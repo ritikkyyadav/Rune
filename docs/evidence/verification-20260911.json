@@ -152,7 +152,8 @@
       "wallSeconds": 0.1,
       "note": "Artifact sha256 af10bd526035a84d6e35a45dc4ef5cc8483283fa514bda4b3e42cfd4fde951af; recorded separately in artifacts.",
       "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/cargo-build.log",
-      "logSha256": "662f4f3b1f9b938897c0d2ef4493b0a6905f0842e95f77c06173b2ac449c25b0"
+      "logSha256": "662f4f3b1f9b938897c0d2ef4493b0a6905f0842e95f77c06173b2ac449c25b0",
+      "correctedBy": "corrections[0] (2026-09-11): a cache hit, and the artifact hash it names is no longer on disk."
     },
     {
       "name": "unit",
@@ -278,7 +279,8 @@
       },
       "wallSeconds": 0.4,
       "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/cargo-fmt.log",
-      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "correctedBy": "corrections[1] (2026-09-11): certified by a zero-byte log, which proves nothing on its own."
     },
     {
       "name": "cargo test",
@@ -346,7 +348,8 @@
       "wallSeconds": 1.0,
       "note": "Sandbox OFF. 0 live requests, no credential used. 38 rows still carry an INFERRED label awaiting human review \u2014 unchanged from Phase 1.",
       "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/eval-auto-safety.log",
-      "logSha256": "fa7ed710ed4a1a09342b61e5dd1ca397def68bfc4944cf56e008650d6fd863df"
+      "logSha256": "fa7ed710ed4a1a09342b61e5dd1ca397def68bfc4944cf56e008650d6fd863df",
+      "correctedBy": "corrections[2] (2026-09-11): the log's reviewer-required figure is not carried into `result`."
     },
     {
       "name": "git diff --check",
@@ -358,7 +361,8 @@
       "wallSeconds": 0.1,
       "note": "Shares a log slot with cargo fmt because both produced no output; the command was run separately and exited 0.",
       "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/cargo-fmt.log",
-      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "correctedBy": "corrections[1] (2026-09-11): certified by a zero-byte log, which proves nothing on its own."
     },
     {
       "name": "repo format check",
@@ -627,5 +631,31 @@
     "This is a checked-in, gated, INSTALLED and smoke-tested source change. It is not a published release: nothing was pushed, no tag was cut, and no hosted CI run exists for this revision.",
     "Every figure here is local. The CI change in 3c075b9 is a preflight step and two comments; it was not exercised on a runner because nothing was pushed.",
     "The founder's ~/.rune/rune.db was read but never written by anything under test. The two installs and three smoke commands appended 81 lines to ~/.rune/audit.jsonl \u2014 sandboxed-bash receipts carrying hashes, not content."
+  ],
+  "corrections": [
+    {
+      "date": "2026-09-11",
+      "target": "checks[0] (cargo build -p rune-tools)",
+      "raisedBy": "V3 adversarial verification, v3-report.md \u00a77 exception 3",
+      "wrong": "Recorded as a build. Its own log reads `Finished \\u0060dev\\u0060 profile \u2026 in 0.06s` \u2014 a cache hit, so this gate compiled nothing. And the note's artifact hash af10bd52\u2026 is not reproducible: `target/debug/rune-tools` today is 24fd5ed0\u2026 (same 22,103,256 bytes), rebuilt on 2026-09-11 by the verification itself.",
+      "right": "The gate proves the workspace still builds from cache, not that these sources compile from cold. The binary every later gate in this manifest exercised was af10bd52\u2026 at the time; that file no longer exists, so the hash cannot be re-checked from this machine. Re-run with `cargo build --locked -p rune-tools` after `cargo clean -p rune-tools` to earn the stronger claim.",
+      "correctedIn": "fix lane F3, 2026-09-11. The check, its log and its sha256 are unchanged."
+    },
+    {
+      "date": "2026-09-11",
+      "target": "checks[7] (cargo fmt) and checks[12] (git diff --check); the same shape as checks[10] and checks[11] of verification-20260910b.json",
+      "raisedBy": "V3 adversarial verification, v3-report.md \u00a77 exception 2",
+      "wrong": "Both are certified by logSha256 e3b0c44298fc1c14\u2026, which is sha256 of the empty string. A zero-byte artifact is consistent with the gate passing silently AND with the gate never having run; it distinguishes nothing.",
+      "right": "Self-disclosed rather than concealed \u2014 `result.output: \"empty\"` and checks[12]'s note both say so \u2014 but evidentially vacuous, and `checks[11].filesCovered: 12` in verification-20260910b.json cannot be supported by a 0-byte file at all. A gate whose success is silence should record its exit status and command line in the log, or be certified by something other than its output.",
+      "correctedIn": "fix lane F3, 2026-09-11. Nothing removed; a method note for the next manifest."
+    },
+    {
+      "date": "2026-09-11",
+      "target": "checks[11] (eval:auto-safety --offline)",
+      "raisedBy": "V3 adversarial verification, v3-report.md \u00a77 exception 4",
+      "wrong": "Every figure in `result` matches the log, but the log's `Reviewer-required (56 rows) 35/46 blocks caught \u00b7 0/10 allows cleared` is not carried into it. A reader of the manifest alone sees the aggregate precision/recall and not the reviewer-required split the offline run contained.",
+      "right": "Offline, the reviewer is dead by design and both reviewer-required outcomes are expected to be contained \u2014 the log says so on the same line. Selective rather than false; the split belongs in `result` so the manifest is readable without the private log.",
+      "correctedIn": "fix lane F3, 2026-09-11."
+    }
   ]
 }

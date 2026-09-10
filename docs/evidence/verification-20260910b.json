@@ -321,7 +321,8 @@
       "wallSeconds": 1.049,
       "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates/render-live.log",
       "logSha256": "7c3d26b79361530b4a074cbd5911ff4db7fbcb1777a18457196dcf9b0223fb32",
-      "note": "The repo's own replay method: stored session events through the real TurnRenderer, read-only against ~/.rune/rune.db, no provider opened. Verified present and inside the measure at both widths: clipped long tool rows, banded unified diffs with line numbers and +/- gutters, check rows, streak rollups, read-back ranges. The single over-width line at each width is entirely Bengali script; both the renderer and this checker approximate Indic cluster widths, so a visible overflow is NOT established. This renders from source c053ca4 — the same source the installed binary was compiled from — not from the installed binary itself."
+      "note": "The repo's own replay method: stored session events through the real TurnRenderer, read-only against ~/.rune/rune.db, no provider opened. Verified present and inside the measure at both widths: clipped long tool rows, banded unified diffs with line numbers and +/- gutters, check rows, streak rollups, read-back ranges. The single over-width line at each width is entirely Bengali script; both the renderer and this checker approximate Indic cluster widths, so a visible overflow is NOT established. This renders from source c053ca4 — the same source the installed binary was compiled from — not from the installed binary itself.",
+      "correctedBy": "corrections[0] (2026-09-11): this check's log certifies a 3-session render, not the 10 sessions the command and result claim, and its over-width note is refuted."
     }
   ],
   "linuxImages": [
@@ -633,5 +634,17 @@
     "This manifest records local engineering gates and one installed build. It is not a capability score, a competitive result, or a release.",
     "A checked-in coherent source change, a tested installation, and a published release are three different things. This is the first two.",
     "The license remains LicenseRef-Proprietary and is unchanged."
+  ],
+  "corrections": [
+    {
+      "date": "2026-09-11",
+      "target": "checks[16] (render-live)",
+      "raisedBy": "V3 adversarial verification, .codex/audit-20260910/handoff/verify/v3-report.md §7 exception 1",
+      "wrong": "The check records `command: \"… --largest 10 …\"` and `result.sessions: 10`, and certifies it with logSha256 7c3d26b7… . Those bytes are the log of a DIFFERENT, smaller render: its own last line reads `scripts/render-live.ts --largest 3 --widt…` and it names three sessions (01a067b8…, 01a06bb0…, 01a0719f…), six frame files. So `result.linesOverWidth80: 1` and `linesOverWidth120: 1` are the three-session figures, certified against a ten-session claim.",
+      "right": "The certified log is a 3-session, 6-frame render. The 10 sessions whose frames are on disk under .codex/audit-20260910/handoff/installed/frames/ were rendered, but their measurement is not the one this check carries; V3 re-measured them at 2 lines over width 80. The command and the sessions count in `result` are the fields to distrust; logSha256 still matches its bytes exactly (recomputed 2026-09-11).",
+      "alsoWrong": "The note argues the single over-width line is 'entirely Bengali script … a visible overflow is NOT established'. Refuted by measurement: frames/01a08083-2f40-7000-a97b-55ec15764a51.80.txt line 437 is 107 display columns in an 80-column frame and is ASCII apart from '│', '✗' and '…', each one column wide. A genuinely visible over-width row exists and was not reported.",
+      "consequence": "docs/harness-status.md:210-212 inherits this claim and is corrected in the same pass; the over-width row is now a tracked backlog item rather than an exculpated one.",
+      "correctedIn": "fix lane F3, 2026-09-11. Nothing was deleted: the original command, result, note and logSha256 stand above this entry."
+    }
   ]
 }

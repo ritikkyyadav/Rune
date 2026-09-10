@@ -486,3 +486,54 @@ tree as `980bf1e` + `c053ca4`; receipts in `docs/evidence/verification-20260910b
   `noUnusedLocals`/`noUnusedParameters`, which no tsconfig in this repo enables. All pre-existing.
   Either enable the flags and clean them in one pass, or stop treating an IDE that enables them as a
   source of findings — Phase 2C — Claude
+
+## Recorded by the 2026-09-11 verification lanes, not fixed
+
+The three adversarial verifiers (V1/V2/V3) re-read the Phase 1 and Phase 2 reports against the
+repository and found seven statements of scope that live only in prose — named honestly inside a
+report, and in no tracked list. They are here so the next person planning work sees them.
+
+- **Linux is covered by `--privileged` only** (`phase-2c-report.md:341`) — every Linux result in the
+  Phase 2 manifests came from a privileged container. An ordinary GitHub runner, or any host that
+  refuses `CLONE_NEWUSER`, is unmeasured. Whichever way that lands it is worth knowing before the
+  next release claims Linux — Phase 2C — Claude
+- **The checkpoint prune has never been applied** (`phase-2c-report.md:347`) — twice a dry run
+  against the founder's own database, never `--apply`. What the advisory promises to remove and what
+  it would actually remove agree on paper; nothing has demonstrated the write path — Phase 2C —
+  Claude
+- **No live long run** (`phase-2c-report.md:348-349`) — the whole lifecycle programme was verified
+  with zero model calls by construction. The handoff's "reserve live long runs for an agreed budget"
+  is unmet because there is no budget, so every durability claim holds against a scripted gateway
+  and none against a real provider's latency, retries or refusals — Phase 2C — Claude
+- **The worker lane was never exercised against a live model or a real crash**
+  (`phase-2-lane-w-report.md:299-301`) — every proving test for the delegated-session work uses a
+  scripted gateway, a temp git repo and a temp database. The one process-level SIGKILL rig is Lane
+  S's, and until 2026-09-11 it asserted nothing about `delegation_lease`/`delegation_checkpoint`
+  rows (it does now, in `tests/integration/lifecycle-durability.test.ts`) — Phase 2C — Claude
+- **`tests/unit/orchestrator/worker-worktree.test.ts` — two `runWorktreeChecks` cases fail under the
+  Bash sandbox and only there** (`phase-2-lane-w-report.md:319-325`), with `"OS isolation
+unavailable: worker check was not started"`: `rune-tools` cannot apply its own Seatbelt profile
+  inside the outer sandbox. Re-measured 2026-09-11 in fix lane F3 — sandboxed 34/36, unsandboxed
+  36/36 — so it remains an artifact of how the suite is run, not a defect. It has never been in a
+  tracked list, which is how "the suite is green" and "two tests fail on my machine" both stayed
+  true — Phase 2C — Claude
+- **`command -v rune` resolves the legacy `~/.alan/bin` shim ahead of `~/.rune/bin`**
+  (`phase-1-report.md:235-238`) — the shim is byte-identical and reports the new version, so the
+  founder runs the right build; but the rename generation's compatibility path, not the new
+  launcher, is what `rune` means on this machine. A live founder-facing defect that appears in three
+  prose locations and no tracked list — Phase 1 — Claude
+- **Child budget inheritance is proven on the artifact, not on a crash**
+  (`phase-2c-report.md:346`) — `delegatedTurnCeiling` is unit-tested against a checkpoint that
+  _looks_ like the one a crash leaves. The residue note at the entry above (`delegated-sessions.ts`,
+  Lane W's turn-inheritance residue) carries the design half of this; the missing half is a real
+  killed child whose resume is measured — Phase 2C — Claude
+
+One more, from the same pass, that is a defect rather than a scope note:
+
+- `packages/orchestrator/src/bin/ui/turn.ts` (or wherever the row is built) — a genuinely visible
+  over-width row at 80 columns: `.codex/audit-20260910/handoff/installed/frames/01a08083-2f40-7000-a97b-55ec15764a51.80.txt`
+  line 437 is **107 display columns** in an 80-column frame — `│ ✗ cd backend && python3 -m mypy .
+(exit 1) | …` — and is ASCII apart from `│`, `✗` and `…`, each one column wide. The
+  `verification-20260910b.json` note that excused the over-width lines as "entirely Bengali script"
+  was measured on a 3-session render and is corrected in that file's `corrections[0]`; this row is
+  the real one — Phase 2C — Claude

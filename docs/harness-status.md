@@ -463,3 +463,70 @@ usage ledger, and which explicitly starts with measurement rather than more mode
 acceptance target — completed-task cost no greater than the baseline harness at equal quality —
 needs paid comparison runs, so treat it as a target until measured. External dependency: a live
 evaluation budget, which does not exist today.
+
+## 2026-09-11 — three adversarial verifications, and what they changed
+
+Phase 2 was re-read by three independent verifiers who were told to attack it rather than confirm
+it: **V1** the containment and install layer, **V2** the orchestrator's correctness claims, **V3**
+the worker layer, the durability rig and the evidence documents. Their reports and their red tests
+are in `.codex/audit-20260910/handoff/verify/`. Everything below is a finding against work this file
+already called done. Three fix lanes (F1 containment, F2 orchestrator, F3 workers and evidence) took
+them.
+
+**Twelve findings carry a HIGH or MEDIUM severity from their verifier.** V2 did not grade its
+findings, so its five defect areas are listed after them at the granularity it used.
+
+| #     | Severity | Finding                                                                                                                                                                                                                                                                                                                                           | Lane |
+| ----- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- |
+| V1-1  | HIGH     | The restart reaper kills a pid it never spawned: `child-ledger.ts` has no identity check, so a recycled number outside the 24-hour window is signalled. Proven by killing a `/bin/sleep` the engine never started                                                                                                                                 | F1   |
+| V3-F1 | HIGH     | `08d99f8`'s headline is false in the shipped engine: `registerDelegationTools()` ran 281 lines before `this.delegatedSessions` was constructed, so every real dispatch used a store with **no** `SessionManager` — zero `delegation_checkpoint` and zero `delegation_lease` rows ever written, and a resumed `task_id` answered "Unknown task_id" | F2   |
+| V3-F2 | HIGH     | Two parallel sessions in one repository allocate the **same** worker id: the counter key was 8 characters of a time-bucketed UUIDv7 (one bucket per 65,536 ms) and its read-modify-write had no lock. Measured: 24 colliding ids across two processes                                                                                             | F3   |
+| V1-1b | MEDIUM   | One restart does not finish the reap — owner rows are judged before the child rows whose owner this pass just SIGKILLed, so the orphan is kept until a second pass                                                                                                                                                                                | F1   |
+| V1-4  | MEDIUM   | A Linux toolchain root that is itself a symlink to `$HOME` is bound whole, and the lexical guard test cannot see it: `~/.ssh/id_rsa` becomes readable through `/root/.local/bin/.ssh/id_rsa`                                                                                                                                                      | F1   |
+| V1-5b | MEDIUM   | macOS silently widens a declared plugin host to a whole port (`api.example.com:443` becomes `remote ip "*:443"`) with `notes: []`, where Linux refuses the same declaration and says so                                                                                                                                                           | F1   |
+| V1-7b | MEDIUM   | `install.sh` copies four artifacts to `*.backup-<epoch>` on every install and nothing ever prunes them. Live on this machine: 97 backup files, 24 generations, `~/.rune/bin` at 2.0 GB — on a founder with zero budget                                                                                                                            | F1   |
+| V3-F3 | MEDIUM   | The durability suite's zero-spend guard was unsound: it asserted the row count of the founder's live `~/.rune/rune.db`, which other processes write and WAL-checkpoint, and it failed 2 of 3 verification runs that spent nothing                                                                                                                 | F3   |
+| V3-F4 | MEDIUM   | The boundary-checkpoint dedup could not tell two child boundaries apart — it hashed the compaction output, which truncates every tool result at 1,500 characters and collapses every image, so the second boundary was never written and the child re-ran that call on resume                                                                     | F3   |
+| V3-F5 | MEDIUM   | The 2 MiB per-run checkpoint budget stopped **silently** — a bare `return`, no event, no field, so a long child's crash granularity collapsed to "the final save only" with nothing saying when                                                                                                                                                   | F3   |
+| V3-F6 | MEDIUM   | The resume lease identified its holder by pid alone: a recycled pid held a `task_id` for the full 30 minutes, and — the dangerous direction — a lease written on another machine was cleared the instant its pid looked dead locally                                                                                                              | F3   |
+| V3-F7 | LOW/MED  | The worker reaper destroyed a dead worker's **gitignored** files and reported a clean reap: `git status --porcelain` does not list them and `add -A` does not stage them                                                                                                                                                                          | F3   |
+
+V2's five defect areas, at its own granularity: a report-shaped plan waives the settled-plan gate
+and a check that runs nothing closes a step (**`apply_patch` records no touched file**); the inline
+check classifier buys relatedness from a comment, a log string or a Python comment, and three
+project-level runners are vacuous; a dirty-tree claim is never stale and a claim decays one rung per
+call; **the rung demotion is never persisted** across a restart; and the TUI footer's
+`filesChanged` predicate drops `apply_patch`. All are F2's.
+
+Two V3 findings are recorded without a lane: **F8** — the "a usable partial result" test asserts
+that recovery _completed_ (`stopReason` is a string, every todo closed), which is not the criterion
+it is named for, and no case in the file refuses recovery; and **F9** — the new lifecycle events are
+genuinely small (`brief`, `checkpoint`, `run_trace`, `task_state` together are 9.5% of one killed
+run's payload), but `auto_compaction` rows are ~58 KB each and are the shape that rebuilt the 184
+MiB checkpoint table.
+
+### What this file itself said that was wrong
+
+V3's evidence sub-audit recomputed all 32 log hashes in the Phase 1 and Phase 2 manifests and found
+them exact, and the installed binaries still hash to their recorded values. Five statements in _this
+file_ did not hold:
+
+- **`:210-212` "…all inside the measure"** — false, and it inherits a false manifest entry.
+  `verification-20260910b.json` `checks[16]` records a ten-session render and certifies it with the
+  log of a **three**-session one; corrected in that file's `corrections[0]`. The real measurement:
+  `frames/01a08083-…80.txt` line 437 is **107 display columns** in an 80-column frame, ASCII apart
+  from `│`, `✗` and `…`. A visible over-width row exists and is now a tracked backlog item.
+- **`:14-22` "Latest installation: v0.4.1-dev+c053ca4, CLI SHA `78239eb4…`"** — stale. Those are the
+  pre-Phase-2 hashes; `:415-416` of this same file records `v0.4.1-dev+b1b1262` and
+  `d0f03687…`/`01d8600b…` as what is installed.
+- **`:9-10` "Phases 2–7 are not [done]"** — stale, contradicted by `:327-457` here and by
+  `CLAUDE_CODE_HANDOFF.md:96`. Phase 2 shipped; 3–7 have not.
+- **`:411` strict `tsc` "0 errors in any test file"** — true as written, and it omits what the
+  manifest records honestly: the run's `exit: 2` and the 23 pre-existing package-level errors.
+- **`:417` "`rune doctor` … green"** — partial. `installed-phase2/doctor.txt` carries a `✗` and two
+  `!` (retired free models, the 184 MB checkpoint table). Diagnostics about the founder's accounts
+  rather than about the build, as `:214` says — but "green" is not the word for a report with a `✗`
+  in it, and `CLAUDE_CODE_HANDOFF.md:78` is the rule this breaks.
+
+The lines above are left standing rather than rewritten, so that what was claimed and what was found
+can both be read.
