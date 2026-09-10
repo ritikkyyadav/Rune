@@ -1,5 +1,23 @@
 # Program status
 
+**2026-09-10, afternoon: the fold measured, the Linux proof run, and the free route.** Pilot J on the
+fold build read 24,320 of 24,882 tokens from cache on its last request (Pilot H: 12,160 frozen);
+the two remaining full misses follow just-in-time doctrine injections, recorded in the backlog.
+Rune still hit 240 s because `bun -e '…assert…'` probes were not checks and `record_evidence`
+refused them twice (fixed: inline assertion scripts count, 9984109). The comparison harness now
+forwards the saved-keys file into its isolated profile (it had no ollama key). On the free route
+gpt-oss:120b never writes a closing line and once printed a tool's arguments as text: a run that
+wrote its work now finishes on silence after one nudge (d18fde0), and a printed call is nudged into
+a real one (be0b468). The first Linux containment run in CI (`lane/linux-containment`, 140 / 7)
+found writes outside the workspace succeeding under bwrap, toolchains under the home directory
+invisible to the sandboxed shell, and plugin tools registering nothing — the backend fixes are in
+the Codex session's working tree. Two free-route series stopped on ollama.com 500s on OpenCode's
+side: three scored pairs, one run each, [free-a](../evidence/comparison-20260910-free-a.json),
+[free-b](../evidence/comparison-20260910-free-b.json),
+[qualifications](../evidence/comparison-20260910-free-notes.json). Codex quota stayed exhausted
+all afternoon, so the paired frontier run on the new build is still owed. Installed:
+`v0.4.1-dev+be0b468`, CLI `afb4c8a1…`.
+
 **2026-09-10, later: the step-count leaks.** Finish gates, nudges and the second wind now tag
 what they append and the engine persists it (`user_msg` with a `harness` field); a plan with
 every step completed and evidenced stands the execution-evidence and fix-verified gates down;
