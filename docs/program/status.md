@@ -1,5 +1,14 @@
 # Program status
 
+**2026-09-10, evening: the first complete free-route series on the new build.** Three tasks by
+two runs, each task invoked separately so a provider error could not end the series; all twelve
+arms scored. Rune completed **5 of 6**, OpenCode **4 of 6**; on every pair both completed Rune
+finished sooner and at a lower estimated list cost (means: Rune 43.0 s and $0.0273 over six arms,
+OpenCode 110.6 s and $0.0496). Rune's one failure was a wrong parser after a normal finish, not a
+harness stop. This reverses the 2026-09-08 series' cost finding on the same route; it is one series
+on one free model and says nothing about the frontier route, where Codex quota stayed exhausted.
+[Reports and qualifications](../evidence/comparison-20260910-free-c-notes.json).
+
 **2026-09-10, afternoon: the fold measured, the Linux proof run, and the free route.** Pilot J on the
 fold build read 24,320 of 24,882 tokens from cache on its last request (Pilot H: 12,160 frozen);
 the two remaining full misses follow just-in-time doctrine injections, recorded in the backlog.

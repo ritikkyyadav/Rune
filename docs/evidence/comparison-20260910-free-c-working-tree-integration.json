@@ -1,0 +1,127 @@
+{
+  "schema": 1,
+  "kind": "local-live-pilot",
+  "startedAt": "2026-09-10T08:03:15.430Z",
+  "limits": {
+    "perTaskListUsd": 1,
+    "timeoutMs": 300000,
+    "runs": 2
+  },
+  "model": "gpt-oss:120b",
+  "providers": {
+    "rune": "ollama-turbo",
+    "opencode": "ollama-cloud"
+  },
+  "provenance": {
+    "runeSha": "8003ec283059a4b0386ed938d0ea3e7e4f8249f1",
+    "dirtyPatchSha256": "56e193ca9e3310f457ed11bec47a5b0be8161f07f99bdf301c90c5e302e29985",
+    "taskDigest": "08a0bdf65bf92faacda15b6b2bcb6de3ab5d62821d59af4f10afa524628e6c61",
+    "runeExecutableSha256": "afb4c8a1624b3ede9b443c495eb30531419843876e349eaba2365ab96dd700f2",
+    "runeCommand": [
+      "/Users/ritikyadav890/.rune/bin/rune-compiled"
+    ],
+    "opencodeCommand": [
+      "opencode"
+    ],
+    "versions": {
+      "rune": "Rune v0.4.1-dev+be0b468",
+      "opencode": "1.18.23"
+    }
+  },
+  "limitations": [
+    "Small internally authored pilot; not SWE-bench or Terminal-Bench and not an overall capability score.",
+    "Same selected primary model and high reasoning; each harness retains its own tools, orchestration, prompts and helper routing.",
+    "Dollar figures use Rune's shared versioned pricing table, not subscription invoices. Unknown prices stay null.",
+    "Rune reserves dollars before requests; OpenCode is stopped after a reported step crosses the common ceiling. Any overshoot is recorded and cannot count as an on-budget success."
+  ],
+  "results": [
+    {
+      "sourceBefore": "afb4c8a1624b3ede9b443c495eb30531419843876e349eaba2365ab96dd700f2",
+      "sourceChanged": false,
+      "task": "working-tree-integration",
+      "run": 1,
+      "arm": "rune",
+      "exitCode": 0,
+      "durationMs": 24573,
+      "listUsd": 0.0030108400000000003,
+      "models": [
+        "ollama-turbo/gpt-oss:120b"
+      ],
+      "entries": 10,
+      "estimated": true,
+      "scored": true,
+      "acceptancePassed": true,
+      "onBudget": true,
+      "success": true,
+      "evidence": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/claude-free-series-4-working-tree-integration/working-tree-integration-1-rune",
+      "patchSha256": "a21fd646dbf2c0ab150f6a61766e95363c07b5d7a8b069a91c49f8e398aa876d",
+      "completedAt": "2026-09-10T08:03:40.521Z"
+    },
+    {
+      "sourceBefore": "afb4c8a1624b3ede9b443c495eb30531419843876e349eaba2365ab96dd700f2",
+      "sourceChanged": false,
+      "task": "working-tree-integration",
+      "run": 1,
+      "arm": "opencode",
+      "exitCode": 0,
+      "durationMs": 43750,
+      "listUsd": 0.00462718,
+      "models": [
+        "gpt-oss:120b"
+      ],
+      "entries": 11,
+      "estimated": true,
+      "scored": true,
+      "acceptancePassed": true,
+      "onBudget": true,
+      "success": true,
+      "evidence": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/claude-free-series-4-working-tree-integration/working-tree-integration-1-opencode",
+      "patchSha256": "f94b0a232b20626620c154507b002516c5504b74d8184c3ee2a0f94049a3d916",
+      "completedAt": "2026-09-10T08:04:24.424Z"
+    },
+    {
+      "sourceBefore": "afb4c8a1624b3ede9b443c495eb30531419843876e349eaba2365ab96dd700f2",
+      "sourceChanged": false,
+      "task": "working-tree-integration",
+      "run": 2,
+      "arm": "opencode",
+      "exitCode": 0,
+      "durationMs": 63292,
+      "listUsd": 0.0058391599999999995,
+      "models": [
+        "gpt-oss:120b"
+      ],
+      "entries": 14,
+      "estimated": true,
+      "scored": true,
+      "acceptancePassed": true,
+      "onBudget": true,
+      "success": true,
+      "evidence": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/claude-free-series-4-working-tree-integration/working-tree-integration-2-opencode",
+      "patchSha256": "74fb94f42f77a515addae70e012743584d8c2683353a6d3195b9a15f283f6a76",
+      "completedAt": "2026-09-10T08:05:27.868Z"
+    },
+    {
+      "sourceBefore": "afb4c8a1624b3ede9b443c495eb30531419843876e349eaba2365ab96dd700f2",
+      "sourceChanged": false,
+      "task": "working-tree-integration",
+      "run": 2,
+      "arm": "rune",
+      "exitCode": 0,
+      "durationMs": 49396,
+      "listUsd": 0.00422778,
+      "models": [
+        "ollama-turbo/gpt-oss:120b"
+      ],
+      "entries": 12,
+      "estimated": true,
+      "scored": true,
+      "acceptancePassed": true,
+      "onBudget": true,
+      "success": true,
+      "evidence": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/claude-free-series-4-working-tree-integration/working-tree-integration-2-rune",
+      "patchSha256": "830eb2f00c2721a8e4178eaa1b225f1234c0cc184220e9126a7d3c0627c36284",
+      "completedAt": "2026-09-10T08:06:17.399Z"
+    }
+  ]
+}
