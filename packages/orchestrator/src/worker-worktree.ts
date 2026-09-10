@@ -1,15 +1,20 @@
 import { spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
+  closeSync,
   existsSync,
   mkdirSync,
   lstatSync,
+  openSync,
   readdirSync,
   readFileSync,
   readlinkSync,
   cpSync,
+  renameSync,
   rmSync,
+  statSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import {
@@ -115,8 +120,14 @@ const WORKTREE_DIR = join(".rune", "worktrees");
  */
 const WORKER_STATE_DIR = join(WORKTREE_DIR, ".workers");
 const WORKER_IDS_FILE = "ids.json";
+/** Held for the read-modify-write of the id ledger, and for nothing else. */
+const WORKER_IDS_LOCK = "ids.lock";
 /** Sessions kept in the id ledger. Older ones cannot collide: their branches exist. */
 const MAX_TRACKED_SESSIONS = 32;
+/** How long a dispatch waits for the id ledger before minting a process-tagged id. */
+const ID_LOCK_WAIT_MS = 2_000;
+/** A lock older than this belonged to a process that died holding it. */
+const ID_LOCK_STALE_MS = 10_000;
 
 function git(
   cwd: string,
@@ -164,52 +175,148 @@ interface WorkerIdLedger {
 /** Per-process floor, so the sequence still advances when the ledger cannot be written. */
 const memorySeq = new Map<string, number>();
 let anonymousKey: string | undefined;
+/** This process's own tag. Only ever reached when the shared ledger cannot be taken. */
+let processTag: string | undefined;
 
+/**
+ * The counter namespace for one session: a digest of the WHOLE session id.
+ *
+ * It used to be the first 8 characters of that id, and that was a collision by
+ * construction. Session ids are `randomUUIDv7` (`packages/shared/src/session.ts`),
+ * whose first 12 hex characters are a 48-bit millisecond stamp — so 8 of them
+ * are `ms >> 16`: **one bucket per 65,536 ms**. Every session started in the
+ * same ~65 seconds shared one counter, and since each process keeps its own
+ * in-memory floor, two live sessions in one repository — how the founder works —
+ * minted the SAME `w<key>-<n>`. The loser's dispatch then died with
+ * `WorkerIsolationError` and degraded to a shell-less shared-tree run: the exact
+ * Gap 1.1b failure durable ids were written to eliminate.
+ *
+ * A digest of the full id has no such structure, and note which way its own
+ * failure would fall: two sessions colliding here would SHARE a counter, which
+ * still cannot mint a duplicate id. A prefix gave colliding sessions a namespace
+ * each, which is the only arrangement that can.
+ */
 function sessionKey(sessionId?: string): string {
-  const clean = String(sessionId ?? "")
-    .replace(/[^a-zA-Z0-9]/g, "")
-    .toLowerCase();
-  if (clean) return clean.slice(0, 8);
+  const clean = String(sessionId ?? "").trim();
+  if (clean) return createHash("sha256").update(clean).digest("hex").slice(0, 12);
   // No session to key on (a direct tool call, a test): one stable key per
   // process, which still cannot collide with another process's workers.
-  anonymousKey ??= randomBytes(4).toString("hex");
+  anonymousKey ??= randomBytes(6).toString("hex");
   return anonymousKey;
 }
 
+/** A synchronous pause that does not spin a core while another process holds the lock. */
+function sleepSync(ms: number): void {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    // No SharedArrayBuffer here: fall through and retry immediately.
+  }
+}
+
 /**
- * The next worker id for this session: `w<session prefix>-<n>`, where `n`
- * survives a restart.
+ * Run the ledger's read-modify-write under an exclusive lock.
+ *
+ * `writeFileSync` alone was not enough: two processes read the same `n`,
+ * incremented it and wrote it back, and both dispatched `w<key>-<n>`. An
+ * exclusive create (`wx`) is the one filesystem primitive that is atomic on
+ * every platform this runs on. A holder that dies keeps the lock file, so a
+ * lock older than `ID_LOCK_STALE_MS` is broken rather than blocking every later
+ * dispatch in the repository; and a lock that never comes free is reported
+ * rather than waited on forever — the caller then mints a process-tagged id,
+ * which cannot collide either.
+ */
+function withIdLedgerLock<T>(dir: string, fn: () => T): { ok: true; value: T } | { ok: false } {
+  const lock = join(dir, WORKER_IDS_LOCK);
+  const deadline = Date.now() + ID_LOCK_WAIT_MS;
+  for (;;) {
+    let fd: number;
+    try {
+      fd = openSync(lock, "wx");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") return { ok: false };
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > ID_LOCK_STALE_MS) rmSync(lock, { force: true });
+      } catch {
+        // Raced with the holder's own release; the next attempt sees the truth.
+      }
+      if (Date.now() >= deadline) return { ok: false };
+      sleepSync(2 + Math.floor(Math.random() * 8));
+      continue;
+    }
+    try {
+      writeSync(fd, String(process.pid));
+      return { ok: true, value: fn() };
+    } catch {
+      return { ok: false };
+    } finally {
+      try {
+        closeSync(fd);
+      } catch {
+        /* already closed */
+      }
+      try {
+        rmSync(lock, { force: true });
+      } catch {
+        /* the staleness check above releases it */
+      }
+    }
+  }
+}
+
+/** Replace the ledger atomically, so a crash mid-write cannot truncate it. */
+function writeIdLedger(file: string, ledger: WorkerIdLedger): void {
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(ledger));
+  renameSync(tmp, file);
+}
+
+/**
+ * The next worker id for this session: `w<session digest>-<n>`, where `n`
+ * survives a restart and is minted under an exclusive lock.
  *
  * Best-effort persistence by design — a repository where the ledger cannot be
- * written still gets monotonic ids within the process, which is the pre-existing
- * guarantee, rather than a failed dispatch.
+ * written or locked still dispatches, but the id it gets carries this process's
+ * own tag, because an id that merely looks monotonic is what collided.
  */
 export function allocateWorkerId(repoRoot: string, sessionId?: string): string {
   const key = sessionKey(sessionId);
   const dir = join(repoRoot, WORKER_STATE_DIR);
   const file = join(dir, WORKER_IDS_FILE);
-  let ledger: WorkerIdLedger = { version: 1, sessions: {} };
-  try {
-    const raw = JSON.parse(readFileSync(file, "utf8")) as WorkerIdLedger;
-    if (raw?.version === 1 && raw.sessions && typeof raw.sessions === "object") ledger = raw;
-  } catch {
-    // Missing or corrupt: start a fresh ledger rather than refusing to dispatch.
-  }
-  const persisted = Number(ledger.sessions[key]?.n);
-  const next = Math.max(Number.isFinite(persisted) ? persisted : 0, memorySeq.get(key) ?? 0) + 1;
-  memorySeq.set(key, next);
-  ledger.sessions[key] = { n: next, at: Date.now() };
-  const kept = Object.entries(ledger.sessions)
-    .sort((a, b) => (b[1]?.at ?? 0) - (a[1]?.at ?? 0))
-    .slice(0, MAX_TRACKED_SESSIONS);
-  ledger.sessions = Object.fromEntries(kept);
   try {
     mkdirSync(dir, { recursive: true });
-    writeFileSync(file, JSON.stringify(ledger));
   } catch {
-    // The in-memory floor above still holds for the rest of this process.
+    // Handled below: an unwritable state directory takes the tagged path.
   }
-  return `w${key}-${next}`;
+  const taken = withIdLedgerLock(dir, () => {
+    let ledger: WorkerIdLedger = { version: 1, sessions: {} };
+    try {
+      const raw = JSON.parse(readFileSync(file, "utf8")) as WorkerIdLedger;
+      if (raw?.version === 1 && raw.sessions && typeof raw.sessions === "object") ledger = raw;
+    } catch {
+      // Missing or corrupt: start a fresh ledger rather than refusing to dispatch.
+    }
+    const persisted = Number(ledger.sessions[key]?.n);
+    const next = Math.max(Number.isFinite(persisted) ? persisted : 0, memorySeq.get(key) ?? 0) + 1;
+    // The session being allocated for is kept first, always. Sorting the whole
+    // map by `at` and slicing evicted the NEWEST entries whenever several
+    // shared one millisecond — the one thing this prune must never do.
+    const others = Object.entries(ledger.sessions)
+      .filter(([k]) => k !== key)
+      .sort((a, b) => (b[1]?.at ?? 0) - (a[1]?.at ?? 0))
+      .slice(0, MAX_TRACKED_SESSIONS - 1);
+    ledger.sessions = Object.fromEntries([[key, { n: next, at: Date.now() }], ...others]);
+    writeIdLedger(file, ledger);
+    return next;
+  });
+  if (taken.ok) {
+    memorySeq.set(key, taken.value);
+    return `w${key}-${taken.value}`;
+  }
+  const next = (memorySeq.get(key) ?? 0) + 1;
+  memorySeq.set(key, next);
+  processTag ??= randomBytes(3).toString("hex");
+  return `w${key}-${next}-${processTag}`;
 }
 
 /** Who owns a live checkout. Written beside it; read only by the reaper. */
@@ -255,6 +362,74 @@ function defaultPidAlive(pid: number): boolean {
   }
 }
 
+/**
+ * Ignored paths whose only copy is inside the dying checkout.
+ *
+ * `node_modules` and `.venv` are excluded because `provisionWorkerDependencies`
+ * built them as copies of the LEAD's, so the tree the reaper runs in already
+ * holds them — and committing them would put a whole dependency tree on a
+ * `rune/worker-*` branch that can never be deleted.
+ */
+const PROVISIONED_DIRS = [".git", ".rune", ".gear", ".alan", "node_modules", ".venv"];
+/** How much ignored output the reaper is willing to commit rather than keep in place. */
+const MAX_IGNORED_FILES = 500;
+const MAX_IGNORED_BYTES = 16 * 1024 * 1024;
+
+/**
+ * What a dead worker left behind that `git status --porcelain` cannot see.
+ *
+ * `--porcelain` does not list ignored files and `add -A` does not stage them,
+ * so a checkout whose only content was ignored — a `.env` the worker wrote, a
+ * generated fixture, anything under an ignored path — was reported `reaped,
+ * committed:false` and destroyed, a shape a caller cannot tell apart from
+ * "there was nothing to keep". Enumerated with `--directory` so a wholly
+ * ignored directory arrives as one entry rather than ten thousand.
+ */
+function ignoredWork(checkout: string): {
+  paths: string[];
+  files: number;
+  bytes: number;
+  over: boolean;
+} {
+  const listed = git(
+    checkout,
+    ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
+    { raw: true },
+  );
+  if (!listed.ok) return { paths: [], files: 0, bytes: 0, over: false };
+  const paths = listed.stdout
+    .split("\0")
+    .filter(Boolean)
+    .map((p) => p.replace(/\/$/, ""))
+    .filter((p) => !p.split(/[\\/]/).some((part) => PROVISIONED_DIRS.includes(part)));
+  let files = 0;
+  let bytes = 0;
+  const visit = (rel: string, depth: number): boolean => {
+    let stat;
+    try {
+      stat = lstatSync(join(checkout, rel));
+    } catch {
+      return true; // gone between the listing and now
+    }
+    if (stat.isDirectory()) {
+      if (depth > 8) return false;
+      let entries: string[];
+      try {
+        entries = readdirSync(join(checkout, rel));
+      } catch {
+        return true;
+      }
+      for (const entry of entries) if (!visit(join(rel, entry), depth + 1)) return false;
+      return true;
+    }
+    files += 1;
+    bytes += stat.size;
+    return files <= MAX_IGNORED_FILES && bytes <= MAX_IGNORED_BYTES;
+  };
+  for (const path of paths) if (!visit(path, 0)) return { paths, files, bytes, over: true };
+  return { paths, files, bytes, over: false };
+}
+
 /** One checkout the reaper looked at, and what it did about it. */
 export interface WorkerReapEntry {
   workerId: string;
@@ -274,7 +449,10 @@ export interface WorkerReapEntry {
  * exactly one place — its checkout — and its `rune/worker-*` branch is the only
  * thing that survives the directory. So every removal COMMITS FIRST, onto that
  * worker's own branch, and a commit that fails leaves the directory alone and
- * says so. Branches are never deleted here, by any path.
+ * says so. Branches are never deleted here, by any path. "Uncommitted" includes
+ * IGNORED output, which `git status --porcelain` does not show and `add -A`
+ * does not stage: it is committed too when it is small enough, and when it is
+ * not, the checkout is kept and the reason names it.
  *
  * A checkout with no owner record is left in place: it belongs to an older Rune,
  * to a concurrent instance, or to a detached run, and none of those are ours to
@@ -330,13 +508,30 @@ export function reapWorkerWorktrees(
       keep(`its checkout is not a usable git worktree (${status.stderr || "git status failed"})`);
       continue;
     }
-    if (status.stdout) {
+    // Ignored output is invisible to the line above and to `add -A`, and the
+    // removal below is unconditional, so it has to be decided here.
+    const ignored = ignoredWork(owner.path);
+    if (ignored.over) {
+      keep(
+        `its ignored output is too large to put on ${branch} ` +
+          `(${ignored.files}+ files, ${ignored.bytes}+ bytes), so the checkout is left in place`,
+      );
+      continue;
+    }
+    if (status.stdout || ignored.paths.length > 0) {
       // `add -A` inside the worker's OWN checkout: everything here belongs to
       // that worker by construction, and the alternative is losing it.
       const staged = git(owner.path, ["add", "-A"]);
       if (!staged.ok) {
         keep(`its uncommitted work could not be staged (${staged.stderr})`);
         continue;
+      }
+      if (ignored.paths.length > 0) {
+        const forced = git(owner.path, ["add", "--force", "--", ...ignored.paths]);
+        if (!forced.ok) {
+          keep(`its ignored output could not be staged (${forced.stderr})`);
+          continue;
+        }
       }
       const commit = git(owner.path, [
         "-c",

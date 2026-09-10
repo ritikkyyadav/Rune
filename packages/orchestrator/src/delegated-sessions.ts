@@ -1,5 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { resolve } from "node:path";
 import type { Message } from "@rune/llm-gateway";
 import type { SessionManager } from "@rune/shared";
@@ -30,6 +33,21 @@ export interface Checkpoint {
   at?: string;
   /** True for a checkpoint saved at a tool boundary rather than on resolve. */
   atBoundary?: boolean;
+  /**
+   * Set on the final save when mid-run boundary saves stopped at the run's byte
+   * budget, with the last boundary that DID reach disk.
+   *
+   * The budget used to be a bare `return`: past it a long child's crash
+   * granularity silently collapsed to "the final save only", and nothing in the
+   * record said when. A resume that has to explain a gap can now read where the
+   * gap starts.
+   */
+  boundaryBudgetExhausted?: {
+    bytes: number;
+    budgetBytes: number;
+    at: string;
+    lastCheckpointAt?: string;
+  };
   /**
    * How the child ENDED, on the final save only.
    *
@@ -64,6 +82,19 @@ interface Lease {
   at: number;
   ttlMs: number;
   released?: boolean;
+  /**
+   * WHERE the holder is, and WHICH process it is.
+   *
+   * A lease used to name a pid and nothing else, so it could be wrongly held
+   * (an unrelated process that inherited the pid kept a `task_id` for the full
+   * TTL) and — the dangerous direction — wrongly CLEARED: a lease written on
+   * another machine against a shared database was reaped the instant its pid
+   * looked dead here, which is exactly the collision the lease exists to stop.
+   * `host` decides whether a local pid probe means anything at all; `pidStart`
+   * decides whether the live pid is still the process that took the lease.
+   */
+  host?: string;
+  pidStart?: string;
 }
 
 function defaultPidAlive(pid: number): boolean {
@@ -76,9 +107,55 @@ function defaultPidAlive(pid: number): boolean {
   }
 }
 
+/**
+ * When a pid started, as the OS reports it — the discriminator against pid reuse.
+ *
+ * Linux answers from `/proc/<pid>/stat` field 22 (boot-relative ticks); everything
+ * else asks `ps`, which is accurate to the second. Null where neither can answer
+ * (Windows, a hardened container): the caller then has no evidence of reuse and
+ * honours the lease, because refusing a live holder is recoverable and stealing
+ * a task from one is not.
+ */
+function defaultPidStart(pid: number): string | null {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const fields = stat
+      .slice(stat.lastIndexOf(")") + 1)
+      .trim()
+      .split(/\s+/);
+    if (fields[19]) return `linux:${fields[19]}`;
+  } catch {
+    // Not Linux, or the process is gone; `ps` below is the portable answer.
+  }
+  try {
+    const res = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+      encoding: "utf8",
+      timeout: 5_000,
+    });
+    const line = (res.stdout ?? "").trim();
+    if (res.status === 0 && line) return `ps:${line}`;
+  } catch {
+    // No `ps` on PATH.
+  }
+  return null;
+}
+
+/** This machine, for a lease read on another one. Never fatal: an unnamed host is treated as local. */
+function safeHostId(): string {
+  try {
+    return hostname() || "unknown-host";
+  } catch {
+    return "unknown-host";
+  }
+}
+
 export interface DelegatedSessionsOptions {
   /** Test seam: liveness probe for a lease holder (default `process.kill(pid, 0)`). */
   pidAlive?: (pid: number) => boolean;
+  /** Test seam: the OS's start time for a pid (default `/proc` then `ps`). */
+  pidStart?: (pid: number) => string | null;
+  /** Test seam: this machine's identity in a lease (default `os.hostname()`). */
+  hostId?: string;
   /** Override the lease TTL. */
   leaseTtlMs?: number;
 }
@@ -89,12 +166,17 @@ export class DelegatedSessions {
   private memory = new Map<string, Checkpoint>();
   private busy = new Set<string>();
   private readonly pidAlive: (pid: number) => boolean;
+  private readonly pidStart: (pid: number) => string | null;
+  private readonly hostId: string;
   private readonly leaseTtlMs: number;
+  private ownStart?: string;
   constructor(
     private sessions?: Pick<SessionManager, "appendEvent" | "getLatestKeyedEvent">,
     opts: DelegatedSessionsOptions = {},
   ) {
     this.pidAlive = opts.pidAlive ?? defaultPidAlive;
+    this.pidStart = opts.pidStart ?? defaultPidStart;
+    this.hostId = opts.hostId ?? safeHostId();
     this.leaseTtlMs = opts.leaseTtlMs ?? DELEGATION_LEASE_TTL_MS;
   }
   load(parent: string, id: string): Checkpoint | undefined {
@@ -114,18 +196,49 @@ export class DelegatedSessions {
     else this.memory.set(`${parent}:${c.id}`, structuredClone(c));
   }
 
-  /** The live lease on `id`, or null when there is none to honour. */
+  /**
+   * The live lease on `id`, or null when there is none to honour.
+   *
+   * A local pid probe is evidence about a LOCAL process and nothing else, so it
+   * only clears a lease this host wrote. Three questions, in order:
+   *
+   * 1. Is the holder on this machine? If not, the pid on the record names some
+   *    unrelated process here; only the TTL may clear it.
+   * 2. Is that pid still alive? A crashed holder is reaped on sight, which is
+   *    why a crash does not strand a `task_id` for half an hour.
+   * 3. Is the live pid still the SAME process? A recycled pid used to hold a
+   *    task for the full TTL — measured against a `sleep 30`. Start times settle
+   *    it; where the OS will not say, the lease is honoured.
+   */
   private heldLease(parent: string, id: string): Lease | null {
     if (!this.sessions) return null;
     const row = this.sessions.getLatestKeyedEvent(parent, "delegation_lease", id);
     const lease = row?.payload as unknown as Lease | undefined;
     if (!lease || typeof lease.pid !== "number" || lease.released) return null;
     const ttl = Number.isFinite(lease.ttlMs) && lease.ttlMs > 0 ? lease.ttlMs : this.leaseTtlMs;
-    // Liveness first, TTL second — the same order `TeamBus.sweep` uses, and the
-    // reason a crash does not strand a `task_id` for half an hour.
-    if (!this.pidAlive(lease.pid)) return null;
     if (Date.now() - lease.at > ttl) return null;
+    const local = !lease.host || lease.host === this.hostId;
+    if (local) {
+      if (!this.pidAlive(lease.pid)) return null;
+      if (lease.pidStart) {
+        const now = this.pidStart(lease.pid);
+        if (now && now !== lease.pidStart) return null; // the pid was reused
+      }
+    }
     return { ...lease, ttlMs: ttl };
+  }
+
+  /**
+   * A record that mid-run checkpointing stopped, so the gap is in the log
+   * rather than only in the absence of rows.
+   */
+  notice(parent: string, payload: Record<string, unknown>): void {
+    if (!this.sessions) return;
+    try {
+      this.sessions.appendEvent(parent, { type: "delegation_notice", payload });
+    } catch {
+      // A notice that cannot be recorded must never fail the delegation.
+    }
   }
 
   /**
@@ -144,26 +257,36 @@ export class DelegatedSessions {
       );
     const held = this.heldLease(parent, id);
     if (held) {
-      const minutes = Math.max(1, Math.round(held.ttlMs / 60_000));
       const age = Math.max(0, Math.round((Date.now() - held.at) / 1000));
+      const left = Math.max(1, Math.round((held.at + held.ttlMs - Date.now()) / 60_000));
+      const where = held.host && held.host !== this.hostId ? ` on ${held.host}` : "";
+      const clears =
+        held.host && held.host !== this.hostId
+          ? `That machine's processes cannot be judged from here, so the hold is not cleared by a ` +
+            `local check: it expires in ${left} minutes, or as soon as ${held.host} releases it.`
+          : `The hold expires in ${left} minutes and clears as soon as process ${held.pid} exits — ` +
+            `if that process is already gone, retry and the lease is reaped automatically.`;
       throw new Error(
-        `Delegated session ${id} is already running: process ${held.pid} has held it for ${age}s. ` +
-          `Wait for its result before resuming. The hold lasts at most ${minutes} minutes and ` +
-          `clears as soon as process ${held.pid} exits — if that process is already gone, retry and ` +
-          `the lease is reaped automatically.`,
+        `Delegated session ${id} is already running: process ${held.pid}${where} has held it for ` +
+          `${age}s. Wait for its result before resuming. ${clears}`,
       );
     }
     this.busy.add(key);
-    this.writeLease(parent, { id, pid: process.pid, at: Date.now(), ttlMs: this.leaseTtlMs });
+    // Probed once per store: `ps` is a process spawn, and this process's own
+    // start time does not change.
+    this.ownStart ??= this.pidStart(process.pid) ?? "";
+    const mine = (): Lease => ({
+      id,
+      pid: process.pid,
+      at: Date.now(),
+      ttlMs: this.leaseTtlMs,
+      host: this.hostId,
+      ...(this.ownStart ? { pidStart: this.ownStart } : {}),
+    });
+    this.writeLease(parent, mine());
     return () => {
       this.busy.delete(key);
-      this.writeLease(parent, {
-        id,
-        pid: process.pid,
-        at: Date.now(),
-        ttlMs: this.leaseTtlMs,
-        released: true,
-      });
+      this.writeLease(parent, { ...mine(), released: true });
     };
   }
 
@@ -205,6 +328,18 @@ export const CHECKPOINT_MAX_BYTES = 256 * 1024;
 export const CHECKPOINT_BOUNDARY_BUDGET_BYTES = 8 * CHECKPOINT_MAX_BYTES;
 /** How much of a tool result survives into the checkpoint. The file is still on disk. */
 const RESULT_KEEP_CHARS = 1_500;
+/**
+ * A fixed-width fingerprint of what a placeholder replaced.
+ *
+ * Without it the compaction below was lossy in a way that mattered downstream:
+ * two boundaries whose tool results shared their first 1,500 characters — or
+ * differed only in an image — produced byte-identical output, so anything
+ * hashing a compacted checkpoint could not tell them apart. Eight hex
+ * characters keep the placeholder a constant size while making it stand for
+ * the exact bytes it dropped.
+ */
+const short = (value: string): string =>
+  createHash("sha256").update(value).digest("hex").slice(0, 8);
 
 /**
  * A follow-up needs the child's findings, not its every file read.
@@ -230,15 +365,19 @@ export function compactCheckpointMessages(
     if (message.role === "assistant") continue;
     message.content = message.content.map((block) => {
       if (block.type === "image")
-        return { type: "text" as const, text: "[image omitted from the resume checkpoint]" };
+        return {
+          type: "text" as const,
+          text: `[image omitted from the resume checkpoint (#${short(block.data)})]`,
+        };
       if (
         block.type === "tool_result" &&
         block.toolResultContent.length > RESULT_KEEP_CHARS + 200
       ) {
         const cut = block.toolResultContent.length - RESULT_KEEP_CHARS;
+        const tail = block.toolResultContent.slice(RESULT_KEEP_CHARS);
         return {
           ...block,
-          toolResultContent: `${block.toolResultContent.slice(0, RESULT_KEEP_CHARS)}\n…[${cut} characters omitted from the resume checkpoint; re-read the source if you need them]`,
+          toolResultContent: `${block.toolResultContent.slice(0, RESULT_KEEP_CHARS)}\n…[${cut} characters omitted from the resume checkpoint (#${short(tail)}); re-read the source if you need them]`,
         };
       }
       return block;
@@ -461,11 +600,13 @@ export function withDelegatedSessions(
         // What every earlier run of this task_id spent. A resume adds to it, so
         // the ceiling bounds the TASK and not one call of it.
         const priorBudget = isSpentBudget(checkpoint?.budget) ? checkpoint.budget : undefined;
-        // Mid-run save state: the last body's hash (dedup) and the bytes spent
-        // on boundary saves (the run's bound).
+        // Mid-run save state: the last body's hash (dedup), the bytes spent on
+        // boundary saves (the run's bound), and where the last one landed.
         let lastHash = "";
         let boundaryBytes = 0;
         let boundaryFailure: unknown;
+        let lastCheckpointAt: string | undefined;
+        let cappedAt: string | undefined;
         const compose = (atBoundary: boolean, status?: string): Checkpoint | null => {
           if (!run.messages || !run.identity) return null;
           const live = run.budget?.();
@@ -490,20 +631,69 @@ export function withDelegatedSessions(
             at: new Date().toISOString(),
             ...(atBoundary ? { atBoundary: true } : {}),
             ...(!atBoundary && status ? { status } : {}),
+            ...(!atBoundary && cappedAt
+              ? {
+                  boundaryBudgetExhausted: {
+                    bytes: boundaryBytes,
+                    budgetBytes: CHECKPOINT_BOUNDARY_BUDGET_BYTES,
+                    at: cappedAt,
+                    ...(lastCheckpointAt ? { lastCheckpointAt } : {}),
+                  },
+                }
+              : {}),
           };
         };
+        /**
+         * Say it, once, when mid-run checkpointing stops.
+         *
+         * The budget used to be a bare `return`: past it the child's crash
+         * granularity collapsed to "the final save only" and nothing recorded
+         * when that happened, so a resume from an old checkpoint looked like a
+         * checkpoint that was simply never taken.
+         */
+        const noticeCap = () => {
+          if (cappedAt) return;
+          cappedAt = new Date().toISOString();
+          store.notice(input.sessionId, {
+            id,
+            kind,
+            parentId: input.sessionId,
+            reason: "boundary_budget",
+            bytes: boundaryBytes,
+            budgetBytes: CHECKPOINT_BOUNDARY_BUDGET_BYTES,
+            at: cappedAt,
+            ...(lastCheckpointAt ? { lastCheckpointAt } : {}),
+            message:
+              `Child checkpointing stopped at its ${Math.round(CHECKPOINT_BOUNDARY_BUDGET_BYTES / 1024)} KiB ` +
+              `per-run cap; a crash after this point resumes from the last checkpoint at ` +
+              `${lastCheckpointAt ?? "the start of this run"}.`,
+          });
+        };
         run.saveBoundary = () => {
-          if (boundaryFailure || boundaryBytes >= CHECKPOINT_BOUNDARY_BUDGET_BYTES) return;
+          if (boundaryFailure) return;
+          if (boundaryBytes >= CHECKPOINT_BOUNDARY_BUDGET_BYTES) {
+            noticeCap();
+            return;
+          }
           try {
+            if (!run.messages || !run.identity) return;
+            // Dedup on the UNTRUNCATED transcript, and on the transcript alone:
+            // `at` and the elapsed clock move on every call and would defeat a
+            // hash over the whole record, while `compactCheckpointMessages`
+            // moves the other way — it cut every tool result to its first 1,500
+            // characters, so two boundaries differing only past that cut hashed
+            // the same, the second was never written, and the child re-ran that
+            // call on resume. For a `bash` that is a duplicated side effect,
+            // which is the criterion the durability suite grades.
+            const hash = createHash("sha256").update(JSON.stringify(run.messages())).digest("hex");
+            if (hash === lastHash) return;
             const next = compose(true);
             if (!next) return;
-            // Dedup on the transcript alone: `at` and the elapsed clock move on
-            // every call and would defeat a hash taken over the whole record.
-            const body = JSON.stringify(next.messages);
-            const hash = createHash("sha256").update(body).digest("hex");
-            if (hash === lastHash) return;
             lastHash = hash;
-            boundaryBytes += Buffer.byteLength(body);
+            // The ROW is the whole checkpoint, not just its messages; counting
+            // the messages alone under-counted what the budget is bounding.
+            boundaryBytes += Buffer.byteLength(JSON.stringify(next));
+            lastCheckpointAt = next.at;
             store.save(input.sessionId, next);
           } catch (error) {
             // A mid-run checkpoint must never take the child down with it. The
