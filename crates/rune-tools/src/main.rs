@@ -93,6 +93,20 @@ async fn main() {
             std::process::exit(130);
         }
     });
+
+    // Parent-death watchdog. The handler above covers a CANCELLED tool call;
+    // it covers nothing at all when the engine is SIGKILLed, because a killed
+    // process sends no signal. Measured (Phase 2, Lane S, S-1): after
+    // `SIGKILL` of the engine this process and its shell grandchild were still
+    // running 6 s and 13 s later. Polling `getppid()` is the portable notice —
+    // `PR_SET_PDEATHSIG` is Linux-only and macOS has no equivalent — and what
+    // it does on death is what an interrupt does: kill the child's whole
+    // process group, then exit.
+    #[cfg(unix)]
+    if let Some(parent) = rune_sandbox::parent_death::initial_parent() {
+        tokio::spawn(rune_sandbox::parent_death::watch(parent));
+    }
+
     let cli = Cli::parse();
     // Canonical, but not VERBATIM. On Windows `canonicalize` returns
     // `\\?\C:\…`, which every path derived from the workspace would then carry
@@ -101,6 +115,11 @@ async fn main() {
     let workspace = rune_tools::paths::simplified(
         &std::fs::canonicalize(&cli.workspace).unwrap_or(cli.workspace.clone()),
     );
+    // Every command this invocation spawns is written down here, keyed to our
+    // pid, so a restarting engine can reap what a SIGKILL of THIS process left
+    // behind — the one hole the watchdog above cannot cover, because a killed
+    // process runs no handler.
+    rune_sandbox::child_ledger::set_workspace(&workspace);
     let input_json = read_stdin();
 
     match cli.command {

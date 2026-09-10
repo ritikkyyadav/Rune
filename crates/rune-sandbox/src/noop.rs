@@ -60,19 +60,27 @@ impl Sandbox for NoopSandbox {
             let sh = crate::shell::command_shell();
             let mut builder = Command::new(&sh.program);
             builder.args(&sh.args);
-            let child = builder
+            builder
                 .arg(command)
                 .current_dir(working_dir)
                 .env_clear()
                 .envs(&env)
                 .envs(&self.config.env_overrides)
                 .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            // Its own process group, so one kill reaches the whole tree — the
+            // shell, its pipelines, and anything it left running. Without it
+            // the shell was registered pid-only (a group kill would have taken
+            // out rune-tools' own group), so an interrupt or a dead parent
+            // killed the shell and ORPHANED its children: Phase 2's S-1
+            // measured `node long.mjs` alive 13 s after its engine was
+            // SIGKILLed, under exactly this backend ([sandbox] mode = "off").
+            #[cfg(unix)]
+            builder.process_group(0);
+            let child = builder
                 .spawn()
                 .map_err(|e| SandboxError::SpawnFailed(e.to_string()))?;
-            // No process_group here, so register pid-only (own_group=false):
-            // a group kill would take out rune-tools' own group.
-            crate::active_child::set(child.id(), false);
+            crate::active_child::set(child.id(), cfg!(unix));
 
             let waited = tokio::time::timeout(
                 std::time::Duration::from_millis(timeout),

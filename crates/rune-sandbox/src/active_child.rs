@@ -25,17 +25,29 @@ pub fn set(pid: Option<u32>, own_group: bool) {
         None => 0,
     };
     ACTIVE.store(v, Ordering::SeqCst);
+    // And write it down, so a SIGKILL of THIS process — which runs no handler
+    // and cannot reach the atomic above — still leaves something a restarting
+    // engine can reap. See child_ledger.rs.
+    if let Some(p) = pid {
+        crate::child_ledger::note(p, if own_group { Some(p) } else { None }, "command");
+    }
 }
 
 /// The child finished (or was already handled) — forget it.
 pub fn clear() {
-    ACTIVE.store(0, Ordering::SeqCst);
+    let v = ACTIVE.swap(0, Ordering::SeqCst);
+    if v != 0 {
+        crate::child_ledger::forget((v >> 1) as u32);
+    }
 }
 
 /// SIGKILL the registered child — its entire process group when it owns one.
 /// Best-effort and idempotent (the slot is consumed).
 pub fn kill_active() {
     let v = ACTIVE.swap(0, Ordering::SeqCst);
+    if v != 0 {
+        crate::child_ledger::forget((v >> 1) as u32);
+    }
     #[cfg(unix)]
     if v != 0 {
         let pid = (v >> 1) as i32;

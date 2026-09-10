@@ -223,18 +223,24 @@ impl Sandbox for LinuxSandbox {
 
             let start = Instant::now();
 
-            let child = Command::new("bwrap")
+            let mut builder = Command::new("bwrap");
+            builder
                 .args(&args)
                 .env_clear()
                 .envs(&env)
                 .envs(&self.config.env_overrides)
                 .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            // bwrap owns the sandboxed tree and killing the bwrap pid tears it
+            // down — but only if something is alive to send that kill. Its own
+            // process group makes the whole subtree reachable from one
+            // `kill(-pgid)`, which is what the parent-death watchdog and the
+            // interrupt handler both use (Phase 2, S-1).
+            builder.process_group(0);
+            let child = builder
                 .spawn()
                 .map_err(|e| SandboxError::SpawnFailed(e.to_string()))?;
-            // bwrap owns the sandboxed tree; killing the bwrap pid tears it
-            // down. No process_group, so pid-only (own_group=false).
-            crate::active_child::set(child.id(), false);
+            crate::active_child::set(child.id(), true);
 
             let waited = tokio::time::timeout(
                 std::time::Duration::from_millis(timeout),

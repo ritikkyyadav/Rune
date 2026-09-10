@@ -38,6 +38,14 @@ export {
   type SandboxCapability,
 } from "./sandbox-capability";
 export { createRustToolHandler } from "./tools/rust-bridge";
+export {
+  childLedgerPath,
+  forgetToolChild,
+  recordToolChild,
+  reapToolChildren,
+  type ReapedChild,
+  type ToolChildRecord,
+} from "./tools/child-ledger";
 export { registerBuiltinTools, stopLanguageServers } from "./tools/builtin";
 // Web search: the engine roster's runtime half. `/login` and `rune login` use
 // the probe to verify a pasted key with one real search.

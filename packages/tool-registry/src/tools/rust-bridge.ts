@@ -1,4 +1,5 @@
 import { isOsIsolationAvailable, isOsIsolationRequired } from "../sandbox-capability";
+import { forgetToolChild, recordToolChild } from "./child-ledger";
 import {
   isUnsandboxedFallbackAllowed,
   resolveSandboxLaunch,
@@ -139,6 +140,23 @@ export function createRustToolHandler(
           stdout: "pipe",
           stderr: "pipe",
         });
+        // Written down before it can outlive us. `rune-tools` watches its own
+        // parent and takes its command's group with it, which handles a killed
+        // ENGINE; this line handles a killed `rune-tools`, where no handler of
+        // its own ever runs, and Windows, where there is no parent to poll. A
+        // restarting engine reaps whatever is still here.
+        //
+        // No `pgid`: `Bun.spawn` does NOT start a new process group (measured
+        // — the child inherits ours), so this process is not a group leader
+        // and `kill(-pid)` would name a group that is not its. Its own
+        // command's group is recorded by rune-tools itself, which is the
+        // process that knows it.
+        recordToolChild(input.workspaceRoot, {
+          pid: proc.pid,
+          ownerPid: process.pid,
+          at: new Date().toISOString(),
+          tool: input.toolName,
+        });
 
         // Esc must actually stop the work. Forward the abort as SIGTERM —
         // rune-tools' signal handler kills its child's whole process group
@@ -174,6 +192,8 @@ export function createRustToolHandler(
         } finally {
           input.signal?.removeEventListener("abort", onAbort);
           if (killTimer) clearTimeout(killTimer);
+          // It exited (or was killed) — its line is no longer a leftover.
+          forgetToolChild(input.workspaceRoot, proc.pid);
         }
         const durationMs = Math.round(performance.now() - start);
 

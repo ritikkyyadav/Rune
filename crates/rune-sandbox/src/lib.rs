@@ -11,6 +11,7 @@
 
 pub mod active_child;
 pub mod audit;
+pub mod child_ledger;
 pub mod error;
 pub mod factory;
 #[cfg(target_os = "linux")]
@@ -18,6 +19,7 @@ pub mod linux;
 #[cfg(target_os = "macos")]
 pub mod macos;
 pub mod noop;
+pub mod parent_death;
 pub mod path_guard;
 pub mod shell;
 pub mod shell_plan;

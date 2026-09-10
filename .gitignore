@@ -39,6 +39,9 @@ tests/eval/results/run-*.json
 .rune/search.db*
 # Detached-run worktrees (git worktree checkouts; branches carry the work)
 .rune/worktrees/
+# Live tool children (pid + process group), so a restarted engine can reap what
+# a crashed one left running. Rewritten constantly; never a source artefact.
+.rune/tool-children.jsonl*
 # MCP server config — local, may contain credentials in headers (see mcp.json.example)
 .rune/mcp.json
 
