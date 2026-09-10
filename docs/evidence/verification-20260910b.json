@@ -462,7 +462,8 @@
       "name": "interactive TUI smokes at 80x24 and 120x40 (start screen, settings save/restart, /help, /model picker, resize)",
       "result": "COULD NOT RUN. The Bash sandbox this phase ran under refuses to allocate a pseudo-terminal, and the standing instruction was not to disable it. os.openpty() and os.open('/dev/ptmx', O_RDWR) both give PermissionError [Errno 1] Operation not permitted; pty.openpty()'s legacy /dev/pty?? fallback gives 'out of pty devices'; script(1) gives 'openpty: Operation not permitted'.",
       "note": "No way around it from inside: the TUI needs setRawMode, which needs a tty; scripts/fake-tty.ts only forces isTTY for a render under `bun --preload` and cannot drive the compiled binary; and cols() is `process.stdout.columns || 80` with no environment seam, so width cannot be forced without a tty either. pyte is absent from every Python on this machine and installing it was forbidden, so a minimal VT100/xterm screen model (vtscreen.py), a pty driver (drive.py) and a five-item script (smoke.py) were written instead. smoke.py has NEVER BEEN EXECUTED — it is a proposal, not a tested harness. These five items remain exactly as unverified as they were at the end of Phase 1.",
-      "framesOrLogs": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/installed/tui/pty-blocked.txt"
+      "framesOrLogs": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/installed/tui/pty-blocked.txt",
+      "supersededBy": "Phase 1c, 2026-09-10: all five items RAN against the installed binary in a real pty with the Bash sandbox disabled for the driver only. See the installedSmokes entries named 'item 1' through 'item 5' and 'zero model calls, ledger before and after the pty runs'. This entry is kept because the blockage and the reasoning about it were real."
     },
     {
       "phase": "1b",
@@ -471,16 +472,81 @@
       "result": "Stored session 01a086b7-b2a1-7000-9c64-071ff2efe842 (the 2026-09-09 dogfood run, 215 events, 13 edit calls) replayed through the real TurnRenderer at both widths. Present and inside the measure: call rows naming files against the workspace, a left-elided path when it will not fit, a long command clipped with an ellipsis, counted streak rollups, the harness's own checks in the same grammar with pass and fail marks, output rolled up as '... 34 lines', read-back line ranges, banded unified diffs with the hunk header on its own line plus line numbers and +/- gutters, and the closing per-file receipt.",
       "note": "SOURCE-SIDE, not the installed binary. render-live.ts imports TurnRenderer from packages/ directly and cannot be pointed at the compiled build. It is the exact source the installed binary was compiled from — `git diff c053ca4..b75a104 -- packages crates` is empty and the DIRTY=1 in rune-compiled.meta was docs only — so the version-skew doubt is closed and the compile-step doubt is not.",
       "frames": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/installed/tui/render-live-tool-rows.txt, render-live-diff.txt, renders/"
+    },
+    {
+      "phase": "1c",
+      "name": "item 1 - start screen at 80x24, installed binary, real pty",
+      "exit": 0,
+      "result": "PASS. The fixed frame is real on the compiled binary: banner + rule on rows 2-3, composer rows 21-23, footer row 24, alt screen live. Provider/model/gear read '1st gear . gpt-oss:20b . every action asks first'.",
+      "note": "No login, connect, sign-in or continue prompt was offered, so none was accepted - asserted on the frame text, not just observed.",
+      "zeroCallProof": "~/.rune/rune.db cost rows 2891 -> 2891 (max created_at 2026-09-10T14:01:18.585Z, unchanged); events 26632 -> 26632; sessions 683 -> 683; blackbox incidents 3279 -> 3279; the whole snapshot data block hashes 80afb96acdfa91eff2440fcf446165c989edcc383fec58674570e48795a4972a before, after and final. Second ledger: the scratch RUNE_HOME database the six TUI processes created themselves holds sessions=0, events=0, cost=0.",
+      "frames": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/installed/tui/80x24-start.txt"
+    },
+    {
+      "phase": "1c",
+      "name": "item 2 - settings: open, change one boolean, save, quit, restart, persisted, restore",
+      "exit": 0,
+      "result": "PASS, with a defect. `playbook` (evolve.playbook, a non-secret, non-security boolean) flipped off -> on from the /config picker; picker row 10 repaints as 'on' and `playbook = true` appears in the config file on disk. A NEW rune-compiled process then reads it back as 'on'. Restored to 'off' by the same route and re-verified on disk.",
+      "restored": "Restored to the ORIGINAL SEEDED VALUE (playbook = false) through the TUI itself, not from the backup copy. The founder's ~/.rune/config.toml needed no restore at all: it is byte-identical to its backup (d56abfb8...87f1) because RUNE_HOME pointed at a scratch profile and the TUI never opened it.",
+      "defect": "The change confirmation is the one transcript row in the TUI with no left gutter - it starts at column 0 while every other row keeps two spaces. settings-command.ts:runSettingsCommand returns the raw update_config result and tui.ts prints it unwrapped, where every neighbouring this.print() wraps with '  '. The /config list text form has the same shape.",
+      "caveat": "There is no UI/layout boolean in CONFIG_SETTINGS - the settings screen is the behavioural config catalog. `playbook` was chosen as the safest non-secret, non-security boolean in it.",
+      "zeroCallProof": "~/.rune/rune.db cost rows 2891 -> 2891 (max created_at 2026-09-10T14:01:18.585Z, unchanged); events 26632 -> 26632; sessions 683 -> 683; blackbox incidents 3279 -> 3279; the whole snapshot data block hashes 80afb96acdfa91eff2440fcf446165c989edcc383fec58674570e48795a4972a before, after and final. Second ledger: the scratch RUNE_HOME database the six TUI processes created themselves holds sessions=0, events=0, cost=0.",
+      "frames": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/installed/tui/80x24-settings-open.txt, 80x24-settings-saved.txt, 80x24-restart-persisted.txt"
+    },
+    {
+      "phase": "1c",
+      "name": "item 3 - /help at 80x24 inside the TUI",
+      "exit": 0,
+      "result": "PASS. The compact grouped form fits a 24-row window with every group visible - work / setup / autonomy / knowledge / session - and both /model and /quit are present. Header pinned top (rows 2-3), footer pinned bottom (rows 21-24), no wrapped, garbled or duplicated row, no stray escape fragment; longest row 55 of 80 columns.",
+      "note": "This is the 2026-09-10 /help fix (8c4c58f) holding on a binary compiled BEFORE that commit - the compact branch itself predates it.",
+      "zeroCallProof": "~/.rune/rune.db cost rows 2891 -> 2891 (max created_at 2026-09-10T14:01:18.585Z, unchanged); events 26632 -> 26632; sessions 683 -> 683; blackbox incidents 3279 -> 3279; the whole snapshot data block hashes 80afb96acdfa91eff2440fcf446165c989edcc383fec58674570e48795a4972a before, after and final. Second ledger: the scratch RUNE_HOME database the six TUI processes created themselves holds sessions=0, events=0, cost=0.",
+      "frames": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/installed/tui/80x24-help.txt"
+    },
+    {
+      "phase": "1c",
+      "name": "item 4 - /model picker opened and escaped",
+      "exit": 0,
+      "result": "PASS. Level 1 painted from engine.getProviderStatus() with no request. Escape resolved null: the transcript keeps only the '> /model' echo, the composer returns, and the footer still reads gpt-oss:20b. No selection, no live discovery, no network.",
+      "caveat": "The scratch profile has no credentials, so level 1 listed two rows (Ollama (local), Type provider/model...). The picker's BEHAVIOUR is proven; the 37-provider list's rendering and scrolling at 80 columns is not.",
+      "zeroCallProof": "~/.rune/rune.db cost rows 2891 -> 2891 (max created_at 2026-09-10T14:01:18.585Z, unchanged); events 26632 -> 26632; sessions 683 -> 683; blackbox incidents 3279 -> 3279; the whole snapshot data block hashes 80afb96acdfa91eff2440fcf446165c989edcc383fec58674570e48795a4972a before, after and final. Second ledger: the scratch RUNE_HOME database the six TUI processes created themselves holds sessions=0, events=0, cost=0.",
+      "frames": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/installed/tui/80x24-picker-open.txt, 80x24-picker-escaped.txt"
+    },
+    {
+      "phase": "1c",
+      "name": "item 5 - resize 80x24 -> 120x40 -> 80x24 via TIOCSWINSZ + SIGWINCH",
+      "exit": 0,
+      "result": "PASS. At 120x40 the header rule spans the full width, the workspace path un-elides to /private/tmp/..., the composer moves to rows 37-39 and the footer to row 40 with the extra 'shift+tab gear . esc stop' affordances. Rows 25-36 are clean - no residue of the 24-row layout, nothing clipped or duplicated. Back at 80x24 the frame is BYTE-IDENTICAL to the item-1 start frame.",
+      "zeroCallProof": "~/.rune/rune.db cost rows 2891 -> 2891 (max created_at 2026-09-10T14:01:18.585Z, unchanged); events 26632 -> 26632; sessions 683 -> 683; blackbox incidents 3279 -> 3279; the whole snapshot data block hashes 80afb96acdfa91eff2440fcf446165c989edcc383fec58674570e48795a4972a before, after and final. Second ledger: the scratch RUNE_HOME database the six TUI processes created themselves holds sessions=0, events=0, cost=0.",
+      "frames": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/installed/tui/120x40-resized.txt, 80x24-resized-back.txt"
+    },
+    {
+      "phase": "1c",
+      "name": "zero model calls, ledger before and after the pty runs",
+      "exit": 0,
+      "result": "IDENTICAL, three times. ~/.rune/rune.db cost rows 2891 -> 2891 (max created_at 2026-09-10T14:01:18.585Z, unchanged); events 26632 -> 26632; sessions 683 -> 683; blackbox incidents 3279 -> 3279; the whole snapshot data block hashes 80afb96acdfa91eff2440fcf446165c989edcc383fec58674570e48795a4972a before, after and final. Second ledger: the scratch RUNE_HOME database the six TUI processes created themselves holds sessions=0, events=0, cost=0.",
+      "howItWasMadeImpossible": [
+        "No credential is reachable: the scratch profile has no credentials.index.json, and KeychainStore.get returns null without spawning `security` when the index does not list the account (credential-store.ts:209). OPENROUTER_API_KEY, GOOGLE_API_KEY and four others are scrubbed from the child environment.",
+        "The launcher is bypassed. ~/.rune/bin/rune ends in `exec rune-compiled \"$@\"` but first does `source \"$HOME/.rune/.env\"` - hard-coded to $HOME, not RUNE_HOME - which would have loaded the founder's two live keys into the child. The driver runs rune-compiled directly with RUNE_TOOLS_BIN set exactly as the launcher sets it; the only other launcher behaviour skipped is the build-freshness warning, which would have printed into the captured frames.",
+        "The only provider is local: the seed sets [llm] defaultProvider = \"ollama\", the one preset marked `local`, registered with no key at base URL localhost:11434 (provider-registry.ts:141).",
+        "No text was ever submitted. The only bytes written to the pty are /config, /help, /model, /quit, arrow-down, Enter inside a picker, the digits 1 and 2 inside a picker, and Escape. Every digit press is gated behind a wait_for on the sub-picker's own footnote, because a digit typed in composer mode would sit in the composer and the next Enter would submit it. And when the / palette has matches, Enter picks a palette entry and cannot submit free text (tui.ts:inputKey).",
+        "No network at all: [update] check = false was seeded, and refreshUpdateCheck is the only host this build contacts at startup (upgrade-cli.ts:216)."
+      ],
+      "sandbox": "The Bash sandbox was disabled ONLY for the python driver invocations, on the director's authorization, because pty allocation was the sole obstacle. Every other command in this phase ran sandboxed. Nothing was pushed.",
+      "framesOrLogs": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/installed/tui/ledger-1c-before.txt, ledger-1c-after.txt, ledger-1c-final.txt"
+    },
+    {
+      "phase": "1c",
+      "name": "extra - the startup gate with no provider configured",
+      "exit": 1,
+      "result": "The installed binary refuses to open the TUI and exits 1 before an engine turn is possible (rune-cli.ts:1229).",
+      "defect": "The splash is misaligned by one column: the '#' comment column sits at 45, 45, 45, 44 - rune-cli.ts:1236 pads `export OPENAI_API_KEY=\"your-key\"` with six spaces where the other three lines reach a common column.",
+      "frames": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/installed/tui/80x24-no-keys.txt"
     }
   ],
   "notProven": [
     {
       "item": "Cancellation on the installed binary",
       "detail": "NOT re-verified, and deliberately not attempted in Phase 1b: interrupting a run requires a running model turn, which would have spent. Covered by unit tests on this source only."
-    },
-    {
-      "item": "Installed TUI smokes, second attempt (Phase 1b)",
-      "detail": "Start screen at 80x24, settings save/quit/restart/persist/restore, in-TUI /help, the /model picker open+Escape, and resize 80x24<->120x40 were all attempted in Phase 1b and all blocked before their first run: the Bash sandbox refuses /dev/ptmx (PermissionError [Errno 1]), so no pseudo-terminal could be allocated, and the phase's standing instruction was not to disable the sandbox. A driver and a five-item script were written (.codex/audit-20260910/handoff/installed/tui/) but never executed. Running them with the sandbox off is the whole remaining job and costs nothing."
     },
     {
       "item": "Ordinary Linux runners",
@@ -499,12 +565,8 @@
       "detail": "Not enforced by anything here. Bubblewrap cannot filter by host; the code refuses such plugins and the image proves the refusal, not the filtering."
     },
     {
-      "item": "Installed 80x24 settings save/restart smoke",
-      "detail": "NOT performed this session. It needs an interactive pty session against the installed TUI, and after the unintended live call recorded above no further interactive run was driven. Settings save/apply/persist is covered by 72 unit tests on this source; that is source coverage, not an installed smoke."
-    },
-    {
-      "item": "Installed picker, resize, cancellation and in-TUI /help",
-      "detail": "NOT exercised on the installed binary. They need an interactive pty session. `rune --help` was captured but, redirected to a file, it is not a TTY and rendered at its default width at both COLUMNS settings, so the 80/120 help layout is unverified on the installed binary."
+      "item": "In-TUI /help at 120 columns, and the /model picker with credentials present",
+      "detail": "NARROWED by Phase 1c. The picker, resize and the in-TUI /help at 80x24 all RAN on the installed binary in a real pty (see installedSmokes items 3, 4 and 5). What remains untested there: the two-column /help layout (the width >= 110 branch), and the /model picker's 37-provider list - the scratch profile had no credentials, so level 1 listed only Ollama (local) and 'Type provider/model...'. Separately, `rune --help` redirected to a file is not a TTY and rendered at its default width at both COLUMNS settings, so the CLI help's own 80/120 layout is still unverified."
     },
     {
       "item": "The headless exit-code contract on the INSTALLED binary",

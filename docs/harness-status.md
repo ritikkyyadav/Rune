@@ -284,3 +284,42 @@ packages crates` is empty and the install-time `DIRTY=1` was docs only, so the v
 closed and only the compile step is unproven.
 
 Running the script with the sandbox off is the whole remaining job, and it costs nothing.
+
+#### Addendum, 2026-09-10 (later still) — Phase 1c: the pty, and the five items
+
+The sandbox was disabled **for the python driver only**, on the director's authorization, because
+pty allocation was the sole obstacle and the smoke provably makes no model call. Everything else
+stayed sandboxed; nothing was pushed. **All five items ran** against the installed binary
+(`v0.4.1-dev+c053ca4`) at 80×24 and 120×40: six processes, six clean `/quit` exits with code 0, nine
+frames in `.codex/audit-20260910/handoff/installed/tui/`.
+
+**Zero calls, and this time by two ledgers.** `~/.rune/rune.db` is unchanged before, after and
+final — 2,891 `cost` rows, newest still `2026-09-10T14:01:18.585Z`; 26,632 events; 683 sessions; the
+whole snapshot data block hashing `80afb96a…4972a` all three times, and `config.toml` / `.env` /
+`audit.jsonl` unchanged by hash. The stronger proof is the second one: `RUNE_HOME` pointed at a
+scratch profile, so the six TUI processes wrote to a database they created themselves — and it holds
+`sessions=0, events=0, cost=0`. A call was made impossible rather than merely absent: no credential
+index (so `KeychainStore.get` never spawns `security`), the launcher's hard-coded
+`source "$HOME/.rune/.env"` bypassed by running `rune-compiled` directly, `defaultProvider =
+"ollama"` as the only registered provider (keyless, `localhost:11434`), `[update] check = false`, and
+no text ever submitted — every digit keypress gated behind proof that a picker was on screen.
+
+**What the frames show.** The fixed frame is real on the compiled binary: header rows 2–3, composer
+21–23, footer 24, alt screen live, no login or connect prompt. `playbook` flipped `off` → `on` from
+`/config`, reached disk, and was read back as `on` by a **new process**, then restored. `/help`
+fits a 24-row window with every group visible and both `/model` and `/quit` present. The `/model`
+picker opened from local state and Escape resolved nothing — footer model unchanged, no request. At
+120×40 the header rule spans the full width, the workspace path un-elides, the footer gains its
+extra affordances, and rows 25–36 are clean; back at 80×24 the frame is **byte-identical to the
+start frame**.
+
+**Three defects the frames caught.** The `/config` change confirmation is the one transcript row
+with no left gutter — it starts at column 0 because `settings-command.ts` returns a raw tool result
+that `tui.ts` prints unwrapped, where every neighbouring `print` adds two spaces. The settings
+picker paints 17 of its 22 rows on a 24-row window and says nothing about the other five —
+`routing`, `helper`, `subagents`, `lsp`, `auto_commit` — the same failure `/help` was fixed for in
+`8c4c58f`. And the no-provider splash misaligns its `OPENAI_API_KEY` comment by one column.
+
+**Still unverified on the installed binary:** cancellation (needs a running turn), the two-column
+`/help` at 120 columns, and the `/model` picker's real 37-provider list — this profile had no
+credentials, so level 1 listed two rows.
