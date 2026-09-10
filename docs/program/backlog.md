@@ -429,3 +429,60 @@ tree as `980bf1e` + `c053ca4`; receipts in `docs/evidence/verification-20260910b
   affordance or scrolling. Frame `80x24-settings-open.txt` — Phase 1c — Claude
 - `bin/ui/` no-provider splash — the `OPENAI_API_KEY` comment is misaligned by one column against
   the rows around it. Frame `80x24-start.txt` — Phase 1c — Claude
+- `crates/rune-sandbox/src/parent_death.rs` — the parent-death watchdog is `#[cfg(unix)]` and
+  Windows has no equivalent, so on Windows the pid ledger is the ONLY S-1 layer and it records a pid
+  with no process group: a restarting engine can kill a leftover `rune-tools` there but not its
+  command's descendants. A Job Object (`CREATE_BREAKAWAY_FROM_JOB` + `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`)
+  is the equivalent mechanism. Untested — no Windows machine — Phase 2C — Claude
+- `packages/tool-registry/src/tools/child-ledger.ts` + `crates/rune-sandbox/src/child_ledger.rs` —
+  the ledger's reap path has unit coverage of every decision (refuse a live owner, refuse an entry
+  past the pid-reuse window, kill group-then-pid) but no end-to-end probe kills a `rune-tools` while
+  its command runs and then starts an engine to watch it reap. The measured proof covers the
+  engine-killed case only — Phase 2C — Claude
+- `crates/rune-sandbox/src/{macos,linux}.rs` — the S-1 orphan probe and the scenario both run with
+  `[sandbox] mode = "off"` (the noop backend, the configuration the defect was measured under).
+  Seatbelt and bwrap got `process_group(0)` and a group-capable `active_child` registration in the
+  same commit, and the Linux image exercises bwrap, but neither was subjected to a
+  kill-the-engine probe. The watchdog itself is backend-independent — Phase 2C — Claude
+- `packages/orchestrator/src/delegated-sessions.ts` — Lane W's turn-inheritance residue, now
+  resolved but worth recording: `turnsUsed` is recorded cumulatively on the child checkpoint and is
+  subtracted from `maxTurns` ONLY on a crash-resume (the checkpoint is a boundary record with no
+  `status`). A follow-up on a child that reached a terminal state gets a fresh ceiling. The two are
+  told apart by a `status` field written on the final save only; if a future path writes a final
+  save without a status, a follow-up would silently start inheriting — Phase 2C — Claude
+- `tests/helpers/mock-model-server.ts` — two test-infra traps Lane S paid for and encoded, worth
+  knowing before anyone extends the rig. (1) **Tool-call ids must be unique across a run**:
+  `isSafeCut` refuses any compaction cut that splits a `tool_use` from its `tool_result`, so a
+  server that reuses one id makes every cut look like that split, `findSafeCutPoint` walks to 0, and
+  `compactWorkingSet` returns `compacted:false` SILENTLY — no event, no notice, no error. (2) **A
+  process marker must be in argv, not in a shell comment**: `sleep 20 # MARKER` shows in `ps` as a
+  bare `sleep 20` on macOS, so both the kill timing and the cleanup match nothing and leak
+  processes — Phase 2C — Claude
+- `packages/orchestrator/src/context-engine.ts` (`compactWorkingSet`) — S-2 is closed for the
+  eviction-rescue path, but `evictInstead()`'s other caller ("head too small") returns the same
+  shape with no reason at all, which is correct today because nothing failed. If a third rescue
+  reason is ever added, the `failureReason`-without-`failed` convention needs a name rather than a
+  convention — Phase 2C — Claude
+- `packages/orchestrator/src/agent-loop.ts` (G15) — the overlarge-fixed-prompt preflight has no
+  test that drives a real over-limit provider on the LEAD's own model. Lane S's E2 rig covers it
+  through a small model NAME (`llama3-fake-tiny` → 8,192 tokens via the static family table),
+  because `GET /v1/models`'s `context_length` is dropped by the adapter: `OpenAIProvider.listModels`
+  maps entries to `{id,label,live}` and keeps no window. Serving the field costs nothing and this
+  becomes true for free the day the adapter reads it — Phase 2C — Claude
+- `packages/orchestrator/src/engine.ts` (`compactSession`) — the `compaction` event `compactSession`
+  now returns still has no consumer: the TUI's `/compress` prints its own summary line. A surface
+  that broadcasts chat events (`engine-host.ts`) is where it should go on the wire — Lane L's open
+  item, Phase 2 — Claude
+- `packages/orchestrator/src/bin/ui/turn.ts` — `TurnRendererOpts.getCost` is unused: its last reader
+  was the deleted `formatEvent` `turn_complete` branch. Removing it is a signature change touching
+  `tui.ts`, `rune-cli.ts` and four test files, with no benefit to the lifecycle work — Lane L's open
+  item, Phase 2 — Claude
+- `packages/orchestrator/src/engine.ts` — the `budget` lifecycle moment is throttled to one row per
+  20 s (`LIFECYCLE_BUDGET_THROTTLE_MS`); named moments are never throttled. If a consumer ever wants
+  a row per turn, that is the knob — Lane L's open item, Phase 2 — Claude
+- `packages/orchestrator/src/lifecycle.ts` — ~23 unused symbols across `llm-gateway`,
+  `tool-registry`, `hooks.ts`, `permissions.ts`, `verifier.ts`, `themes.ts`, `context-engine.ts`,
+  `engine.ts`, `task-state.ts` and `credential-store.ts` are reported by a strict `tsc` with
+  `noUnusedLocals`/`noUnusedParameters`, which no tsconfig in this repo enables. All pre-existing.
+  Either enable the flags and clean them in one pass, or stop treating an IDE that enables them as a
+  source of findings — Phase 2C — Claude

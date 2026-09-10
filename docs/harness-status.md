@@ -323,3 +323,143 @@ picker paints 17 of its 22 rows on a 24-row window and says nothing about the ot
 **Still unverified on the installed binary:** cancellation (needs a running turn), the two-column
 `/help` at 120 columns, and the `/model` picker's real 37-provider list — this profile had no
 credentials, so level 1 listed two rows.
+
+### 2026-09-11 — Phase 2: one durable task lifecycle, integrated, gated and installed
+
+**Status.** Planned → implemented → tested on this source → **installed and smoke-tested**. Not
+published: nothing was pushed, no tag was cut, and no hosted CI run exists for this revision.
+
+Phase 2 ran as three lanes over a shared tree — L (lead lifecycle, compaction, headless, protocol:
+`54459b0`, `ff3c23f`, `d1daa15`), W (children, workers, leases: `08d99f8`, `8145eba`), S (the
+process-level scenario: `2e564e9`) — against the design in `docs/program/phase-2-lifecycle.md`,
+committed here. This entry is the integration step that follows them.
+
+#### What changed, and where
+
+**The engine took the seams Lane W could not wire** (`b2a220a`). Lane W was forbidden from editing
+`engine.ts`, so it left eleven optional deps with working defaults. The reaper now runs at **process
+start** rather than on the first worker dispatch — a session that dispatches no worker at all should
+still not leave a dead run's checkout on disk — and its report goes to the incident trail as
+`crash.dirty_exit`, `debug` when the checkout went and `warn` when it could not, because a checkout
+the reaper could _not_ clear is uncommitted work still sitting in a directory. No path deletes a
+branch. Child checkpoints at tool boundaries, persisted leases and durable worker ids were already
+on the production path (`new DelegatedSessions(this.sessions)` and `input.sessionId` supply both),
+and `Engine.recordChild` already consumed Lane W's `structured.child`, so those needed confirming
+rather than wiring.
+
+**The director's rule on a child's turn ceiling** (`b2a220a`). Two resumes arrive through the same
+door — a `task_id` and a prompt — and they are not the same event. A crash-resume of a child that
+was still running **inherits**: its checkpoint is a boundary record, and `remaining = max − used`,
+with a floor of one turn so it can still report. A follow-up on a child that already reported starts
+**fresh**, because Lane W's objection holds: a child resumed after `max_turns` with nothing left
+cannot take a single turn. The cumulative caps apply either way — `resumeBudgetState` still inherits
+spend and backdates the clock — so cost and wall-clock bound the task and only the ceiling
+distinguishes the two. What tells them apart is a new `status` field on the checkpoint, written on
+the final save only. Both directions are tested (`delegated-sessions.test.ts`): 12 → 5 with the
+spend carried, and 8 → 8 with the spend cap still accumulating 0.3 → 0.6.
+
+**S-1 — a tool child no longer outlives its engine** (`0a2cb5d`). Lane S measured it twice: SIGKILL
+the engine and the `rune-tools` running the in-flight `bash` was still there six seconds later, its
+shell grandchild with it. Nothing was wrong with the interrupt path; a killed process simply sends no
+signal. Three layers. A **parent-death watchdog** in `rune-tools` polling `getppid()` every 250 ms
+(`PR_SET_PDEATHSIG` is Linux-only and macOS has no equivalent), which on death does what an interrupt
+does — SIGKILL the command's whole process group — and exits 129, distinct from the interrupt path's 130. **Process groups** on the two sandbox backends that lacked them: the noop backend (`[sandbox]
+mode = "off"`, the very configuration Lane S measured) and the Linux bwrap backend both registered
+their child pid-only, so no group kill was available. And a **pid ledger** at
+`<workspace>/.rune/tool-children.jsonl`, written by both spawn paths and reaped by a starting engine,
+for the two cases the watchdog cannot cover: a `rune-tools` that was itself SIGKILLed, and Windows.
+Three refusals before anything is signalled — a live owner's children are its own business, an entry
+older than a day names a recycled number, most are already gone — because the cost of a false
+positive is killing a stranger's process.
+
+**S-2 — a rescued compaction says its summarizer failed** (`b2a220a`). When the summarizer breaks and
+the deterministic tier rescues the compaction, the working set really did shrink, so `failed` is the
+wrong word: setting it routes the row to `compaction_failed`, which does not replace the replayed
+transcript, and for a real eviction that would resurrect everything just dropped. The reason travels
+on its own instead — `failureReason` without `failed`, persisted on the `auto_compaction` row as
+`summaryFailure`, replayed from either name, and rendered as "compacted without a summary" with the
+reason in the receipt where `flowRow` keeps it whole. Three summarizer 500s used to produce three
+rows indistinguishable from healthy evictions.
+
+**A defect the install smoke found, and fixed** (`b1b1262`). Run against the founder's real database,
+`rune doctor` offered "552 superseded or orphaned rows, 136 MB — rune doctor prune-checkpoints", and
+that command then offered to remove 428 rows / 106 MB. Two predicates: the report counted every row
+with _any_ newer version, the prune keeps the newest two. The advisory over-promised by 124 rows and
+30 MB in the same sentence that named the command. Same predicate now, `keepVersions: 2` gets a name
+so they cannot drift apart again, and the test pins them together in both directions.
+
+#### Exact checks, on this source (`b1b1262`)
+
+Full manifest: [`docs/evidence/verification-20260911.json`](evidence/verification-20260911.json).
+Logs and hashes under `.codex/audit-20260910/handoff/gates-phase2/`.
+
+| Gate                                                       | Result                                                                                                                          |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `cargo build --locked -p rune-tools`                       | exit 0; `af10bd52…51af`                                                                                                         |
+| `bun test tests/unit` (sandbox off)                        | **4,527 pass / 0 fail / 1 skip**, 356 files, 16,388 expects, 53 s                                                               |
+| `bun test tests/integration` (sandbox off)                 | **212 pass / 0 fail / 7 skip**, 35 files, 1,010 expects, 78 s — includes the scenario suite                                     |
+| `lifecycle-durability.test.ts` ×3                          | **42 pass / 0 fail / 0 todo**, 130 expects, identical three times, 24 s each                                                    |
+| browser (Playwright 1.62.1 from bun's store)               | 2 pass / 0 fail — run separately; counted as _skipped_ in the integration row                                                   |
+| `bun run typecheck --force`                                | 14/14, 0 cached                                                                                                                 |
+| `bun run lint --force`                                     | 7/7, 0 cached                                                                                                                   |
+| `cargo fmt --all -- --check`                               | clean                                                                                                                           |
+| `cargo test --locked --workspace`                          | **103 pass / 0 fail** (rune-index 15, rune-sandbox 30, rune-tools 58)                                                           |
+| `cargo clippy --all-targets --all-features -- -D warnings` | 0 warnings, forced re-check                                                                                                     |
+| `bun run eval`                                             | **63/63 (100%)**, baseline **unchanged**                                                                                        |
+| `bun run eval:auto-safety --offline`                       | 227 scenarios, P 90.0% / R 89.1% / F1 89.6%, 0 live requests                                                                    |
+| `git diff --check` · `bunx prettier --check .`             | clean                                                                                                                           |
+| strict scratch `tsc --noEmit` over 12 changed test files   | **0 errors in any test file**                                                                                                   |
+| Linux containment image `rune-containment-audit:20260911`  | **ALL STEPS PASSED** — bwrap ok, clippy 0, 22 crate tests, 32 integration pass, home toolchain visible and home credentials not |
+
+**Installed.** `bash scripts/install.sh`, no override flag, no guard triggered.
+`rune-compiled` `78239eb4…6407` → `d0f03687…a9c2`; `rune-tools` `f849020a…33f2` → `01d8600b…ee48`;
+the `rune` launcher shim is byte-identical. `rune --version` → `Rune v0.4.1-dev+b1b1262`.
+`rune doctor` and `rune tools-smoke` green. `rune doctor prune-checkpoints` **DRY RUN only** —
+`--apply` was never passed and the founder's database was not modified.
+
+**The orphan proof, on the installed binary.** The scenario's own fixture, scratch `RUNE_HOME` and
+loopback mock, driving `~/.rune/bin/rune` rather than `bun rune-cli.ts`. Before the kill: `node
+long.mjs …` under `rune-tools --workspace <fixture> bash`. SIGKILL the engine → exit 137. Polled
+`ps` for **0.33 s**: nothing left. The same probe against the _previous_ installed binary left both
+alive past six seconds.
+
+**Zero model calls, by ledger.** `~/.rune/rune.db` `cost` rows 2,891 → 2,891, newest still
+`2026-09-10T14:01:18.585Z`; events 26,632 → 26,632; sessions 683 → 683; `blackbox.db` incidents
+3,279 → 3,279; every credential file unchanged by hash. Two deliberate differences: `rune-compiled`'s
+hash (the installs) and 81 lines appended to `~/.rune/audit.jsonl` — sandboxed-`bash` receipts
+carrying hashes, not content, from the installers' own smokes and `tools-smoke`.
+
+**The IDE's eleven diagnostics.** Checked one at a time with a strict scratch `tsc`: **eight stale,
+three real**. Real: `GatewayConfig.retryBaseMs` missing from a test literal (pre-existing since
+`f1b9366`, harmless at runtime because `maxRetries` is 0), and four dead symbols in `worker.ts` /
+`subagent.ts` that all predate every Phase 2 lane — including a second, superseded copy of the
+provenance banner `subagent-result.ts` has rendered since P6B.3. Per-item verdicts in
+`.codex/audit-20260910/handoff/gates-phase2/step0-diagnostics.md`.
+
+#### Remaining defects and uncertainty
+
+Every item is in the manifest's `notProven`; the ones that matter most:
+
+- **Windows has only one of the three S-1 layers.** The watchdog is `#[cfg(unix)]`; the pid ledger
+  records a pid with no process group there, so a Windows engine can kill a leftover `rune-tools`
+  but not its command's descendants. Untested — there is no Windows machine here.
+- **Ordinary Linux runners are not covered.** Every Linux result came from `docker run --privileged`,
+  because Docker Desktop's VM refuses nested unprivileged user namespaces. That is a property of the
+  rig, not of Rune.
+- **A `rune-tools` SIGKILLed while its command runs** has unit coverage of the reaper's decisions but
+  no end-to-end probe.
+- **Child budget inheritance is proven on the artifact a crash leaves**, not on a crash: the two
+  turn-ceiling tests are in-process.
+- **The prune was never applied.** Dry run twice against the founder's database; that the 428 rows
+  would delete cleanly is proven on a scratch database only.
+- **No live long run.** Zero model calls by construction; the handoff's "reserve live long runs for
+  an agreed budget" is unmet because there is no budget.
+
+#### Next executable step
+
+Phase 3 (make Auto efficient at equal task quality), which the handoff scopes to `auto-mode.ts`,
+`auto-containment.ts`, `auto-metrics.ts`, `turn-budget.ts`, `subagent-budget.ts` and the gateway's
+usage ledger, and which explicitly starts with measurement rather than more model roles. Its
+acceptance target — completed-task cost no greater than the baseline harness at equal quality —
+needs paid comparison runs, so treat it as a target until measured. External dependency: a live
+evaluation budget, which does not exist today.
