@@ -618,6 +618,42 @@ export function withTailFolded(messages: Message[], blocks: string[]): Message[]
   return [...messages, { role: "user", content: [{ type: "text", text: tail }] }];
 }
 
+/**
+ * A text-only reply that IS the argument object of one advertised tool: the
+ * model printed a call instead of making one. Free-route gpt-oss:120b,
+ * 2026-09-10: `{"paths": ["csv.ts"]}` as the whole answer, then end_turn, and
+ * the run ended after one completion with nothing read. Returns the tool the
+ * object fits — every key a declared property, every required key present —
+ * or null for prose, arrays, empty objects and anything no schema takes.
+ */
+export function misencodedToolCall(
+  text: string,
+  tools: ReadonlyArray<ToolDefinition>,
+): string | null {
+  const t = text.trim();
+  if (t.length === 0 || t.length > 4000 || !t.startsWith("{") || !t.endsWith("}")) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(t);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const keys = Object.keys(parsed as Record<string, unknown>);
+  if (keys.length === 0) return null;
+  for (const tool of tools) {
+    const schema = tool.inputSchema as {
+      properties?: Record<string, unknown>;
+      required?: string[];
+    };
+    const props = schema?.properties ? Object.keys(schema.properties) : [];
+    if (props.length === 0) continue;
+    if ((schema.required ?? []).some((r) => !keys.includes(r))) continue;
+    if (keys.every((k) => props.includes(k))) return tool.name;
+  }
+  return null;
+}
+
 /** The last non-empty line of a report — the line a failure is usually named on. */
 function lastNonEmptyLine(text: string): string {
   const lines = text.split("\n").filter((l) => l.trim().length > 0);
@@ -1166,6 +1202,10 @@ export class AgentLoop {
     // tool calls (Gemini MALFORMED_FUNCTION_CALL, over-eager stops) must never
     // end the run as a silent no-op — retry bounded, then fail loudly.
     let emptyCompletions = 0;
+    // Replies that were a tool's arguments printed as text (see
+    // misencodedToolCall). Bounded like empty completions: nudge twice, then
+    // let the reply stand as what it is.
+    let misencodedCalls = 0;
     let anyTextThisRun = false;
     // Whether the model has said anything since its last tool results. An
     // empty end_turn while this is false is a run that stopped mid-sentence:
@@ -1791,6 +1831,53 @@ export class AgentLoop {
       const producedText = contentBlocks.some((b) => b.type === "text" && b.text.trim().length > 0);
       const producedUsableOutput = pendingToolCalls.length > 0 || producedText;
       const claimedToolUseButNone = stopReason === "tool_use" && pendingToolCalls.length === 0;
+      // ── A call printed as text ──
+      // The reply is exactly one advertised tool's argument object and nothing
+      // else. It ran nothing, and ending the turn on it ends the task on
+      // nothing. Push the reply (the model must see what it did), name the
+      // tool, and ask for a real call — twice at most.
+      const misencoded =
+        stopReason === "end_turn" && pendingToolCalls.length === 0 && producedText
+          ? misencodedToolCall(
+              contentBlocks
+                .filter((b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text")
+                .map((b) => b.text)
+                .join("\n"),
+              tools,
+            )
+          : null;
+      if (!signal?.aborted && !haltReportPending && misencoded && misencodedCalls < 2) {
+        misencodedCalls++;
+        this.report(
+          "provider.empty_completion",
+          "warn",
+          "run#misencodedCall",
+          `${this.config.provider}/${this.config.model} printed the arguments of ${misencoded} as text instead of calling it (attempt ${misencodedCalls})`,
+        );
+        this.appendMessage({ role: "assistant", content: contentBlocks });
+        this.appendMessage(
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text:
+                  `[Harness note] That reply was the arguments for the tool "${misencoded}" printed as ` +
+                  `text, so nothing ran. Call ${misencoded} as a tool with those arguments — JSON in ` +
+                  "prose does nothing.",
+              },
+            ],
+          },
+          "nudge:misencoded-call",
+        );
+        anyTextThisRun = true;
+        textSinceLastTools = true;
+        yield {
+          type: "notice",
+          message: `The model printed tool arguments as text instead of calling ${misencoded} — asking it to call the tool.`,
+        };
+        continue;
+      }
       // Silence is an empty end_turn either with no answer EVER this run, or
       // after tool calls whose results the model never spoke to. The second
       // shape gets one nudge and is then accepted: the work happened and the
