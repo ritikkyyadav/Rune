@@ -8,18 +8,18 @@ the Rune arm's `rune.db` cost events and event stream, the way the Pilot H note 
 
 ## The cache now extends
 
-| Request | Prompt tokens | Cached | Uncached | Note |
-| ------- | ------------: | -----: | -------: | ---- |
-| 1 | 10,046 | 0 | 10,046 | cold |
-| 2 | 10,408 | 3,840 | 6,568 | doctrine phase switch, as in every run |
-| 3 | 11,249 | 10,240 | 1,009 | |
-| 4 | 11,527 | 0 | 11,527 | **full miss** after `read_back` |
-| 5 | 14,976 | 11,392 | 3,584 | |
-| 6 | 15,310 | 0 | 15,310 | **full miss** after the first passing `bun test` |
-| 7 | 15,400 | 15,104 | 296 | |
-| 8 | 23,881 | 15,232 | 8,649 | three tool results landed at once |
-| 9 | 24,495 | 23,680 | 815 | |
-| 10 | 24,882 | 24,320 | 562 | 98% hit |
+| Request | Prompt tokens | Cached | Uncached | Note                                             |
+| ------- | ------------: | -----: | -------: | ------------------------------------------------ |
+| 1       |        10,046 |      0 |   10,046 | cold                                             |
+| 2       |        10,408 |  3,840 |    6,568 | doctrine phase switch, as in every run           |
+| 3       |        11,249 | 10,240 |    1,009 |                                                  |
+| 4       |        11,527 |      0 |   11,527 | **full miss** after `read_back`                  |
+| 5       |        14,976 | 11,392 |    3,584 |                                                  |
+| 6       |        15,310 |      0 |   15,310 | **full miss** after the first passing `bun test` |
+| 7       |        15,400 | 15,104 |      296 |                                                  |
+| 8       |        23,881 | 15,232 |    8,649 | three tool results landed at once                |
+| 9       |        24,495 | 23,680 |      815 |                                                  |
+| 10      |        24,882 | 24,320 |      562 | 98% hit                                          |
 
 Pilot H on the previous build read 12,160 cached tokens on every request from the fifth to the
 last while prompts grew to 18,212. Here the cached count tracks the prompt from request 7 on. That

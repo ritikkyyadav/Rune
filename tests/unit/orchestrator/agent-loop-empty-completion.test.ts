@@ -194,6 +194,65 @@ describe("AgentLoop — empty completions never end a run silently", () => {
     },
   );
 
+  test("a write followed by silence: nudged once, then the work stands as the finish", async () => {
+    // Free-route gpt-oss:120b, 2026-09-10: edited the parser, passed acceptance
+    // in 31 s, never wrote a closing line — and the run was failed as lost.
+    let calls = 0;
+    let executions = 0;
+    const gateway = {
+      inferStream: async function* () {
+        calls++;
+        if (calls === 1) {
+          yield { type: "tool_use_start", toolCallId: "w-1", toolName: "write_file" };
+          yield {
+            type: "tool_use_stop",
+            toolCallId: "w-1",
+            toolInput: { path: "csv.ts", content: "export const parseCsv = () => []" },
+          };
+          yield stopEvent("tool_use");
+        } else {
+          yield {
+            type: "message_stop",
+            stopReason: "end_turn",
+            usage: { inputTokens: 0, outputTokens: 0 },
+          };
+        }
+      },
+    };
+    const registry = {
+      toLlmTools: () => [],
+      get: () => ({ schema: { name: "write_file", category: "write", permissionLevel: "auto" } }),
+      execute: async (input: { callId: string; toolName: string }) => {
+        executions++;
+        return { ...input, success: true, result: "written", durationMs: 0 };
+      },
+    };
+    const loop = new AgentLoop(
+      { model: "m", provider: "google", maxTurns: 8, maxEmptyCompletionRetries: 3 },
+      gateway as any,
+      registry as any,
+    );
+    const events = await collect(loop.run("Fix the parser.", "s1", "/tmp"));
+    expect(executions).toBe(1);
+    // The write, one nudge, one more empty reply — then the work stands and
+    // the finish gates run: a write with no check is refused once, the model
+    // stays silent once more, and the run ends on the work. Four completions,
+    // no error.
+    expect(calls).toBe(4);
+    expect(
+      events.some((e) => e.type === "notice" && e.message.startsWith("Execution-evidence gate:")),
+    ).toBe(true);
+    expect(events.some((e) => e.type === "error")).toBe(false);
+    expect(events.some((e) => e.type === "turn_complete" && e.stopReason === "end_turn")).toBe(
+      true,
+    );
+    expect(
+      events.some(
+        (e) => e.type === "notice" && e.message.includes("the edits above are the result"),
+      ),
+    ).toBe(true);
+  });
+
   test("stopReason tool_use with zero tool calls: retries twice, then fails LOUDLY", async () => {
     let calls = 0;
     const gateway = {

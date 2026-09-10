@@ -1802,7 +1802,13 @@ export class AgentLoop {
         (!anyTextThisRun || (!textSinceLastTools && toolCallsThisRun > 0));
       const narratedEarlier = silentEndTurn && anyTextThisRun;
       if (!signal?.aborted && !haltReportPending && (claimedToolUseButNone || silentEndTurn)) {
-        const maxEmpty = narratedEarlier ? 2 : (this.config.maxEmptyCompletionRetries ?? 3);
+        // A run that already changed the workspace has a result the user can
+        // read even without a closing line. Free-route gpt-oss:120b never
+        // writes one: on 2026-09-10 it edited the parser, passed acceptance in
+        // 31 s, and the run was then failed as "provider lost". One nudge,
+        // then the work stands. A read-only run with no answer stays an error.
+        const workStands = narratedEarlier || anyWritesThisRun;
+        const maxEmpty = workStands ? 2 : (this.config.maxEmptyCompletionRetries ?? 3);
         emptyCompletions++;
         this.report(
           "provider.empty_completion",
@@ -1833,7 +1839,7 @@ export class AgentLoop {
           this.state = "observing";
           continue;
         }
-        if (!narratedEarlier) {
+        if (!workStands) {
           this.state = "done";
           yield* this.handoffEvents("provider_lost");
           yield {
@@ -1850,17 +1856,20 @@ export class AgentLoop {
           yield { type: "turn_complete", stopReason: "provider_lost", totalTurns: turn };
           return;
         }
-        // Accept the finish on the earlier narration, and say so once.
+        // Accept the finish — on the earlier narration, or on the work — and say so once.
         this.report(
           "provider.empty_completion",
           "warn",
           "run#emptyCompletion",
-          "no closing account after the last tool results — finishing on the earlier narration",
+          narratedEarlier
+            ? "no closing account after the last tool results — finishing on the earlier narration"
+            : "no closing message at all — finishing on the written work",
         );
         yield {
           type: "notice",
-          message:
-            "The model ended without a closing message after its last tool results; finishing on what it said earlier.",
+          message: narratedEarlier
+            ? "The model ended without a closing message after its last tool results; finishing on what it said earlier."
+            : "The model ended without a closing message; the edits above are the result.",
         };
       }
       if (producedText) {
