@@ -618,6 +618,16 @@ export class TaskStateStore {
       durationMs?: number;
       /** Who ran it. Defaults to the model (the `bash` chokepoint). */
       source?: "harness" | "model";
+      /**
+       * Whether this check speaks to the step it was run under. False sets the
+       * check aside: it still goes on the run's check ledger and the retro
+       * still counts it, and it counts against the step as a command that
+       * RAN, but it does not become the step's `lastCheck` and so cannot
+       * prove a verify step. Judged by `checkRelatedness` at the `bash`
+       * chokepoint; the harness's own step check is already scoped to the
+       * step's files, so it never passes false. Defaults to true.
+       */
+      attributed?: boolean;
     },
   ): void {
     const check = (passed: boolean): StepEvidence["lastCheck"] => ({
@@ -627,8 +637,8 @@ export class TaskStateStore {
       ...(detail?.exitCode != null ? { exitCode: detail.exitCode } : {}),
       ...(detail?.durationMs != null ? { durationMs: detail.durationMs } : {}),
     });
-    const apply = (ev: StepEvidence): void => {
-      switch (kind) {
+    const apply = (ev: StepEvidence, effect: EffectKind): void => {
+      switch (effect) {
         case "read":
           ev.reads++;
           break;
@@ -660,11 +670,21 @@ export class TaskStateStore {
           break;
       }
     };
-    apply(this.pending);
+    // A check that does not speak to the open step is an EXECUTION, not that
+    // step's proof: it counts as something that ran — the refusal must never
+    // say "nothing ran while it was open" about a command that did — but it
+    // does not become the step's `lastCheck`, and it does not enter the
+    // pending pool the NEXT step draws from either, because inheriting it
+    // there is the same defect one step later.
+    const effect: EffectKind =
+      detail?.attributed === false && (kind === "check_pass" || kind === "check_fail")
+        ? "run"
+        : kind;
+    apply(this.pending, effect);
     const active = this.state.todos.find((t) => t.status === "in_progress");
     if (active) {
       active.evidence ??= { ...emptyEvidence(), startedAt: new Date().toISOString() };
-      apply(active.evidence);
+      apply(active.evidence, effect);
     }
     // The check ledger: WHICH command, its exit code, how long. Kept beside the
     // counters because a count of checks cannot answer "checked with what?".

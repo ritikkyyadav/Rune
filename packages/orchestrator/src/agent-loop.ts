@@ -47,6 +47,7 @@ import type { HandoffReason, TaskStateStore, TodoItem } from "./task-state";
 import { evidenceWeight, TASK_STATE_BLOCK_BUDGET_AFTER_COMPACTION } from "./task-state";
 import type { ArtifactKind } from "@rune/protocol";
 import { bashCheckVerdict, isVerificationCommand } from "./brief";
+import { checkRelatedness } from "./verification-command";
 
 // ─── Agent Turn Events (yielded to caller) ───
 //
@@ -625,6 +626,13 @@ export function withTailFolded(messages: Message[], blocks: string[]): Message[]
  * the run ended after one completion with nothing read. Returns the tool the
  * object fits — every key a declared property, every required key present —
  * or null for prose, arrays, empty objects and anything no schema takes.
+ *
+ * EXACTLY one, and the ambiguity is not hypothetical: `{"path": "a.ts"}` fits
+ * `read_file`, `list_dir` and `delete_file` alike, and the first match in
+ * registry order decided which one to demand. Two candidates means the object
+ * does not name a call — it is returned as null, and the reply stands as the
+ * text it is. The caller adds the other half of the rule: a run whose user
+ * ASKED for JSON gets no nudge at all (see `jsonAnswerRequested`).
  */
 export function misencodedToolCall(
   text: string,
@@ -641,6 +649,7 @@ export function misencodedToolCall(
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
   const keys = Object.keys(parsed as Record<string, unknown>);
   if (keys.length === 0) return null;
+  let match: string | null = null;
   for (const tool of tools) {
     const schema = tool.inputSchema as {
       properties?: Record<string, unknown>;
@@ -649,9 +658,27 @@ export function misencodedToolCall(
     const props = schema?.properties ? Object.keys(schema.properties) : [];
     if (props.length === 0) continue;
     if ((schema.required ?? []).some((r) => !keys.includes(r))) continue;
-    if (keys.every((k) => props.includes(k))) return tool.name;
+    if (!keys.every((k) => props.includes(k))) continue;
+    if (match !== null) return null; // ambiguous: two tools take this object
+    match = tool.name;
   }
-  return null;
+  return match;
+}
+
+/**
+ * The user asked for JSON back.
+ *
+ * A bare JSON object is then the ANSWER, and demanding a tool call for it
+ * would throw away precisely what was requested — for a machine consumer
+ * reading stdout, replacing the answer with a nudge is worse than any
+ * recovery it buys. Narrow on purpose: an output verb or a format preposition
+ * has to sit beside the word, so "fix the JSON parser" is still an ordinary
+ * task and still gets the nudge.
+ */
+export function jsonAnswerRequested(request: string): boolean {
+  return /\b(?:output|outputs|return|returns|respond|reply|answer|print|emit|produce|render|format|formatted|give)\b[^.\n]{0,40}\bjson\b|\bjson\b[^.\n]{0,25}\b(?:only|output|response|answer|format|back)\b|\b(?:as|in)\s+(?:valid\s+|raw\s+|pure\s+|strict\s+|plain\s+)?json\b/i.test(
+    request,
+  );
 }
 
 /** The last non-empty line of a report — the line a failure is usually named on. */
@@ -1174,6 +1201,10 @@ export class AgentLoop {
      * cycle, the same command with no edit between is a rut.
      */
     let writeCount = 0;
+    // A completed plan only covers effects observed before it was accepted.
+    // Closed steps receive no new effects, so their old evidence cannot
+    // waive verification of a later write (including on a resumed run).
+    let settledPlanAtWriteCount: number | null = null;
     // Repeated-failure circuit breaker: how many times each EXACT call
     // (tool + args) has failed this run. After 2 identical failures the call is
     // refused without executing — a failing fetch/command retried verbatim will
@@ -1837,7 +1868,10 @@ export class AgentLoop {
       // nothing. Push the reply (the model must see what it did), name the
       // tool, and ask for a real call — twice at most.
       const misencoded =
-        stopReason === "end_turn" && pendingToolCalls.length === 0 && producedText
+        stopReason === "end_turn" &&
+        pendingToolCalls.length === 0 &&
+        producedText &&
+        !jsonAnswerRequested(userMessage)
           ? misencodedToolCall(
               contentBlocks
                 .filter((b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text")
@@ -2098,6 +2132,9 @@ export class AgentLoop {
             }
             if (result.ran && !result.passed) {
               verifyStillFailing = true;
+              // Same rule as a model-run check going red: a settled plan
+              // cannot waive a failure recorded after it settled.
+              settledPlanAtWriteCount = null;
               latchEffort("verification failed");
               this.report(
                 "loop.verification_failed",
@@ -2247,18 +2284,17 @@ export class AgentLoop {
         // model-independent — weak models get pushed just as hard as strong
         // ones.
         // ── A settled plan stands the evidence gates down ──
-        // Every planned step is completed and none is unproven: each carries
-        // the passing check the ledger attributed to it, and a write after a
-        // step's check already marks that step unproven. The plan IS the
-        // evidence system; the two gates below are the fallback for runs that
-        // never wrote one. Firing them anyway re-prompted a finished dogfood
-        // run for eleven completions after its closing message (2026-09-09).
+        // Every planned step closed with evidence, and no write followed that
+        // closure. A write while a step is OPEN invalidates its check, but a
+        // write after closure only enters the pending pool. Comparing the
+        // write count prevents that later edit borrowing the old plan's pass.
         const planCounts = this.config.taskState?.todoCounts();
         const planSettled =
           !!planCounts &&
           planCounts.total > 0 &&
           planCounts.open === 0 &&
-          planCounts.unproven === 0;
+          planCounts.unproven === 0 &&
+          settledPlanAtWriteCount === writeCount;
         if (planSettled && anyWritesThisRun && !executedSinceWrite && !projectChecksPassed) {
           this.config.taskState?.logEvent(
             "gate",
@@ -3190,6 +3226,10 @@ export class AgentLoop {
             }
             if (verdict.accepted) {
               acceptedPlan = structuredClone(ts.todos);
+              const counts = ts.todoCounts();
+              if (verdict.completed.length > 0 && counts.open === 0 && counts.unproven === 0) {
+                settledPlanAtWriteCount = writeCount;
+              }
               // A step closed over a FAILING check is the one sign of
               // difficulty the ledger sees. In attest mode it is accepted as
               // unproven rather than refused, and it still raises the
@@ -3302,11 +3342,38 @@ export class AgentLoop {
               // transcript reducer already read the code (`checkFromBash`);
               // the spine, which is what the rule is enforced from, did not.
               const verdict = bashCheckVerdict(output);
+              // ── Relatedness ──
+              // A check closes the step it SPEAKS TO. The harness's own step
+              // check has always been scoped to the step's files
+              // (`stepCheck(signal, ts.touchedFiles)`); a model-run one was
+              // attributed to whichever step happened to be in progress, so
+              // `python3 -c "assert True"` run while a step was open closed
+              // that step. The same scope now applies to both. A check set
+              // aside here is still executed, still cited, still counted by
+              // the retro — it just cannot stand in for the step's proof.
+              const active = ts.todos.find((t) => t.status === "in_progress");
+              const relation = checkRelatedness(cmd, {
+                content: active?.content,
+                touched: ts.touchedFiles,
+              });
               ts.noteEffect(verdict.passed ? "check_pass" : "check_fail", {
                 command: cmd.slice(0, 120),
                 summary: verdict.summary,
                 ...(verdict.exitCode != null ? { exitCode: verdict.exitCode } : {}),
+                attributed: relation.related,
               });
+              if (!relation.related) {
+                const about = active ? `"${active.content.slice(0, 60)}"` : "the open plan";
+                ts.logEvent(
+                  "check",
+                  `${cmd.slice(0, 80)} ${verdict.passed ? "passed" : "FAILED"} but does not speak to ${about} — recorded, not attributed`,
+                );
+              }
+              // A closure is a snapshot of what was true when it was made. A
+              // check that goes RED afterwards is new evidence about the same
+              // code, and the old plan's pass cannot answer it: the waiver is
+              // withdrawn and the finish gates arm again.
+              if (!verdict.passed) settledPlanAtWriteCount = null;
             } else if (!TRIVIAL_EVIDENCE_RE.test(cmd)) {
               ts.noteEffect("run");
             }

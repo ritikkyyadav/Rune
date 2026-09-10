@@ -4825,11 +4825,12 @@ export class Engine {
         onToolExecuted: ({ toolName, args, output }) => {
           if (toolName !== CHECK_SOURCE_TOOL) return;
           const command = String(args.command ?? "");
-          if (!command || !isVerificationCommand(command)) return;
+          if (!command) return;
           const verdict = bashCheckVerdict(output);
           this.checkLog.record({
             command,
             passed: verdict.passed,
+            kind: isVerificationCommand(command) ? "check" : "execution",
             at: Date.now(),
             summary: verdict.summary,
             ...(verdict.exitCode != null ? { exitCode: verdict.exitCode } : {}),

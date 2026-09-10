@@ -249,6 +249,35 @@ function logWith(runs: Array<[string, boolean, string?]>): CheckLog {
 }
 
 describe("what a cited command is worth", () => {
+  test("an unclassified execution is observed once without replaying or upgrading it", async () => {
+    const command = "bun -e 'console.log(42)'";
+    const log = new CheckLog();
+    log.record({ command, passed: true, kind: "execution", at: 1 });
+    log.record({ command, passed: true, kind: "execution", at: 2 });
+    log.recordParent({ command, status: "failed" });
+    expect(rungForCommand(log, command)).toMatchObject({ ok: true, rung: "observed" });
+    const other = new CheckLog();
+    other.record({ command, passed: true, kind: "execution", at: 1 });
+    let probes = 0;
+    const tool = createRecordEvidenceTool(
+      () => new BriefLedger(brief()),
+      () => other,
+      () => {
+        probes++;
+        return { command, status: "failed" };
+      },
+    );
+    const result = await tool.execute({
+      callId: "exec",
+      toolName: "record_evidence",
+      args: { criterion: 0, command },
+      sessionId: "s",
+      workspaceRoot: "/tmp",
+    });
+    expect(probes).toBe(0);
+    expect(result.result).toContain("execution receipt only");
+    expect(result.result).not.toContain("never ran");
+  });
   test("a command that never ran is not evidence", () => {
     const v = rungForCommand(logWith([]), "bun test");
     expect(v.ok).toBe(false);
@@ -373,6 +402,88 @@ describe("what a cited command is worth", () => {
   test("a command is identified by what ran, not by how it was spaced", () => {
     const v = rungForCommand(logWith([["bun  test   tests/http", true]]), "bun test tests/http");
     expect(v.ok).toBe(true);
+  });
+
+  test("quoted whitespace and command-list boundaries are significant to a receipt", () => {
+    const log = logWith([
+      [`test "two  spaces" = "two  spaces"`, true],
+      ["false\ntrue", true],
+    ]);
+    expect(rungForCommand(log, `test "two spaces" = "two spaces"`).ok).toBe(false);
+    expect(rungForCommand(log, "false true").ok).toBe(false);
+    expect(rungForCommand(log, `test  "two  spaces"   = "two  spaces"`).ok).toBe(true);
+  });
+
+  test("a failed execution receipt is still a failure, not an observation", () => {
+    const log = new CheckLog();
+    log.record({ command: "bun run build", passed: false, kind: "execution", at: 1 });
+    const v = rungForCommand(log, "bun run build");
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.reason).toContain("FAILED");
+  });
+
+  test("citing the same receipt twice does not reproduce it", async () => {
+    // Reproduction is two RUNS, not two mentions. The log is written by the
+    // runtime when a command executes; record_evidence only reads it, so a
+    // model that cites the same pass twice must not climb a rung for it.
+    const command = "bun test tests/http";
+    const log = logWith([[command, true, "44/44"]]);
+    let probes = 0;
+    const ledger = new BriefLedger(brief());
+    const tool = createRecordEvidenceTool(
+      () => ledger,
+      () => log,
+      () => {
+        probes++;
+        return { command, status: "passed" as const };
+      },
+    );
+    const cite = () =>
+      tool.execute({
+        callId: "c",
+        toolName: "record_evidence",
+        args: { criterion: 0, command },
+        sessionId: "s",
+        workspaceRoot: "/tmp",
+      });
+    const first = await cite();
+    const second = await cite();
+    expect(first.result).toContain("observed");
+    expect(second.result).toContain("observed");
+    expect(second.result).not.toContain("reproduced");
+    expect(log.all).toHaveLength(1);
+    // The parent tree is measured ONCE per command, however often it is cited.
+    expect(probes).toBe(1);
+  });
+
+  test("classification and replay eligibility are separate questions", async () => {
+    // A classified check earns the parent-commit replay (the isolated
+    // detached-worktree probe in parent-check.ts). An unclassified execution
+    // is an arbitrary script that can mutate state, so it never gets one —
+    // and that refusal costs it only a rung, never its receipt.
+    for (const kind of ["check", "execution"] as const) {
+      const command = "bun test tests/http";
+      const log = new CheckLog();
+      log.record({ command, passed: true, kind, at: 1 });
+      let probes = 0;
+      const tool = createRecordEvidenceTool(
+        () => new BriefLedger(brief()),
+        () => log,
+        () => {
+          probes++;
+          return { command, status: "failed" as const };
+        },
+      );
+      const result = await tool.execute({
+        callId: "c",
+        toolName: "record_evidence",
+        args: { criterion: 0, command },
+        sessionId: "s",
+        workspaceRoot: "/tmp",
+      });
+      expect(probes).toBe(kind === "check" ? 1 : 0);
+      expect(result.result).toContain(kind === "check" ? "verified" : "observed");
+    }
   });
 });
 

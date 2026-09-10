@@ -42,7 +42,8 @@ import { TASK_KINDS } from "@rune/protocol";
  * where it was born — no engine module may import a surface module, and a gate
  * on Phase 2 counts the violations.
  */
-export { isVerificationCommand } from "./verification-command";
+import { checkRelatedness, normalizeCommand } from "./verification-command";
+export { isVerificationCommand, normalizeCommand } from "./verification-command";
 
 export const CLAIM_RUNGS: readonly ClaimRung[] = [
   "suspected",
@@ -357,6 +358,9 @@ export interface CheckRun {
   passed: boolean;
   at: number;
   summary?: string;
+  /** Other shell actions are recorded too, but never replayed or promoted
+   * as checks. Omitted by legacy embedders/harness verifiers means check. */
+  kind?: "check" | "execution";
   /**
    * The exit code the runtime read, and how long the command took. Present for
    * checks the HARNESS ran (the verifier reads both directly); absent for
@@ -425,10 +429,6 @@ export class CheckLog {
   }
 }
 
-export function normalizeCommand(command: string): string {
-  return command.trim().replace(/\s+/g, " ");
-}
-
 export type RungVerdict =
   { ok: true; rung: ClaimRung; evidence: Evidence } | { ok: false; reason: string };
 
@@ -459,6 +459,19 @@ export function rungForCommand(log: CheckLog, command: string): RungVerdict {
     source: normalizeCommand(command),
     detail: last.summary,
   };
+  if (last.kind === "execution") {
+    return {
+      ok: true,
+      rung: "observed",
+      evidence: {
+        ...base,
+        detail: joinDetail(
+          last.summary,
+          "execution receipt only; not classified as a verification check and not replayed on the parent",
+        ),
+      },
+    };
+  }
 
   // `verified` comes from ONE place: the runtime having run this same command
   // against the pre-change tree and read a failure there.
@@ -590,7 +603,8 @@ export function createRecordEvidenceTool(
    * a validation error here was never the model's fault, and it landed on
    * the user's screen seven times in one turn.
    */
-  getSpine?: () => { todos: Array<{ content: string }> } | undefined,
+  getSpine?: () =>
+    { todos: Array<{ content: string }>; touchedFiles?: readonly string[] } | undefined,
 ): ToolHandler {
   return {
     schema: RECORD_EVIDENCE_SCHEMA,
@@ -630,7 +644,8 @@ export function createRecordEvidenceTool(
         // the reply says plainly that no criterion moved.
         const verdict = rungForCommand(log, command);
         if (!verdict.ok) return reply(verdict.reason);
-        const step = target.index != null ? getSpine?.()?.todos[target.index] : undefined;
+        const spine = getSpine?.();
+        const step = target.index != null ? spine?.todos[target.index] : undefined;
         const about =
           step != null
             ? `step ${target.index! + 1} "${step.content.slice(0, 80)}"`
@@ -639,9 +654,26 @@ export function createRecordEvidenceTool(
               : target.index != null
                 ? `step ${target.index + 1}`
                 : "the claim";
+        // The citation names a STEP, so the same relatedness test the loop
+        // applies to a model-run check applies here: a command that speaks to
+        // files this step never touched is still on record as executed, and
+        // still gets its rung, but it is not this step's evidence. A step
+        // with no touched files has nothing to judge against and keeps the
+        // reply it always had.
+        const relation =
+          step != null
+            ? checkRelatedness(command, { content: step.content, touched: spine?.touchedFiles })
+            : null;
         return reply(
           `Noted for ${about}: ${verdict.rung} — ${RUNG_MEANING[verdict.rung]} ` +
             (verdict.evidence.detail ? `Receipt: ${verdict.evidence.detail}. ` : "") +
+            (relation && !relation.related
+              ? "It is on record as executed, but it does not speak to that step: " +
+                (relation.reason === "names_nothing"
+                  ? "it names no file this step wrote, and it is not a project-wide check. "
+                  : "it names only files this step never touched. ") +
+                "Cite the step's own check, or run one. "
+              : "") +
             "No read_back criteria are in play, so this settles no criterion.",
         );
       }
@@ -670,7 +702,7 @@ export function createRecordEvidenceTool(
       // would spend it again for an answer already on record.
       const runs = log.history(command);
       const lastRun = runs[runs.length - 1];
-      if (probeParent && lastRun?.passed && !log.parent(command)) {
+      if (probeParent && lastRun?.passed && lastRun.kind !== "execution" && !log.parent(command)) {
         const parent = probeParent(command);
         if (parent) log.recordParent(parent);
       }

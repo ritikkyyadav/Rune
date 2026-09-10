@@ -48,6 +48,16 @@ export interface HeadlessResult {
   ok: boolean;
   /** Why it failed, when it did. */
   error?: string;
+  /**
+   * How the turn ENDED, verbatim from the loop's terminal event.
+   *
+   * `ok` is one bit and the outcomes are five: completed, incomplete (the turn
+   * or token ceiling), blocked (halted), cancelled (aborted) and provider-lost.
+   * Only the first is a finished task, and a consumer that cannot tell them
+   * apart scores four different things as the same thing. Absent when the run
+   * ended without a terminal event (a thrown turn).
+   */
+  stopReason?: string;
   toolCalls: number;
   toolErrors: number;
   /** Workspace-relative paths the run wrote or edited. */
@@ -115,6 +125,8 @@ export async function runHeadless(
   // The FIRST non-recoverable error, which is the root cause; the ones after
   // it are usually consequences of the same failure.
   let fatalError: string | undefined;
+  // The loop's own terminal verdict. Last one wins: a turn emits exactly one.
+  let stopReason: string | undefined;
 
   engine.setPermissionHandler(
     headlessPermissionHandler(opts.autoApprove === true, (p) => {
@@ -191,9 +203,17 @@ export async function runHeadless(
           }
           break;
 
+        // ── The terminal verdict ──
+        // It used to sit in the ignored group, so a run the user CANCELLED,
+        // one the supervisor HALTED and one that ran out of turns all
+        // reported ok:true and exited 0 with whatever partial text they had.
+        // Nothing about that says the task was done.
+        case "turn_complete":
+          stopReason = event.stopReason;
+          break;
+
         case "thinking_delta":
         case "tool_call_args_delta":
-        case "turn_complete":
         case "verification_started":
         case "verification_completed":
         case "todo_updated":
@@ -231,6 +251,7 @@ export async function runHeadless(
       text,
       ok: false,
       error: err instanceof Error ? err.message : String(err),
+      ...(stopReason ? { stopReason } : {}),
       toolCalls,
       toolErrors,
       filesChanged: [...filesChanged],
@@ -242,10 +263,13 @@ export async function runHeadless(
     };
   }
 
+  const unfinished = stopReason ? UNFINISHED_STOP[stopReason] : undefined;
+  const error = fatalError ?? unfinished;
   return {
     text,
-    ok: fatalError === undefined,
-    ...(fatalError === undefined ? {} : { error: fatalError }),
+    ok: error === undefined,
+    ...(error === undefined ? {} : { error }),
+    ...(stopReason ? { stopReason } : {}),
     toolCalls,
     toolErrors,
     filesChanged: [...filesChanged],
@@ -256,6 +280,18 @@ export async function runHeadless(
     durationMs: Date.now() - started,
   };
 }
+
+/**
+ * Terminal verdicts that are NOT a completed task, and the one line each one
+ * owes the caller. `end_turn` is the only finished outcome; `provider_lost`
+ * already raises its own non-recoverable error and keeps that wording.
+ */
+const UNFINISHED_STOP: Record<string, string | undefined> = {
+  aborted: "The run was cancelled before it finished; the output above is partial.",
+  halted: "The run was halted before it finished; the output above is its report.",
+  max_turns: "The run hit its turn ceiling without finishing; the output above is partial.",
+  max_tokens: "The response hit the output-token limit; the output above is partial.",
+};
 
 /** The exit code a result deserves. */
 export function headlessExitCode(r: HeadlessResult): number {
@@ -293,6 +329,9 @@ export function headlessEnvelope(
       ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
       text: r.text,
       error: r.error,
+      // How it ended, so "cancelled", "out of turns" and "done" are three
+      // different answers to a machine consumer, not one boolean.
+      stopReason: r.stopReason,
       toolCalls: r.toolCalls,
       toolErrors: r.toolErrors,
       filesChanged: r.filesChanged,

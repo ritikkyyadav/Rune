@@ -250,3 +250,84 @@ describe("a terminal error fails the run", () => {
     expect(r.error).toBe("root cause");
   });
 });
+
+/**
+ * The terminal verdict.
+ *
+ * `ok` is one bit and the outcomes are five. A run the user CANCELLED, one the
+ * supervisor HALTED and one that ran out of turns each ended with a
+ * turn_complete the reducer ignored, so all three came back ok:true, exit 0,
+ * with whatever partial text they had — the same answer a finished task gives.
+ * A benchmark harness scores that as a pass.
+ */
+describe("how the turn ended reaches the caller", () => {
+  const run = (stopReason: string, text = "partial work") =>
+    runHeadless(
+      fakeEngine([
+        { type: "text_delta", text },
+        { type: "turn_complete", stopReason, totalTurns: 3 },
+      ]),
+      "s",
+      "hi",
+    );
+
+  test("a completed turn is a success and says so", async () => {
+    const r = await run("end_turn", "done");
+    expect(r.ok).toBe(true);
+    expect(r.stopReason).toBe("end_turn");
+    expect(r.error).toBeUndefined();
+    expect(headlessExitCode(r)).toBe(HEADLESS_EXIT.ok);
+  });
+
+  test.each([
+    ["aborted", "cancelled"],
+    ["halted", "halted"],
+    ["max_turns", "turn ceiling"],
+    ["max_tokens", "output-token limit"],
+  ])("%s is not a completed task", async (stopReason, reason) => {
+    const r = await run(stopReason);
+    expect(r.stopReason).toBe(stopReason);
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain(reason);
+    expect(headlessExitCode(r)).not.toBe(HEADLESS_EXIT.ok);
+    // The partial result survives: stdout still carries what the run produced.
+    expect(r.text).toBe("partial work");
+  });
+
+  test("a provider failure keeps the provider's own reason, not a generic one", async () => {
+    const r = await runHeadless(
+      fakeEngine([
+        { type: "text_delta", text: "got this far" },
+        { type: "error", error: "No credits on ollama-turbo.", recoverable: false },
+        { type: "turn_complete", stopReason: "provider_lost", totalTurns: 2 },
+      ]),
+      "s",
+      "hi",
+    );
+    expect(r.ok).toBe(false);
+    expect(r.error).toBe("No credits on ollama-turbo.");
+    expect(r.stopReason).toBe("provider_lost");
+    expect(r.text).toBe("got this far");
+  });
+
+  test("the envelope carries the stop reason", () => {
+    const env = JSON.parse(
+      headlessEnvelope({
+        text: "partial",
+        ok: false,
+        error: "cancelled",
+        stopReason: "aborted",
+        toolCalls: 1,
+        toolErrors: 0,
+        filesChanged: [],
+        permissionsDenied: 0,
+        inputTokens: 1,
+        outputTokens: 1,
+        cacheReadTokens: 0,
+        durationMs: 1,
+      }),
+    );
+    expect(env.stopReason).toBe("aborted");
+    expect(env.ok).toBe(false);
+  });
+});

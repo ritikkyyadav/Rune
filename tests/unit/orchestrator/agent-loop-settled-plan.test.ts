@@ -71,13 +71,25 @@ function makeRegistry() {
       callId: input.callId,
       toolName: input.toolName,
       success: true,
-      result: input.toolName === "todo_write" ? JSON.stringify({ items: input.args.items }) : "ok",
+      // The shell reports that it LAUNCHED; the child exit code lives in its
+      // result JSON, and that is what decides a check. A command naming
+      // "failing" comes back red, so a failed check can be scripted here.
+      result:
+        input.toolName === "todo_write"
+          ? JSON.stringify({ items: input.args.items })
+          : input.toolName === "bash"
+            ? JSON.stringify({
+                exit_code: String(input.args.command ?? "").includes("failing") ? 1 : 0,
+                stdout: "",
+                stderr: String(input.args.command ?? "").includes("failing") ? "1 fail" : "",
+              })
+            : "ok",
       durationMs: 1,
     })),
   } as any;
 }
 
-function makeLoop(gateway: any, taskState?: TaskStateStore) {
+function makeLoop(gateway: any, taskState?: TaskStateStore, opts: Record<string, unknown> = {}) {
   return new AgentLoop(
     {
       model: "m",
@@ -87,6 +99,7 @@ function makeLoop(gateway: any, taskState?: TaskStateStore) {
       systemPrompt: "s",
       effortRouting: "off",
       ...(taskState ? { taskState } : {}),
+      ...opts,
     } as any,
     gateway,
     makeRegistry(),
@@ -98,6 +111,10 @@ const WRITE_THEN_FINISH: Step[] = [
   { tool: "write_file", args: { path: "src/parser.ts", content: "export {}" } },
   { text: "Done — the parser is fixed." },
 ];
+
+/** Did the run's own log say the plan stood the evidence gates down? */
+const stoodDown = (ts: TaskStateStore) =>
+  (ts.snapshot().log ?? []).some((e: any) => e.kind === "gate" && /stood down/.test(e.text));
 
 const stopMessages = (loop: AgentLoop) =>
   loop
@@ -123,29 +140,23 @@ describe("finish gates", () => {
     expect(gw.calls()).toBe(3);
   });
 
-  test("a plan with every step completed and evidenced stands the gate down", async () => {
+  test("a completed plan cannot waive verification of a later edit", async () => {
     const ts = new TaskStateStore();
     ts.beginTurn("fix the parser");
-    // Steps closed without the enforcement judge: no unproven mark, no open step.
-    ts.setTodos(
-      [
-        { content: "repair parseCsv", status: "completed" },
-        { content: "run the parser tests", status: "completed" },
-      ],
-      { enforce: false },
-    );
-    expect(ts.todoCounts()).toEqual({ done: 2, total: 2, unproven: 0, open: 0 });
+    ts.setTodos([{ content: "repair parseCsv", kind: "change", status: "in_progress" }]);
+    ts.noteEffect("write");
+    ts.noteEffect("check_pass", { command: "bun test" });
+    ts.setTodos([{ content: "repair parseCsv", kind: "change", status: "completed" }]);
+    expect(ts.todoCounts()).toEqual({ done: 1, total: 1, unproven: 0, open: 0 });
     const gw = makeGateway(WRITE_THEN_FINISH);
     const loop = makeLoop(gw, ts);
     const events = await collect(loop.run("fix the parser", "s1", "/tmp"));
-    expect(stopMessages(loop)).toHaveLength(0);
-    expect(gw.calls()).toBe(2);
+    expect(stopMessages(loop)).toHaveLength(1);
+    expect(gw.calls()).toBe(3);
     expect(events.some((e) => e.type === "turn_complete" && e.stopReason === "end_turn")).toBe(
       true,
     );
-    expect(
-      (ts.snapshot().log ?? []).some((e) => e.kind === "gate" && /stood down/.test(e.text)),
-    ).toBe(true);
+    expect(loop.originOf(stopMessages(loop)[0]!)).toBe("gate:execution-evidence");
   });
 
   test("a plan with an unproven step does not stand the gate down", async () => {
@@ -161,6 +172,51 @@ describe("finish gates", () => {
     expect(stopMessages(loop).length).toBeGreaterThanOrEqual(1);
   });
 
+  test.each([false, true])(
+    "a newly settled plan covers only the writes before closure: later write %s",
+    async (laterWrite) => {
+      const ts = new TaskStateStore();
+      const item = { content: "repair parseCsv", kind: "change" };
+      const steps: Step[] = [
+        { tool: "todo_write", args: { items: [{ ...item, status: "in_progress" }] } },
+        WRITE_THEN_FINISH[0]!,
+        { tool: "bash", args: { command: "node browser-test.mjs" } },
+        { tool: "todo_write", args: { items: [{ ...item, status: "completed" }] } },
+        ...(laterWrite
+          ? [
+              WRITE_THEN_FINISH[0]!,
+              // Repeating the old completed list does not re-check the new edit.
+              { tool: "todo_write", args: { items: [{ ...item, status: "completed" }] } },
+            ]
+          : []),
+        { text: "The parser was checked." },
+      ];
+      const gw = makeGateway(steps);
+      const loop = makeLoop(gw, ts);
+      await collect(loop.run("fix the parser", "s1", "/tmp"));
+      expect(ts.todoCounts().unproven).toBe(0); // the closed row itself is historical
+      expect(stopMessages(loop)).toHaveLength(laterWrite ? 1 : 0);
+      expect(gw.calls()).toBe(steps.length + (laterWrite ? 1 : 0));
+    },
+  );
+
+  test("a genuinely settled plan avoids an extra fix-verified prompt", async () => {
+    const ts = new TaskStateStore();
+    const item = { content: "repair parseCsv", kind: "change" };
+    const gw = makeGateway([
+      { tool: "todo_write", args: { items: [{ ...item, status: "in_progress" }] } },
+      WRITE_THEN_FINISH[0]!,
+      { tool: "bash", args: { command: "node browser-test.mjs" } },
+      { tool: "todo_write", args: { items: [{ ...item, status: "completed" }] } },
+      { text: "The parser was checked." },
+    ]);
+    const loop = makeLoop(gw, ts, { ledgerStatus: () => ({ total: 1, verified: 0 }) });
+    await collect(loop.run("fix the parser", "s1", "/tmp"));
+    expect(ts.todoCounts()).toEqual({ done: 1, total: 1, unproven: 0, open: 0 });
+    expect(stopMessages(loop)).toHaveLength(0);
+    expect(gw.calls()).toBe(5);
+  });
+
   test("the open-steps gate tags its message too", async () => {
     const ts = new TaskStateStore();
     const gw = makeGateway([
@@ -171,5 +227,85 @@ describe("finish gates", () => {
     await collect(loop.run("do a multi step thing", "s1", "/tmp"));
     const stops = stopMessages(loop);
     expect(stops.map((m) => loop.originOf(m))).toContain("gate:open-steps");
+  });
+
+  test("a resumed completed plan is not renewed by re-emitting it", async () => {
+    // The plan was settled in an EARLIER turn. Re-sending the same completed
+    // list transitions nothing, so it closes no step and grants no waiver —
+    // and the edit that follows is still unverified work.
+    const ts = new TaskStateStore();
+    ts.beginTurn("fix the parser");
+    const item = { content: "repair parseCsv", kind: "change" as const };
+    ts.setTodos([{ ...item, status: "in_progress" }]);
+    ts.noteEffect("write");
+    ts.noteEffect("check_pass", { command: "bun test" });
+    ts.setTodos([{ ...item, status: "completed" }]);
+    expect(ts.todoCounts()).toEqual({ done: 1, total: 1, unproven: 0, open: 0 });
+    const gw = makeGateway([
+      { tool: "todo_write", args: { items: [{ ...item, status: "completed" }] } },
+      WRITE_THEN_FINISH[0]!,
+      { text: "Done — the parser is fixed." },
+    ]);
+    const loop = makeLoop(gw, ts);
+    await collect(loop.run("fix the parser", "s1", "/tmp"));
+    expect(stoodDown(ts)).toBe(false);
+    expect(stopMessages(loop).map((m) => loop.originOf(m))).toEqual(["gate:execution-evidence"]);
+  });
+
+  test("a check that FAILS after the plan settled re-arms the gates", async () => {
+    // Closure is a snapshot of what was true then. A red check afterwards is
+    // new evidence about the same code, and a stale waiver would let the run
+    // finish a fix-shaped task with nothing verified and a failing check on
+    // the record.
+    const item = { content: "repair parseCsv", kind: "change" as const };
+    const ts = new TaskStateStore();
+    const steps: Step[] = [
+      { tool: "todo_write", args: { items: [{ ...item, status: "in_progress" }] } },
+      WRITE_THEN_FINISH[0]!,
+      { tool: "bash", args: { command: "node browser-test.mjs" } },
+      { tool: "todo_write", args: { items: [{ ...item, status: "completed" }] } },
+      { tool: "bash", args: { command: "node failing-test.mjs" } },
+      { text: "The parser was checked." },
+    ];
+    const gw = makeGateway(steps);
+    const loop = makeLoop(gw, ts, { ledgerStatus: () => ({ total: 1, verified: 0 }) });
+    await collect(loop.run("fix the parser", "s1", "/tmp"));
+    expect(ts.checks.map((c) => c.passed)).toEqual([true, false]);
+    expect(stoodDown(ts)).toBe(false);
+    expect(stopMessages(loop).map((m) => loop.originOf(m))).toEqual(["gate:fix-verified"]);
+  });
+
+  test("one open step is enough to keep the gates armed", async () => {
+    const ts = new TaskStateStore();
+    const one = { content: "repair parseCsv", kind: "change" as const };
+    const two = { content: "run the parser tests", kind: "verify" as const };
+    const gw = makeGateway([
+      {
+        tool: "todo_write",
+        args: {
+          items: [
+            { ...one, status: "in_progress" },
+            { ...two, status: "pending" },
+          ],
+        },
+      },
+      WRITE_THEN_FINISH[0]!,
+      { tool: "bash", args: { command: "node browser-test.mjs" } },
+      {
+        tool: "todo_write",
+        args: {
+          items: [
+            { ...one, status: "completed" },
+            { ...two, status: "in_progress" },
+          ],
+        },
+      },
+      { text: "The parser was checked." },
+    ]);
+    const loop = makeLoop(gw, ts, { ledgerStatus: () => ({ total: 1, verified: 0 }) });
+    await collect(loop.run("fix the parser", "s1", "/tmp"));
+    expect(ts.todoCounts()).toMatchObject({ open: 1, unproven: 0 });
+    expect(stoodDown(ts)).toBe(false);
+    expect(stopMessages(loop).map((m) => loop.originOf(m))).toContain("gate:open-steps");
   });
 });

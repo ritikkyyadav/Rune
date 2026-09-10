@@ -245,8 +245,79 @@ const INLINE_FLAGS: Record<string, readonly string[]> = {
 };
 const INLINE_ASSERTION =
   /\bassert\b|\bexpect\s*\(|process\.exit\s*\(\s*[1-9]|sys\.exit\s*\(\s*[1-9]|\braise\b|\bthrow\b/;
-function inlineCheck(script: string): boolean {
-  return !script.includes(OPAQUE) && INLINE_ASSERTION.test(script);
+/** An exit code the script sets itself. A catch can swallow a throw; it cannot
+ *  swallow this. */
+const INLINE_NONZERO_EXIT =
+  /(?:process\.|sys\.)?\bexit\s*\(\s*[1-9]|\bexitCode\s*=\s*[1-9]|\bexit\s+[1-9]/;
+/** Constructs that can absorb the only failure signal the script has. */
+const INLINE_SWALLOW = /\bcatch\b|\bexcept\b|\brescue\b/;
+
+/** Which comment and literal syntax the inline script is written in. */
+type ScriptStyle = "c" | "hash";
+const SCRIPT_STYLE = (program: string): ScriptStyle =>
+  /^(?:node|bun|deno)$/.test(program) ? "c" : "hash";
+
+/**
+ * Blank out comments and string literals, so the assertion test reads CODE.
+ *
+ * `node -e 'console.log("assert ok")'` printed a word; `# assert the file
+ * parses` is a note to a reader. Both were classified as executed checks
+ * (measured 2026-09-10, Lane A: eight shapes of this, plus a swallowed
+ * assertion). Anything unterminated ends the scan — the remainder is then
+ * data by definition, and being wrong in that direction only costs a rung.
+ */
+function stripLiterals(script: string, style: ScriptStyle): string {
+  let out = "";
+  for (let i = 0; i < script.length; i++) {
+    const ch = script[i]!,
+      next = script[i + 1];
+    if (style === "c" && ch === "/" && next === "/") {
+      while (i < script.length && script[i] !== "\n") i++;
+      out += "\n";
+      continue;
+    }
+    if (style === "c" && ch === "/" && next === "*") {
+      const end = script.indexOf("*/", i + 2);
+      if (end < 0) return out;
+      i = end + 1;
+      out += " ";
+      continue;
+    }
+    if (style === "hash" && ch === "#") {
+      while (i < script.length && script[i] !== "\n") i++;
+      out += "\n";
+      continue;
+    }
+    if (ch === '"' || ch === "'" || (style === "c" && ch === "`")) {
+      // Python's triple quote spans lines and holds anything, docstrings
+      // included; every other literal here closes on its own delimiter.
+      const close = style === "hash" && script.startsWith(ch.repeat(3), i) ? ch.repeat(3) : ch;
+      let j = i + close.length;
+      for (; j < script.length; j++) {
+        if (script[j] === "\\") {
+          j++;
+          continue;
+        }
+        if (script.startsWith(close, j)) break;
+      }
+      if (j >= script.length) return out;
+      i = j + close.length - 1;
+      out += '""';
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+function inlineCheck(script: string, style: ScriptStyle): boolean {
+  if (script.includes(OPAQUE)) return false;
+  const code = stripLiterals(script, style);
+  if (!INLINE_ASSERTION.test(code)) return false;
+  // A verdict a `catch` can absorb is not one the exit code carries, unless
+  // the script sets that code itself.
+  if (INLINE_SWALLOW.test(code) && !INLINE_NONZERO_EXIT.test(code)) return false;
+  return true;
 }
 
 const base = (path: string) =>
@@ -322,7 +393,7 @@ function checks(input: string[], depth = 0): boolean {
   if (/^(python[23]?(?:\.\d+)?|node|bun|deno|bash|sh|zsh|ruby|perl)$/.test(program)) {
     const inlineFlags = /^python/.test(program) ? INLINE_FLAGS.python : INLINE_FLAGS[program];
     if (inlineFlags?.includes(words[0] ?? "") && typeof words[1] === "string") {
-      return inlineCheck(words[1]);
+      return inlineCheck(words[1], SCRIPT_STYLE(program));
     }
     if (/^python/.test(program) && words[0] === "-m")
       return /^(pytest|unittest|mypy)$/.test(words[1] ?? "");
@@ -331,4 +402,258 @@ function checks(input: string[], depth = 0): boolean {
     return checkScript(positional(words)[0] ?? "");
   }
   return checkScript(executable) && /[\\/]/.test(executable);
+}
+
+// ─── Relatedness: does this check speak to the step it would close? ───
+
+/**
+ * The command normalization the citation ledger identifies a command by.
+ *
+ * Lives here, beside the classifier, because relatedness compares a command
+ * a STEP declares against a command the model RAN, and both have to be
+ * spelled the same way for that comparison to mean anything. `brief.ts`
+ * re-exports it, so every existing importer is unaffected.
+ */
+export function normalizeCommand(command: string): string {
+  // Substitution syntax stays verbatim. Collapsing whitespace inside a quote
+  // or a nested program can make a citation identify a different command.
+  if (command.includes("$(") || command.includes("`")) return command.trim();
+  let out = "",
+    quote: string | null = null;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i]!;
+    if (ch === "\\" && quote !== "'") {
+      out += ch + (command[++i] ?? "");
+    } else if (quote) {
+      out += ch;
+      if (ch === quote) quote = null;
+    } else if (ch === "'" || ch === '"') {
+      quote = ch;
+      out += ch;
+    } else if (ch === " " || ch === "\t") {
+      if (!out.endsWith(" ")) out += " ";
+    } else out += ch;
+  }
+  return out.trim();
+}
+
+/** Why a check does or does not speak to the step it was run under. */
+export type CheckRelation = {
+  /** True when the check may be attributed to the step and close it. */
+  related: boolean;
+  reason:
+    | /** A project-wide runner: the whole suite, typecheck, lint, build. */ "project"
+    | /** The step's own wording names this command. */ "declared"
+    | /** It names a file the step touched, or that file's test. */ "file"
+    | /** The step touched nothing, so there is no file set to judge against. */ "unscoped"
+    | /** It names no path at all and is not project-wide. */ "names_nothing"
+    | /** It names only files this step never touched. */ "other_files";
+  /** The touched file the command matched, for the record. */
+  match?: string;
+};
+
+/**
+ * Programs that run a project's OWN checks rather than one file's. A check
+ * from this list is related to any change or verify step by nature: it
+ * compiles, lints or exercises the whole project, so whatever the step
+ * touched is inside what it just measured.
+ *
+ * `node`, `python` and the other script hosts are deliberately absent — they
+ * run whatever file (or inline script) they are handed, which is exactly the
+ * case relatedness has to judge by the file.
+ */
+const PROJECT_RUNNERS = new Set([
+  "npm",
+  "pnpm",
+  "yarn",
+  "bun",
+  "bunx",
+  "npx",
+  "turbo",
+  "nx",
+  "make",
+  "gradle",
+  "gradlew",
+  "mvn",
+  "mvnw",
+  "cargo",
+  "go",
+  "dotnet",
+  "swift",
+  "xcodebuild",
+  "tsc",
+  "eslint",
+  "biome",
+  "ruff",
+  "mypy",
+  "pyright",
+  "pytest",
+  "pytest-3",
+  "jest",
+  "vitest",
+  "mocha",
+  "ava",
+  "playwright",
+  "cypress",
+  "deno",
+  "test",
+  "check",
+  "lint",
+  "typecheck",
+  "build",
+  "selftest",
+]);
+
+/** A source or test FILE named on the command line: the thing that narrows a
+ *  project runner to one target. A directory (`pytest tests/`) does not — a
+ *  whole tree is still a suite — and neither does a config file. */
+const SOURCE_FILE_RE =
+  /\.(?:[cm]?[jt]sx?|py|rb|pl|go|rs|java|kt|kts|swift|sh|bash|zsh|ps1|php|ex|exs|erl|scala|c|cc|cpp|cxx|h|hpp|cs|dart|lua|r|jl|vue|svelte)$/i;
+const fileTarget = (word: string) =>
+  !word.startsWith("-") && !word.includes(OPAQUE) && SOURCE_FILE_RE.test(base(word));
+
+/**
+ * Whether the command runs the project's checks rather than a named file's.
+ *
+ * Built on the same parse the classifier uses, so `A=1 env bun test` and
+ * `cd x && cargo test` are read the way the shell reads them. A command that
+ * is not a check at all is never project-level.
+ */
+export function projectLevelCheck(command: string): boolean {
+  const chain = lastCommandChain(command);
+  if (chain === null) return false;
+  return chain.some((words) => checks(words) && projectLevelWords(words));
+}
+
+function projectLevelWords(input: string[], depth = 0): boolean {
+  if (depth > 4) return false;
+  const words = [...input];
+  while (ASSIGNMENT.test(words[0] ?? "")) words.shift();
+  const executable = words.shift() ?? "";
+  const program = base(executable);
+  if (!program || executable.includes(OPAQUE)) return false;
+  if (program === "env" || program === "command") return projectLevelWords(words, depth + 1);
+  // An inline script IS the program. Whatever it asserts, it asserts about
+  // what its own text names — never about the project as a whole.
+  const inlineFlags = /^python/.test(program) ? INLINE_FLAGS.python : INLINE_FLAGS[program];
+  if (inlineFlags?.includes(words[0] ?? "")) return false;
+  const runner = /^python[23]?(?:\.\d+)?$/.test(program)
+    ? words[0] === "-m"
+    : PROJECT_RUNNERS.has(program) ||
+      (program === "node" && (words[0] === "--test" || words[0] === "--check"));
+  if (!runner) return false;
+  return !words.some(fileTarget);
+}
+
+/**
+ * Every path the command NAMES, wherever it names it — as an argument, or
+ * inside an inline script's own text (`node -e "require('./src/csv')"`).
+ *
+ * Read off the raw command on purpose. The shell parse folds an inline script
+ * into one word, and the module a script imports is the strongest signal
+ * there is about what that script is checking. The leading executable is
+ * skipped so `python3.11 -c '…'` does not look like it named a file.
+ */
+export function commandPaths(command: string): string[] {
+  const from = command.search(/\s/);
+  if (from < 0) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const re = /[A-Za-z0-9_@~+.-]*(?:[\\/][A-Za-z0-9_@~+.-]+)+|[A-Za-z0-9_@~+-]+\.[A-Za-z0-9_]{1,8}/g;
+  for (const m of command.slice(from).matchAll(re)) {
+    const token = m[0]!;
+    if (token.includes(OPAQUE) || /^-/.test(token) || seen.has(token)) continue;
+    seen.add(token);
+    out.push(token);
+  }
+  return out;
+}
+
+type PathParts = {
+  norm: string;
+  segs: string[];
+  /** The basename with its extension, and any `.test`/`_test`, removed. */
+  core: string;
+  dirs: string[];
+};
+
+function pathParts(raw: string): PathParts {
+  const norm = raw.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
+  const segs = norm.split("/").filter((s) => s && s !== "." && s !== "..");
+  const baseName = segs.at(-1) ?? "";
+  const ext = /\.[^.]+$/.exec(baseName)?.[0] ?? "";
+  const stem = ext ? baseName.slice(0, -ext.length) : baseName;
+  const core = stem
+    .replace(/[._-](?:test|spec)$/i, "")
+    .replace(/^(?:test|spec)[._-]/i, "")
+    .toLowerCase();
+  return { norm, segs, core, dirs: segs.slice(0, -1).map((s) => s.toLowerCase()) };
+}
+
+/**
+ * Whether a path the command named is about a file the step touched.
+ *
+ * Three correspondences, in the order a person would check them: the same
+ * file however it was spelled; the same module by name, which is what
+ * `src/csv.ts` ↔ `tests/unit/csv.test.ts` ↔ `require('./src/csv')` all are;
+ * and a directory that holds the file or is named after it.
+ */
+function pathsCorrespond(named: string, touched: string): boolean {
+  const a = pathParts(named),
+    b = pathParts(touched);
+  if (!a.norm || !b.norm) return false;
+  if (a.norm === b.norm || a.norm.endsWith(`/${b.norm}`) || b.norm.endsWith(`/${a.norm}`))
+    return true;
+  if (a.core && a.core === b.core) return true;
+  if (b.norm.startsWith(`${a.norm}/`)) return true;
+  if (a.core && b.dirs.includes(a.core)) return true;
+  if (b.core && a.dirs.includes(b.core)) return true;
+  return false;
+}
+
+/** Whether the step's own wording names this command — in backticks, or
+ *  verbatim in prose. The step said what would prove it; this ran it. */
+function declaredCheckMatches(content: string, command: string): boolean {
+  const cmd = normalizeCommand(command);
+  if (!cmd) return false;
+  for (const m of content.matchAll(/`([^`]+)`/g)) {
+    const declared = normalizeCommand(m[1]!);
+    if (!declared) continue;
+    if (declared === cmd || cmd.startsWith(`${declared} `) || cmd.includes(declared)) return true;
+  }
+  return normalizeCommand(content).includes(cmd);
+}
+
+/**
+ * Does this check speak to the step it would close?
+ *
+ * The defect this answers (Lane A, remaining defect 1): the loop attributed a
+ * `bash` check to whichever step was in progress, so `python3 -c "assert
+ * True"` run while a step was open closed that step. The harness's own step
+ * check has always been scoped to `touchedFiles`; a model-run one was not.
+ *
+ * Conservative by construction, because the common path has to stay cheap:
+ * a project-wide check is related to everything, a step that declared its
+ * check keeps it, and a step that has touched NO files has no file set to
+ * judge against, so it keeps today's behaviour. Only a check that names
+ * nothing, or names only files this step never touched, is set aside — and
+ * "set aside" means it still counts as executed everywhere else, it just
+ * does not close the step.
+ */
+export function checkRelatedness(
+  command: string,
+  step: { content?: string; touched?: readonly string[] },
+): CheckRelation {
+  if (projectLevelCheck(command)) return { related: true, reason: "project" };
+  if (step.content && declaredCheckMatches(step.content, command))
+    return { related: true, reason: "declared" };
+  const named = commandPaths(command);
+  if (named.length === 0) return { related: false, reason: "names_nothing" };
+  const touched = (step.touched ?? []).filter(Boolean);
+  if (touched.length === 0) return { related: true, reason: "unscoped" };
+  for (const file of touched) {
+    if (named.some((p) => pathsCorrespond(p, file)))
+      return { related: true, reason: "file", match: file };
+  }
+  return { related: false, reason: "other_files" };
 }
