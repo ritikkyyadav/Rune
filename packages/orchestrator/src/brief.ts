@@ -89,11 +89,17 @@ export class BriefLedger {
    * `revision` is how a rung learns which tree it is a claim about. The engine
    * supplies it; a ledger built without one still works and simply records
    * evidence with no revision, which `demoteStaleCriteria` treats as old
-   * rather than stale.
+   * rather than stale. It is called at RECORD time, with the files the brief
+   * is scoped to, and answers for that moment — not for the moment the run
+   * started.
    */
   constructor(
     private readonly brief: Brief,
-    private readonly revision?: () => { head: string | null; dirty: boolean },
+    private readonly revision?: (files?: readonly string[]) => {
+      head: string | null;
+      dirty: boolean;
+      digest?: string;
+    },
   ) {}
 
   get criteria(): readonly Criterion[] {
@@ -156,9 +162,17 @@ export class BriefLedger {
       };
     }
     criterion.rung = rung;
-    const at = this.revision?.();
+    // Scoped to the files the brief says the work is in: on a dirty tree HEAD
+    // cannot date a claim, and their content digest is the only thing that
+    // can say the tree moved under it.
+    const at = this.revision?.(this.brief.touch);
     criterion.evidence = at
-      ? { ...evidence, ...(at.head ? { head: at.head } : {}), dirty: at.dirty }
+      ? {
+          ...evidence,
+          ...(at.head ? { head: at.head } : {}),
+          dirty: at.dirty,
+          ...(at.digest ? { digest: at.digest } : {}),
+        }
       : evidence;
     return { ok: true, criterion };
   }

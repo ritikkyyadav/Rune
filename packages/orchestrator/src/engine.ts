@@ -298,8 +298,19 @@ import {
   previousRunWasInterrupted,
   runSeqFromEvents,
   statusFromStopReason,
+  workspaceDigest,
   workspaceRevision,
 } from "./lifecycle";
+import type { StampedRevision } from "./lifecycle";
+
+/**
+ * How long `runRevision` may reuse one `git rev-parse` + `git status` pair.
+ *
+ * Long enough that a rung and the check behind it — stamped milliseconds
+ * apart — do not each pay for two git processes, short enough that a stamp
+ * still describes the tree the record is about.
+ */
+const REVISION_MEMO_MS = 1_000;
 
 export type PermissionHandler = (prompt: PermissionPrompt) => Promise<UserPermissionDecision>;
 
@@ -1268,6 +1279,10 @@ export class Engine {
   private liveSessionId: string | null = null;
   /** The workspace revision this run started against; see `workspaceRevision`. */
   private liveRevision: { head: string | null; dirty: boolean } | null = null;
+  /** Short memo behind `runRevision`, so stamping every record does not
+   *  spawn two git processes per tool call. */
+  private revisionMemo: { at: number; value: { head: string | null; dirty: boolean } } | null =
+    null;
   /** Digest of the last `lifecycle` emitted, so an unchanged boundary is silent. */
   private lastLifecycleDigest: string | null = null;
   /** Digest of the last persisted brief, so an unchanged ledger writes no row. */
@@ -1305,7 +1320,7 @@ export class Engine {
   private costSessionId: string | null = null;
   private costSessions = new Map<string, CostTracker>();
   private costContext = new AsyncLocalStorage<string>();
-  private delegatedSessions!: DelegatedSessions;
+  private delegatedSessions: DelegatedSessions;
   private readonly lessonCohortExcluded = new Set<string>();
   private delegationPool = new DelegationPool(() =>
     resolveMaxParallel(this.config.subagents?.maxParallel),
@@ -1564,6 +1579,22 @@ export class Engine {
     this.reapDeadWorkerCheckouts();
     this.reapOrphanedToolChildren();
 
+    // The session store, and the delegated-session store bound to it.
+    //
+    // These MUST stand before `registerDelegationTools()`, which snapshots
+    // `this.delegatedSessions` on its first line and hands that one object to
+    // both delegation tools for the life of the process. They used to be
+    // built 280 lines further down, so the snapshot was `undefined` and
+    // `withDelegatedSessions` silently substituted a store with no
+    // SessionManager: every child checkpoint lived in a per-process Map, no
+    // lease was ever read or written, and a `task_id` handed to the caller by
+    // one process was rejected by the next ("Unknown task_id in this parent
+    // session"). `delegatedSessions` carried a `!` that hid the undefined from
+    // tsc; the declaration no longer has one, so this order is now the
+    // compiler's business too.
+    this.sessions = new SessionManager(this.config.dbPath);
+    this.delegatedSessions = new DelegatedSessions(this.sessions);
+
     // Register the delegation tools (task + worker) — unless `[subagents]
     // mode = "off"`, in which case neither exists, the doctrine never
     // advertises them (doctrineContext derives canDelegate from registry
@@ -1640,7 +1671,7 @@ export class Engine {
         () => this.currentGoal(),
         (brief) => {
           this.brief = brief;
-          this.ledger = new BriefLedger(brief, () => this.runRevision());
+          this.ledger = new BriefLedger(brief, (files) => this.runRevision(files));
           // Durable from the moment it is agreed. Before this the criteria and
           // their rungs lived only in two Engine fields, so a restart discarded
           // every acceptance criterion the user had confirmed and a resumed run
@@ -1848,10 +1879,6 @@ export class Engine {
         readSetting: (key) => this.readConfigSetting(key),
       }),
     );
-
-    // Initialize Session Manager
-    this.sessions = new SessionManager(this.config.dbPath);
-    this.delegatedSessions = new DelegatedSessions(this.sessions);
 
     // ── Org policy: load + verify BEFORE the broker exists. A managed machine
     // with a tampered/unsigned policy refuses to start — running unpoliced is
@@ -4779,11 +4806,18 @@ export class Engine {
 
     // ── The workspace revision (Phase 2 G4/G5) ──
     // Nothing recorded what revision a run started from, so a stored verdict
-    // had nothing to be stale against. Measured once per run, stamped onto
-    // every check the spine records and onto every rung the ledger moves.
+    // had nothing to be stale against. The run's OPENING revision is this
+    // snapshot; what a rung or a check is stamped with is measured again when
+    // that record is written (`runRevision`), because a run that never
+    // commits would otherwise stamp one identical revision on everything it
+    // claims, however much the tree moved under it.
     const revision = workspaceRevision(this.config.workspaceRoot);
     this.liveRevision = revision;
-    taskState.setRevision(revision);
+    // A FUNCTION, not the snapshot: every check is stamped with the revision
+    // and the file digest measured when that check ran, not with the one the
+    // run opened on. See `runRevision`.
+    this.revisionMemo = null;
+    taskState.setRevision((files) => this.runRevision(files));
 
     // ── The brief and its ledger (G3) ──
     // Restored beside the spine, with any claim that was proven against a
@@ -6278,9 +6312,31 @@ export class Engine {
 
   // ─── The lifecycle projection ───
 
-  /** The revision this run is working against; measured once per run. */
-  private runRevision(): { head: string | null; dirty: boolean } {
-    return this.liveRevision ?? { head: null, dirty: false };
+  /**
+   * The revision a claim or a verdict recorded RIGHT NOW is about.
+   *
+   * Measured at stamp time, not once per run. The run-start snapshot alone
+   * made the staleness rule almost unfireable: an ordinary run is dirty from
+   * its first write to its last and never commits mid-run, so every rung and
+   * every check carried one identical stamp however much the file it was
+   * about was rewritten afterwards — and the mirror case was worse, a run
+   * that started clean stamping `dirty: false` on claims taken after its own
+   * writes had dirtied the tree, which the next run then demoted for this
+   * run's own output.
+   *
+   * `files` is what the claim is scoped to (a brief's `touch` list, a step's
+   * touched files); their content digest is the part that moves while HEAD
+   * stands still. The git pair is memoised for a second, because a rung and
+   * the check behind it are stamped milliseconds apart.
+   */
+  private runRevision(files?: readonly string[]): StampedRevision {
+    if (!this.liveRevision) return { head: null, dirty: false };
+    const now = Date.now();
+    if (!this.revisionMemo || now - this.revisionMemo.at > REVISION_MEMO_MS) {
+      this.revisionMemo = { at: now, value: workspaceRevision(this.config.workspaceRoot) };
+    }
+    const digest = workspaceDigest(this.config.workspaceRoot, files);
+    return { ...this.revisionMemo.value, ...(digest ? { digest } : {}) };
   }
 
   /**
@@ -6469,15 +6525,26 @@ export class Engine {
       if (payload.version !== 1) continue;
       const brief = payload.brief as Brief | undefined;
       if (!brief || !Array.isArray(brief.criteria)) continue;
-      const moved = demoteStaleCriteria(brief.criteria, revision);
       this.brief = brief;
-      this.ledger = new BriefLedger(brief, () => this.runRevision());
-      // Seed the digest from what was just read so an unchanged ledger does
-      // not rewrite the same row on every resume…
+      this.ledger = new BriefLedger(brief, (files) => this.runRevision(files));
+      // Seed the digest from what was READ, BEFORE anything is demoted, so an
+      // unchanged ledger does not rewrite the same row on every resume — and
+      // so a demotion, which changes it, is durable. Seeding it afterwards
+      // (which is what this did) made the digest match the demoted brief, so
+      // both the persist on the next line and the terminal one at the end of
+      // the run hit the early return and wrote nothing: the durable record
+      // still claimed `verified` against a HEAD that had moved, which is the
+      // exact state this rule exists to prevent.
       this.lastBriefDigest = JSON.stringify(
         brief.criteria.map((c) => [c.rung, c.text, c.evidence?.source]),
       );
-      // …unless a demotion actually changed it, which must be durable.
+      // Scoped to what the brief says it is about, so a claim taken on a
+      // dirty tree has something to be measured against.
+      const digest = workspaceDigest(this.config.workspaceRoot, brief.touch);
+      const moved = demoteStaleCriteria(brief.criteria, {
+        ...revision,
+        ...(digest ? { digest } : {}),
+      });
       if (moved.length > 0) this.persistBrief();
       return moved;
     }
@@ -6572,7 +6639,18 @@ export class Engine {
    */
   private registerDelegationTools(): void {
     const engine = this;
-    const delegatedSessions = this.delegatedSessions;
+    // A snapshot, not a getter: both tools take the store BY VALUE and keep
+    // that one object for the life of the process. When this ran before the
+    // store existed, `withDelegatedSessions` substituted a memory-only store
+    // and every child checkpoint and lease was lost without a word. Fail
+    // loudly instead — the constructor builds the store above this call.
+    const delegatedSessions = this.delegatedSessions as DelegatedSessions | undefined;
+    if (!delegatedSessions) {
+      throw new Error(
+        "registerDelegationTools ran before the delegated-session store existed — " +
+          "child checkpoints and leases would never reach the database",
+      );
+    }
     const subRegistry = new ToolRegistry();
     registerBuiltinTools(subRegistry, this.config.toolsBinaryPath);
     // `todo_write` has category "read", so it was reachable from a `task`

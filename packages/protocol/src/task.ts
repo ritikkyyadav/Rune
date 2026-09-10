@@ -226,6 +226,13 @@ export interface CheckRecord {
    */
   head?: string;
   dirty?: boolean;
+  /**
+   * A content digest of the files the check was scoped to, taken when the
+   * verdict was recorded. On a dirty tree — which is every ordinary run —
+   * HEAD does not move, so this is the only thing that can say the code has
+   * been edited since this verdict was read.
+   */
+  digest?: string;
 }
 
 /**

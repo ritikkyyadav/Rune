@@ -13,6 +13,11 @@
 // run's commit contained them. One function, four callers.
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readFileSync, statSync } from "node:fs";
+import { resolve, sep } from "node:path";
+
+import { patchTargetPaths } from "@rune/tool-registry";
 
 import type {
   CheckRecord,
@@ -45,8 +50,10 @@ const WRITE_TOOLS: ReadonlySet<string> = new Set([
  * them in a worktree the lead never sees a tool call for, so its `args.files`
  * are the only record the event stream carries.
  *
- * Callers pass whatever they have: the result is optional, and a caller with
- * no result simply gets no `apply_patch` paths rather than a wrong answer.
+ * Callers pass whatever they have. The result is optional: without it an
+ * `apply_patch` is read from the patch text's own file headers, which is the
+ * same set the tool then writes — so an event-stream consumer that never sees
+ * a result (the TUI footer) is no longer short by every patched file.
  */
 export function filesChangedFrom(
   toolName: string | undefined,
@@ -71,10 +78,15 @@ export function filesChangedFrom(
         if (typeof path === "string" && path) paths.push(path);
       }
     }
-    // A patch the harness could not read back is still a write; fall back to
-    // the declared path so the count is never lower than the truth.
+    // A patch the harness could not read back — or a caller that has the call
+    // but not its result, which is every event-stream consumer — is still a
+    // write. The patch text names its own targets, so read them from there
+    // rather than answering "nothing changed": the TUI footer counted zero
+    // patched files for exactly this reason.
+    if (paths.length === 0 && typeof a.patch === "string" && a.patch)
+      paths.push(...patchTargetPaths(a.patch));
     if (paths.length === 0 && typeof a.path === "string" && a.path) paths.push(a.path);
-    return paths;
+    return [...new Set(paths)];
   }
 
   if (name === "worker") {
@@ -136,6 +148,55 @@ export function workspaceRevision(root: string): { head: string | null; dirty: b
   return { head, dirty: status !== null && status.length > 0 };
 }
 
+/** What a claim or a verdict is a claim ABOUT: a revision, and the content of
+ *  the files it is scoped to at that moment. */
+export interface StampedRevision {
+  head: string | null;
+  dirty: boolean;
+  /** sha256 (short) over the named files' contents. Undefined when no file was named. */
+  digest?: string;
+}
+
+/**
+ * A content digest of the files a claim is scoped to.
+ *
+ * HEAD cannot date a claim on a dirty tree, and the ordinary agent run is
+ * dirty from its first write to its last: nothing commits mid-run, so every
+ * rung and every check was stamped against one unchanging revision however
+ * much the very file it was about was rewritten afterwards. This is the part
+ * that moves.
+ *
+ * Bounded and never fatal: at most 64 files, at most 256 KiB read from each,
+ * and a file that cannot be read contributes its name and "missing" rather
+ * than throwing. A path that resolves outside the workspace is skipped — the
+ * digest is a fact about this tree.
+ */
+export function workspaceDigest(
+  root: string,
+  files: readonly string[] | undefined,
+): string | undefined {
+  const named = (files ?? []).filter((f) => typeof f === "string" && f.trim().length > 0);
+  if (named.length === 0) return undefined;
+  const hash = createHash("sha256");
+  for (const file of [...new Set(named)].sort().slice(0, 64)) {
+    const full = resolve(root, file);
+    if (full !== root && !full.startsWith(root.endsWith(sep) ? root : root + sep)) continue;
+    hash.update(file);
+    try {
+      const stats = statSync(full);
+      if (stats.isDirectory()) {
+        hash.update(`\0dir:${stats.mtimeMs}`);
+        continue;
+      }
+      hash.update("\0");
+      hash.update(readFileSync(full).subarray(0, 256 * 1024));
+    } catch {
+      hash.update("\0missing");
+    }
+  }
+  return hash.digest("hex").slice(0, 16);
+}
+
 // ─── Stale evidence ───
 
 const RUNGS: readonly ClaimRung[] = ["suspected", "observed", "reproduced", "verified"];
@@ -153,30 +214,54 @@ const RUNGS: readonly ClaimRung[] = ["suspected", "observed", "reproduced", "ver
  *  · HEAD moved since the claim was recorded → drop one rung.
  *  · the tree was CLEAN when the claim was recorded and is dirty now → drop
  *    one rung (something was edited under a proven claim).
- *  · it was dirty then and is dirty now → nothing can be concluded either
- *    way, so nothing moves.
+ *  · it was dirty then and is dirty now → the claim has no immutable anchor.
+ *    If both moments carry a digest of the files the claim is about, that
+ *    digest decides; with no digest on either side nothing can be shown to
+ *    have held, so the claim drops a rung. This is the ordinary agent run —
+ *    HEAD never moves inside it — and treating it as "nothing can be
+ *    concluded, so nothing moves" is what made the rule almost unfireable.
  * A claim recorded before revisions were tracked has no `head` and is left
  * alone; it is not evidence of staleness, only of age.
+ *
+ * Each demotion is KEYED by the revision that caused it (`evidence.staleAt`),
+ * so one change costs one rung. Without that key the same unchanged fact
+ * decayed again on every call — verified → reproduced → observed — because
+ * the evidence itself is never re-stamped: `evidence.head` still says, truly,
+ * where the claim was taken.
  *
  * Returns the criteria that moved, for the line the surface prints.
  */
 export function demoteStaleCriteria(
   criteria: Criterion[],
-  now: { head: string | null; dirty: boolean },
+  now: StampedRevision,
 ): Array<{ text: string; from: ClaimRung; to: ClaimRung }> {
   const moved: Array<{ text: string; from: ClaimRung; to: ClaimRung }> = [];
+  const key = `${now.head ?? ""}|${now.dirty ? 1 : 0}|${now.digest ?? ""}`;
   for (const criterion of criteria) {
     const rung = criterion.rung;
     const evidence = criterion.evidence as
-      (Criterion["evidence"] & { head?: string; dirty?: boolean }) | undefined;
+      | (Criterion["evidence"] & {
+          head?: string;
+          dirty?: boolean;
+          digest?: string;
+          staleAt?: string;
+        })
+      | undefined;
     if (!rung || !evidence?.head) continue;
     const index = RUNGS.indexOf(rung);
     if (index <= 1) continue; // suspected/observed cannot go stale
+    // This revision has already cost this criterion its rung.
+    if (evidence.staleAt === key) continue;
     const headMoved = now.head !== null && evidence.head !== now.head;
     const wentDirty = evidence.dirty === false && now.dirty;
-    if (!headMoved && !wentDirty) continue;
+    const stayedDirty =
+      evidence.dirty === true &&
+      now.dirty &&
+      !(evidence.digest !== undefined && evidence.digest === now.digest);
+    if (!headMoved && !wentDirty && !stayedDirty) continue;
     const to = RUNGS[index - 1]!;
     criterion.rung = to;
+    evidence.staleAt = key;
     moved.push({ text: criterion.text, from: rung, to });
   }
   return moved;

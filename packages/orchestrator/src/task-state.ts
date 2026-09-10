@@ -496,6 +496,31 @@ export type SetTodosVerdict =
       notes: string[];
     };
 
+/**
+ * What a recorded verdict is a verdict ABOUT: the revision, whether the tree
+ * was dirty, and a digest of the files in scope at that moment. Structural on
+ * purpose — this store never reads git; the engine hands it in.
+ */
+export interface RevisionStamp {
+  head: string | null;
+  dirty: boolean;
+  digest?: string;
+}
+
+/** The revision fields of a `CheckRecord`, omitting what was not measured. */
+function revisionFields(at: RevisionStamp | null): {
+  head?: string;
+  dirty?: boolean;
+  digest?: string;
+} {
+  if (!at) return {};
+  return {
+    ...(at.head ? { head: at.head } : {}),
+    dirty: at.dirty,
+    ...(at.digest ? { digest: at.digest } : {}),
+  };
+}
+
 export class TaskStateStore {
   private state: TaskState = emptyState();
   /**
@@ -534,16 +559,34 @@ export class TaskStateStore {
   }
 
   /**
-   * The workspace revision this run is working against.
+   * The workspace revision a verdict is a verdict ABOUT.
    *
-   * Set once per run by the engine and stamped onto every check the spine
-   * records, so a verdict carries the tree it was taken on. Never derived
-   * here: reading git is the engine's job and this store is pure.
+   * Stamped onto every check the spine records, so a stored verdict can be
+   * told apart from a stale one. Never derived here: reading git is the
+   * engine's job and this store is pure — which is why the engine may hand in
+   * a FUNCTION instead of a snapshot. It measured once per run before, and on
+   * a tree that is dirty from the first write to the last (every ordinary
+   * run) that made every check in the run carry one identical stamp. The
+   * function is called at stamp time, with the files the check was scoped to.
    */
-  private revision: { head: string | null; dirty: boolean } | null = null;
+  private revision: RevisionStamp | ((files: readonly string[]) => RevisionStamp) | null = null;
 
-  setRevision(revision: { head: string | null; dirty: boolean } | null): void {
+  setRevision(
+    revision: RevisionStamp | ((files: readonly string[]) => RevisionStamp) | null,
+  ): void {
     this.revision = revision;
+  }
+
+  /** The revision to stamp on a record taken right now, for the files it is about. */
+  private revisionNow(): RevisionStamp | null {
+    if (typeof this.revision !== "function") return this.revision;
+    const scope = this.touchedFiles.length > 0 ? this.touchedFiles : this.writtenFiles;
+    try {
+      return this.revision(scope);
+    } catch {
+      // Bookkeeping must never fail a run.
+      return null;
+    }
   }
   /**
    * Id counters for the narrative. Restored from the snapshot rather than kept
@@ -722,11 +765,12 @@ export class TaskStateStore {
         ...(detail?.exitCode != null ? { exitCode: detail.exitCode } : {}),
         ...(detail?.durationMs != null ? { durationMs: detail.durationMs } : {}),
         ...(detail?.summary ? { summary: detail.summary.slice(0, 200) } : {}),
-        // The revision it ran against. A verdict with no revision cannot be
-        // told apart from a stale one after a restart, which is why "no
-        // verified status for stale evidence" had nothing to check.
-        ...(this.revision?.head ? { head: this.revision.head } : {}),
-        ...(this.revision ? { dirty: this.revision.dirty } : {}),
+        // The revision it ran against, measured NOW and scoped to the files
+        // this step touched. A verdict with no revision cannot be told apart
+        // from a stale one after a restart, which is why "no verified status
+        // for stale evidence" had nothing to check; a verdict stamped once
+        // per run cannot be told apart from a later one either.
+        ...revisionFields(this.revisionNow()),
       });
       if (this.state.checks.length > CHECKS_CAP) {
         this.state.checks = this.state.checks.slice(-CHECKS_CAP);

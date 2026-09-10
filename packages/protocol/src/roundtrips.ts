@@ -89,6 +89,24 @@ export interface Evidence {
    */
   head?: string;
   dirty?: boolean;
+  /**
+   * A content digest of the files the claim is about, taken at the same
+   * moment as `head`. HEAD alone cannot date a claim on a DIRTY tree — the
+   * ordinary agent run never commits mid-run, so every rung would be stamped
+   * against one unchanging revision however much its own file was rewritten.
+   * The digest is what makes "the tree moved under this claim" measurable
+   * while HEAD stands still. Absent outside a git repository, and absent when
+   * the brief names no files.
+   */
+  digest?: string;
+  /**
+   * The revision that already cost this criterion a rung. Written by
+   * `demoteStaleCriteria` so one change demotes once: without it the same
+   * unchanged fact decayed one rung on every call — verified → reproduced →
+   * observed — which is the "demoting every criterion on every resume" the
+   * rule exists to avoid.
+   */
+  staleAt?: string;
 }
 
 export interface Criterion {
