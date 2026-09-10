@@ -1,0 +1,173 @@
+{
+  "schema": 1,
+  "kind": "local-live-pilot",
+  "startedAt": "2026-09-10T07:43:21.917Z",
+  "limits": {
+    "perTaskListUsd": 1,
+    "timeoutMs": 300000,
+    "runs": 2
+  },
+  "model": "gpt-oss:120b",
+  "providers": {
+    "rune": "ollama-turbo",
+    "opencode": "ollama-cloud"
+  },
+  "provenance": {
+    "runeSha": "d18fde0680e27c1e33f7218182cf074836d16cfd",
+    "dirtyPatchSha256": "50307ca05903dc54e8947c3ce7407c95cd5b21de7f5c4b7d21737844fdd0ab56",
+    "taskDigest": "00931a9bb12af7ab95d494e2009b9db1750841c4992cfa1b6e6d2c4d7b9692dd",
+    "runeExecutableSha256": "0bea8a3849e8c77d683e2632e21d48fb15c9811968f1e8ed1108bc8b8607bd7a",
+    "runeCommand": [
+      "/Users/ritikyadav890/.rune/bin/rune-compiled"
+    ],
+    "opencodeCommand": [
+      "opencode"
+    ],
+    "versions": {
+      "rune": "Rune v0.4.1-dev+d18fde0",
+      "opencode": "1.18.23"
+    }
+  },
+  "limitations": [
+    "Small internally authored pilot; not SWE-bench or Terminal-Bench and not an overall capability score.",
+    "Same selected primary model and high reasoning; each harness retains its own tools, orchestration, prompts and helper routing.",
+    "Dollar figures use Rune's shared versioned pricing table, not subscription invoices. Unknown prices stay null.",
+    "Rune reserves dollars before requests; OpenCode is stopped after a reported step crosses the common ceiling. Any overshoot is recorded and cannot count as an on-budget success."
+  ],
+  "results": [
+    {
+      "sourceBefore": "0bea8a3849e8c77d683e2632e21d48fb15c9811968f1e8ed1108bc8b8607bd7a",
+      "sourceChanged": false,
+      "task": "csv-state-machine",
+      "run": 1,
+      "arm": "rune",
+      "exitCode": 0,
+      "durationMs": 2660,
+      "listUsd": 0.00108934,
+      "models": [
+        "ollama-turbo/gpt-oss:120b"
+      ],
+      "entries": 1,
+      "estimated": true,
+      "scored": true,
+      "acceptancePassed": false,
+      "onBudget": true,
+      "success": false,
+      "evidence": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/claude-free-series-3/csv-state-machine-1-rune",
+      "patchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completedAt": "2026-09-10T07:43:25.145Z"
+    },
+    {
+      "sourceBefore": "0bea8a3849e8c77d683e2632e21d48fb15c9811968f1e8ed1108bc8b8607bd7a",
+      "sourceChanged": false,
+      "task": "csv-state-machine",
+      "run": 1,
+      "arm": "opencode",
+      "exitCode": null,
+      "durationMs": 300075,
+      "stopped": "timeout",
+      "listUsd": 0.022302740000000005,
+      "models": [
+        "gpt-oss:120b"
+      ],
+      "entries": 15,
+      "estimated": true,
+      "scored": true,
+      "acceptancePassed": false,
+      "onBudget": false,
+      "success": false,
+      "evidence": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/claude-free-series-3/csv-state-machine-1-opencode",
+      "patchSha256": "a57baf8ebfaef03b7e951ecec9f5b02634f088c8e67f72b54387a805ee56e6d9",
+      "completedAt": "2026-09-10T07:48:25.382Z"
+    },
+    {
+      "sourceBefore": "0bea8a3849e8c77d683e2632e21d48fb15c9811968f1e8ed1108bc8b8607bd7a",
+      "sourceChanged": false,
+      "task": "working-tree-integration",
+      "run": 1,
+      "arm": "opencode",
+      "exitCode": 0,
+      "durationMs": 63272,
+      "listUsd": 0.00553746,
+      "models": [
+        "gpt-oss:120b"
+      ],
+      "entries": 12,
+      "estimated": true,
+      "scored": true,
+      "acceptancePassed": true,
+      "onBudget": true,
+      "success": true,
+      "evidence": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/claude-free-series-3/working-tree-integration-1-opencode",
+      "patchSha256": "b1ab7f97e3827c180cd030e9fd03c0695511e5b1b0411d69ac281a8f915b3365",
+      "completedAt": "2026-09-10T07:49:28.809Z"
+    },
+    {
+      "sourceBefore": "0bea8a3849e8c77d683e2632e21d48fb15c9811968f1e8ed1108bc8b8607bd7a",
+      "sourceChanged": false,
+      "task": "working-tree-integration",
+      "run": 1,
+      "arm": "rune",
+      "exitCode": 0,
+      "durationMs": 63614,
+      "listUsd": 0.00810196,
+      "models": [
+        "ollama-turbo/gpt-oss:120b"
+      ],
+      "entries": 15,
+      "estimated": true,
+      "scored": true,
+      "acceptancePassed": true,
+      "onBudget": true,
+      "success": true,
+      "evidence": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/claude-free-series-3/working-tree-integration-1-rune",
+      "patchSha256": "8794f8a986296a59e66feae1f425a6e8fa66a37e9513cc415a28634c64be48fa",
+      "completedAt": "2026-09-10T07:50:32.565Z"
+    },
+    {
+      "sourceBefore": "0bea8a3849e8c77d683e2632e21d48fb15c9811968f1e8ed1108bc8b8607bd7a",
+      "sourceChanged": false,
+      "task": "dependent-migration",
+      "run": 1,
+      "arm": "rune",
+      "exitCode": 0,
+      "durationMs": 47191,
+      "listUsd": 0.00527982,
+      "models": [
+        "ollama-turbo/gpt-oss:120b"
+      ],
+      "entries": 13,
+      "estimated": true,
+      "scored": true,
+      "acceptancePassed": true,
+      "onBudget": true,
+      "success": true,
+      "evidence": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/claude-free-series-3/dependent-migration-1-rune",
+      "patchSha256": "ecccd91d71ee63c4199bfbcfddb0ceec9d4c13c895e6cfb194b948d2ee5da24c",
+      "completedAt": "2026-09-10T07:51:19.911Z"
+    },
+    {
+      "sourceBefore": "0bea8a3849e8c77d683e2632e21d48fb15c9811968f1e8ed1108bc8b8607bd7a",
+      "sourceChanged": false,
+      "task": "dependent-migration",
+      "run": 1,
+      "arm": "opencode",
+      "exitCode": 1,
+      "durationMs": 211904,
+      "listUsd": 0.00649424,
+      "models": [
+        "gpt-oss:120b"
+      ],
+      "entries": 8,
+      "estimated": true,
+      "scored": false,
+      "unscoredReason": "provider_unavailable",
+      "acceptancePassed": true,
+      "onBudget": true,
+      "success": false,
+      "evidence": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/claude-free-series-3/dependent-migration-1-opencode",
+      "patchSha256": "9bedb248bc56c8e614998bcea2e8d9620824805baa935469df6bbcc4c2a47339",
+      "completedAt": "2026-09-10T07:54:51.994Z"
+    }
+  ]
+}

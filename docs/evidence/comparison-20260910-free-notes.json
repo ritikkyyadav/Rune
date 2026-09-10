@@ -1,0 +1,19 @@
+{
+  "kind": "comparison-qualification",
+  "recordedAt": "2026-09-10",
+  "reports": {
+    "comparison-20260910-free-a.json": "4ea7fd9fcd665d482f55e47bfec6b82ce65bbb2d25b6813236c43cbb18b3d115",
+    "comparison-20260910-free-b.json": "1ab4d5dd98e35e5cff32a791ba57c128595b23913111189ef5a0c507879f78f7"
+  },
+  "route": "Rune ollama-turbo, OpenCode ollama-cloud, both on gpt-oss:120b through the founder's own ollama.com account; list costs are the free route's estimated equivalents, both routes billed nothing",
+  "builds": {
+    "free-a": "Rune v0.4.1-dev+0946e42 (CLI c337e2e0beea\u2026), the Codex session's build of 0946e42 plus its working changes; before the silent-finish fix",
+    "free-b": "Rune v0.4.1-dev+d18fde0 (CLI 0bea8a3849e8\u2026), with the silent-finish fix; before the printed-call guard"
+  },
+  "qualifications": [
+    "Series A (free-a) stopped after one pair: OpenCode's arm reported an ollama.com HTTP 500 (isRetryable) after 190.7 s, which the runner records as provider_unavailable and treats as an infrastructure stop. Rune's arm passed acceptance in 30.9 s and exited 1: gpt-oss:120b never wrote a closing message and the empty-completion guard failed the run as provider_lost. That defect is fixed in d18fde0 (a run that wrote its work finishes on silence after one nudge); the recorded exit and success=false stand as they were.",
+    "Series B (free-b) ran on the d18fde0 build and stopped after three pairs when OpenCode's dependent-migration arm reported another ollama.com 500 at 211.9 s. Run 2 of every task therefore never happened. Rune's csv arm ended after one 2.7 s completion: the model printed a tool's arguments as text (`{\"paths\": [\"csv.ts\"]}`) and ended the turn, which the loop accepted as an answer; fixed in be0b468 (such a reply is nudged into a real call, twice at most). OpenCode's csv arm timed out at 300 s after 15 entries, having called a tool that route does not offer.",
+    "What the three scored pairs support: working-tree-integration, both passed at equal wall time (Rune 63.6 s / $0.0081, OpenCode 63.3 s / $0.0055); dependent-migration, Rune passed in 47.2 s / $0.0053 while OpenCode's arm was unscored on the provider error (its artifact also passed acceptance); csv-state-machine, both failed for different reasons. This is one run per task on a route that failed on the OpenCode side twice; it is not the three-by-two series the plan asked for and no ranking is drawn from it.",
+    "Rune's estimated list cost per task remained above OpenCode's on the pair both completed (about 1.5\u00d7), consistent with the 2026-09-08 series; on this route neither side caches, so the fold does not apply."
+  ]
+}

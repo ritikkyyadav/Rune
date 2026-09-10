@@ -1,0 +1,84 @@
+{
+  "schema": 1,
+  "kind": "local-live-pilot",
+  "startedAt": "2026-09-10T07:33:13.845Z",
+  "limits": {
+    "perTaskListUsd": 1,
+    "timeoutMs": 300000,
+    "runs": 2
+  },
+  "model": "gpt-oss:120b",
+  "providers": {
+    "rune": "ollama-turbo",
+    "opencode": "ollama-cloud"
+  },
+  "provenance": {
+    "runeSha": "0946e42cc17fa3ef25da2937abbce5133fdaac4b",
+    "dirtyPatchSha256": "ec12f3e105ab5fbcbc945da4ab97faa2afb111812af68897d88b32bcc7028853",
+    "taskDigest": "00931a9bb12af7ab95d494e2009b9db1750841c4992cfa1b6e6d2c4d7b9692dd",
+    "runeExecutableSha256": "c337e2e0beea270fbf9bfda202ed78eed5069f2e3eca7966f2637a24f2f28aa2",
+    "runeCommand": [
+      "/Users/ritikyadav890/.rune/bin/rune-compiled"
+    ],
+    "opencodeCommand": [
+      "opencode"
+    ],
+    "versions": {
+      "rune": "Rune v0.4.1-dev+0946e42",
+      "opencode": "1.18.23"
+    }
+  },
+  "limitations": [
+    "Small internally authored pilot; not SWE-bench or Terminal-Bench and not an overall capability score.",
+    "Same selected primary model and high reasoning; each harness retains its own tools, orchestration, prompts and helper routing.",
+    "Dollar figures use Rune's shared versioned pricing table, not subscription invoices. Unknown prices stay null.",
+    "Rune reserves dollars before requests; OpenCode is stopped after a reported step crosses the common ceiling. Any overshoot is recorded and cannot count as an on-budget success."
+  ],
+  "results": [
+    {
+      "sourceBefore": "c337e2e0beea270fbf9bfda202ed78eed5069f2e3eca7966f2637a24f2f28aa2",
+      "sourceChanged": false,
+      "task": "csv-state-machine",
+      "run": 1,
+      "arm": "rune",
+      "exitCode": 1,
+      "durationMs": 30916,
+      "listUsd": 0.00250364,
+      "models": [
+        "ollama-turbo/gpt-oss:120b"
+      ],
+      "entries": 8,
+      "estimated": true,
+      "scored": true,
+      "acceptancePassed": true,
+      "onBudget": true,
+      "success": false,
+      "evidence": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/claude-free-series-2/csv-state-machine-1-rune",
+      "patchSha256": "efffa7d85a30e3f60bf4ffcb521318c4ebdc6e54c8742074872b073d89b51dcc",
+      "completedAt": "2026-09-10T07:33:45.563Z"
+    },
+    {
+      "sourceBefore": "c337e2e0beea270fbf9bfda202ed78eed5069f2e3eca7966f2637a24f2f28aa2",
+      "sourceChanged": false,
+      "task": "csv-state-machine",
+      "run": 1,
+      "arm": "opencode",
+      "exitCode": 1,
+      "durationMs": 190705,
+      "listUsd": 0.0074719999999999995,
+      "models": [
+        "gpt-oss:120b"
+      ],
+      "entries": 6,
+      "estimated": true,
+      "scored": false,
+      "unscoredReason": "provider_unavailable",
+      "acceptancePassed": false,
+      "onBudget": true,
+      "success": false,
+      "evidence": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/claude-free-series-2/csv-state-machine-1-opencode",
+      "patchSha256": "c69420411fbb858853ca99f9cd7628302d4ac77f9140076484295c89f1d19fd4",
+      "completedAt": "2026-09-10T07:36:56.441Z"
+    }
+  ]
+}
