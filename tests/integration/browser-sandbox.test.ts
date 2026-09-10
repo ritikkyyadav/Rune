@@ -2,12 +2,26 @@ import { expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { describeNativeBinary, resolveRuneToolsBinary } from "../helpers/native-binary";
 
-const binary = resolve(process.env.RUNE_TOOLS_BINARY ?? "target/debug/rune-tools");
+// An exported RUNE_TOOLS_BINARY/RUNE_TOOLS_BIN wins over anything under
+// target/, and a variable pointing nowhere throws instead of skipping.
+const nativeBinary = resolveRuneToolsBinary();
+const binary = nativeBinary.path;
 // Opt in with an already installed runtime. This test never downloads browsers.
 const playwright = process.env.RUNE_TEST_PLAYWRIGHT;
-const available = process.platform === "darwin" && existsSync(binary) && !!playwright;
+const available = process.platform === "darwin" && nativeBinary.exists && !!playwright;
+if (!available)
+  console.warn(
+    `[browser-sandbox] skipped: ${
+      process.platform !== "darwin"
+        ? `these Chromium cases are darwin-only, this is ${process.platform}`
+        : !nativeBinary.exists
+          ? describeNativeBinary(nativeBinary)
+          : "RUNE_TEST_PLAYWRIGHT is unset — no installed Playwright module to point at"
+    }`,
+  );
 
 function run(command: string[], cwd: string, env: NodeJS.ProcessEnv, input?: string) {
   return new Promise<{ code: number | null; stdout: string; stderr: string }>((done, reject) => {

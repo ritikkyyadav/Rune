@@ -1,12 +1,24 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, statSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 import { BackgroundShellManager } from "../../packages/tool-registry/src/tools/background";
 import { setSandboxMode } from "../../packages/tool-registry/src/sandbox-mode";
+import { describeNativeBinary, resolveRuneToolsBinary } from "../helpers/native-binary";
 
-const binary = resolve(process.env.RUNE_TOOLS_BINARY ?? "target/debug/rune-tools");
-const native = existsSync(binary) && ["darwin", "linux"].includes(process.platform);
+// An exported RUNE_TOOLS_BINARY/RUNE_TOOLS_BIN wins over anything under
+// target/, and a variable pointing nowhere throws instead of skipping.
+const nativeBinary = resolveRuneToolsBinary();
+const binary = nativeBinary.path;
+const native = nativeBinary.exists && ["darwin", "linux"].includes(process.platform);
+if (!native)
+  console.warn(
+    `[background-sandbox] skipped: ${
+      nativeBinary.exists
+        ? `${process.platform} has no native sandbox backend`
+        : describeNativeBinary(nativeBinary)
+    }`,
+  );
 const dirs: string[] = [];
 const managers: BackgroundShellManager[] = [];
 afterEach(() => {
@@ -54,17 +66,98 @@ test.skipIf(!native)(
       expect(result.status).toBe("completed");
       expect(result.output).toContain("local-response");
       expect(existsSync(join(workspace, "allowed.txt"))).toBe(true);
+      // The temp root is writable too — a contained command still needs
+      // somewhere to put a scratch file, and that is not a leak.
+      const temp = manager.start(
+        'f="${TMPDIR:-/tmp}/rune-temp-probe-$$.txt"; printf inside > "$f" && cat "$f" && rm -f "$f"',
+        workspace,
+        true,
+      );
+      const tempResult = await finished(manager, temp.shellId);
+      expect(tempResult.status).toBe("completed");
+      expect(tempResult.output).toContain("inside");
       const denied = manager.start("printf forbidden > ../outside.txt", workspace, true);
       expect((await finished(manager, denied.shellId)).status).toBe("failed");
       expect(existsSync(join(dir, "outside.txt"))).toBe(false);
       const probe = manager.start("env", workspace, true);
       expect((await finished(manager, probe.shellId)).output).not.toContain("RUNE_TEST_SECRET");
+      if (process.platform === "linux") {
+        const pid = manager.start("readlink /proc/self/ns/pid", workspace, true);
+        const child = await finished(manager, pid.shellId);
+        expect(child.status).toBe("completed");
+        expect(child.output.trim()).not.toBe(readlinkSync("/proc/self/ns/pid"));
+        const caps = manager.start("grep '^CapEff:' /proc/self/status", workspace, true);
+        expect((await finished(manager, caps.shellId)).output).toMatch(/CapEff:\s+0+\s*$/);
+      }
     } finally {
       server.stop(true);
       if (oldSecret === undefined) delete process.env.RUNE_TEST_SECRET;
       else process.env.RUNE_TEST_SECRET = oldSecret;
     }
   },
+);
+
+test.skipIf(!native)(
+  "killing a background shell kills the descendants it left behind, not only the leader",
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rune-bg-cleanup-"));
+    dirs.push(dir);
+    const workspace = join(dir, "workspace");
+    mkdirSync(workspace);
+    const manager = new BackgroundShellManager(binary);
+    managers.push(manager);
+    setSandboxMode("on");
+    // A grandchild that outlives a leader-only kill and says so by growing a
+    // file. `wait` keeps the leader alive so the kill has a real tree to take.
+    const started = manager.start(
+      "(while true; do printf . >> ticks.txt; sleep 0.05; done) & wait",
+      workspace,
+      false,
+    );
+    expect(started.sandboxed).toBe(true);
+    const ticks = join(workspace, "ticks.txt");
+    for (let i = 0; i < 150 && !existsSync(ticks); i++) await Bun.sleep(20);
+    expect(existsSync(ticks)).toBe(true);
+
+    expect(manager.kill(started.shellId).found).toBe(true);
+    await Bun.sleep(400);
+    const settled = statSync(ticks).size;
+    await Bun.sleep(600);
+    expect(statSync(ticks).size).toBe(settled);
+    expect(manager.read(started.shellId).status).not.toBe("running");
+  },
+  30_000,
+);
+
+test.skipIf(!native)(
+  "a foreground sandboxed command that times out leaves no descendant running",
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rune-fg-cleanup-"));
+    dirs.push(dir);
+    const workspace = join(dir, "workspace");
+    mkdirSync(workspace);
+    const marker = join(workspace, "grandchild-alive");
+    // The same shape the crate tests unsandboxed, through the SANDBOXED
+    // foreground path: macOS kills the process group, Linux tears down the
+    // bwrap PID namespace, and neither may leave this touch to land.
+    const proc = Bun.spawnSync([binary, "--sandbox", "--workspace", workspace, "bash"], {
+      stdin: new TextEncoder().encode(
+        JSON.stringify({ command: `(sleep 2 && touch ${marker}) & wait`, timeout_ms: 400 }),
+      ),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const parsed = JSON.parse(new TextDecoder().decode(proc.stdout)) as {
+      success?: boolean;
+      result?: { sandboxed?: boolean; timed_out?: boolean };
+    };
+    expect(parsed.success).toBe(true);
+    expect(parsed.result?.sandboxed).toBe(true);
+    expect(parsed.result?.timed_out).toBe(true);
+    await Bun.sleep(2_500);
+    expect(existsSync(marker)).toBe(false);
+  },
+  30_000,
 );
 
 test("a missing native planner cannot silently launch a host background process", () => {

@@ -111,6 +111,8 @@ pub struct SpawnPlan {
     pub host_enforcement: &'static str,
     /// Anything the caller must say out loud — e.g. an unparseable host entry.
     pub notes: Vec<String>,
+    /// Same credential-free parent environment as foreground/background bash.
+    pub env: std::collections::HashMap<String, String>,
 }
 
 /// Best-effort real path. The profile matches on RESOLVED paths: on macOS
@@ -283,11 +285,11 @@ fn bwrap_args(workspace: &Path, req: &SpawnRequest, notes: &mut Vec<String>) -> 
         args.extend_from_slice(&["--bind".to_string(), ws.clone(), ws.clone()]);
     } else if req.capability.reads_workspace() {
         args.extend_from_slice(&["--ro-bind".to_string(), ws.clone(), ws.clone()]);
-    } else {
-        // No workspace at all — but the program still has to read itself.
-        let plug = plugin_root.display().to_string();
-        args.extend_from_slice(&["--ro-bind".to_string(), plug.clone(), plug]);
     }
+    // The plugin may be installed outside the workspace. It always needs
+    // its own files, and those remain read-only even for a workspace writer.
+    let plug = plugin_root.display().to_string();
+    args.extend_from_slice(&["--ro-bind".to_string(), plug.clone(), plug]);
 
     let scratch_s = scratch.display().to_string();
     args.extend_from_slice(&["--bind".to_string(), scratch_s.clone(), scratch_s.clone()]);
@@ -299,22 +301,21 @@ fn bwrap_args(workspace: &Path, req: &SpawnRequest, notes: &mut Vec<String>) -> 
         "/dev".to_string(),
     ]);
 
-    if req.capability.wants_network() {
+    args.extend_from_slice(&["--remount-ro".to_string(), "/".to_string()]);
+    args.push("--unshare-all".to_string());
+    if req.capability.wants_network() && !req.hosts.is_empty() {
+        args.push("--share-net".to_string());
         notes.push(
             "bubblewrap's network isolation is all-or-nothing: the declared hosts are disclosure on Linux, not a filter"
                 .to_string(),
         );
-    } else {
-        args.push("--unshare-net".to_string());
     }
+    args.push("--new-session".to_string());
+    args.extend_from_slice(&["--cap-drop".to_string(), "ALL".to_string()]);
     args.push("--die-with-parent".to_string());
 
-    let cwd = if req.capability.reads_workspace() {
-        workspace.display().to_string()
-    } else {
-        plugin_root.display().to_string()
-    };
-    args.extend_from_slice(&["--chdir".to_string(), cwd]);
+    // Manifest command paths are relative to the plugin, on every platform.
+    args.extend_from_slice(&["--chdir".to_string(), plugin_root.display().to_string()]);
     args.push("--".to_string());
     args.push(req.program.clone());
     args.extend(req.args.iter().cloned());
@@ -329,6 +330,7 @@ fn bwrap_args(workspace: &Path, req: &SpawnRequest, notes: &mut Vec<String>) -> 
 /// explain it.
 pub fn plan_spawn(workspace_root: &Path, req: &SpawnRequest) -> SpawnPlan {
     let mut notes: Vec<String> = Vec::new();
+    let env = crate::path_guard::PathGuard::new(workspace_root.to_path_buf()).curate_env();
 
     #[cfg(target_os = "macos")]
     {
@@ -348,6 +350,7 @@ pub fn plan_spawn(workspace_root: &Path, req: &SpawnRequest) -> SpawnPlan {
                 os_isolation: true,
                 host_enforcement: "port",
                 notes,
+                env,
             };
         }
         notes.push("sandbox-exec is not available on this machine".to_string());
@@ -365,6 +368,7 @@ pub fn plan_spawn(workspace_root: &Path, req: &SpawnRequest) -> SpawnPlan {
                 os_isolation: true,
                 host_enforcement: "all-or-nothing",
                 notes,
+                env,
             };
         }
         notes.push("bwrap is not available on this machine".to_string());
@@ -387,6 +391,7 @@ pub fn plan_spawn(workspace_root: &Path, req: &SpawnRequest) -> SpawnPlan {
         os_isolation: false,
         host_enforcement: "none",
         notes,
+        env,
     }
 }
 

@@ -51,7 +51,12 @@ pub(crate) fn escape_sbpl(s: &str) -> String {
 /// Credential and secret stores that stay unreadable under every profile, even
 /// where reads are otherwise broad. One list, because two lists become one
 /// list plus an omission.
-#[cfg(target_os = "macos")]
+///
+/// macOS reads broadly and denies these explicitly. Linux binds nothing from
+/// $HOME except the named toolchain roots, so the same stores are unreachable
+/// by construction — and `linux::tests` uses this list to keep it that way,
+/// which is why it is compiled there for tests.
+#[cfg(any(target_os = "macos", all(test, target_os = "linux")))]
 pub(crate) fn credential_deny_paths() -> Vec<PathBuf> {
     let home = dirs::home_dir().unwrap_or_default();
     vec![

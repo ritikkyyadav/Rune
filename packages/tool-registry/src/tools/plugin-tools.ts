@@ -183,6 +183,7 @@ export interface PluginToolSpawnPlan {
   os_isolation: boolean;
   host_enforcement: string;
   notes: string[];
+  env?: Record<string, string>;
 }
 
 export type SpawnPlanner = (req: {
@@ -346,6 +347,35 @@ export class PluginToolServer {
     });
     this.plan = plan;
 
+    // A declared endpoint is a restriction. Do not quietly turn it into
+    // unrestricted networking on backends that cannot enforce that scope.
+    let unenforcedEndpoints = false;
+    if (
+      decl.capability === "network" &&
+      (decl.hosts?.length ?? 0) > 0 &&
+      plan.os_isolation &&
+      plan.host_enforcement !== "port"
+    ) {
+      if (!unsandboxedToolsAllowed(this.opts.allowUnsandboxed, this.opts.plugin)) {
+        this.cleanupScratch();
+        return {
+          ok: false,
+          tools: [],
+          plan,
+          message:
+            `plugin "${this.opts.plugin}" tool "${decl.id}" was not started: ${plan.mechanism} cannot enforce its declared network endpoints. ` +
+            `Set [extensions] allowUnsandboxedTools = ["${this.opts.plugin}"] only to explicitly allow networking without that restriction.`,
+        };
+      }
+      pluginToolLog.warn(
+        `plugin "${this.opts.plugin}" tool "${decl.id}" has unrestricted network access by explicit allowUnsandboxedTools opt-in; filesystem isolation remains active.`,
+      );
+      // The opt-in belongs on the same surface that says "UNSANDBOXED", not
+      // only in a log line nobody reads: the tool DID start, and the scope it
+      // advertises is not the scope it got.
+      unenforcedEndpoints = true;
+    }
+
     // Rule 2. A machine that cannot contain the process does not run it.
     if (!plan.os_isolation) {
       const allowed = unsandboxedToolsAllowed(this.opts.allowUnsandboxed, this.opts.plugin);
@@ -380,7 +410,30 @@ export class PluginToolServer {
         stdout: "pipe",
         stderr: "pipe",
         env: {
-          ...process.env,
+          // Older/custom planners may omit env. The fallback remains an
+          // allowlist so neither path inherits provider keys or auth tokens.
+          ...(plan.env ??
+            Object.fromEntries(
+              [
+                "PATH",
+                "HOME",
+                "USER",
+                "LANG",
+                "TERM",
+                "SHELL",
+                "SystemRoot",
+                "windir",
+                "COMSPEC",
+                "ComSpec",
+                "PATHEXT",
+                "TEMP",
+                "TMP",
+                "USERPROFILE",
+              ].flatMap((key) =>
+                process.env[key] === undefined ? [] : [[key, process.env[key]!]],
+              ),
+            )),
+          ...(this.opts.env ?? {}),
           TMPDIR: this.scratchDir,
           // A tool that cannot write its runtime's caches must not die trying.
           PYTHONDONTWRITEBYTECODE: "1",
@@ -388,7 +441,6 @@ export class PluginToolServer {
           RUNE_PLUGIN_ROOT: this.opts.pluginRoot,
           RUNE_WORKSPACE: this.opts.workspaceRoot,
           RUNE_TOOL_CAPABILITY: decl.capability,
-          ...(this.opts.env ?? {}),
         },
       });
     } catch (err) {
@@ -431,11 +483,20 @@ export class PluginToolServer {
       workspaceRoot: this.opts.workspaceRoot,
     });
 
+    const startNotes = [
+      ...(unenforcedEndpoints
+        ? [
+            `its declared network endpoints (${(decl.hosts ?? []).join(", ")}) are NOT enforced by ` +
+              `${plan.mechanism} — allowUnsandboxedTools accepted unrestricted networking`,
+          ]
+        : []),
+      ...plan.notes,
+    ];
     return {
       ok: true,
       tools: advertised,
       plan,
-      message: plan.notes.length > 0 ? plan.notes.join("; ") : undefined,
+      message: startNotes.length > 0 ? startNotes.join("; ") : undefined,
     };
   }
 

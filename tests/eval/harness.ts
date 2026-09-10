@@ -266,9 +266,12 @@ const REAL_DEFAULT_MAX_COST = Math.max(
   Number(process.env.RUNE_EVAL_TASK_MAX_COST ?? process.env.RUNE_EVAL_TASK_MAX_COST ?? 0),
 );
 
+// Both spellings, because CI jobs and local runs export either one; the
+// repeated `RUNE_TOOLS_BINARY` here was a rename artifact that made an
+// exported `RUNE_TOOLS_BIN` invisible.
 const TOOLS_BINARY =
   process.env.RUNE_TOOLS_BINARY ??
-  process.env.RUNE_TOOLS_BINARY ??
+  process.env.RUNE_TOOLS_BIN ??
   join(__dirname, "..", "..", "target", "release", "rune-tools");
 
 /**
