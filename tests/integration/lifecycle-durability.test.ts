@@ -25,9 +25,12 @@
  * file is run on its own with sandboxing disabled. It also needs the native
  * binary, and per §7 says so as a FAILURE rather than vanishing as a skip.
  *
- * **Where an assertion has nothing to read yet it is a `test.todo` naming the
- * gap** from §6's table, so the build lanes have an executable definition of
- * done. Nothing here is weakened to make it green.
+ * **Where an assertion had nothing to read yet it was a `test.todo` naming the
+ * gap**, so the build lanes had an executable definition of done. All of them
+ * are real assertions now: the seven §6 predicted, and the two this rig found
+ * itself (S-1, orphaned tool children; S-2, a rescued compaction that could
+ * not say its summarizer failed), both closed on 2026-09-11. Nothing here is
+ * weakened to make it green.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -495,14 +498,15 @@ describe("a dependent multi-step change, killed inside a tool and resumed", () =
     expect(killedTool.join(" ")).toContain("long.mjs");
   });
 
-  test.todo(
-    "S-1 (new): no orphan processes. MEASURED on 2026-09-10: after `SIGKILL` of the engine, " +
-      "both the `rune-tools` child running the in-flight `bash` and ITS own grandchild survive " +
-      "indefinitely — still there 6 s later, and only reaped by this suite's own cleanup. " +
-      "`rust-bridge.ts:148-162` sends SIGTERM/SIGKILL only on the tool's abort signal, which a " +
-      "SIGKILLed parent never delivers, and nothing puts the child in a killable process group " +
-      "or gives it a parent-death watchdog. §6's table has no item for this; the smallest fix " +
-      "is a group kill or a parent-pid watchdog in the native executor.",
+  test(
+    "S-1: no orphan processes. MEASURED as broken on 2026-09-10 — after `SIGKILL` of the engine " +
+      "both the `rune-tools` child running the in-flight `bash` and ITS own grandchild survived, " +
+      "still there 6 s later and only reaped by this suite's own cleanup, because " +
+      "`rust-bridge.ts` sends SIGTERM/SIGKILL only on the tool's abort signal and a SIGKILLed " +
+      "parent never delivers one. Closed 2026-09-11 by a parent-death watchdog in `rune-tools` " +
+      "(`crates/rune-sandbox/src/parent_death.rs`, `getppid()` polled every 250 ms) which kills " +
+      "the command's process group and exits, plus process groups on the two sandbox backends " +
+      "that lacked them and a pid ledger a restarting engine reaps.",
     () => {
       expect(orphans).toEqual([]);
       expect(S.matchingProcesses(`rune-tools --workspace ${rig.fixture.root}`)).toEqual([]);
@@ -972,13 +976,14 @@ describe("a summarizer that fails every time", () => {
     }
   });
 
-  test.todo(
-    "S-2 (new): a compaction whose summarizer FAILED but whose deterministic tier rescued it is " +
-      "indistinguishable from a healthy eviction. G16 put `failed`/`failureReason` on the event, " +
-      'but `evictInstead("summarizer failed")` (`context-engine.ts:678-704`) returns a plain ' +
-      "success, so `lastSummaryFailure` — which the engine already knows — never reaches any " +
-      "consumer. Measured here: three summarizer 500s, and every compaction event reports a " +
-      "clean `tier: tool_results`.",
+  test(
+    "S-2: a compaction whose summarizer FAILED but whose deterministic tier rescued it says so. " +
+      "It used to be indistinguishable from a healthy eviction: G16 put `failed`/`failureReason` " +
+      'on the event, but `evictInstead("summarizer failed")` returned a plain success, so ' +
+      "`lastSummaryFailure` — which the engine already knew — reached no consumer, and three " +
+      "summarizer 500s produced three clean `tier: tool_results` rows. Closed 2026-09-11: the " +
+      "rescue carries `failureReason` (and NOT `failed`, which would route it to a " +
+      "`compaction_failed` row that does not replace the replayed transcript).",
     () => {
       const attributed = compactionEvents.filter(
         (e) => e.failed === true || String(e.failureReason ?? "") !== "",

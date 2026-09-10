@@ -156,6 +156,27 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           bwrap --ro-bind / / --dev /dev --proc /proc --unshare-all -- /bin/true
           echo "bwrap ok"
+      - name: Preconditions the lifecycle scenario turns into failures, not skips
+        # `tests/integration/lifecycle-durability.test.ts` is picked up by the
+        # glob below, and it is the only suite here that spawns REAL `rune`
+        # processes, listens on a loopback port and SIGKILLs a run mid-tool.
+        # Two things it needs are environmental, and it treats both as failures
+        # rather than skips (§7: a skip silently deletes coverage):
+        #
+        #   * the native binary — `requireNativeBinary()` throws by name; the
+        #     RUNE_TOOLS_BIN/RUNE_TOOLS_BINARY env below is what supplies it;
+        #   * `ps` — the kill is timed on the process table, so without it the
+        #     scenario's own "the kill really landed inside a tool call"
+        #     assertion fails rather than passing vacuously, and the S-1 orphan
+        #     check with it.
+        #
+        # Printed here so a runner image that loses one is visible in the log
+        # instead of only in a red test. `node` runs the fixture's acceptance
+        # check and its long-running command.
+        run: |
+          ps -eo pid,ppid,command > /dev/null && echo "ps ok" || { echo "ps: MISSING — the lifecycle scenario cannot time its kill"; exit 1; }
+          node --version || { echo "node: MISSING — the scenario's check.mjs/long.mjs cannot run"; exit 1; }
+          test -x "${{ github.workspace }}/target/release/rune-tools" && echo "rune-tools ok" || { echo "rune-tools: MISSING"; exit 1; }
       - name: TypeScript integration tests (real engine + real rune-tools)
         env:
           RUNE_TOOLS_BIN: ${{ github.workspace }}/target/release/rune-tools
@@ -166,6 +187,10 @@ jobs:
           # ubuntu ships Go, Python and Java; Rust comes from the toolchain step
           # above. macOS runners have no Go, so the requirement is linux-only.
           RUNE_VERIFIER_REQUIRE_TOOLCHAINS: ${{ matrix.os == 'ubuntu-latest' && 'go,python,rust,java' || '' }}
+        # Includes `lifecycle-durability.test.ts` (Phase 2): a real `rune`
+        # against a scripted loopback model server, killed mid-tool and
+        # restarted. It spends nothing — the child's environment is BUILT, not
+        # inherited, so no credential ever reaches it — and it needs no network.
         run: bun test tests/integration/
 
   # ── Stage 4b: Windows unit suite + the Windows installer's only compiler ──

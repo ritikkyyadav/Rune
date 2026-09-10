@@ -16,9 +16,11 @@ import {
   compactCheckpointMessages,
   delegatedBudgetSeed,
   delegatedHistory,
+  delegatedTurnCeiling,
   withDelegatedSessions,
 } from "../../../packages/orchestrator/src/delegated-sessions";
 import { checkBudget, resumeBudgetState } from "../../../packages/orchestrator/src/subagent-budget";
+import type { Checkpoint } from "../../../packages/orchestrator/src/delegated-sessions";
 import type { Message } from "../../../packages/llm-gateway/src/types";
 import type { ToolCallInput, ToolHandler } from "../../../packages/tool-registry/src/types";
 const dirs: string[] = [];
@@ -47,7 +49,12 @@ test("a child retains findings across follow-up, process restart, and parent sco
   provider.onRequest = () => [
     { type: "text", text: "The parser is in source/parser.ts; preserve escaped quotes." },
   ];
-  const gateway = new LlmGateway({ providers: {}, defaultProvider: "anthropic", maxRetries: 0 });
+  const gateway = new LlmGateway({
+    providers: {},
+    defaultProvider: "anthropic",
+    maxRetries: 0,
+    retryBaseMs: 1,
+  });
   gateway.registerProvider(provider);
   const build = (model = "claude-sonnet-5") =>
     createSubagentTool({
@@ -481,4 +488,178 @@ test("G12 — with no store the lease stays the in-process guard it always was",
   expect(() => store.claim("parent", "child")).toThrow("already running");
   release();
   expect(() => store.claim("parent", "child")()).not.toThrow();
+});
+
+// ── The director's rule on a child's turn ceiling ────────────────────────────
+//
+// Two resumes arrive through the same door — a `task_id` and a prompt — and
+// they are different events. A crash-resume of a child that was still running
+// inherits the turns the killed run spent; a follow-up on a child that already
+// reported gets a fresh ceiling. The cost and wall-clock caps carry in both
+// cases, so the ceiling is the only thing that differs.
+
+test("turn ceiling — a crash-resume of an UNFINISHED child inherits the turns it spent", async () => {
+  const { manager, dir } = sessionsAt("rune-turns-crash-");
+  const parent = manager.createSession(dir, "m", "anthropic").id;
+  const messages: Message[] = [{ role: "user", content: [{ type: "text", text: "go" }] }];
+  const ceilings: number[] = [];
+  const seeds: Array<{ spentUsd: number; turnsUsed: number } | undefined> = [];
+
+  // The durable shape a SIGKILL leaves: a boundary row written mid-run, and no
+  // final row after it, because the process that would have written one is
+  // gone. Reached here by a store that refuses the save on resolve — the same
+  // end state, produced without killing the test runner.
+  class CrashingStore extends DelegatedSessions {
+    refuseFinal = false;
+    override save(p: string, c: Checkpoint): void {
+      if (this.refuseFinal && !c.atBoundary) throw new Error("the process died here");
+      super.save(p, c);
+    }
+  }
+  const store = new CrashingStore(manager);
+
+  const tool = withDelegatedSessions(
+    stubHandler(() => {
+      delegatedHistory({ provider: "anthropic", model: "m" });
+      bindDelegatedLoop({ getMessages: () => messages });
+      const prior = delegatedBudgetSeed();
+      seeds.push(prior ? { spentUsd: prior.spentUsd, turnsUsed: prior.turnsUsed } : undefined);
+      bindDelegatedBudget(() => ({
+        spentUsd: (prior?.spentUsd ?? 0) + 0.4,
+        elapsedMs: 60_000,
+        turnsUsed: (prior?.turnsUsed ?? 0) + 7,
+      }));
+      ceilings.push(delegatedTurnCeiling(12));
+      messages.push(say("read src/a.ts"));
+      checkpointDelegated();
+    }),
+    "task",
+    store,
+  );
+  const base = {
+    toolName: "task",
+    callId: "c1",
+    sessionId: parent,
+    workspaceRoot: dir,
+    args: { prompt: "go" },
+  } as unknown as ToolCallInput;
+
+  store.refuseFinal = true;
+  const first = await tool.execute(base);
+  // The child ran; only its terminal record is missing, exactly as after a kill.
+  expect(first.success).toBe(false);
+  const midRun = checkpointsOf(manager, parent).at(-1)!;
+  expect(midRun.atBoundary).toBe(true);
+  expect(midRun.status).toBeUndefined();
+  expect(midRun.budget).toMatchObject({ turnsUsed: 7 });
+
+  store.refuseFinal = false;
+  const second = await tool.execute({
+    ...base,
+    callId: "c2",
+    args: { prompt: "carry on", task_id: midRun.id as string },
+  } as unknown as ToolCallInput);
+  expect(second.success).toBe(true);
+
+  // 12 fresh, then 12 - 7 = 5. And the spend and the clock came with it.
+  expect(ceilings).toEqual([12, 5]);
+  expect(seeds[1]).toMatchObject({ spentUsd: 0.4, turnsUsed: 7 });
+
+  // A crash-resume that had already burned the whole ceiling still gets one
+  // turn, so it can report rather than return an empty failure. Write the
+  // boundary row a longer killed run would have left, and resume that.
+  const killed: Record<string, unknown> = {
+    ...midRun,
+    atBoundary: true,
+    budget: { spentUsd: 0.4, elapsedMs: 60_000, turnsUsed: 99 },
+  };
+  manager.appendEvent(parent, {
+    type: "delegation_checkpoint",
+    payload: killed as unknown as Record<string, unknown>,
+  });
+  const floor = withDelegatedSessions(
+    stubHandler(() => {
+      delegatedHistory({ provider: "anthropic", model: "m" });
+      bindDelegatedLoop({ getMessages: () => messages });
+      ceilings.push(delegatedTurnCeiling(3));
+    }),
+    "task",
+    store,
+  );
+  await floor.execute({
+    ...base,
+    callId: "c3",
+    args: { prompt: "again", task_id: midRun.id as string },
+  } as unknown as ToolCallInput);
+  expect(ceilings.at(-1)).toBe(1);
+  manager.close();
+});
+
+test("turn ceiling — a follow-up on a child that ENDED starts fresh, and the spend cap does not", async () => {
+  const { manager, dir } = sessionsAt("rune-turns-followup-");
+  const parent = manager.createSession(dir, "m", "anthropic").id;
+  const store = new DelegatedSessions(manager);
+  const messages: Message[] = [{ role: "user", content: [{ type: "text", text: "go" }] }];
+  const ceilings: number[] = [];
+  const seeds: Array<{ spentUsd: number; turnsUsed: number } | undefined> = [];
+
+  // A child that ran out of turns: it ENDS, so the final save records how.
+  const tool = withDelegatedSessions(
+    {
+      ...stubHandler(() => {}),
+      execute: async (input) => {
+        delegatedHistory({ provider: "anthropic", model: "m" });
+        bindDelegatedLoop({ getMessages: () => messages });
+        const prior = delegatedBudgetSeed();
+        seeds.push(prior ? { spentUsd: prior.spentUsd, turnsUsed: prior.turnsUsed } : undefined);
+        bindDelegatedBudget(() => ({
+          spentUsd: (prior?.spentUsd ?? 0) + 0.3,
+          elapsedMs: 120_000,
+          turnsUsed: (prior?.turnsUsed ?? 0) + 8,
+        }));
+        ceilings.push(delegatedTurnCeiling(8));
+        return {
+          callId: input.callId,
+          toolName: input.toolName,
+          success: true,
+          result: "out of turns",
+          structured: { stopReason: "max_turns", child: { status: "max_turns" } },
+          durationMs: 1,
+        };
+      },
+    },
+    "task",
+    store,
+  );
+  const base = {
+    toolName: "task",
+    callId: "c1",
+    sessionId: parent,
+    workspaceRoot: dir,
+    args: { prompt: "go" },
+  } as unknown as ToolCallInput;
+
+  const first = await tool.execute(base);
+  const taskId = first.structured!.task_id as string;
+  const ended = checkpointsOf(manager, parent).at(-1)!;
+  expect(ended.atBoundary).toBeUndefined();
+  expect(ended.status).toBe("max_turns");
+
+  const second = await tool.execute({
+    ...base,
+    callId: "c2",
+    args: { prompt: "one more thing", task_id: taskId },
+  } as unknown as ToolCallInput);
+  expect(second.success).toBe(true);
+
+  // Fresh ceiling both times — a child resumed after max_turns with 8 - 8 = 0
+  // turns could not take one, which is Lane W's objection and it is right.
+  expect(ceilings).toEqual([8, 8]);
+  // The cumulative caps did NOT reset: the follow-up starts from what the
+  // first run spent.
+  expect(seeds[1]).toMatchObject({ spentUsd: 0.3, turnsUsed: 8 });
+  const after = checkpointsOf(manager, parent).at(-1)!;
+  expect((after.budget as { spentUsd: number }).spentUsd).toBeCloseTo(0.6, 5);
+  expect(after.budget).toMatchObject({ turnsUsed: 16 });
+  manager.close();
 });

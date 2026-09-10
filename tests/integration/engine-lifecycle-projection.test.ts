@@ -40,6 +40,7 @@ import {
   headlessExitCode,
   UNFINISHED_STOP,
 } from "../../packages/orchestrator/src/headless";
+import { formatCompaction } from "../../packages/orchestrator/src/bin/ui/events";
 import { UsageProvider } from "../helpers/usage-provider";
 
 const cleanup: Array<() => void> = [];
@@ -535,6 +536,75 @@ describe("the terminal result reaches a machine consumer", () => {
     const rows = (engine as unknown as Internals).sessions.getEvents(session, 1);
     const replayed = replayEvents(rows).frames.map((f) => f.event);
     expect(replayed.some((e) => e.type === "compaction" && e.failed === true)).toBe(true);
+  });
+
+  test("S-2 — a compaction the eviction tier RESCUED still names the summarizer that failed", async () => {
+    const dir = tempWorkspace("rune-compaction-rescue-");
+    const engine = makeEngine(dir);
+    // The shape Lane S measured: the summarizer is 500-ing, but the
+    // deterministic tier drops old tool-result bodies and the compaction
+    // succeeds. It used to report a clean `tier: "tool_results"` and nothing
+    // else, indistinguishable from a healthy eviction — so a run whose
+    // summarizer was down looked, on all three surfaces, like a run that was
+    // compacting normally right up to the moment it died of an over-limit
+    // prompt.
+    const internals = engine as unknown as {
+      contextEngine: {
+        shouldCompact: () => boolean;
+        compactWorkingSet: () => Promise<unknown>;
+      };
+    };
+    internals.contextEngine.shouldCompact = () => true;
+    internals.contextEngine.compactWorkingSet = async () => ({
+      compacted: true,
+      messages: [],
+      beforeTokens: 9_000,
+      afterTokens: 4_000,
+      summarizedCount: 0,
+      tier: "tool_results",
+      trigger: "overflow",
+      failureReason: "every summarizer candidate refused",
+    });
+    script(engine, [[{ type: "text", text: "Answered." }]]);
+    const session = engine.createSession();
+    const events = await drain(engine, session, "Say something short.");
+
+    const rescued = events.find((e) => e.type === "compaction");
+    expect(rescued).toBeDefined();
+    expect(rescued).toMatchObject({
+      tier: "tool_results",
+      failureReason: "every summarizer candidate refused",
+    });
+    // NOT `failed`: the working set really did shrink. `failed` routes the row
+    // to `compaction_failed`, which does not replace the replayed transcript —
+    // and for a real eviction that would resurrect everything it just dropped.
+    expect((rescued as { failed?: boolean }).failed).toBeUndefined();
+
+    // Consumer 2: the transcript says so instead of drawing a healthy row.
+    const line = formatCompaction(rescued as Parameters<typeof formatCompaction>[0]);
+    expect(line).toContain("compacted without a summary");
+    // The reason rides in the receipt, which `flowRow` keeps whole while it
+    // cuts the left side — so a narrow terminal loses the token delta before
+    // it loses why there was no summary.
+    expect(line).toContain("every summarizer candidate refused");
+
+    // Consumer 3: it survives a restart. The row is an `auto_compaction` (the
+    // working set has to be persisted), and the reason rides along on it.
+    const rows = (engine as unknown as Internals).sessions.getEvents(session, 1);
+    expect(
+      rows.some(
+        (r) =>
+          r.event.type === "auto_compaction" &&
+          (r.event.payload as Record<string, unknown>).summaryFailure ===
+            "every summarizer candidate refused",
+      ),
+    ).toBe(true);
+    const replayed = replayEvents(rows).frames.map((f) => f.event);
+    expect(
+      replayed.some(
+        (e) => e.type === "compaction" && e.failureReason === "every summarizer candidate refused",
+      ),
+    ).toBe(true);
   });
 
   test("a manual /compact emits the event it always persisted a name for", async () => {
