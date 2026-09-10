@@ -266,7 +266,17 @@ const SCRIPT_STYLE = (program: string): ScriptStyle =>
  * assertion). Anything unterminated ends the scan — the remainder is then
  * data by definition, and being wrong in that direction only costs a rung.
  */
-function stripLiterals(script: string, style: ScriptStyle): string {
+/**
+ * The one kind of string literal that is a PATH and not data: the argument of
+ * a module load. `require('./src/csv')` is the strongest statement an inline
+ * script makes about what it is checking; `console.log('src/csv.ts')` is a
+ * word it prints. Both are literals to the parser, so relatedness needs this
+ * to tell them apart.
+ */
+const LOADER_ARG =
+  /(?:^|[^\w$.])(?:require(?:\.resolve)?|import|__import__|open|readFile|readFileSync)\s*\(\s*$|(?:^|[^\w$.])(?:from|import)\s+$/;
+
+function stripLiterals(script: string, style: ScriptStyle, keepLoaderArgs = false): string {
   let out = "";
   for (let i = 0; i < script.length; i++) {
     const ch = script[i]!,
@@ -301,8 +311,9 @@ function stripLiterals(script: string, style: ScriptStyle): string {
         if (script.startsWith(close, j)) break;
       }
       if (j >= script.length) return out;
+      const inner = script.slice(i + close.length, j);
       i = j + close.length - 1;
-      out += '""';
+      out += keepLoaderArgs && LOADER_ARG.test(out) ? ` ${inner} ` : '""';
       continue;
     }
     out += ch;
@@ -447,7 +458,8 @@ export type CheckRelation = {
     | /** It names a file the step touched, or that file's test. */ "file"
     | /** The step touched nothing, so there is no file set to judge against. */ "unscoped"
     | /** It names no path at all and is not project-wide. */ "names_nothing"
-    | /** It names only files this step never touched. */ "other_files";
+    | /** It names only files this step never touched. */ "other_files"
+    | /** It executed no test at all: a receipt, not a verdict. */ "no_tests";
   /** The touched file the command matched, for the record. */
   match?: string;
 };
@@ -542,6 +554,11 @@ function projectLevelWords(input: string[], depth = 0): boolean {
     : PROJECT_RUNNERS.has(program) ||
       (program === "node" && (words[0] === "--test" || words[0] === "--check"));
   if (!runner) return false;
+  // A run narrowed to test NAMES is not a whole-project verdict, whatever it
+  // matched: `bun test --test-name-pattern zzz` exits 0 having executed
+  // nothing, and "related to every step by construction" is exactly the wrong
+  // answer for it. It can still be related BY FILE, like any other check.
+  if (hasSelectorWord(words)) return false;
   return !words.some(fileTarget);
 }
 
@@ -557,16 +574,156 @@ function projectLevelWords(input: string[], depth = 0): boolean {
 export function commandPaths(command: string): string[] {
   const from = command.search(/\s/);
   if (from < 0) return [];
+  return pathTokens(command.slice(from));
+}
+
+function pathTokens(text: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   const re = /[A-Za-z0-9_@~+.-]*(?:[\\/][A-Za-z0-9_@~+.-]+)+|[A-Za-z0-9_@~+-]+\.[A-Za-z0-9_]{1,8}/g;
-  for (const m of command.slice(from).matchAll(re)) {
+  for (const m of text.matchAll(re)) {
     const token = m[0]!;
     if (token.includes(OPAQUE) || /^-/.test(token) || seen.has(token)) continue;
     seen.add(token);
     out.push(token);
   }
   return out;
+}
+
+/**
+ * The paths a command names that are the command's own SCOPE.
+ *
+ * `commandPaths` reads the raw text, comments and printed strings included.
+ * That is right for "did this command mention a path at all"; it is wrong for
+ * "what did this command measure", and relatedness asked the second question
+ * with the first answer — so `node -e "// src/csv.ts⏎assert(1===1)"` and
+ * `node -e "assert(1); console.log('src/csv.ts')"` closed a step about
+ * `src/csv.ts` that they never exercised. `inlineCheck` already blanks that
+ * text before deciding whether the script is a check at all; the nine shapes
+ * it fixed simply reappeared one layer up, as scope instead of as code.
+ *
+ * ARGUMENTS are read raw and in full: a path handed to a program is a real
+ * path even though the shell called it a string. Only an inline SCRIPT's body
+ * is stripped, and there a module load (`require('./src/csv')`) survives —
+ * it is the strongest thing such a script says about its subject.
+ */
+export function commandScopePaths(command: string): string[] {
+  const chain = lastCommandChain(command);
+  // Unparseable (a heredoc, an unbalanced quote): fall back to the raw
+  // reading rather than inventing an empty scope for a command we cannot see.
+  if (chain === null) return commandPaths(command);
+  return pathTokens(chain.map(scopeWords).join(" "));
+}
+
+/** One command's words as SCOPE text: arguments verbatim, inline scripts stripped. */
+function scopeWords(input: string[], depth = 0): string {
+  if (depth > 4) return "";
+  const words = [...input];
+  while (ASSIGNMENT.test(words[0] ?? "")) words.shift();
+  const executable = words.shift() ?? "";
+  const program = base(executable);
+  // The leading executable is not a path the command named — the same rule
+  // `commandPaths` applies by skipping the first word.
+  if (program === "env" || program === "command") return scopeWords(words, depth + 1);
+  const inlineFlags = /^python/.test(program) ? INLINE_FLAGS.python : INLINE_FLAGS[program];
+  const out: string[] = [];
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i]!;
+    if (inlineFlags?.includes(word) && typeof words[i + 1] === "string") {
+      out.push(stripLiterals(words[i + 1]!, SCRIPT_STYLE(program), true));
+      i++;
+      continue;
+    }
+    out.push(word);
+  }
+  return out.join(" ");
+}
+
+// ─── A check that ran nothing ───
+
+/**
+ * Flags that narrow a test run to names, which can select NOTHING.
+ *
+ * `--filter` is deliberately absent: a monorepo filter (`turbo run test
+ * --filter=app`) narrows to a package and still runs that package's suite.
+ */
+const SELECTOR_FLAGS = new Set([
+  "-t",
+  "--test-name-pattern",
+  "--testNamePattern",
+  "--test-name",
+  "-k",
+  "--grep",
+  "--fgrep",
+  "--skip",
+  "-run",
+]);
+
+const hasSelectorWord = (words: string[]): boolean =>
+  words.some((w) => SELECTOR_FLAGS.has(w.split("=", 1)[0]!));
+
+/** Whether a check's command narrows it by test NAME, so it may match nothing. */
+export function hasTestSelector(command: string): boolean {
+  const chain = lastCommandChain(command);
+  return chain !== null && chain.some(hasSelectorWord);
+}
+
+/** Runner summaries that say, in the runner's own words, that nothing ran. */
+const ZERO_TESTS = [
+  /(?:^|\n)\s*0 pass\b/i, // bun
+  /\bno tests? (?:found|ran|were found|to run|matched)\b/i,
+  /\bTests:\s+0 total\b/i, // jest
+  /\btest result: ok\. 0 passed; 0 failed/i, // cargo
+  /\bcollected 0 items\b/i, // pytest
+  /\bno tests ran\b/i, // pytest
+  /\[no test files\]/i, // go test
+  /\b0 (?:tests?|examples?|specs?|assertions?)(?:,| ) ?(?:ran|run|executed|passed|completed)\b/i,
+];
+
+/** The same runners saying that something DID run. */
+const SOME_TESTS = [
+  /(?:^|\n)\s*[1-9]\d* pass\b/i,
+  /\bTests:\s+(?:\d+ \w+, )*[1-9]\d* total\b/i,
+  /\btest result: \w+\. [1-9]\d* passed/i,
+  /\b[1-9]\d* (?:passed|failed|tests?|examples?|specs?)\b/i,
+  /\bran [1-9]\d* tests?\b/i,
+  /\bcollected [1-9]\d* items?\b/i,
+];
+
+/** The text a check produced: the shell's JSON streams if that is what it is. */
+function checkOutputText(output: string | undefined): string {
+  if (!output) return "";
+  try {
+    const parsed = JSON.parse(output) as Record<string, unknown>;
+    const streams = [parsed.stdout, parsed.stderr].filter(
+      (s): s is string => typeof s === "string",
+    );
+    if (streams.length > 0) return streams.join("\n");
+  } catch {
+    // Not the shell's shape — read it as plain text.
+  }
+  return output;
+}
+
+/**
+ * Whether a check executed no tests at all — an execution receipt, not a
+ * verdict, and never enough to close a step.
+ *
+ * `bun test --test-name-pattern zzz`, `cargo test -- --skip everything` and
+ * `pytest -k zzz` all exit 0 having run nothing, and all three answer TRUE to
+ * `isVerificationCommand` AND to `projectLevelCheck` — so relatedness, the one
+ * thing standing between an empty run and a closed step, was related to every
+ * step by construction. The runner's own summary settles it where there is
+ * one; where there is not, only a run narrowed by a test-NAME selector is
+ * assumed to have run nothing, because that is the only shape that silently
+ * selects the empty set. A plain `bun test` with unreadable output keeps its
+ * verdict.
+ */
+export function ranZeroTests(command: string, output: string | undefined): boolean {
+  const text = checkOutputText(output);
+  if (ZERO_TESTS.some((re) => re.test(text))) return true;
+  if (SOME_TESTS.some((re) => re.test(text))) return false;
+  return hasTestSelector(command);
 }
 
 type PathParts = {
@@ -651,8 +808,12 @@ export function checkRelatedness(
   if (named.length === 0) return { related: false, reason: "names_nothing" };
   const touched = (step.touched ?? []).filter(Boolean);
   if (touched.length === 0) return { related: true, reason: "unscoped" };
+  // A path in a comment or a printed string is a path the command NAMED (so
+  // this is not "names_nothing") but not a path it MEASURED, so it cannot
+  // buy the correspondence that closes a step.
+  const scope = commandScopePaths(command);
   for (const file of touched) {
-    if (named.some((p) => pathsCorrespond(p, file)))
+    if (scope.some((p) => pathsCorrespond(p, file)))
       return { related: true, reason: "file", match: file };
   }
   return { related: false, reason: "other_files" };
