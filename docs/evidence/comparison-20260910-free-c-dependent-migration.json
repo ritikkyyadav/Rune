@@ -1,0 +1,127 @@
+{
+  "schema": 1,
+  "kind": "local-live-pilot",
+  "startedAt": "2026-09-10T08:06:17.417Z",
+  "limits": {
+    "perTaskListUsd": 1,
+    "timeoutMs": 300000,
+    "runs": 2
+  },
+  "model": "gpt-oss:120b",
+  "providers": {
+    "rune": "ollama-turbo",
+    "opencode": "ollama-cloud"
+  },
+  "provenance": {
+    "runeSha": "8003ec283059a4b0386ed938d0ea3e7e4f8249f1",
+    "dirtyPatchSha256": "56e193ca9e3310f457ed11bec47a5b0be8161f07f99bdf301c90c5e302e29985",
+    "taskDigest": "33c6434e8123a7e16fa9a99b61536764a6827155afdd04fab02e67565ff59fc4",
+    "runeExecutableSha256": "afb4c8a1624b3ede9b443c495eb30531419843876e349eaba2365ab96dd700f2",
+    "runeCommand": [
+      "/Users/ritikyadav890/.rune/bin/rune-compiled"
+    ],
+    "opencodeCommand": [
+      "opencode"
+    ],
+    "versions": {
+      "rune": "Rune v0.4.1-dev+be0b468",
+      "opencode": "1.18.23"
+    }
+  },
+  "limitations": [
+    "Small internally authored pilot; not SWE-bench or Terminal-Bench and not an overall capability score.",
+    "Same selected primary model and high reasoning; each harness retains its own tools, orchestration, prompts and helper routing.",
+    "Dollar figures use Rune's shared versioned pricing table, not subscription invoices. Unknown prices stay null.",
+    "Rune reserves dollars before requests; OpenCode is stopped after a reported step crosses the common ceiling. Any overshoot is recorded and cannot count as an on-budget success."
+  ],
+  "results": [
+    {
+      "sourceBefore": "afb4c8a1624b3ede9b443c495eb30531419843876e349eaba2365ab96dd700f2",
+      "sourceChanged": false,
+      "task": "dependent-migration",
+      "run": 1,
+      "arm": "rune",
+      "exitCode": 0,
+      "durationMs": 27025,
+      "listUsd": 0.0025186,
+      "models": [
+        "ollama-turbo/gpt-oss:120b"
+      ],
+      "entries": 5,
+      "estimated": true,
+      "scored": true,
+      "acceptancePassed": true,
+      "onBudget": true,
+      "success": true,
+      "evidence": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/claude-free-series-4-dependent-migration/dependent-migration-1-rune",
+      "patchSha256": "19ccd91c526d64ccda401765eddd0cd903349a9557ce440fbeab5d96974c98a2",
+      "completedAt": "2026-09-10T08:06:44.990Z"
+    },
+    {
+      "sourceBefore": "afb4c8a1624b3ede9b443c495eb30531419843876e349eaba2365ab96dd700f2",
+      "sourceChanged": false,
+      "task": "dependent-migration",
+      "run": 1,
+      "arm": "opencode",
+      "exitCode": 0,
+      "durationMs": 248107,
+      "listUsd": 0.010178779999999998,
+      "models": [
+        "gpt-oss:120b"
+      ],
+      "entries": 14,
+      "estimated": true,
+      "scored": true,
+      "acceptancePassed": true,
+      "onBudget": true,
+      "success": true,
+      "evidence": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/claude-free-series-4-dependent-migration/dependent-migration-1-opencode",
+      "patchSha256": "9629ac8bd152a62b3390df1bf9047936068834e12e326ee7f83845f040b9dfb1",
+      "completedAt": "2026-09-10T08:10:53.270Z"
+    },
+    {
+      "sourceBefore": "afb4c8a1624b3ede9b443c495eb30531419843876e349eaba2365ab96dd700f2",
+      "sourceChanged": false,
+      "task": "dependent-migration",
+      "run": 2,
+      "arm": "opencode",
+      "exitCode": 0,
+      "durationMs": 92040,
+      "listUsd": 0.01016204,
+      "models": [
+        "gpt-oss:120b"
+      ],
+      "entries": 10,
+      "estimated": true,
+      "scored": true,
+      "acceptancePassed": true,
+      "onBudget": true,
+      "success": true,
+      "evidence": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/claude-free-series-4-dependent-migration/dependent-migration-2-opencode",
+      "patchSha256": "6dc8720cc98415df32ab1131e34c57fb9897d1fe4166b7e6b6bf399110801643",
+      "completedAt": "2026-09-10T08:12:25.456Z"
+    },
+    {
+      "sourceBefore": "afb4c8a1624b3ede9b443c495eb30531419843876e349eaba2365ab96dd700f2",
+      "sourceChanged": false,
+      "task": "dependent-migration",
+      "run": 2,
+      "arm": "rune",
+      "exitCode": 0,
+      "durationMs": 39439,
+      "listUsd": 0.00448538,
+      "models": [
+        "ollama-turbo/gpt-oss:120b"
+      ],
+      "entries": 9,
+      "estimated": true,
+      "scored": true,
+      "acceptancePassed": true,
+      "onBudget": true,
+      "success": true,
+      "evidence": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/claude-free-series-4-dependent-migration/dependent-migration-2-rune",
+      "patchSha256": "41b6a55ec52b1670c58a43b07bb432d02ab6f8f83323a6a81c7713e72b61baef",
+      "completedAt": "2026-09-10T08:13:05.043Z"
+    }
+  ]
+}

@@ -1,0 +1,177 @@
+{
+  "kind": "comparison-qualification",
+  "recordedAt": "2026-09-10",
+  "reports": {
+    "comparison-20260910-free-c-csv-state-machine.json": "32da90bc2033f836f3b88d444c466d4581f37b7ff2ab0b7328aa52ee7076994c",
+    "comparison-20260910-free-c-working-tree-integration.json": "0bbc9f2fcd3b657d2bfbf189957b26b59444ef9ee19ff864037da69cc5db80ba",
+    "comparison-20260910-free-c-dependent-migration.json": "0752bc90eb3ba4b7dd41ece5c4dc825b7e3dc4775d7b5c887ab17a4e5297b9f7"
+  },
+  "series": "C \u2014 each task invoked separately so a provider error on one task could not end the others; three tasks by two runs, all twelve arms scored, no infrastructure interruption",
+  "route": "Rune ollama-turbo, OpenCode 1.18.23 ollama-cloud, both gpt-oss:120b through the founder's own ollama.com account; list costs are estimated equivalents, both routes billed nothing; neither side caches on this route",
+  "build": "Rune v0.4.1-dev+be0b468 (CLI afb4c8a1624b\u2026), carrying the fold, the step-count changes, the inline-script classifier, the silent-finish fix and the printed-call guard",
+  "rows": [
+    {
+      "task": "csv-state-machine",
+      "run": 1,
+      "arm": "rune",
+      "success": true,
+      "acceptancePassed": true,
+      "durationMs": 40087,
+      "listUsd": 0.004,
+      "entries": 10,
+      "stopped": null,
+      "unscoredReason": null
+    },
+    {
+      "task": "csv-state-machine",
+      "run": 1,
+      "arm": "opencode",
+      "success": false,
+      "acceptancePassed": false,
+      "durationMs": 65472,
+      "listUsd": 0.0078,
+      "entries": 15,
+      "stopped": null,
+      "unscoredReason": null
+    },
+    {
+      "task": "csv-state-machine",
+      "run": 2,
+      "arm": "opencode",
+      "success": false,
+      "acceptancePassed": false,
+      "durationMs": 150652,
+      "listUsd": 0.011,
+      "entries": 11,
+      "stopped": null,
+      "unscoredReason": null
+    },
+    {
+      "task": "csv-state-machine",
+      "run": 2,
+      "arm": "rune",
+      "success": false,
+      "acceptancePassed": false,
+      "durationMs": 77228,
+      "listUsd": 0.0091,
+      "entries": 17,
+      "stopped": null,
+      "unscoredReason": null
+    },
+    {
+      "task": "working-tree-integration",
+      "run": 1,
+      "arm": "rune",
+      "success": true,
+      "acceptancePassed": true,
+      "durationMs": 24573,
+      "listUsd": 0.003,
+      "entries": 10,
+      "stopped": null,
+      "unscoredReason": null
+    },
+    {
+      "task": "working-tree-integration",
+      "run": 1,
+      "arm": "opencode",
+      "success": true,
+      "acceptancePassed": true,
+      "durationMs": 43750,
+      "listUsd": 0.0046,
+      "entries": 11,
+      "stopped": null,
+      "unscoredReason": null
+    },
+    {
+      "task": "working-tree-integration",
+      "run": 2,
+      "arm": "opencode",
+      "success": true,
+      "acceptancePassed": true,
+      "durationMs": 63292,
+      "listUsd": 0.0058,
+      "entries": 14,
+      "stopped": null,
+      "unscoredReason": null
+    },
+    {
+      "task": "working-tree-integration",
+      "run": 2,
+      "arm": "rune",
+      "success": true,
+      "acceptancePassed": true,
+      "durationMs": 49396,
+      "listUsd": 0.0042,
+      "entries": 12,
+      "stopped": null,
+      "unscoredReason": null
+    },
+    {
+      "task": "dependent-migration",
+      "run": 1,
+      "arm": "rune",
+      "success": true,
+      "acceptancePassed": true,
+      "durationMs": 27025,
+      "listUsd": 0.0025,
+      "entries": 5,
+      "stopped": null,
+      "unscoredReason": null
+    },
+    {
+      "task": "dependent-migration",
+      "run": 1,
+      "arm": "opencode",
+      "success": true,
+      "acceptancePassed": true,
+      "durationMs": 248107,
+      "listUsd": 0.0102,
+      "entries": 14,
+      "stopped": null,
+      "unscoredReason": null
+    },
+    {
+      "task": "dependent-migration",
+      "run": 2,
+      "arm": "opencode",
+      "success": true,
+      "acceptancePassed": true,
+      "durationMs": 92040,
+      "listUsd": 0.0102,
+      "entries": 10,
+      "stopped": null,
+      "unscoredReason": null
+    },
+    {
+      "task": "dependent-migration",
+      "run": 2,
+      "arm": "rune",
+      "success": true,
+      "acceptancePassed": true,
+      "durationMs": 39439,
+      "listUsd": 0.0045,
+      "entries": 9,
+      "stopped": null,
+      "unscoredReason": null
+    }
+  ],
+  "totals": {
+    "rune": {
+      "completed": 5,
+      "of": 6,
+      "meanDurationS": 43.0,
+      "sumListUsd": 0.0273
+    },
+    "opencode": {
+      "completed": 4,
+      "of": 6,
+      "meanDurationS": 110.6,
+      "sumListUsd": 0.0496
+    }
+  },
+  "qualifications": [
+    "Rune completed 5 of 6, OpenCode 4 of 6. On every pair both completed (working-tree-integration twice, dependent-migration twice) Rune finished sooner and at a lower estimated list cost; on csv-state-machine run 1 Rune passed and OpenCode failed acceptance, and on run 2 both failed \u2014 Rune's parser was wrong on `a,b\\r\\n` after a normal finish, OpenCode's run timed out.",
+    "This reverses the cost finding of the 2026-09-08 series on the same route (Rune about twice OpenCode's tokens); the intervening changes cut Rune's completions and refused-citation loops. It is one series on one free model and does not transfer to the frontier route, where Codex quota stayed exhausted and no paired run on this build exists yet.",
+    "Wall time on this route is dominated by the free tier's per-completion latency and varies run to run (OpenCode 248 s and 92 s on the same task); mean durations are reported, not claimed as stable."
+  ]
+}
