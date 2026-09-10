@@ -181,7 +181,7 @@ import { HookRunner } from "./hooks";
 import { pickFallbackReviewer } from "./reviewer-fallback";
 import { resolveHelperRoute, helperAppliesToSafety } from "./helper-route";
 import type { HelperRoute } from "./helper-route";
-import { turnBudgetForMessage } from "./turn-budget";
+import { applyInheritance, turnBudgetForMessage } from "./turn-budget";
 import { createSubagentTool } from "./subagent";
 import { TeamBus } from "./team/bus";
 import { createTeamTool, renderTeamStatus } from "./team/tool";
@@ -280,6 +280,24 @@ import type {
   UserPermissionDecision,
 } from "@rune/protocol";
 import { isAgentTurnEvent } from "@rune/protocol";
+import type {
+  TaskLifecycle,
+  TaskLifecycleChild,
+  TaskLifecycleMoment,
+  TaskLifecycleStatus,
+} from "@rune/protocol";
+import {
+  buildLifecycle,
+  checkpointRunId,
+  demoteStaleCriteria,
+  filesChangedFrom,
+  inheritedBudget,
+  lifecycleDigest,
+  previousRunWasInterrupted,
+  runSeqFromEvents,
+  statusFromStopReason,
+  workspaceRevision,
+} from "./lifecycle";
 
 export type PermissionHandler = (prompt: PermissionPrompt) => Promise<UserPermissionDecision>;
 
@@ -326,6 +344,17 @@ export interface TranscriptLine {
  * `tool_result`, `compaction`) or that are not state at all (`text_delta`,
  * `thinking_delta`, the tool-call arg deltas — a keystroke log, not a fact).
  */
+/**
+ * How often an unprompted `budget` lifecycle row may be written.
+ *
+ * The named moments (start, steering, dispatch, child_return, compaction,
+ * checkpoint, terminal) are never throttled. This one covers the long stretch
+ * where a run is spending turns and tokens without crossing any of them, and
+ * it is throttled because the alternative — one row per tool call, each
+ * carrying the plan — is the same defect the checkpoints table already is.
+ */
+const LIFECYCLE_BUDGET_THROTTLE_MS = 20_000;
+
 export const RUN_TRACE_EVENTS: ReadonlySet<string> = new Set([
   "usage",
   "fallback",
@@ -1191,6 +1220,43 @@ export class Engine {
   /** The contract for the task in flight, and the only thing that can close it. */
   private brief?: Brief;
   private ledger?: BriefLedger;
+
+  // ─── The lifecycle projection (Phase 2) ───
+  //
+  // Live per-run state the projection reads. All of it is cleared in `chat`'s
+  // `finally`, so nothing leaks between runs on one Engine.
+
+  /** The session the current run belongs to, for the handlers that have none. */
+  private liveSessionId: string | null = null;
+  /** The workspace revision this run started against; see `workspaceRevision`. */
+  private liveRevision: { head: string | null; dirty: boolean } | null = null;
+  /** Digest of the last `lifecycle` emitted, so an unchanged boundary is silent. */
+  private lastLifecycleDigest: string | null = null;
+  /** Digest of the last persisted brief, so an unchanged ledger writes no row. */
+  private lastBriefDigest: string | null = null;
+  /** Children this run dispatched, in order, keyed by call id. */
+  private liveChildren = new Map<string, TaskLifecycleChild>();
+  /** Token totals this run has been billed for, from the `usage` events. */
+  private liveTokens = { in: 0, out: 0 };
+  /**
+   * Live turn/wind counters. CUMULATIVE across an interrupted predecessor:
+   * the loop counts only its own turns and its ceiling is already narrowed,
+   * so a projection that reported the loop's numbers verbatim would let a
+   * machine that crashed three times narrow from the full ceiling each time.
+   */
+  private liveBudget = { turnsUsed: 0, turnsMax: 0, secondWindsUsed: 0 };
+  /** What an interrupted predecessor had already spent. */
+  private liveBudgetBase = { turnsUsed: 0, secondWindsUsed: 0 };
+  /** This message's un-narrowed ceiling, so `turnsMax - turnsUsed` is stable. */
+  private liveTurnsMax = 0;
+  /** The run's terminal status once it has one; `running` until then. */
+  private liveStatus: TaskLifecycleStatus = "running";
+  /** Compactions this run performed, for `checkpoint.compactions`. */
+  private liveCompactions = 0;
+  /** The last seq this run wrote, and when — where a restart picks up. */
+  private liveCheckpoint: TaskLifecycle["checkpoint"] = null;
+  /** Wall clock of the last throttled (budget) lifecycle emit. */
+  private lastBudgetEmitMs = 0;
   /** Every check this session ran, with the verdict the RUNTIME read.
    *  The only thing a criterion's rung is ever derived from. */
   private readonly checkLog = new CheckLog();
@@ -1526,7 +1592,12 @@ export class Engine {
         () => this.currentGoal(),
         (brief) => {
           this.brief = brief;
-          this.ledger = new BriefLedger(brief);
+          this.ledger = new BriefLedger(brief, () => this.runRevision());
+          // Durable from the moment it is agreed. Before this the criteria and
+          // their rungs lived only in two Engine fields, so a restart discarded
+          // every acceptance criterion the user had confirmed and a resumed run
+          // could not know which of them were already met.
+          this.persistBrief();
         },
         // The model's one revision of the task kind: the read-back is where it
         // says what it understood the work to BE, so it is the honest place
@@ -4591,10 +4662,22 @@ export class Engine {
       }
     }
 
-    const runId = `${sessionId}-${Date.now()}`;
-
     // Load prior conversation history
     const priorEvents = this.sessions.getEvents(sessionId, 1);
+
+    // ── The run's identity, and whether the last one died ──
+    //
+    // `runId` was `${sessionId}-${Date.now()}`: a new value every turn, so no
+    // checkpoint row could ever be addressed again and `resumeFromCheckpoint`
+    // — imported since the feature landed — was never once called. Measured on
+    // the founder's own database on 2026-09-10: 747 rows holding 184 MiB of a
+    // 250 MiB file, written on every edit, read by nothing.
+    //
+    // The ordinal is DERIVED from the log rather than held in memory, because
+    // a counter in memory resets on exactly the crash it exists to survive.
+    const runSeq = runSeqFromEvents(priorEvents);
+    const runId = checkpointRunId(sessionId, runSeq);
+    const priorRunInterrupted = previousRunWasInterrupted(priorEvents);
     const priorMessages: Message[] = eventsToMessages(priorEvents, {
       // Historical Codex rows predate exact block persistence and therefore
       // lack the encrypted reasoning item required before each function call.
@@ -4616,6 +4699,28 @@ export class Engine {
     // Publish this run's spine for the round-trip handlers, which are called
     // from tool execution and have no session in scope. Cleared in the finally.
     this.liveSpine = taskState;
+    this.liveSessionId = sessionId;
+
+    // ── The workspace revision (Phase 2 G4/G5) ──
+    // Nothing recorded what revision a run started from, so a stored verdict
+    // had nothing to be stale against. Measured once per run, stamped onto
+    // every check the spine records and onto every rung the ledger moves.
+    const revision = workspaceRevision(this.config.workspaceRoot);
+    this.liveRevision = revision;
+    taskState.setRevision(revision);
+
+    // ── The brief and its ledger (G3) ──
+    // Restored beside the spine, with any claim that was proven against a
+    // different tree dropped one rung and said out loud.
+    const demoted = this.restoreBrief(priorEvents, revision);
+
+    this.liveChildren.clear();
+    this.liveTokens = { in: 0, out: 0 };
+    this.liveStatus = "running";
+    this.liveCompactions = 0;
+    this.liveCheckpoint = null;
+    this.lastLifecycleDigest = null;
+    this.lastBudgetEmitMs = 0;
     this.pendingNarrative = [];
     // The spine as it stands BEFORE this run touches it. The run's retro
     // reports steps as a delta against this, so one turn's record is that
@@ -4643,6 +4748,26 @@ export class Engine {
       } catch {
         // the dossier is best-effort; the event log remains the source of truth
       }
+    };
+
+    /**
+     * Emit the lifecycle projection for this moment, and persist it.
+     *
+     * Returns null when nothing a reader would notice has moved, so a
+     * boundary that produced no news writes no row. Persisted through the
+     * same `run_trace` door every other run-level event uses, which is what
+     * lets `replayEvents` hand it back on a reconnect and a restart rebuild
+     * the budget, the constraints and the plan from it.
+     */
+    const emitLifecycle = (moment: TaskLifecycleMoment): AgentTurnEvent | null => {
+      const event = this.lifecycleEvent(moment);
+      if (!event) return null;
+      try {
+        this.sessions.appendEvent(sessionId, { type: "run_trace", payload: { ...event } });
+      } catch {
+        // A projection is observability; losing one must never fail a turn.
+      }
+      return event;
     };
 
     // A claimed loop iteration arrives through the same door as a typed
@@ -4693,11 +4818,38 @@ export class Engine {
       });
     }
 
-    // Mark session as running for crash recovery
-    this.sessions.appendEvent(sessionId, {
+    // Mark session as running for crash recovery — with the revision it is
+    // running AGAINST, which is the anchor every stale-evidence check needs
+    // and which nothing recorded before Phase 2.
+    const runStartMarkerSeq = this.sessions.appendEvent(sessionId, {
       type: "checkpoint",
-      payload: { summary: "session_started" },
+      payload: {
+        summary: "session_started",
+        runId,
+        head: revision.head,
+        dirty: revision.dirty,
+      },
     });
+    this.liveCheckpoint = {
+      seq: runStartMarkerSeq,
+      at: runStartedAt,
+      compactions: this.liveCompactions,
+    };
+
+    // Claims that were proven against a tree that is no longer on disk. Said
+    // out loud, because a rung that quietly weakens is worse than one that
+    // never moved — and because the user is entitled to know that "verified"
+    // stopped being true while they were away.
+    if (demoted.length > 0) {
+      yield {
+        type: "notice",
+        message:
+          `${demoted.length} acceptance criteri${demoted.length === 1 ? "on" : "a"} ` +
+          `dropped a rung: the workspace moved since the evidence was taken (` +
+          demoted.map((d) => `"${d.text.slice(0, 60)}" ${d.from} → ${d.to}`).join("; ") +
+          "). Re-run the check to earn it back.",
+      };
+    }
 
     // The message's turn budget: a greeting or short question gets a small
     // conversational ceiling (measured: a 24-character question once ran the
@@ -4707,7 +4859,57 @@ export class Engine {
     // turn ceiling is one of them (`[reliability] maxTurns`, default 80).
     const reliability = policyForModel(session.model, this.config.reliability);
     taskState.setEvidenceGate(reliability.evidenceGate);
-    const turnBudget = turnBudgetForMessage(userMessage, reliability.maxTurns);
+    const messageBudget = turnBudgetForMessage(userMessage, reliability.maxTurns);
+
+    // ── What an interrupted run hands forward (G6) ──
+    //
+    // Only a run that died WITHOUT running its close hands anything on: a run
+    // that ended at a ceiling, or that the user aborted, announced itself and
+    // the next message is a fresh authorization. A crash announced nothing, so
+    // before this a machine that died twice could spend 240 turns on an
+    // 80-turn task and nothing anywhere would say so. Extending stays the
+    // second wind's job; this only narrows.
+    const inherited = priorRunInterrupted ? inheritedBudget(priorEvents) : null;
+    const {
+      budget: turnBudget,
+      secondWinds: secondWindBudget,
+      line: inheritanceLine,
+    } = applyInheritance(messageBudget, reliability.secondWinds, inherited);
+
+    // The one place a restart reads the checkpoint it has been writing since
+    // the feature landed. It is a POINTER, not a transcript: the messages come
+    // from the event log as they always did, and what this recovers is where
+    // the dead run had got to.
+    if (priorRunInterrupted && this.checkpointStore && runSeq > 1) {
+      const prior = resumeFromCheckpoint(
+        checkpointRunId(sessionId, runSeq - 1),
+        this.checkpointStore,
+      );
+      if (prior) {
+        yield {
+          type: "notice",
+          message:
+            `Recovered the previous run's checkpoint: it died at turn ${prior.turnCount} ` +
+            `after event ${prior.lastSeq} (${prior.updatedAt}). The transcript comes from ` +
+            "the session log; nothing was replayed twice.",
+        };
+      }
+    }
+    if (inheritanceLine) yield { type: "notice", message: inheritanceLine };
+
+    // The lifecycle, at the top of the run: the id, the objective, the
+    // constraints as they stand, the revision, and the budget this run has —
+    // narrowed by whatever an interrupted predecessor already spent.
+    this.liveBudgetBase = {
+      turnsUsed: inherited?.turnsUsed ?? 0,
+      secondWindsUsed: inherited?.secondWindsUsed ?? 0,
+    };
+    this.liveTurnsMax = messageBudget.maxTurns;
+    this.syncBudget();
+    {
+      const started = emitLifecycle("start");
+      if (started) yield started;
+    }
 
     // The map is intentionally per request rather than per session: ranking is
     // query-aware. It remains outside the cache-sensitive system prompt and is
@@ -4869,6 +5071,16 @@ export class Engine {
       untrustedPrompts,
     });
     let turnCount = 0;
+    /** The last checkpoint pointer written, so an unmoved boundary is silent. */
+    let lastCheckpointStamp = "";
+    /**
+     * Mid-run steering is accepted inside the LOOP (`drainInterjections` →
+     * `noteSteer`), which the engine never hears about directly. The spine's
+     * directive is the one durable trace of it, so a change in that is how a
+     * boundary knows the user said something while the run was streaming.
+     */
+    const steerDigest = (): string => taskState.snapshot().directive ?? "";
+    let lastSteerDigest = steerDigest();
 
     // Create a per-turn AbortController for cancellation
     const abortController = new AbortController();
@@ -4891,7 +5103,7 @@ export class Engine {
         // Cheap independent file tools keep the loop's normal parallelism.
         // Paid delegates are separately bounded by the engine-wide pool.
         maxParallelTools: 8,
-        maxSecondWinds: turnBudget.conversational ? 0 : reliability.secondWinds,
+        maxSecondWinds: turnBudget.conversational ? 0 : secondWindBudget,
         systemPrompt,
         workingSystemPrompt,
         priorMessages,
@@ -5077,32 +5289,14 @@ export class Engine {
           runError = event.error;
         }
 
-        // Track turns, checkpoint, and context management
+        // Track turns and context management. The interval checkpoint that
+        // used to live here was unreachable from the day it was written:
+        // `turnCount` is incremented only on `turn_complete`, which the loop
+        // emits exactly once per `chat()` call, so `turnCount % 5 === 0` was
+        // never true. It is gone rather than left looking like live policy.
         if (event.type === "turn_complete") {
           turnCount++;
-
-          // Checkpoint save per policy
-          if (this.checkpointStore && turnCount % this.checkpointPolicy.intervalTurns === 0) {
-            try {
-              const state: RunState = {
-                runId,
-                sessionId,
-                messages: runner.getMessages(),
-                turnCount,
-                context: { model: session.model },
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-              };
-              this.checkpointStore.save(runId, state);
-              const saved = this.checkpointStore.load(runId);
-              if (saved) {
-                yield { type: "checkpoint_saved", runId, version: saved.version, turnCount };
-              }
-            } catch {
-              // Checkpoint save failed — non-fatal
-            }
-          }
-
+          this.liveStatus = statusFromStopReason(event.stopReason);
           this.sessions.appendEvent(sessionId, {
             type: "checkpoint",
             payload: { summary: `auto-checkpoint at turn ${turnCount}` },
@@ -5125,6 +5319,7 @@ export class Engine {
         // every evicted result on the next message. Flush the original events
         // first so the checkpoint replaces exactly the history before it.
         if (event.type === "compaction") {
+          if (event.failed !== true) this.liveCompactions++;
           persistPending();
           this.refreshJitDelivery(sessionId, runner.getMessages());
           this.sessions.appendEvent(sessionId, {
@@ -5248,32 +5443,74 @@ export class Engine {
             }
           }
 
-          // Save checkpoint after successful file writes
+          // ── The checkpoint, at a boundary that changed the workspace ──
+          //
+          // At most one per tool call, skipped outright when the pointer has
+          // not moved, and never carrying the transcript: what a restart needs
+          // is where the dead run got to, and the `events` table already holds
+          // every message. Three things changed here — the predicate is the
+          // shared one (so a `multi_edit`, an `apply_patch` and a worker's
+          // files are boundaries too, not just write/edit), the payload is a
+          // pointer, and superseded versions of this run are rotated away.
           if (
             this.checkpointStore &&
             this.checkpointPolicy.onToolSuccess &&
             event.output.success &&
-            ["write_file", "edit_file"].includes(event.output.toolName)
+            filesChangedFrom(event.output.toolName, event.args, event.output.result).length > 0
           ) {
-            try {
-              const state: RunState = {
-                runId,
-                sessionId,
-                messages: runner.getMessages(),
-                turnCount,
-                context: { model: session.model },
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-              };
-              this.checkpointStore.save(runId, state);
-              const saved = this.checkpointStore.load(runId);
-              if (saved) {
-                yield { type: "checkpoint_saved", runId, version: saved.version, turnCount };
+            this.syncBudget();
+            const pointer = {
+              turnCount,
+              lastSeq: this.sessions.lastSeq(sessionId),
+              turnsUsed: this.liveBudget.turnsUsed,
+              windsUsed: this.liveBudget.secondWindsUsed,
+            };
+            const stamp = JSON.stringify(pointer);
+            if (stamp !== lastCheckpointStamp) {
+              lastCheckpointStamp = stamp;
+              try {
+                const now = new Date().toISOString();
+                const state: RunState = {
+                  runId,
+                  sessionId,
+                  turnCount,
+                  lastSeq: pointer.lastSeq,
+                  budget: {
+                    turnsUsed: this.liveBudget.turnsUsed,
+                    secondWindsUsed: this.liveBudget.secondWindsUsed,
+                    spentUsd: this.costTracker.getLedger().totalListCostUsd,
+                  },
+                  head: revision.head,
+                  dirty: revision.dirty,
+                  context: { model: session.model, provider: session.provider ?? null },
+                  createdAt: now,
+                  updatedAt: now,
+                };
+                this.checkpointStore.save(runId, state, this.checkpointPolicy.keepVersions);
+                const saved = this.checkpointStore.load(runId);
+                if (saved) {
+                  this.liveCheckpoint = {
+                    seq: pointer.lastSeq,
+                    at: now,
+                    compactions: this.liveCompactions,
+                  };
+                  yield { type: "checkpoint_saved", runId, version: saved.version, turnCount };
+                  const lc = emitLifecycle("checkpoint");
+                  if (lc) yield lc;
+                }
+              } catch {
+                // Non-fatal: a checkpoint is a convenience, the log is truth.
               }
-            } catch {
-              // Non-fatal
             }
           }
+        }
+
+        // The run's token totals, for the lifecycle projection. The gateway
+        // prices them; this only counts them, so the two never disagree about
+        // what a run cost because one of them re-derived it.
+        if (event.type === "usage") {
+          this.liveTokens.in += event.inputTokens + (event.cacheReadTokens ?? 0);
+          this.liveTokens.out += event.outputTokens;
         }
 
         // Keep the session row's context-size readout current (sessions
@@ -5313,6 +5550,37 @@ export class Engine {
         }
 
         yield event;
+
+        // ── The lifecycle, at each boundary that moved it ──
+        //
+        // Named moments are emitted the instant they happen; `budget` is
+        // throttled and silent when nothing changed, so a long tool-free
+        // stretch still reports its turns and tokens without writing the
+        // whole plan again on every tool call.
+        {
+          const moment: TaskLifecycleMoment | null =
+            event.type === "tool_call_start" &&
+            (event.toolName === "task" || event.toolName === "worker")
+              ? "dispatch"
+              : event.type === "tool_call_end" &&
+                  (event.output.toolName === "task" || event.output.toolName === "worker")
+                ? "child_return"
+                : event.type === "compaction"
+                  ? "compaction"
+                  : steerDigest() !== lastSteerDigest
+                    ? "steering"
+                    : event.type === "tool_call_end" || event.type === "turn_complete"
+                      ? "budget"
+                      : null;
+          if (moment === "steering") lastSteerDigest = steerDigest();
+          if (moment) {
+            if (moment === "child_return" && event.type === "tool_call_end") {
+              this.recordChild(event);
+            }
+            const lc = emitLifecycle(moment);
+            if (lc) yield lc;
+          }
+        }
 
         // Connector lifecycle, through the grammar every other harness message
         // already uses. A server that dies mid-turn used to be completely
@@ -5358,6 +5626,17 @@ export class Engine {
       // Stop accepting steering the moment the run winds down — anything
       // interjected after this point could never be drained by the loop.
       const steeredLoop = this.liveLoop;
+      // Fold the loop's final counters onto the base BEFORE dropping it: the
+      // terminal projection is emitted further down this block, and a run that
+      // reported `turnsUsed: 0` for the turns it had just spent is exactly the
+      // number a resumed run would then fail to inherit.
+      if (steeredLoop) {
+        const final = steeredLoop.getBudgetProgress();
+        this.liveBudgetBase = {
+          turnsUsed: this.liveBudgetBase.turnsUsed + final.turnsUsed,
+          secondWindsUsed: this.liveBudgetBase.secondWindsUsed + final.secondWindsUsed,
+        };
+      }
       this.liveLoop = null;
       if (this.costCapTripped) runError = this.costCapTripped.message;
 
@@ -5414,10 +5693,37 @@ export class Engine {
         // The record is a reading of the run; it must never break the run.
       }
 
+      // ── The terminal lifecycle ──
+      //
+      // Emitted before the "session_ended" marker, so a reader that follows
+      // the log in order sees how the run ended and only then that it is over.
+      // The status is reconciled here rather than trusted from the loop: a
+      // hard throw between boundaries yields no `turn_complete` at all, and a
+      // cancelled run's own terminal event can be the one that never arrives.
+      if (this.liveStatus === "running") {
+        this.liveStatus = signal.aborted ? "aborted" : runError ? "provider_lost" : "end_turn";
+      }
+      if (this.liveStatus === "end_turn" && taskState.hasOpenTodos()) {
+        this.liveStatus = "open_steps";
+      }
+      this.syncBudget();
+      try {
+        const terminal = this.lifecycleEvent("terminal");
+        if (terminal) {
+          this.sessions.appendEvent(sessionId, { type: "run_trace", payload: { ...terminal } });
+          yield terminal;
+        }
+      } catch {
+        // The projection is a reading of the run; it must never break it.
+      }
+      // Whatever the ledger ended at, durably — including any rung a check in
+      // this run moved after the brief was last written.
+      this.persistBrief();
+
       // Mark session as cleanly ended
       this.sessions.appendEvent(sessionId, {
         type: "checkpoint",
-        payload: { summary: "session_ended" },
+        payload: { summary: "session_ended", runId },
       });
 
       // Behavioral signals that only resolve at run end.
@@ -5578,6 +5884,13 @@ export class Engine {
       }
       // The round-trip handlers have no run to write into any more.
       if (this.liveSpine === taskState) this.liveSpine = null;
+      if (this.liveSessionId === sessionId) {
+        this.liveSessionId = null;
+        this.liveRevision = null;
+        this.liveChildren.clear();
+        this.lastLifecycleDigest = null;
+        this.lastBriefDigest = null;
+      }
       // A spend ceiling that stops the run without saying so is indistinguishable
       // from a crash. Report it once, in the user's terms — what the limit was,
       // what it reached, and how to lift it — then clear it so the next turn
@@ -5861,6 +6174,188 @@ export class Engine {
       if (!(cap && cap > 0)) return undefined;
       return tracker.reserveRequest(request, cap);
     });
+  }
+
+  // ─── The lifecycle projection ───
+
+  /** The revision this run is working against; measured once per run. */
+  private runRevision(): { head: string | null; dirty: boolean } {
+    return this.liveRevision ?? { head: null, dirty: false };
+  }
+
+  /**
+   * Fold a returned child into this run's `lifecycle.children[]`.
+   *
+   * Before Phase 2 a child's identity, its terminal reason and — for a worker
+   * — whether its writes actually merged reached the lead only as prose
+   * appended to the tool result. A conflicted merge in particular came back
+   * with `success: true` and a `[MERGE CONFLICTS — …]` block inside the text,
+   * so `toolErrors` never moved and every machine consumer scored it as a
+   * clean success. It is a typed field now. `structured.child` is Lane W's
+   * shape, built from the contract in @rune/protocol; when it is absent (an
+   * older build, a failed dispatch) the call still produces a row, because a
+   * child that ran and cannot say how it ended is exactly what a reader needs
+   * to see.
+   */
+  private recordChild(event: {
+    callId: string;
+    args: Record<string, unknown>;
+    output: { toolName: string; success: boolean; structured?: Record<string, unknown> };
+  }): void {
+    const structured = event.output.structured ?? {};
+    const child = (structured.child ?? {}) as {
+      status?: unknown;
+      integration?: unknown;
+      conflicts?: unknown;
+    };
+    const declaredId = structured.task_id ?? structured.taskId;
+    const id = typeof declaredId === "string" && declaredId ? declaredId : event.callId;
+    const kind = event.output.toolName === "worker" ? "worker" : "task";
+    const status = statusFromStopReason(
+      typeof child.status === "string"
+        ? child.status
+        : typeof structured.stopReason === "string"
+          ? structured.stopReason
+          : event.output.success
+            ? "end_turn"
+            : "stalled",
+    );
+    const integration =
+      child.integration === "merged" || child.integration === "retained"
+        ? child.integration
+        : child.integration === "shared"
+          ? "shared"
+          : undefined;
+    const conflicts = Array.isArray(child.conflicts)
+      ? (child.conflicts as unknown[]).filter((c): c is string => typeof c === "string")
+      : undefined;
+    this.liveChildren.set(id, {
+      id,
+      kind,
+      status,
+      ...(integration ? { integration } : {}),
+      ...(conflicts && conflicts.length > 0 ? { conflicts } : {}),
+    });
+  }
+
+  /** Fold the loop's live counters onto whatever a dead predecessor spent. */
+  private syncBudget(): void {
+    const progress = this.liveLoop?.getBudgetProgress();
+    this.liveBudget = {
+      turnsUsed: this.liveBudgetBase.turnsUsed + (progress?.turnsUsed ?? 0),
+      turnsMax: this.liveTurnsMax,
+      secondWindsUsed: this.liveBudgetBase.secondWindsUsed + (progress?.secondWindsUsed ?? 0),
+    };
+  }
+
+  /**
+   * Persist the brief and its ledger, when either moved.
+   *
+   * A `brief` row, latest-wins, beside the `task_state` snapshot the spine
+   * already writes. There was no such row anywhere in the repo: `BriefLedger`
+   * held every criterion and its rung in memory and a restart discarded all
+   * of it, so "user constraints survive" had nothing to survive IN.
+   */
+  private persistBrief(): void {
+    const sessionId = this.liveSessionId;
+    const brief = this.ledger?.snapshot ?? this.brief;
+    if (!sessionId || !brief) return;
+    const digest = JSON.stringify(brief.criteria.map((c) => [c.rung, c.text, c.evidence?.source]));
+    if (digest === this.lastBriefDigest) return;
+    this.lastBriefDigest = digest;
+    try {
+      this.sessions.appendEvent(sessionId, {
+        type: "brief",
+        payload: { version: 1, brief },
+      });
+    } catch {
+      // The brief is a record of the run; it must never break the run.
+    }
+  }
+
+  /**
+   * Restore the brief and its ledger from the log, demoting stale claims.
+   *
+   * Returns the criteria whose rung dropped because the tree they were proven
+   * against is no longer the tree on disk — the caller states them, because a
+   * verdict that quietly weakens is worse than one that never moved.
+   */
+  private restoreBrief(
+    priorEvents: Array<{ event: { type: string; payload: Record<string, unknown> } }>,
+    revision: { head: string | null; dirty: boolean },
+  ): Array<{ text: string; from: string; to: string }> {
+    for (let i = priorEvents.length - 1; i >= 0; i--) {
+      const row = priorEvents[i]!.event;
+      if (row.type !== "brief") continue;
+      const payload = row.payload as { version?: unknown; brief?: unknown };
+      if (payload.version !== 1) continue;
+      const brief = payload.brief as Brief | undefined;
+      if (!brief || !Array.isArray(brief.criteria)) continue;
+      const moved = demoteStaleCriteria(brief.criteria, revision);
+      this.brief = brief;
+      this.ledger = new BriefLedger(brief, () => this.runRevision());
+      // Seed the digest from what was just read so an unchanged ledger does
+      // not rewrite the same row on every resume…
+      this.lastBriefDigest = JSON.stringify(
+        brief.criteria.map((c) => [c.rung, c.text, c.evidence?.source]),
+      );
+      // …unless a demotion actually changed it, which must be durable.
+      if (moved.length > 0) this.persistBrief();
+      return moved;
+    }
+    return [];
+  }
+
+  /**
+   * The lifecycle event for this moment, or null when nothing moved.
+   *
+   * `budget` is throttled: it exists so a long tool-free stretch still reports
+   * its turns and tokens, not so every tool call writes the whole plan again.
+   * Every named moment is emitted the instant it happens.
+   */
+  private lifecycleEvent(moment: TaskLifecycleMoment): AgentTurnEvent | null {
+    const sessionId = this.liveSessionId;
+    if (!sessionId) return null;
+    const spine = this.taskStates.get(sessionId);
+    this.syncBudget();
+    const ledger = this.costTracker.getLedger();
+    const criteria = this.ledger?.criteria ?? this.brief?.criteria ?? [];
+
+    const lifecycle = buildLifecycle({
+      id: sessionId,
+      kind: "lead",
+      objective: spine?.snapshot().goal ?? "",
+      constraints: [...criteria],
+      workspace: { root: this.config.workspaceRoot, ...this.runRevision() },
+      status: this.liveStatus,
+      budget: {
+        turnsUsed: this.liveBudget.turnsUsed,
+        turnsMax: this.liveBudget.turnsMax,
+        secondWindsUsed: this.liveBudget.secondWindsUsed,
+        tokensIn: this.liveTokens.in,
+        tokensOut: this.liveTokens.out,
+        spentUsd: ledger.totalListCostUsd,
+        capUsd: this.config.maxSessionCostUsd ?? null,
+        reservedUsd: this.costTracker.getReservedUsd(),
+      },
+      checkpoint: this.liveCheckpoint,
+      todos: spine?.todos ?? [],
+      checks: spine?.checks ?? [],
+      verifiedCriteria: this.ledger?.met ?? 0,
+      children: [...this.liveChildren.values()],
+    });
+
+    const digest = lifecycleDigest(lifecycle);
+    if (moment === "budget") {
+      const now = Date.now();
+      if (digest === this.lastLifecycleDigest) return null;
+      if (now - this.lastBudgetEmitMs < LIFECYCLE_BUDGET_THROTTLE_MS) return null;
+      this.lastBudgetEmitMs = now;
+    } else if (digest === this.lastLifecycleDigest && moment !== "terminal") {
+      return null;
+    }
+    this.lastLifecycleDigest = digest;
+    return { type: "lifecycle", moment, lifecycle };
   }
 
   getCost() {

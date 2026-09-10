@@ -196,8 +196,11 @@ export {
   type CheckpointVersion,
   type CheckpointPolicy,
   type CheckpointStore,
+  type CheckpointReport,
   DEFAULT_CHECKPOINT_POLICY,
   SqliteCheckpointStore,
+  reportCheckpoints,
+  pruneCheckpoints,
 } from "./state.js";
 export { CHECKPOINT_INDEXES, AUDIT_INDEXES, SESSION_INDEXES, applyIndexes } from "./schema.js";
 export {

@@ -5,7 +5,8 @@
 
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { getRuneHome } from "@rune/shared";
+import { Database } from "bun:sqlite";
+import { getRuneHome, pruneCheckpoints, reportCheckpoints } from "@rune/shared";
 import type { IncidentRecord } from "@rune/shared";
 import { BlackboxStore } from "@rune/telemetry";
 import { mergedServers, preflightServer } from "@rune/tool-registry";
@@ -151,6 +152,8 @@ export function runDoctor(): void {
     }
   }
 
+  doctorCheckpoints();
+
   doctorProviderRoutes();
 
   doctorToolchain();
@@ -169,6 +172,124 @@ export function runDoctor(): void {
     `\n  ${dim("browse:")} ${info("rune incidents")} ${dim("·")} ${info("rune incidents top")} ${dim("·")} ${info("rune incidents show <id>")}\n`,
   );
   store?.close();
+}
+
+// ─── checkpoints ───
+
+const SESSION_DB = () => process.env.RUNE_DB_PATH || join(HOME(), "rune.db");
+
+function fmtBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(0)} MB`;
+  return `${(bytes / 1024).toFixed(0)} KB`;
+}
+
+/**
+ * What the checkpoints table is costing, and how much of it is dead weight.
+ *
+ * It earned a line on this page the hard way: measured on the founder's own
+ * database on 2026-09-10 it held 747 rows / 184 MiB of a 250 MiB file, written
+ * on every file edit since May and read by nothing, because the run id was
+ * minted from `Date.now()` and no row could ever be addressed again. The
+ * writes are bounded now and superseded rows rotate; what accumulated before
+ * that is still there, and this is where a person finds out.
+ */
+function doctorCheckpoints(): void {
+  const path = SESSION_DB();
+  if (!existsSync(path)) return;
+  let db: Database | null = null;
+  try {
+    db = new Database(path, { readonly: true });
+    const report = reportCheckpoints(db);
+    if (report.rows === 0) {
+      console.log(`  ${ok("✓")} checkpoints: none stored`);
+      return;
+    }
+    const span =
+      report.oldest && report.newest
+        ? ` ${dim(`${shortTs(report.oldest)} → ${shortTs(report.newest)}`)}`
+        : "";
+    const mark = report.reclaimableBytes > 32 * 1024 * 1024 ? warn("!") : ok("✓");
+    console.log(
+      `  ${mark} checkpoints: ${text(String(report.rows))} row${report.rows === 1 ? "" : "s"} ` +
+        `across ${report.runs} run${report.runs === 1 ? "" : "s"}, ` +
+        `${text(fmtBytes(report.bytes))}${span}`,
+    );
+    if (report.reclaimableRows > 0) {
+      console.log(
+        `    ${dim("reclaimable:")} ${report.reclaimableRows} superseded or orphaned row` +
+          `${report.reclaimableRows === 1 ? "" : "s"}, ${fmtBytes(report.reclaimableBytes)} ` +
+          `${dim("—")} ${info("rune doctor prune-checkpoints")} ${dim("(dry run; --apply removes them)")}`,
+      );
+    }
+  } catch {
+    console.log(`  ${warn("!")} checkpoints: cannot read ${path}`);
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * `rune doctor prune-checkpoints [--apply] [--keep N]`
+ *
+ * DRY RUN by default, and deliberately so: this is the founder's own history,
+ * and a report must never be able to delete it by accident. It removes only
+ * rows that are superseded (a newer version of the same run exists, beyond
+ * `--keep`) or orphaned (their session is gone) — never the newest checkpoint
+ * of a run whose session still exists.
+ */
+export function runCheckpointPrune(args: string[]): number {
+  const apply = args.includes("--apply");
+  const keepFlag = args.indexOf("--keep");
+  const keep = keepFlag >= 0 ? Number(args[keepFlag + 1]) : 2;
+  if (!Number.isFinite(keep) || keep < 1) {
+    console.error(`  ${danger(glyph("failure"))} --keep must be a positive integer`);
+    return 1;
+  }
+  const path = SESSION_DB();
+  if (!existsSync(path)) {
+    console.error(`  ${danger(glyph("failure"))} no session database at ${path}`);
+    return 1;
+  }
+  let db: Database | null = null;
+  try {
+    db = new Database(path, { readonly: !apply });
+    const before = reportCheckpoints(db);
+    const result = pruneCheckpoints(db, { apply, keep: Math.floor(keep) });
+    console.log(
+      `
+  ${dim("§ CHECKPOINTS")} ${faint(path)}
+
+` +
+        `  ${before.rows} row${before.rows === 1 ? "" : "s"} across ${before.runs} run` +
+        `${before.runs === 1 ? "" : "s"}, ${fmtBytes(before.bytes)}
+`,
+    );
+    if (result.removedRows === 0) {
+      console.log(`  ${ok("✓")} nothing to prune — every row is a run's newest ${keep}
+`);
+      return 0;
+    }
+    console.log(
+      result.applied
+        ? `  ${ok("✓")} removed ${result.removedRows} row${result.removedRows === 1 ? "" : "s"}, ` +
+            `${fmtBytes(result.removedBytes)} reclaimed ` +
+            `${dim("(run VACUUM to return it to the filesystem)")}
+`
+        : `  ${warn("!")} would remove ${result.removedRows} row` +
+            `${result.removedRows === 1 ? "" : "s"}, ${fmtBytes(result.removedBytes)} ` +
+            `${dim("— nothing was deleted.")} ${info("rune doctor prune-checkpoints --apply")}
+`,
+    );
+    return 0;
+  } catch (err) {
+    console.error(
+      `  ${danger(glyph("failure"))} ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return 1;
+  } finally {
+    db?.close();
+  }
 }
 
 /**

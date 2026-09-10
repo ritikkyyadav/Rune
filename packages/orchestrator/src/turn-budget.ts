@@ -69,3 +69,58 @@ export function turnBudgetForMessage(message: string, fullBudget: number): TurnB
       "Do not resume the broader task or start tool-driven work unless the answer genuinely requires it — if the mission should continue, say what you would do next and stop.",
   };
 }
+
+// ─── Resuming after a crash ───
+
+/**
+ * What a run killed mid-flight hands to the run that picks it up.
+ *
+ * Measured shape of the defect: a run SIGKILLed at turn 60 of 80 came back
+ * with a fresh 80-turn ceiling and fresh second winds, so a machine that
+ * crashed twice could spend 240 turns on an 80-turn task and nothing anywhere
+ * would say so. Inheritance is deliberately narrow — see `applyInheritance`.
+ */
+export interface InheritedBudget {
+  turnsUsed: number;
+  secondWindsUsed: number;
+  spentUsd: number;
+  /** The status the interrupted run last reported, for the resume line. */
+  from: string;
+}
+
+/** At least this many turns, however much the interrupted run had spent. */
+export const MIN_RESUMED_TURNS = 1;
+
+/**
+ * Narrow the budget by what an interrupted run already spent.
+ *
+ * Not applied when the message is conversational (a question after a crash is
+ * a question, not the resumed task) and not applied at all unless the caller
+ * has already established that the previous run died without running its close
+ * AND left open steps — a run that ENDED, at a ceiling or by the user's own
+ * abort, announced itself and the next message is a fresh authorization.
+ *
+ * Returns the line both surfaces state. Extending stays the second wind's job.
+ */
+export function applyInheritance(
+  budget: TurnBudget,
+  secondWinds: number,
+  inherited: InheritedBudget | null,
+): { budget: TurnBudget; secondWinds: number; line: string | null } {
+  if (!inherited || budget.conversational) return { budget, secondWinds, line: null };
+  const turnsUsed = Math.max(0, Math.floor(inherited.turnsUsed));
+  const windsUsed = Math.max(0, Math.floor(inherited.secondWindsUsed));
+  if (turnsUsed === 0 && windsUsed === 0) return { budget, secondWinds, line: null };
+
+  const remaining = Math.max(MIN_RESUMED_TURNS, budget.maxTurns - turnsUsed);
+  const winds = Math.max(0, secondWinds - windsUsed);
+  const spend = inherited.spentUsd > 0 ? ` $${inherited.spentUsd.toFixed(2)} already spent;` : "";
+  const line =
+    `Resuming interrupted work: ${turnsUsed} turn${turnsUsed === 1 ? "" : "s"} and ` +
+    `${windsUsed} second wind${windsUsed === 1 ? "" : "s"} were used before the run died,` +
+    `${spend} this run has ${remaining} turn${remaining === 1 ? "" : "s"} and ` +
+    `${winds} second wind${winds === 1 ? "" : "s"} left. ` +
+    "Raise `[reliability] maxTurns` if the task genuinely needs more.";
+
+  return { budget: { ...budget, maxTurns: remaining }, secondWinds: winds, line };
+}

@@ -202,6 +202,17 @@ const PENDING_DECISIONS_CAP = 50;
 const GOAL_CAP = 24_000;
 /** Lineage entries are context, not the live spec — capped harder. */
 const PRIOR_GOAL_CHARS = 2_000;
+/**
+ * The live directive — the last thing the user asked for mid-run.
+ *
+ * It was 200 characters. A 400-character correction ("no, keep the old API
+ * and add a shim; the migration has to be reversible; do NOT touch the
+ * schema") survived in the transcript and was cut in half on the spine, so
+ * after a compaction that dropped the transcript tail the correction was
+ * gone and the run carried on against the original ask. Sized like the goal
+ * it competes with, because that is what it is: a revision of the spec.
+ */
+const DIRECTIVE_CAP = GOAL_CAP;
 /** Todos rendered into the mission FILE (the block keeps its tighter cap). */
 const MISSION_TODOS_CAP = 50;
 /** Hard ceiling on the mission file so a runaway state can't fill a disk. */
@@ -521,6 +532,19 @@ export class TaskStateStore {
   setEvidenceGate(mode: "attest" | "refuse"): void {
     this.gate = mode;
   }
+
+  /**
+   * The workspace revision this run is working against.
+   *
+   * Set once per run by the engine and stamped onto every check the spine
+   * records, so a verdict carries the tree it was taken on. Never derived
+   * here: reading git is the engine's job and this store is pure.
+   */
+  private revision: { head: string | null; dirty: boolean } | null = null;
+
+  setRevision(revision: { head: string | null; dirty: boolean } | null): void {
+    this.revision = revision;
+  }
   /**
    * Id counters for the narrative. Restored from the snapshot rather than kept
    * only in memory: a resumed session that started again at `h1` would give
@@ -578,7 +602,7 @@ export class TaskStateStore {
       return true;
     }
     const open = this.state.todos.some((t) => t.status !== "completed");
-    this.state.directive = trimmed.slice(0, 200);
+    this.state.directive = trimmed.slice(0, DIRECTIVE_CAP);
     if (open || this.state.handoff || isPureSteering(trimmed) || isInspection(trimmed)) {
       this.touch();
       return false;
@@ -596,7 +620,7 @@ export class TaskStateStore {
   noteSteer(text: string): void {
     const trimmed = text.trim();
     if (!trimmed) return;
-    this.state.directive = trimmed.slice(0, 200);
+    this.state.directive = trimmed.slice(0, DIRECTIVE_CAP);
     this.logEvent("steer", trimmed.slice(0, 160));
   }
 
@@ -698,6 +722,11 @@ export class TaskStateStore {
         ...(detail?.exitCode != null ? { exitCode: detail.exitCode } : {}),
         ...(detail?.durationMs != null ? { durationMs: detail.durationMs } : {}),
         ...(detail?.summary ? { summary: detail.summary.slice(0, 200) } : {}),
+        // The revision it ran against. A verdict with no revision cannot be
+        // told apart from a stale one after a restart, which is why "no
+        // verified status for stale evidence" had nothing to check.
+        ...(this.revision?.head ? { head: this.revision.head } : {}),
+        ...(this.revision ? { dirty: this.revision.dirty } : {}),
       });
       if (this.state.checks.length > CHECKS_CAP) {
         this.state.checks = this.state.checks.slice(-CHECKS_CAP);
@@ -977,7 +1006,12 @@ export class TaskStateStore {
       .slice(-PRIOR_GOALS_CAP);
     this.state.goal = nextGoal.slice(0, GOAL_CAP);
     delete this.state.pendingGoal;
-    if (this.state.directive && todoKey(this.state.directive) === todoKey(nextGoal.slice(0, 200))) {
+    // The directive and the goal can be the same words arriving twice (a
+    // steering message the harness then promoted to the goal). Compared at
+    // full length now that the directive is no longer truncated at 200 — the
+    // old comparison sliced one side and not the other, so a long steer that
+    // BECAME the goal stayed on the spine as a duplicate of it.
+    if (this.state.directive && todoKey(this.state.directive) === todoKey(this.state.goal)) {
       delete this.state.directive;
     }
     if (lineage.length > 0) this.state.priorGoals = lineage;

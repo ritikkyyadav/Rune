@@ -79,26 +79,12 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_events_session_seq
     ON events(session_id, seq);
 
-  CREATE TABLE IF NOT EXISTS files (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id      TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    path            TEXT NOT NULL,
-    hash            TEXT NOT NULL,
-    last_read_seq   INTEGER NOT NULL,
-    updated_at      TEXT NOT NULL,
-    UNIQUE(session_id, path)
-  );
-
-  CREATE TABLE IF NOT EXISTS permissions (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id      TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    tool            TEXT NOT NULL,
-    scope           TEXT NOT NULL DEFAULT 'session'
-                    CHECK (scope IN ('once', 'session', 'project', 'global')),
-    pattern         TEXT,
-    granted_at      TEXT NOT NULL,
-    expires_at      TEXT
-  );
+  -- Two tables used to be declared here, "files" and "permissions". Nothing
+  -- ever read or wrote either one: file freshness is tracked in the tool layer
+  -- and grants live in the permission store, so the pair described a design
+  -- the code does not have and misled every reader of this schema. They are no
+  -- longer CREATEd. Existing databases keep their empty tables -- dropping a
+  -- table is destructive and this is the founder's own history.
 
   CREATE TABLE IF NOT EXISTS audit_log (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -272,25 +258,56 @@ export class SessionManager {
     return existed;
   }
 
+  /**
+   * Append one event and return its seq.
+   *
+   * Transactional, and that is not a nicety: `MAX(seq) + 1` followed by an
+   * INSERT is a read-modify-write, and two hosts on one database file — a
+   * detached run and an attached terminal, two `engine-host` processes, a
+   * lead and the session manager — could interleave between the two
+   * statements and race into the `UNIQUE(session_id, seq)` constraint. The
+   * throw was swallowed by the callers (every append is wrapped in a
+   * best-effort try/catch, because losing a trace row must never fail a turn),
+   * so the loser's row simply vanished. A WAL database serialises writers, so
+   * wrapping the pair makes the read and the write one atomic step.
+   */
   appendEvent(sessionId: string, event: SessionEvent): number {
     const now = new Date().toISOString();
     const payloadJson = JSON.stringify(event);
 
+    const insert = this.db.transaction((): number => {
+      const row = this.db
+        .prepare("SELECT COALESCE(MAX(seq), 0) + 1 as next_seq FROM events WHERE session_id = ?")
+        .get(sessionId) as { next_seq: number };
+
+      const seq = row.next_seq;
+
+      this.db
+        .prepare(
+          "INSERT INTO events (session_id, seq, type, payload_json, created_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .run(sessionId, seq, event.type, payloadJson, now);
+
+      this.db.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(now, sessionId);
+
+      return seq;
+    });
+
+    return insert();
+  }
+
+  /**
+   * The highest seq this session has written — where a reader picks up.
+   *
+   * One indexed read; the alternative every caller was reaching for is
+   * `getEvents(id, 1).length`, which loads the whole transcript to learn one
+   * number.
+   */
+  lastSeq(sessionId: string): number {
     const row = this.db
-      .prepare("SELECT COALESCE(MAX(seq), 0) + 1 as next_seq FROM events WHERE session_id = ?")
-      .get(sessionId) as { next_seq: number };
-
-    const seq = row.next_seq;
-
-    this.db
-      .prepare(
-        "INSERT INTO events (session_id, seq, type, payload_json, created_at) VALUES (?, ?, ?, ?, ?)",
-      )
-      .run(sessionId, seq, event.type, payloadJson, now);
-
-    this.db.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(now, sessionId);
-
-    return seq;
+      .prepare("SELECT COALESCE(MAX(seq), 0) AS seq FROM events WHERE session_id = ?")
+      .get(sessionId) as { seq: number } | null;
+    return row?.seq ?? 0;
   }
 
   /**

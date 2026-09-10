@@ -789,6 +789,26 @@ export class AgentLoop {
   }
 
   /**
+   * Turns spent and second winds granted, live.
+   *
+   * `turn` and `windsUsed` are locals inside `run()`, so the only turn number
+   * that ever left the loop was `turn_complete.totalTurns` — at the very end.
+   * The lifecycle projection needs them at every boundary, and a run that is
+   * killed at turn 60 of 80 needs them to have been persisted BEFORE it died.
+   */
+  getBudgetProgress(): { turnsUsed: number; turnsMax: number; secondWindsUsed: number } {
+    return {
+      turnsUsed: this.turnsUsed,
+      turnsMax: this.config.maxTurns,
+      secondWindsUsed: this.secondWindsUsed,
+    };
+  }
+
+  /** Mirrors of `run()`'s locals; see `getBudgetProgress`. */
+  private turnsUsed = 0;
+  private secondWindsUsed = 0;
+
+  /**
    * Promote catalogued tools that the recent conversation NAMED (P13.1).
    *
    * Only text the harness or the model wrote is scanned — user requests,
@@ -1297,6 +1317,7 @@ export class AgentLoop {
       const counts = ts.todoCounts();
       if (counts.done <= windDoneAtStart) return false;
       windsUsed++;
+      this.secondWindsUsed = windsUsed;
       windDoneAtStart = counts.done;
       wrapUpInjected = false;
       this.config.maxTurns += baseMaxTurns;
@@ -1360,6 +1381,7 @@ export class AgentLoop {
       }
 
       turn++;
+      this.turnsUsed = turn;
       this.currentTurn = turn;
       // The report turn is owed even when the turn budget just ran out — a run
       // that halts on its last turn still has to say what it did not finish.

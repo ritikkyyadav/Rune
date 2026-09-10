@@ -2,11 +2,33 @@ import { Database } from "bun:sqlite";
 
 // ─── Run State ───
 
+/**
+ * Where a run had got to — a POINTER, not a transcript.
+ *
+ * It used to carry `messages: unknown[]`, the loop's entire working set, saved
+ * after every file write. Measured on the founder's own database on
+ * 2026-09-10: 747 checkpoint rows holding 193 414 376 bytes — 184 MiB of a
+ * 250 MiB file — spanning three months, never read and never pruned, because
+ * `runId` was `${sessionId}-${Date.now()}` and no row could be addressed
+ * again. The messages were never the point either: a resumed run rebuilds its
+ * transcript from the `events` table, which already holds every one of them.
+ *
+ * So this is what a restart genuinely needs and cannot derive: how far the
+ * dead run got, what it had spent, and the last event it managed to write.
+ */
 export interface RunState {
   runId: string;
   sessionId: string;
-  messages: unknown[];
+  /** Turns the dead run had completed. */
   turnCount: number;
+  /** The last `events.seq` this run wrote — where a reader picks up. */
+  lastSeq: number;
+  /** What it had spent, so the next run can inherit it rather than reset. */
+  budget: { turnsUsed: number; secondWindsUsed: number; spentUsd: number };
+  /** The workspace revision it was working against. */
+  head: string | null;
+  dirty: boolean;
+  /** Model, provider — small, flat, and bounded by construction. */
   context: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -21,22 +43,34 @@ export interface CheckpointVersion {
 
 // ─── Checkpoint Policy ───
 
+/**
+ * When a checkpoint is written.
+ *
+ * `intervalTurns` and `intervalMs` used to live here too. The interval save
+ * was dead code from the day it was written — `turnCount` is declared inside
+ * `chat()` and incremented only on `turn_complete`, which the loop emits
+ * exactly once per call, so `turnCount % 5 === 0` was never true. Nothing
+ * timed the `intervalMs` one at all. Both are gone rather than left looking
+ * like policy someone could tune.
+ */
 export interface CheckpointPolicy {
-  intervalTurns: number; // default 5
-  intervalMs: number; // default 60000
-  onToolSuccess: boolean; // default true
+  /** Write at a tool boundary that changed the workspace. Default true. */
+  onToolSuccess: boolean;
+  /** Versions kept per run. Older ones are rotated away on each save. */
+  keepVersions: number;
 }
 
 export const DEFAULT_CHECKPOINT_POLICY: CheckpointPolicy = {
-  intervalTurns: 5,
-  intervalMs: 60000,
   onToolSuccess: true,
+  // Two: the one a restart reads, and the one before it, so a torn write is
+  // recoverable. A third has never answered a question the second could not.
+  keepVersions: 2,
 };
 
 // ─── Checkpoint Store Interface ───
 
 export interface CheckpointStore {
-  save(runId: string, state: RunState): void;
+  save(runId: string, state: RunState, keep?: number): void;
   load(runId: string): CheckpointVersion | null;
   loadVersion(runId: string, version: number): CheckpointVersion | null;
   getLastCheckpoint(runId: string): CheckpointVersion | null;
@@ -68,26 +102,44 @@ export class SqliteCheckpointStore implements CheckpointStore {
   }
 
   /**
-   * Save a checkpoint for the given run. Automatically increments the version
-   * number based on the highest existing version for this run.
+   * Save a checkpoint for the given run, and rotate the superseded ones.
+   *
+   * Transactional for the same reason `appendEvent` is: `MAX(version) + 1`
+   * followed by an INSERT is a read-modify-write and the UNIQUE constraint is
+   * the only thing between two writers and a lost row.
+   *
+   * `keep` rotation is what stops the table growing without bound. It deletes
+   * only rows of THIS run — never another session's, and never on a schedule
+   * nobody asked for. Existing history is left alone; `rune doctor` reports it
+   * and `rune doctor prune-checkpoints` removes it, on purpose, with a flag.
    */
-  save(runId: string, state: RunState): void {
+  save(runId: string, state: RunState, keep = 2): void {
     const now = new Date().toISOString();
     const stateJson = JSON.stringify(state);
 
-    const row = this.db
-      .prepare(
-        "SELECT COALESCE(MAX(version), 0) + 1 AS next_version FROM checkpoints WHERE run_id = ?",
-      )
-      .get(runId) as { next_version: number };
+    const write = this.db.transaction(() => {
+      const row = this.db
+        .prepare(
+          "SELECT COALESCE(MAX(version), 0) + 1 AS next_version FROM checkpoints WHERE run_id = ?",
+        )
+        .get(runId) as { next_version: number };
 
-    const version = row.next_version;
+      const version = row.next_version;
 
-    this.db
-      .prepare(
-        "INSERT INTO checkpoints (run_id, version, state_json, created_at) VALUES (?, ?, ?, ?)",
-      )
-      .run(runId, version, stateJson, now);
+      this.db
+        .prepare(
+          "INSERT INTO checkpoints (run_id, version, state_json, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .run(runId, version, stateJson, now);
+
+      if (keep > 0 && version > keep) {
+        this.db
+          .prepare("DELETE FROM checkpoints WHERE run_id = ? AND version <= ?")
+          .run(runId, version - keep);
+      }
+    });
+
+    write();
   }
 
   /**
@@ -180,4 +232,109 @@ export class SqliteCheckpointStore implements CheckpointStore {
       createdAt: row.created_at,
     }));
   }
+}
+
+// ─── Reporting and pruning ───
+
+export interface CheckpointReport {
+  rows: number;
+  bytes: number;
+  runs: number;
+  /** Rows whose session no longer exists, or that belong to a finished run. */
+  reclaimableRows: number;
+  reclaimableBytes: number;
+  oldest: string | null;
+  newest: string | null;
+}
+
+/**
+ * What the checkpoints table currently holds, and how much of it is dead.
+ *
+ * "Reclaimable" is deliberately conservative: a row is only counted when its
+ * session row is gone, or when the row is superseded (a newer version of the
+ * same run exists). A live run's newest checkpoint is never reclaimable, and
+ * nothing here deletes anything — see `pruneCheckpoints`.
+ */
+export function reportCheckpoints(db: Database): CheckpointReport {
+  const totals = db
+    .prepare(
+      `SELECT COUNT(*) AS rows, COALESCE(SUM(LENGTH(state_json)), 0) AS bytes,
+              COUNT(DISTINCT run_id) AS runs,
+              MIN(created_at) AS oldest, MAX(created_at) AS newest
+         FROM checkpoints`,
+    )
+    .get() as {
+    rows: number;
+    bytes: number;
+    runs: number;
+    oldest: string | null;
+    newest: string | null;
+  };
+
+  const dead = db
+    .prepare(
+      `SELECT COUNT(*) AS rows, COALESCE(SUM(LENGTH(c.state_json)), 0) AS bytes
+         FROM checkpoints c
+        WHERE EXISTS (
+                SELECT 1 FROM checkpoints newer
+                 WHERE newer.run_id = c.run_id AND newer.version > c.version
+              )
+           OR NOT EXISTS (
+                SELECT 1 FROM sessions s
+                 WHERE s.id = c.run_id
+                    OR c.run_id LIKE s.id || '%'
+              )`,
+    )
+    .get() as { rows: number; bytes: number };
+
+  return {
+    rows: totals.rows ?? 0,
+    bytes: totals.bytes ?? 0,
+    runs: totals.runs ?? 0,
+    reclaimableRows: dead.rows ?? 0,
+    reclaimableBytes: dead.bytes ?? 0,
+    oldest: totals.oldest,
+    newest: totals.newest,
+  };
+}
+
+/**
+ * Remove superseded and orphaned checkpoint rows.
+ *
+ * DRY RUN unless `apply` is true, because this is the founder's own history
+ * and a build agent must not be able to delete it by running a report. Keeps
+ * the newest `keep` versions of every run whose session still exists.
+ */
+export function pruneCheckpoints(
+  db: Database,
+  opts: { apply?: boolean; keep?: number } = {},
+): { removedRows: number; removedBytes: number; applied: boolean } {
+  const keep = Math.max(1, Math.floor(opts.keep ?? 2));
+  const doomed = db
+    .prepare(
+      `SELECT c.id AS id, LENGTH(c.state_json) AS bytes
+         FROM checkpoints c
+        WHERE (
+                SELECT COUNT(*) FROM checkpoints newer
+                 WHERE newer.run_id = c.run_id AND newer.version > c.version
+              ) >= ?
+           OR NOT EXISTS (
+                SELECT 1 FROM sessions s
+                 WHERE s.id = c.run_id
+                    OR c.run_id LIKE s.id || '%'
+              )`,
+    )
+    .all(keep) as Array<{ id: number; bytes: number }>;
+
+  const removedBytes = doomed.reduce((sum, row) => sum + (row.bytes ?? 0), 0);
+  if (!opts.apply || doomed.length === 0) {
+    return { removedRows: doomed.length, removedBytes, applied: false };
+  }
+
+  const remove = db.transaction((ids: number[]) => {
+    const stmt = db.prepare("DELETE FROM checkpoints WHERE id = ?");
+    for (const id of ids) stmt.run(id);
+  });
+  remove(doomed.map((row) => row.id));
+  return { removedRows: doomed.length, removedBytes, applied: true };
 }

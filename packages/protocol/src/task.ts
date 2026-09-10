@@ -218,6 +218,14 @@ export interface CheckRecord {
   exitCode?: number;
   durationMs?: number;
   summary?: string;
+  /**
+   * The workspace revision the check ran against, and whether the tree was
+   * dirty at the time. Absent outside a git repository, and absent on every
+   * record written before Phase 2 — a check with no revision is old, not
+   * stale. Without these a stored verdict has nothing to be stale against.
+   */
+  head?: string;
+  dirty?: boolean;
 }
 
 /**

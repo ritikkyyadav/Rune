@@ -12,8 +12,11 @@
 // whose writes came from a worker reported `filesChanged: []` while the same
 // run's commit contained them. One function, four callers.
 
+import { execFileSync } from "node:child_process";
+
 import type {
   CheckRecord,
+  ClaimRung,
   Criterion,
   HandoffReason,
   TaskLifecycle,
@@ -96,6 +99,87 @@ export function filesChangedFrom(
 /** True when this tool call, if it succeeded, changed the workspace. */
 export function isFileChangingTool(toolName: string | undefined): boolean {
   return typeof toolName === "string" && (WRITE_TOOLS.has(toolName) || toolName === "worker");
+}
+
+// ─── The workspace revision ───
+
+/**
+ * The revision a run is working against, and whether the tree is dirty.
+ *
+ * Nothing recorded this before: `sessions.workspace_root` is a path, and the
+ * only commit sha that reached disk was prose inside an opt-in auto-commit
+ * marker. Without it a stored verdict has nothing to be stale AGAINST, which
+ * is why "no verified status for stale evidence" had no durable anchor.
+ *
+ * Two short git calls, bounded and never fatal: a non-repo, a broken git, or a
+ * repository with no commits all report `{ head: null, dirty: false }` rather
+ * than failing a run over bookkeeping.
+ */
+export function workspaceRevision(root: string): { head: string | null; dirty: boolean } {
+  const run = (args: string[]): string | null => {
+    try {
+      return execFileSync("git", args, {
+        cwd: root,
+        encoding: "utf8",
+        timeout: 5_000,
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+    } catch {
+      return null;
+    }
+  };
+  const head = run(["rev-parse", "HEAD"]);
+  if (head === null) return { head: null, dirty: false };
+  // Untracked files count: a run that created files and never committed them
+  // has changed the tree, and a criterion verified before that is not safe.
+  const status = run(["status", "--porcelain", "--untracked-files=normal"]);
+  return { head, dirty: status !== null && status.length > 0 };
+}
+
+// ─── Stale evidence ───
+
+const RUNGS: readonly ClaimRung[] = ["suspected", "observed", "reproduced", "verified"];
+
+/**
+ * Demote any claim that was proven against a DIFFERENT workspace revision.
+ *
+ * `verified` means "this check failed on the parent commit and passes now".
+ * That sentence is about a revision. After a restart — or after the run's own
+ * auto-commit moved HEAD — the claim is about a tree that no longer exists,
+ * and reporting it unchanged is the harness taking the model's word by proxy.
+ *
+ * The rule is deliberately narrow, because the alternative is demoting every
+ * criterion on every resume and teaching the reader to ignore the ledger:
+ *  · HEAD moved since the claim was recorded → drop one rung.
+ *  · the tree was CLEAN when the claim was recorded and is dirty now → drop
+ *    one rung (something was edited under a proven claim).
+ *  · it was dirty then and is dirty now → nothing can be concluded either
+ *    way, so nothing moves.
+ * A claim recorded before revisions were tracked has no `head` and is left
+ * alone; it is not evidence of staleness, only of age.
+ *
+ * Returns the criteria that moved, for the line the surface prints.
+ */
+export function demoteStaleCriteria(
+  criteria: Criterion[],
+  now: { head: string | null; dirty: boolean },
+): Array<{ text: string; from: ClaimRung; to: ClaimRung }> {
+  const moved: Array<{ text: string; from: ClaimRung; to: ClaimRung }> = [];
+  for (const criterion of criteria) {
+    const rung = criterion.rung;
+    const evidence = criterion.evidence as
+      (Criterion["evidence"] & { head?: string; dirty?: boolean }) | undefined;
+    if (!rung || !evidence?.head) continue;
+    const index = RUNGS.indexOf(rung);
+    if (index <= 1) continue; // suspected/observed cannot go stale
+    const headMoved = now.head !== null && evidence.head !== now.head;
+    const wentDirty = evidence.dirty === false && now.dirty;
+    if (!headMoved && !wentDirty) continue;
+    const to = RUNGS[index - 1]!;
+    criterion.rung = to;
+    moved.push({ text: criterion.text, from: rung, to });
+  }
+  return moved;
 }
 
 // ─── One terminal vocabulary ───

@@ -81,6 +81,14 @@ export interface Evidence {
   parentCommitFailed?: boolean;
   /** The parent commit the check was run against, for the receipt. */
   parentCommit?: string;
+  /**
+   * The workspace revision this evidence was taken at, and whether the tree
+   * was dirty then. A rung is a claim about a TREE: after HEAD moves, or after
+   * a clean tree is edited, the claim is about a tree that no longer exists.
+   * `demoteStaleCriteria` is what acts on it.
+   */
+  head?: string;
+  dirty?: boolean;
 }
 
 export interface Criterion {

@@ -85,10 +85,24 @@ export type LedgerRejection = { ok: true; criterion: Criterion } | { ok: false; 
  * through `record`, which checks the evidence before it agrees.
  */
 export class BriefLedger {
-  constructor(private readonly brief: Brief) {}
+  /**
+   * `revision` is how a rung learns which tree it is a claim about. The engine
+   * supplies it; a ledger built without one still works and simply records
+   * evidence with no revision, which `demoteStaleCriteria` treats as old
+   * rather than stale.
+   */
+  constructor(
+    private readonly brief: Brief,
+    private readonly revision?: () => { head: string | null; dirty: boolean },
+  ) {}
 
   get criteria(): readonly Criterion[] {
     return this.brief.criteria;
+  }
+
+  /** The brief itself, for persistence. The ledger mutates it in place. */
+  get snapshot(): Brief {
+    return this.brief;
   }
 
   get met(): number {
@@ -142,7 +156,10 @@ export class BriefLedger {
       };
     }
     criterion.rung = rung;
-    criterion.evidence = evidence;
+    const at = this.revision?.();
+    criterion.evidence = at
+      ? { ...evidence, ...(at.head ? { head: at.head } : {}), dirty: at.dirty }
+      : evidence;
     return { ok: true, criterion };
   }
 

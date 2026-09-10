@@ -323,7 +323,13 @@ if (values.help) {
 // ─── Black-box surfaces: no Engine, no provider validation — instant ───
 
 if (command === "doctor") {
-  const { runDoctor } = await import("./blackbox-cli");
+  const { runDoctor, runCheckpointPrune } = await import("./blackbox-cli");
+  // `rune doctor prune-checkpoints [--apply] [--keep N]` — dry run by default.
+  // The report above says what is reclaimable; this is the one that removes it,
+  // and it will not do so without the flag.
+  if (process.argv[3] === "prune-checkpoints") {
+    process.exit(runCheckpointPrune(process.argv.slice(4)));
+  }
   runDoctor();
   process.exit(0);
 }
