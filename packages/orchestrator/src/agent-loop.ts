@@ -4279,7 +4279,12 @@ export class AgentLoop {
       // important news, since it is the one that precedes a run dying of an
       // over-limit prompt.
       failed: r.failed === true ? true : undefined,
-      failureReason: r.failed === true ? r.failureReason : undefined,
+      // Carried whether or not `failed` is set. A compaction the deterministic
+      // tier RESCUED after the summarizer broke did happen — so `failed` is
+      // wrong for it — but it is not a healthy eviction either, and with the
+      // reason dropped the three consumers saw a clean `tier: "tool_results"`
+      // row and nothing else. That was Phase 2's S-2.
+      failureReason: r.failureReason || undefined,
     };
   }
 

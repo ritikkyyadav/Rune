@@ -30,6 +30,15 @@ export interface Checkpoint {
   at?: string;
   /** True for a checkpoint saved at a tool boundary rather than on resolve. */
   atBoundary?: boolean;
+  /**
+   * How the child ENDED, on the final save only.
+   *
+   * A boundary checkpoint has no status, because a child that is between two
+   * model calls has not ended. That asymmetry is the whole signal the turn
+   * ceiling reads: a record with no status is a record of a child that was
+   * still running when its process died.
+   */
+  status?: string;
 }
 
 /**
@@ -301,6 +310,42 @@ export function delegatedBudgetSeed(): SpentBudget | undefined {
 }
 
 /**
+ * The turn ceiling this run of the child gets, per the director's rule.
+ *
+ * Two resumes look identical from the tool's side — both arrive as a
+ * `task_id` and a prompt — and they are not the same event:
+ *
+ * - **A crash-resume of an UNFINISHED child** picks up work that was still in
+ *   flight. Its checkpoint is a boundary record (`atBoundary`, no `status`),
+ *   because the final save never happened. Handing it a fresh ceiling would
+ *   mean a user who kills and resumes twice gets three full budgets for one
+ *   task, which is the lead-side G6 hole in child form. It inherits:
+ *   `remaining = max - used`.
+ * - **A follow-up to a child that REACHED a terminal state** is new work the
+ *   parent asked for, on a child that already reported. Its checkpoint carries
+ *   a `status`. It starts a fresh turn ceiling — Lane W's point holds, a child
+ *   resumed after `max_turns` with nothing left cannot take a single turn and
+ *   would return an empty failure. The cumulative CAPS still apply either way:
+ *   `resumeBudgetState` inherits spend and backdates the clock, so cost and
+ *   wall-clock bound the task, not the call.
+ *
+ * The floor is one turn. A crash-resume that had already spent its ceiling is
+ * a shape a live run cannot reach (a child at `max_turns` ends and writes a
+ * final save), and zero turns would produce a child with no receipts and no
+ * prose — the opposite of a usable partial result.
+ */
+export function delegatedTurnCeiling(maxTurns: number): number {
+  const prior = active.getStore()?.checkpoint;
+  if (!prior) return maxTurns;
+  // A terminal record means the child ended and this is a follow-up.
+  if (typeof prior.status === "string" && prior.status) return maxTurns;
+  if (!prior.atBoundary) return maxTurns;
+  const used = Number(prior.budget?.turnsUsed);
+  if (!Number.isFinite(used) || used <= 0) return maxTurns;
+  return Math.max(1, maxTurns - Math.floor(used));
+}
+
+/**
  * Save the child's resume checkpoint mid-run, at a tool boundary.
  *
  * The checkpoint used to be written only after `handler.execute` resolved, so a
@@ -421,7 +466,7 @@ export function withDelegatedSessions(
         let lastHash = "";
         let boundaryBytes = 0;
         let boundaryFailure: unknown;
-        const compose = (atBoundary: boolean): Checkpoint | null => {
+        const compose = (atBoundary: boolean, status?: string): Checkpoint | null => {
           if (!run.messages || !run.identity) return null;
           const live = run.budget?.();
           const budget: SpentBudget | undefined = isSpentBudget(live)
@@ -444,6 +489,7 @@ export function withDelegatedSessions(
             ...(budget ? { budget } : {}),
             at: new Date().toISOString(),
             ...(atBoundary ? { atBoundary: true } : {}),
+            ...(!atBoundary && status ? { status } : {}),
           };
         };
         run.saveBoundary = () => {
@@ -474,12 +520,23 @@ export function withDelegatedSessions(
         });
         if (run.messages && run.identity) {
           try {
-            const final = compose(false);
-            if (final) store.save(input.sessionId, final);
             // The child summary in the shape the lifecycle contract's
             // `children[]` uses. The child itself cannot fill in `id`/`kind` —
             // both are minted here — so it reports the rest and this completes it.
             const child = result.structured?.child as Record<string, unknown> | undefined;
+            // How it ended, on the final save only. `delegatedTurnCeiling`
+            // reads this to tell a follow-up (fresh ceiling) from a
+            // crash-resume of a child that never got here (inherits).
+            const declared =
+              typeof child?.status === "string" && child.status
+                ? child.status
+                : typeof result.structured?.stopReason === "string" && result.structured.stopReason
+                  ? (result.structured.stopReason as string)
+                  : result.success
+                    ? "end_turn"
+                    : "stalled";
+            const final = compose(false, declared);
+            if (final) store.save(input.sessionId, final);
             result = {
               ...result,
               result: `${result.result}\n\ntask_id: ${id}`,

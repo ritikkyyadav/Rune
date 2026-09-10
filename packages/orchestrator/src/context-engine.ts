@@ -684,7 +684,7 @@ export class ContextEngine {
      * history untouched.
      */
     const evictInstead = (
-      why: string,
+      summarizerFailure?: string,
     ): Awaited<ReturnType<ContextEngine["compactWorkingSet"]>> | null => {
       if (safeCutPoint <= 0) return null;
       const evicted = evictOldToolResults(messages, safeCutPoint);
@@ -692,7 +692,6 @@ export class ContextEngine {
       const after = countSet(evicted.messages);
       const before = countSet(messages);
       if (after >= before) return null;
-      void why;
       return {
         messages: remember(evicted.messages),
         compacted: true,
@@ -701,6 +700,15 @@ export class ContextEngine {
         summarizedCount: 0,
         tier: "tool_results",
         trigger,
+        // A RESCUE is not a clean compaction, and the difference matters: a run
+        // whose summarizer is down keeps force-compacting, each round trip
+        // reports `tier: "tool_results"` with no summarizer in sight, and the
+        // three consumers cannot tell it from a healthy eviction. `failed`
+        // stays unset because the working set genuinely shrank — a `failed`
+        // compaction is persisted as `compaction_failed` and does NOT replace
+        // the replayed transcript, which for a real eviction would resurrect
+        // everything it just dropped. The reason travels on its own.
+        ...(summarizerFailure ? { failureReason: summarizerFailure } : {}),
       };
     };
 
@@ -712,7 +720,7 @@ export class ContextEngine {
     const setTokens = countSet(messages);
     if (setTokens > 0 && headTokens < setTokens * MIN_SUMMARIZABLE_HEAD_SHARE) {
       return (
-        evictInstead("head too small") ?? {
+        evictInstead() ?? {
           messages,
           compacted: false,
           noop: true,
@@ -751,12 +759,13 @@ export class ContextEngine {
       // take the deterministic tier. Under `force` it may not satisfy the
       // provider on its own, but it beats handing back the same over-limit
       // history untouched.
+      const because = this.lastSummaryFailure ?? "summary generation failed";
       return (
-        evictInstead("summarizer failed") ?? {
+        evictInstead(because) ?? {
           messages,
           compacted: false,
           failed: true,
-          failureReason: this.lastSummaryFailure ?? "summary generation failed",
+          failureReason: because,
         }
       );
     }

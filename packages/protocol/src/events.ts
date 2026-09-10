@@ -244,6 +244,14 @@ export type AgentTurnEvent =
        * looked, to all three consumers, like a run that simply errored.
        */
       failed?: boolean;
+      /**
+       * Why the summarizer did not produce a summary — present on a failed
+       * compaction AND on one the deterministic tier rescued. The rescue is
+       * the case `failed` cannot express: the working set really did shrink,
+       * so the compaction happened, but no summarizer ran and the run is one
+       * unexplained `tier: "tool_results"` row away from dying of an
+       * over-limit prompt with no visible cause.
+       */
       failureReason?: string;
     }
   // A durable run-state checkpoint was written (see @rune/shared state.ts).

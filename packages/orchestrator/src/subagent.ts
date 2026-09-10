@@ -5,6 +5,7 @@ import {
   bindDelegatedLoop,
   bindDelegatedBudget,
   delegatedBudgetSeed,
+  delegatedTurnCeiling,
   checkpointDelegated,
   delegatedFallback,
 } from "./delegated-sessions";
@@ -286,7 +287,14 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
             model: deps.model,
             provider: deps.provider,
           };
-          const budget = effort ? EFFORT_PRESETS[effort] : { maxTurns, maxTokens };
+          const preset = effort ? EFFORT_PRESETS[effort] : { maxTurns, maxTokens };
+          // A crash-resume inherits the turns the killed run spent; a
+          // follow-up on a child that already reported starts fresh. Cost and
+          // wall-clock caps carry either way, through `resumeBudgetState`.
+          const budget = {
+            ...preset,
+            maxTurns: delegatedTurnCeiling(preset.maxTurns),
+          };
           // See worker.ts: without a context engine the loop's over-limit
           // recovery is gated off, so a long scout dies on three consecutive
           // errors rather than compacting. Summarizer = this scout's own model,
@@ -484,19 +492,11 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
 
           const trimmed = finalText.trim();
 
-          // Provenance banner. A scout that finished on a different model than
-          // the one it was dispatched to is reporting SECONDHAND from somewhere
-          // the caller did not choose — usually a free fallback picked up after
-          // the session model hit a plan quota. The parent has no other way to
-          // learn this (the swap happens inside a nested loop), and it changes
-          // how much the findings are worth, so it leads the result instead of
-          // being buried at the end.
-          const provenance = servedBy
-            ? `[PROVENANCE — this sub-agent did not run on ${live.provider}/${live.model}. ` +
-              `The gateway switched it to ${servedBy.provider}/${servedBy.model} mid-run` +
-              `${fallbackReason ? ` (${fallbackReason})` : ""}. Treat everything below as ` +
-              `UNVERIFIED: re-check any claim before you rely on it or repeat it to the user.]\n\n`
-            : "";
+          // The provenance banner — a scout that finished on a different model
+          // than the one it was dispatched to is reporting SECONDHAND — is
+          // built by `renderTaskResult` from `servedBy` and `fallbackReason`
+          // (subagent-result.ts). A second, dead copy of the same string lived
+          // here until 2026-09-11.
 
           // An empty summary is not an empty investigation.
           //

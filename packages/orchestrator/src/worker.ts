@@ -5,8 +5,8 @@ import {
   bindDelegatedLoop,
   bindDelegatedBudget,
   delegatedBudgetSeed,
+  delegatedTurnCeiling,
   checkpointDelegated,
-  delegatedFallback,
   delegatedWorkerSnapshot,
   retainDelegatedWorker,
 } from "./delegated-sessions";
@@ -32,7 +32,6 @@ import {
 //     worker whose checks fail keeps its branch and does not merge.
 //   - No recursion: a worker's registry contains neither `task` nor `worker`.
 
-import { readFileSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { LlmGateway, ProviderName, ReasoningEffort } from "@rune/llm-gateway";
 import type { IncidentReporter, ModelTier } from "@rune/shared";
@@ -637,7 +636,14 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
             shell: Boolean(worktree),
           });
           const live = deps.resolve(tier);
-          const budget = effort ? EFFORT_PRESETS[effort] : { maxTurns, maxTokens };
+          const preset = effort ? EFFORT_PRESETS[effort] : { maxTurns, maxTokens };
+          // A crash-resume inherits the turns the killed run spent; a
+          // follow-up on a child that already reported starts fresh. Cost and
+          // wall-clock caps carry either way, through `resumeBudgetState`.
+          const budget = {
+            ...preset,
+            maxTurns: delegatedTurnCeiling(preset.maxTurns),
+          };
           // Nested loops used to run with NO context engine, which meant the
           // over-limit recovery in agent-loop.ts was gated off for them
           // (`isContextOverflowError(...) && this.config.contextEngine`): a
@@ -1082,9 +1088,3 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
 // `renderWorkerResult` in subagent-result.ts, driven off the result object.
 // The measurement is unchanged and is still the point: per-file line counts
 // and sizes read back off disk, which the worker cannot inflate.
-
-function humanBytes(n: number): string {
-  if (n >= 1_048_576) return `${(n / 1_048_576).toFixed(1)} MB`;
-  if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${n} B`;
-}

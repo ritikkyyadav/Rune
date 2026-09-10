@@ -57,6 +57,7 @@ import {
   stopLanguageServers,
 } from "@rune/tool-registry";
 import { expandPromptCommand, findResourceMentions, readResourceText } from "@rune/tool-registry";
+import { reapToolChildren, type ReapedChild } from "@rune/tool-registry";
 import type {
   DashboardInfo,
   McpEvent,
@@ -187,6 +188,7 @@ import { TeamBus } from "./team/bus";
 import { createTeamTool, renderTeamStatus } from "./team/tool";
 import { deriveRepoIdentity } from "./team/repo-key";
 import { createWorkerTool } from "./worker";
+import { reapWorkerWorktrees, type WorkerReapEntry } from "./worker-worktree";
 import { createAskUserTool } from "./ask-user";
 import {
   BriefLedger,
@@ -572,7 +574,15 @@ export function replayEvents(
                 ? (p.trigger as "auto" | "requested" | "overflow" | "manual")
                 : undefined,
             failed: p.failed === true ? true : undefined,
-            failureReason: typeof p.failureReason === "string" ? p.failureReason : undefined,
+            // `summaryFailure` is what an `auto_compaction` row calls it — a
+            // compaction the deterministic tier rescued; `failureReason` is
+            // what a live `compaction` row carries. Both mean "no summarizer
+            // ran, and here is why", so a replayed session shows the same
+            // thing a live one did (S-2).
+            failureReason:
+              (typeof p.failureReason === "string" ? p.failureReason : "") ||
+              (typeof p.summaryFailure === "string" ? p.summaryFailure : "") ||
+              undefined,
           },
         });
         break;
@@ -1543,6 +1553,16 @@ export class Engine {
     // (the pre-P4.1 behaviour). An escape, not a recommendation.
     if (this.config.mcp?.deferTools === false) this.registry.setDeferralEnabled(false);
     registerBuiltinTools(this.registry, this.config.toolsBinaryPath);
+
+    // Clear the checkouts of workers whose process is gone, at process start
+    // rather than on the first dispatch. Lane W had to hang the reaper off the
+    // worker tool because it may not edit this file; the tool still owns the
+    // fallback, but a session that dispatches no worker at all should still
+    // not leave a dead run's 200 MB checkout on the founder's disk. Every
+    // branch is kept, and uncommitted work is committed onto its own branch
+    // before its directory goes.
+    this.reapDeadWorkerCheckouts();
+    this.reapOrphanedToolChildren();
 
     // Register the delegation tools (task + worker) — unless `[subagents]
     // mode = "off"`, in which case neither exists, the doctrine never
@@ -5416,6 +5436,12 @@ export class Engine {
               // audit can only say a number got smaller.
               tier: event.tier ?? null,
               trigger: event.trigger ?? null,
+              // A compaction the deterministic tier RESCUED after the
+              // summarizer broke. It shrank the set — so it belongs here and
+              // not in a `compaction_failed` row, which does not replace the
+              // replayed transcript — but the audit must still be able to see
+              // that no summarizer ran and why (S-2).
+              summaryFailure: event.failureReason ?? null,
             },
           });
         }
@@ -6312,6 +6338,84 @@ export class Engine {
     });
   }
 
+  /**
+   * The startup reaper: dead workers' checkouts go, their branches stay.
+   *
+   * Called once per Engine, before any tool is registered. It is
+   * housekeeping — every failure is swallowed, because a stale checkout is a
+   * disk cost and a refused start is a broken product. What it did lands on
+   * the incident trail rather than in the transcript: a user who never
+   * dispatched a worker has no reason to read about one, and a user
+   * investigating a crashed one needs the record.
+   */
+  private reapDeadWorkerCheckouts(): void {
+    let report: WorkerReapEntry[] = [];
+    try {
+      report = reapWorkerWorktrees(this.config.workspaceRoot);
+    } catch {
+      return;
+    }
+    if (report.length === 0) return;
+    this.recordWorktreeReap(report);
+  }
+
+  /**
+   * Kill the tool children a dead run left behind, before starting our own.
+   *
+   * `rune-tools` now dies with its engine (`crates/rune-sandbox/parent_death`)
+   * and takes its command's process group with it, which closes the ordinary
+   * case in about 250 ms. This closes the two it cannot: a `rune-tools` that
+   * was itself SIGKILLed, and Windows, where there is no parent to poll. Both
+   * spawn paths write a pid — and, where one exists, a process GROUP — into
+   * `<workspace>/.rune/tool-children.jsonl`, and this reads it.
+   *
+   * The reaper never touches an entry whose owner is still alive, so two Runes
+   * in one workspace do not kill each other's calls.
+   */
+  private reapOrphanedToolChildren(): void {
+    let report: ReapedChild[] = [];
+    try {
+      report = reapToolChildren(this.config.workspaceRoot);
+    } catch {
+      return;
+    }
+    for (const entry of report) {
+      if (entry.outcome !== "killed") continue;
+      this.recorder?.record({
+        class: "crash.dirty_exit",
+        severity: "warn",
+        component: "orchestrator",
+        where: "engine#reapOrphanedToolChildren",
+        message: `killed ${entry.tool ?? "a tool"} child ${entry.pid} left by dead process ${entry.ownerPid}`,
+      });
+    }
+  }
+
+  /**
+   * One incident per reaped or kept checkout, for the trail.
+   *
+   * `crash.dirty_exit` rather than a new class: the reaper only ever touches
+   * what a process that exited without cleaning up left behind, which is the
+   * same event `telemetry/sentinel.ts` files from the trail spool. A checkout
+   * it could NOT clear is the one worth a `warn` — that is uncommitted work
+   * still sitting in a directory.
+   */
+  private recordWorktreeReap(report: WorkerReapEntry[]): void {
+    if (!this.recorder) return;
+    for (const entry of report) {
+      this.recorder.record({
+        class: "crash.dirty_exit",
+        severity: entry.outcome === "reaped" ? "debug" : "warn",
+        component: "orchestrator",
+        where: "engine#reapDeadWorkerCheckouts",
+        message:
+          entry.outcome === "reaped"
+            ? `reaped dead worker ${entry.workerId}'s checkout${entry.committed ? `, its work committed to ${entry.branch ?? "its branch"}` : ""}`
+            : `kept dead worker ${entry.workerId}'s checkout at ${entry.path}: ${entry.reason ?? "unstated"}`,
+      });
+    }
+  }
+
   /** Fold the loop's live counters onto whatever a dead predecessor spent. */
   private syncBudget(): void {
     const progress = this.liveLoop?.getBudgetProgress();
@@ -6514,6 +6618,12 @@ export class Engine {
         resolve: (tier) => this.resolveSubagentModel(tier, "standard"),
         toolResultProcessor: (ctx) => this.processToolResult(ctx),
         onIncident: this.recorder ? (i: IncidentInput) => this.recorder?.record(i) : undefined,
+        // The engine already reaped at startup (`reapDeadWorkerCheckouts`), so
+        // the tool's own lazy pass would be a second walk of the same tree.
+        // The report handler stays wired: it is what runs if anything ever
+        // turns the tool's pass back on.
+        reapWorktrees: false,
+        onWorktreeReap: (report) => this.recordWorktreeReap(report),
         // Repo-wide worker leases: peers' workers stay off these files while
         // the build runs (and this engine's workers respect THEIR leases).
         team: {

@@ -109,17 +109,40 @@ export function formatCompaction(ev: {
   limitTokens: number;
   summarizedCount?: number;
   forced?: boolean;
+  failed?: boolean;
+  failureReason?: string;
 }): string {
   const pct = (tokens: number): string =>
     ev.limitTokens > 0
       ? `${Math.round((tokens / ev.limitTokens) * 100)}%`
       : `~${fmtTokens(tokens)}`;
   const saved = Math.max(0, ev.beforeTokens - ev.afterTokens);
+  // The compaction did not happen. It is the row that precedes a run dying of
+  // an over-limit prompt, and it used to render as an ordinary "compacted"
+  // line reporting a saving of zero.
+  if (ev.failed === true) {
+    return F.flowRow(
+      `${F.BODY}${warn("!")} ${text("compaction failed")}  ${muted(ev.failureReason || "the summarizer did not answer")}`,
+      muted(`${pct(ev.beforeTokens)} | context unchanged`),
+    );
+  }
   const scope =
     ev.summarizedCount && ev.summarizedCount > 0
       ? `${ev.summarizedCount} older ${ev.summarizedCount === 1 ? "message" : "messages"} summarized`
       : "older messages summarized";
   const label = ev.forced ? "compacted (window exceeded)" : "compacted";
+  // A rescue: the summarizer broke and the deterministic tier carried it. The
+  // set really did shrink, so this is a compaction — but saying only that hid
+  // a down summarizer behind a healthy-looking row (S-2).
+  if (ev.failureReason) {
+    // The REASON is the receipt here, not the token delta: flowRow cuts the
+    // left side first and keeps the receipt whole, and on this row the news is
+    // why no summarizer ran, not how many tokens went.
+    return F.flowRow(
+      `${F.BODY}${warn("!")} ${text("compacted without a summary")}  ${muted(`${pct(ev.beforeTokens)} -> ${pct(ev.afterTokens)} | -${fmtTokens(saved)} tokens`)}`,
+      muted(ev.failureReason),
+    );
+  }
   // One row, and only facts the engine actually measured.
   return F.flowRow(
     `${F.BODY}${faint(glyph("observed"))} ${text(label)}  ${muted(scope)}`,
