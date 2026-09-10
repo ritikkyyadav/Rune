@@ -60,11 +60,20 @@ export interface CheckpointPolicy {
   keepVersions: number;
 }
 
+/**
+ * Versions kept per run: the one a restart reads, and the one before it, so a
+ * torn write is recoverable. A third has never answered a question the second
+ * could not.
+ *
+ * Named rather than repeated, because `reportCheckpoints` and
+ * `pruneCheckpoints` MUST agree on it — when they did not, the doctor
+ * advertised more reclaimable rows than the command it named could remove.
+ */
+export const DEFAULT_KEEP_VERSIONS = 2;
+
 export const DEFAULT_CHECKPOINT_POLICY: CheckpointPolicy = {
   onToolSuccess: true,
-  // Two: the one a restart reads, and the one before it, so a torn write is
-  // recoverable. A third has never answered a question the second could not.
-  keepVersions: 2,
+  keepVersions: DEFAULT_KEEP_VERSIONS,
 };
 
 // ─── Checkpoint Store Interface ───
@@ -251,11 +260,16 @@ export interface CheckpointReport {
  * What the checkpoints table currently holds, and how much of it is dead.
  *
  * "Reclaimable" is deliberately conservative: a row is only counted when its
- * session row is gone, or when the row is superseded (a newer version of the
- * same run exists). A live run's newest checkpoint is never reclaimable, and
- * nothing here deletes anything — see `pruneCheckpoints`.
+ * session row is gone, or when the row is superseded past `keep` newer
+ * versions of the same run. Nothing here deletes anything.
+ *
+ * `keep` must match `pruneCheckpoints`'s default, and does. It used to count
+ * every row with ANY newer version, so the doctor advertised 552 rows / 136 MB
+ * as reclaimable while the command it named in the same sentence removed 428 /
+ * 106 MB — the report promised more than the prune delivered, and the
+ * difference was exactly the versions the keep rule preserves.
  */
-export function reportCheckpoints(db: Database): CheckpointReport {
+export function reportCheckpoints(db: Database, keep = DEFAULT_KEEP_VERSIONS): CheckpointReport {
   const totals = db
     .prepare(
       `SELECT COUNT(*) AS rows, COALESCE(SUM(LENGTH(state_json)), 0) AS bytes,
@@ -271,21 +285,23 @@ export function reportCheckpoints(db: Database): CheckpointReport {
     newest: string | null;
   };
 
+  // The same predicate `pruneCheckpoints` uses, with the same keep rule, so
+  // the number the doctor prints is the number the prune command removes.
   const dead = db
     .prepare(
       `SELECT COUNT(*) AS rows, COALESCE(SUM(LENGTH(c.state_json)), 0) AS bytes
          FROM checkpoints c
-        WHERE EXISTS (
-                SELECT 1 FROM checkpoints newer
+        WHERE (
+                SELECT COUNT(*) FROM checkpoints newer
                  WHERE newer.run_id = c.run_id AND newer.version > c.version
-              )
+              ) >= ?
            OR NOT EXISTS (
                 SELECT 1 FROM sessions s
                  WHERE s.id = c.run_id
                     OR c.run_id LIKE s.id || '%'
               )`,
     )
-    .get() as { rows: number; bytes: number };
+    .get(Math.max(1, Math.floor(keep))) as { rows: number; bytes: number };
 
   return {
     rows: totals.rows ?? 0,
@@ -309,7 +325,7 @@ export function pruneCheckpoints(
   db: Database,
   opts: { apply?: boolean; keep?: number } = {},
 ): { removedRows: number; removedBytes: number; applied: boolean } {
-  const keep = Math.max(1, Math.floor(opts.keep ?? 2));
+  const keep = Math.max(1, Math.floor(opts.keep ?? DEFAULT_KEEP_VERSIONS));
   const doomed = db
     .prepare(
       `SELECT c.id AS id, LENGTH(c.state_json) AS bytes

@@ -394,6 +394,19 @@ describe("checkpoints are addressable, bounded and prunable", () => {
     const dry = pruneCheckpoints(db, {});
     expect(dry.applied).toBe(false);
     expect(reportCheckpoints(db).rows).toBe(report.rows);
+
+    // The advisory must promise exactly what the command delivers. Measured on
+    // the founder's own database on 2026-09-11, `rune doctor` offered "552
+    // superseded or orphaned rows, 136 MB — rune doctor prune-checkpoints" and
+    // that command then removed 428 rows / 106 MB: the report counted every row
+    // with ANY newer version, the prune kept the newest two. Same predicate,
+    // same keep rule, now pinned in both directions and at a non-default keep.
+    expect(report.reclaimableRows).toBe(dry.removedRows);
+    expect(report.reclaimableBytes).toBe(dry.removedBytes);
+    const keep1 = pruneCheckpoints(db, { keep: 1 });
+    expect(keep1.applied).toBe(false);
+    expect(reportCheckpoints(db, 1).reclaimableRows).toBe(keep1.removedRows);
+    expect(reportCheckpoints(db, 1).reclaimableBytes).toBe(keep1.removedBytes);
     db.close();
   });
 });

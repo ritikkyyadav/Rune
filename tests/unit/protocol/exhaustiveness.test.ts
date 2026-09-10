@@ -208,7 +208,10 @@ describe("the persisted session is a reducer too", () => {
   });
 
   test("replayEvents keeps a deliberate default, not a silent one", () => {
-    const body = reducerBody("packages/orchestrator/src/engine.ts", "export function replayEvents(");
+    const body = reducerBody(
+      "packages/orchestrator/src/engine.ts",
+      "export function replayEvents(",
+    );
     // The reducer switches on ROW types, not on event types, so `assertNever`
     // cannot apply: an unknown row from a NEWER build must be skipped, not
     // thrown. What the law can require is that the skip is documented.
