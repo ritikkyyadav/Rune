@@ -27,7 +27,7 @@ function brokenGateway() {
     getProvider: mock(() => null),
     getRegisteredProviderNames: () => [],
     getTotalCost: mock(() => 0),
-  } as never;
+  };
 }
 
 const userMsg = (text: string): Message => ({ role: "user", content: [{ type: "text", text }] });
@@ -63,7 +63,7 @@ function proseOnly(turns: number): Message[] {
 describe("a rescued compaction on the real ContextEngine", () => {
   test("a 500-ing summarizer rescued by eviction reports the reason and is NOT failed", async () => {
     const gateway = brokenGateway();
-    const engine = new ContextEngine({ summarizeTurnsThreshold: 2 }, gateway);
+    const engine = new ContextEngine({ summarizeTurnsThreshold: 2 }, gateway as never);
     engine.noteRealUsage({ inputTokens: 150_000 }, MODEL);
     const messages = toolHeavy(30, 4_000);
 
@@ -85,7 +85,7 @@ describe("a rescued compaction on the real ContextEngine", () => {
 
   test("with nothing to evict, the same failure is `failed: true` and carries its reason", async () => {
     const gateway = brokenGateway();
-    const engine = new ContextEngine({ summarizeTurnsThreshold: 2 }, gateway);
+    const engine = new ContextEngine({ summarizeTurnsThreshold: 2 }, gateway as never);
     engine.noteRealUsage({ inputTokens: 150_000 }, MODEL);
 
     const r = await engine.compactWorkingSet(proseOnly(20), 6, { force: true });

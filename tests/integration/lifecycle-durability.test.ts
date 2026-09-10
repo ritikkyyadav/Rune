@@ -471,7 +471,7 @@ describe("a dependent multi-step change, killed inside a tool and resumed", () =
     try {
       const loaded = new DelegatedSessions(manager).load(must(sessionId, "the session id"), taskId);
       expect(loaded?.id).toBe(taskId);
-      expect(loaded?.parentId).toBe(sessionId);
+      expect(loaded?.parentId).toBe(must(sessionId, "the session id"));
       expect(Array.isArray(loaded?.messages)).toBe(true);
     } finally {
       manager.close();

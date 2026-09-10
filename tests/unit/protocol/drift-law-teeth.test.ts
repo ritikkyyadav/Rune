@@ -97,7 +97,7 @@ describe("the persistence manifests describe real behaviour", () => {
       seq: i + 1,
       event: { type: "run_trace", payload: { type, ...(sample[type] ?? {}) } },
     }));
-    const replayed = replayEvents(rows).frames.map((f) => f.event.type);
+    const replayed: string[] = replayEvents(rows).frames.map((f) => f.event.type);
     expect([...RUN_TRACE_EVENTS].filter((t) => !replayed.includes(t))).toEqual([]);
   });
 
@@ -126,7 +126,7 @@ describe("the persistence manifests describe real behaviour", () => {
         event: { type: "decision_record", payload: { record: { goal: "g", steps: [] } } },
       },
     ];
-    const replayed = new Set(replayEvents(rows).frames.map((f) => f.event.type));
+    const replayed = new Set<string>(replayEvents(rows).frames.map((f) => f.event.type));
     expect([...REPLAYED_FROM_ROW].filter((t) => !replayed.has(t))).toEqual([]);
   });
 
