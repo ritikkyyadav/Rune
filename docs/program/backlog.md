@@ -419,3 +419,13 @@ tree as `980bf1e` + `c053ca4`; receipts in `docs/evidence/verification-20260910b
   name is silently ignored rather than refused: `rune -P "…" -p not-a-real-provider` ran the turn on
   the configured route instead of failing. A typo in a provider name should not spend on a different
   provider — Phase 1 — Claude
+- `packages/orchestrator/src/settings-command.ts` / `tui.ts` — the `/config` change confirmation is
+  the one transcript row with no left gutter: it starts at column 0 because the command returns a
+  raw tool result that the TUI prints unwrapped, while every neighbouring print adds two spaces.
+  Seen in the installed 80×24 pty smoke (frame `80x24-settings-saved.txt`) — Phase 1c — Claude
+- `bin/ui/` settings picker — on a 24-row window it paints 17 of its 22 rows and says nothing about
+  the other five (`routing`, `helper`, `subagents`, `lsp`, `auto_commit`), the same failure `/help`
+  was fixed for in `8c4c58f`. A founder at 80×24 cannot see those settings exist; needs a "more"
+  affordance or scrolling. Frame `80x24-settings-open.txt` — Phase 1c — Claude
+- `bin/ui/` no-provider splash — the `OPENAI_API_KEY` comment is misaligned by one column against
+  the rows around it. Frame `80x24-start.txt` — Phase 1c — Claude
