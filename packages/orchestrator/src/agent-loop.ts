@@ -47,7 +47,8 @@ import type { HandoffReason, TaskStateStore, TodoItem } from "./task-state";
 import { evidenceWeight, TASK_STATE_BLOCK_BUDGET_AFTER_COMPACTION } from "./task-state";
 import type { ArtifactKind } from "@rune/protocol";
 import { bashCheckVerdict, isVerificationCommand } from "./brief";
-import { checkRelatedness } from "./verification-command";
+import { checkRelatedness, ranZeroTests } from "./verification-command";
+import { filesChangedFrom, isFileChangingTool } from "./lifecycle";
 
 // ─── Agent Turn Events (yielded to caller) ───
 //
@@ -510,6 +511,31 @@ export function stepDownEffort(ceiling: ReasoningEffort): ReasoningEffort {
 
 const TRIVIAL_EVIDENCE_RE =
   /^\s*(?:ls|pwd|echo|cat|cd|which|type|env|printenv|date|whoami|true|head|tail|wc|stat|file|dirname|basename)\b[^|;&]*$/;
+
+/**
+ * Every workspace path one successful tool call wrote, for the spine's file
+ * ledger.
+ *
+ * `filesChangedFrom` (lifecycle.ts) is the definition — the same one the
+ * headless envelope, the auto-commit scope and both TUI surfaces read. A
+ * worker adds the one thing only the loop knows: the child reports what it
+ * ACTUALLY changed in `structured.filesChanged`, which is narrower and truer
+ * than the files it declared up front, and a `retained` worker merged nothing
+ * into this tree at all.
+ */
+function writtenBy(
+  toolName: string,
+  args: Record<string, unknown>,
+  output: { result?: string; structured?: Record<string, unknown> },
+): string[] {
+  if (toolName === "worker") {
+    if (output.structured?.integration === "retained") return [];
+    const declared = output.structured?.filesChanged;
+    if (Array.isArray(declared))
+      return declared.filter((f): f is string => typeof f === "string" && f.length > 0);
+  }
+  return filesChangedFrom(toolName, args, output.result);
+}
 
 /** Tools whose success means the agent LEARNED something — step evidence of the read kind. */
 const READ_EVIDENCE_TOOLS = new Set([
@@ -3439,10 +3465,17 @@ export class AgentLoop {
               // aside here is still executed, still cited, still counted by
               // the retro — it just cannot stand in for the step's proof.
               const active = ts.todos.find((t) => t.status === "in_progress");
-              const relation = checkRelatedness(cmd, {
-                content: active?.content,
-                touched: ts.touchedFiles,
-              });
+              // A check that executed NO test is an execution receipt, not a
+              // verdict: `bun test -t <no match>` exits 0 having run nothing,
+              // and it used to read as a whole-project pass — related to
+              // every step by construction.
+              const ranNothing = verdict.passed && ranZeroTests(cmd, output.result);
+              const relation = ranNothing
+                ? ({ related: false, reason: "no_tests" } as const)
+                : checkRelatedness(cmd, {
+                    content: active?.content,
+                    touched: ts.touchedFiles,
+                  });
               ts.noteEffect(verdict.passed ? "check_pass" : "check_fail", {
                 command: cmd.slice(0, 120),
                 summary: verdict.summary,
@@ -3453,7 +3486,9 @@ export class AgentLoop {
                 const about = active ? `"${active.content.slice(0, 60)}"` : "the open plan";
                 ts.logEvent(
                   "check",
-                  `${cmd.slice(0, 80)} ${verdict.passed ? "passed" : "FAILED"} but does not speak to ${about} — recorded, not attributed`,
+                  relation.reason === "no_tests"
+                    ? `${cmd.slice(0, 80)} exited 0 but ran no tests — recorded as executed, not as a verdict`
+                    : `${cmd.slice(0, 80)} ${verdict.passed ? "passed" : "FAILED"} but does not speak to ${about} — recorded, not attributed`,
                 );
               }
               // A closure is a snapshot of what was true when it was made. A
@@ -3502,17 +3537,23 @@ export class AgentLoop {
             for (const rp of p.parsedArgs.paths) {
               if (typeof rp === "string" && rp) ts.noteFileRead(rp);
             }
-          } else if (p.isWrite && pathArg) {
-            ts.noteFileWritten(pathArg);
-          } else if (
-            p.tc.toolName === "worker" &&
-            output.structured?.integration !== "retained" &&
-            Array.isArray(p.parsedArgs.files)
-          ) {
-            for (const f of Array.isArray(output.structured?.filesChanged)
-              ? output.structured.filesChanged
-              : p.parsedArgs.files) {
-              if (typeof f === "string") ts.noteFileWritten(f);
+          } else if (p.isWrite || isFileChangingTool(p.tc.toolName)) {
+            // ONE predicate for "what did this call write" — the same
+            // `filesChangedFrom` the headless envelope, the auto-commit scope
+            // and both TUI surfaces use. This site used to read `args.path`
+            // alone, and `apply_patch` has no `path` argument at all (it takes
+            // `patch` and reports its files in the RESULT), so a step whose
+            // writes came from a patch recorded NO touched file: relatedness
+            // fell through to "unscoped" and any unrelated check closed it.
+            for (const f of writtenBy(p.tc.toolName, p.parsedArgs, output)) ts.noteFileWritten(f);
+            // A write-category tool the predicate does not know (a plugin or
+            // MCP tool registered as `write`) still has its declared path.
+            if (
+              !isFileChangingTool(p.tc.toolName) &&
+              pathArg &&
+              filesChangedFrom(p.tc.toolName, p.parsedArgs, output.result).length === 0
+            ) {
+              ts.noteFileWritten(pathArg);
             }
           }
           // Artifacts the run produced that are not file writes: a research

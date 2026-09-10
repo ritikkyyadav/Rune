@@ -5381,7 +5381,12 @@ class Tui {
             // files, and headless counted a fourth set — four answers to "what
             // did this run change".
             if (ev.output?.success) {
-              const paths = filesChangedFrom(ev.output.toolName, ev.args);
+              // The RESULT is part of the predicate's input, not an optional
+              // extra: `apply_patch` reports its files there and has no `path`
+              // argument, so a call without it silently dropped every patched
+              // file from this readout while the other three surfaces counted
+              // them.
+              const paths = filesChangedFrom(ev.output.toolName, ev.args, ev.output.result);
               for (const path of paths) {
                 if (!this.filesEdited.has(path)) filesChanged++;
                 this.filesEdited.add(path);

@@ -16,6 +16,7 @@ import type { SessionEvent } from "@rune/shared";
 import type { CallRole } from "@rune/llm-gateway";
 import { isGovernanceRole } from "@rune/llm-gateway";
 import { isVerificationCommand } from "./brief";
+import { filesChangedFrom } from "./lifecycle";
 import { categorizeProjectCommand, toolObservation } from "./notebook/capture";
 import type { ToolObservation } from "./notebook/capture";
 import type { NotebookStore } from "./notebook/store";
@@ -298,8 +299,6 @@ export function observationsFromRows(rows: EventRow[]): ToolObservation[] {
 
 // ─── The numbers ───
 
-const WRITE_TOOLS = new Set(["write_file", "edit_file", "multi_edit", "apply_patch"]);
-
 function bashCommandOf(o: ToolObservation): string | null {
   if (o.toolName !== "bash") return null;
   const c = o.args.command;
@@ -419,9 +418,11 @@ export function deriveRunRetro(rows: EventRow[], opts: DeriveOptions = {}): RunR
         lastPassed = cmd;
       } else checksFailed++;
     }
-    if (o.success && WRITE_TOOLS.has(o.toolName) && typeof o.args.path === "string") {
-      written.add(o.args.path);
-    }
+    // The shared predicate, not a fifth private WRITE_TOOLS set: a worker's
+    // declared files count here, and they never did before. `apply_patch`
+    // remains invisible to this counter — an observation deliberately keeps
+    // no `result`, and that is where a patch names its files.
+    if (o.success) for (const f of filesChangedFrom(o.toolName, o.args)) written.add(f);
   }
 
   // Checks the HARNESS ran are on the spine, not in the tool observations: the
