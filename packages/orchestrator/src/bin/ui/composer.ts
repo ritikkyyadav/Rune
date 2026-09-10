@@ -846,6 +846,22 @@ function pickerTag(tag: string): string {
  * description, and chips (`free` | `local` | provider | `current`), the
  * selection on the bar surface, then an optional footnote and the key hints.
  */
+/**
+ * A hint yields by whole segments, never mid-word. "gpt-oss:120b | 35 events |
+ * 9.3k tokens" behind a long session title at 80 columns rendered as
+ * "gpt-oss…", a fragment that carried nothing (2026-09-10). Segments drop from
+ * the right until the rest fits; below twelve cells the hint goes entirely --
+ * the title is the row's identity, the hint is its receipt.
+ */
+function fitHint(hint: string, budget: number): string {
+  if (budget < 12) return "";
+  const sep = hint.includes(" | ") ? " | " : hint.includes(" \u00b7 ") ? " \u00b7 " : null;
+  const parts = sep ? hint.split(sep) : [hint];
+  while (parts.length > 1 && visLen(parts.join(sep ?? "")) > budget) parts.pop();
+  const fitted = parts.join(sep ?? "");
+  return "  " + muted(visLen(fitted) > budget ? truncate(fitted, budget) : fitted);
+}
+
 export function renderPicker(
   title: string,
   items: PickerItem[],
@@ -883,8 +899,8 @@ export function renderPicker(
       ...(it.current ? [chip("brand", " current ")] : []),
     ];
     const tags = chips.length > 0 ? "  " + chips.join(" ") : "";
-    const hintBudget = Math.max(8, maxWidth - visLen(prefix) - visLen(label) - visLen(tags) - 12);
-    const hint = it.hint ? "  " + muted(truncate(it.hint, Math.min(44, hintBudget))) : "";
+    const fixed = visLen(`${PAD}${marker} ${number} ${prefix}`) + visLen(label) + visLen(tags);
+    const hint = it.hint ? fitHint(it.hint, Math.min(44, maxWidth - fixed - 2)) : "";
     const row = clampVisible(`${PAD}${marker} ${number} ${prefix}${label}${hint}${tags}`, maxWidth);
     lines.push(on ? popoverRow(selection(row)) : popoverRow(row));
   });

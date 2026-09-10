@@ -504,6 +504,31 @@ describe("ui/composer renderPicker", () => {
     expect(r.caretRow).toBe(2);
   });
 
+  it("a picker hint yields by whole segments, and goes entirely below twelve cells", () => {
+    const title = "fix the failing test in this repo, run bun test to prove…";
+    const items = [
+      { label: "*  Start a new session", hint: "fresh start" },
+      { label: title, hint: "gpt-oss:120b | 35 events | 9.3k tokens" },
+    ];
+    const rowAt = (cols: number): string => {
+      setTermWidthOverride(cols);
+      try {
+        return stripAnsi(renderPicker("Resume a session", items, 0, cols).lines[2] ?? "");
+      } finally {
+        setTermWidthOverride(null);
+      }
+    };
+    // 80 columns: the row has no room for a hint, so none -- not "gpt-oss…".
+    expect(rowAt(80)).toContain(title);
+    expect(rowAt(80)).not.toContain("gpt-oss");
+    // 100 columns: the model and the count fit, the tokens do not, and the
+    // cut is at a bar, never inside a word.
+    expect(rowAt(100)).toContain("gpt-oss:120b | 35 events");
+    expect(rowAt(100)).not.toContain("tokens");
+    expect(rowAt(100)).not.toMatch(/\|\s*$/);
+    // 140 columns: everything.
+    expect(rowAt(140)).toContain("gpt-oss:120b | 35 events | 9.3k tokens");
+  });
   it("windows tall pickers to the terminal height and retains the selected row", () => {
     const items = Array.from({ length: 30 }, (_, i) => ({ label: `item ${i}` }));
     const r = renderPicker("Pick", items, 23, 40, 7);

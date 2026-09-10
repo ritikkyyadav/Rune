@@ -43,9 +43,9 @@ describe("turn v2 metadata", () => {
   test("usage events surface real ↓ tokens on the live rung, and nowhere else", () => {
     const h = harness();
     h.turn.onEvent({ type: "usage", inputTokens: 900, outputTokens: 1800 });
-    expect(h.preview()).toContain("down 1.8k tokens");
+    expect(h.preview()).toContain("1.8k tokens");
     h.turn.onEvent({ type: "usage", inputTokens: 100, outputTokens: 200 });
-    expect(h.preview()).toContain("down 2.0k tokens"); // 1800 + 200, accumulated
+    expect(h.preview()).toContain("2.0k tokens"); // 1800 + 200, accumulated
     h.turn.onEvent(editEnd("src/a.ts"));
     h.turn.finish();
     // Session telemetry belongs to the footer, which is always visible anyway.

@@ -290,7 +290,13 @@ fn generate_diff(path: &str, old: &str, new: &str) -> String {
     let mut output = format!("--- a/{path}\n+++ b/{path}\n");
 
     for hunk in diff.unified_diff().context_radius(3).iter_hunks() {
+        // The header is its own line. `similar` renders it without a trailing
+        // newline, so the hunk's first line used to ride on the header itself
+        // ("@@ -1,3 +1,5 @@ export function greet…"): every consumer that
+        // numbers lines from the header then lost that line and started the
+        // gutter one row early (transcript diffs, 2026-09-10).
         output.push_str(&hunk.header().to_string());
+        output.push('\n');
         for change in hunk.iter_changes() {
             let tag = match change.tag() {
                 ChangeTag::Delete => "-",
@@ -337,6 +343,24 @@ mod tests {
         assert!(result.contains("\"world\""));
         assert!(!result.contains("\"hello\""));
         assert!(output.diff.contains("+"));
+    }
+
+    #[test]
+    fn hunk_header_is_its_own_line() {
+        let diff = generate_diff(
+            "greet.ts",
+            "export function greet(name: string): string {\n  return \"hi \" + name;\n}\n",
+            "export function greet(name: string): string {\n  const trimmed = name.trim();\n  return \"hi \" + trimmed;\n}\n",
+        );
+        let lines: Vec<&str> = diff.lines().collect();
+        assert_eq!(lines[2], "@@ -1,3 +1,4 @@");
+        assert_eq!(lines[3], " export function greet(name: string): string {");
+        assert_eq!(lines[4], "-  return \"hi \" + name;");
+        // The declared counts match the body, so a line-numbering consumer
+        // starts at the right row.
+        let body = &lines[3..];
+        assert_eq!(body.iter().filter(|l| !l.starts_with('+')).count(), 3);
+        assert_eq!(body.iter().filter(|l| !l.starts_with('-')).count(), 4);
     }
 
     #[test]

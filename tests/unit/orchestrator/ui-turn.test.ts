@@ -328,7 +328,7 @@ describe("TurnRenderer — customizer activity stream", () => {
     h.turn.onEvent({ type: "text_delta", text: "Implemented and verified." });
     h.turn.finish();
     // The check is a row where it ran; a checked turn ends with the answer.
-    expect(h.output()).toContain("✓ $ bun run typecheck (ok)");
+    expect(h.output()).toContain("✓ check  bun run typecheck · bun test");
     expect(h.output()).not.toContain("no check was run on this change");
     expect(h.output()).not.toContain("│ changed");
     expect(h.output().trimEnd().endsWith("Implemented and verified.")).toBe(true);
@@ -367,7 +367,7 @@ describe("TurnRenderer — customizer activity stream", () => {
     h.turn.finish();
     // The verdict is the latest run, not the worst one along the way: the
     // repaired turn ends clean, with no failure row after the answer.
-    expect(h.output()).toContain("✓ $ bun test (ok)");
+    expect(h.output()).toContain("✓ check  bun test");
     expect(h.output()).not.toContain("stopped on an error");
     expect(h.output().trimEnd().endsWith("Fixed.")).toBe(true);
   });

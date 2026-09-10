@@ -8,6 +8,34 @@ use crate::error::ToolError;
 
 const DEFAULT_LIMIT: usize = 500;
 
+/// Directories whose contents are never worth a model's context. A recursive
+/// listing walked into `.git/` and reported 53 entries for a four-file repo
+/// (2026-09-10); on a real project it hits the limit inside `node_modules`
+/// before it reaches a source file. Mirrors the glob tool's default ignore
+/// set. The directory itself still lists, so the tree says "node_modules/ is
+/// here"; its contents are one `list_dir` of that path away, since the root
+/// of a listing is never skipped.
+const NOISE_DIRS: &[&str] = &[
+    "node_modules",
+    ".git",
+    "dist",
+    "build",
+    "target",
+    ".turbo",
+    ".next",
+    "coverage",
+    ".cache",
+];
+
+fn is_noise_dir(entry: &walkdir::DirEntry) -> bool {
+    entry.depth() > 0
+        && entry.file_type().is_dir()
+        && entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| NOISE_DIRS.contains(&name))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ListDirInput {
     pub path: String,
@@ -69,17 +97,23 @@ pub fn execute(input: ListDirInput, workspace_root: &Path) -> Result<ListDirOutp
         .transpose()?;
 
     let max_depth = if recursive { usize::MAX } else { 1 };
-    let walker = WalkDir::new(&canonical)
+    let mut walker = WalkDir::new(&canonical)
         .max_depth(max_depth)
-        .sort_by_file_name();
+        .sort_by_file_name()
+        .into_iter();
 
     let mut entries = Vec::new();
     let mut total_count = 0;
 
-    for entry in walker.into_iter().filter_map(|e| e.ok()) {
+    while let Some(item) = walker.next() {
+        let Ok(entry) = item else { continue };
         // Skip the root directory itself
         if entry.path() == canonical {
             continue;
+        }
+        // Name the noise directory, never its contents.
+        if is_noise_dir(&entry) {
+            walker.skip_current_dir();
         }
 
         let rel_path = entry
@@ -162,6 +196,53 @@ mod tests {
         .unwrap();
 
         assert_eq!(output.total_count, 3); // a.txt, sub/, sub/b.txt
+    }
+
+    #[test]
+    fn recursive_listing_names_noise_dirs_without_walking_them() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("a.txt"), "").unwrap();
+        fs::create_dir_all(tmp.path().join(".git/objects/ab")).unwrap();
+        fs::write(tmp.path().join(".git/objects/ab/cdef"), "").unwrap();
+        fs::create_dir_all(tmp.path().join("node_modules/pkg")).unwrap();
+        fs::write(tmp.path().join("node_modules/pkg/index.js"), "").unwrap();
+
+        let output = execute(
+            ListDirInput {
+                path: ".".to_string(),
+                recursive: Some(true),
+                glob: None,
+                limit: None,
+            },
+            tmp.path(),
+        )
+        .unwrap();
+
+        let paths: Vec<&str> = output.entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(paths, vec![".git", "a.txt", "node_modules"]);
+        assert_eq!(output.total_count, 3);
+        assert!(!output.truncated);
+    }
+
+    #[test]
+    fn a_noise_dir_asked_for_by_path_lists_its_contents() {
+        let tmp = TempDir::new().unwrap();
+        fs::create_dir_all(tmp.path().join("node_modules/pkg")).unwrap();
+        fs::write(tmp.path().join("node_modules/pkg/index.js"), "").unwrap();
+
+        let output = execute(
+            ListDirInput {
+                path: "node_modules".to_string(),
+                recursive: Some(true),
+                glob: None,
+                limit: None,
+            },
+            tmp.path(),
+        )
+        .unwrap();
+
+        let paths: Vec<&str> = output.entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(paths, vec!["node_modules/pkg", "node_modules/pkg/index.js"]);
     }
 
     #[test]

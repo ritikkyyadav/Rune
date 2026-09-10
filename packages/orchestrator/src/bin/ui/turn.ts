@@ -626,6 +626,9 @@ export class TurnRenderer {
   // durable checkpoint -- all fed by structured events, never invented.
   private downTokens = 0;
   private thinkingMs = 0;
+  /** Reasoning is streaming right now. The rung already says "thinking"
+   *  then; "thought for" is the receipt once it has stopped. */
+  private thinkingLive = false;
   private lastThinkingAt = 0;
   private contextPercent: number | null = null;
   private turnCount = 0;
@@ -1206,8 +1209,12 @@ export class TurnRenderer {
     if (this.retrying) {
       parts.push(`${glyph("retry")} ${this.retrying.attempt} of ${this.retrying.of}`);
     }
-    if (this.downTokens > 0) parts.push(`down ${fmtTokens(this.downTokens)} tokens`);
-    if (this.thinkingMs >= 100) parts.push(`thought for ${(this.thinkingMs / 1000).toFixed(1)}s`);
+    if (this.downTokens > 0) parts.push(`${fmtTokens(this.downTokens)} tokens`);
+    // "thinking 6s · thought for 5.1s" on one rung was two clocks for one
+    // thing; the receipt waits for the thinking to stop.
+    if (this.thinkingMs >= 100 && !this.thinkingLive) {
+      parts.push(`thought for ${(this.thinkingMs / 1000).toFixed(1)}s`);
+    }
     return parts;
   }
 
@@ -1665,6 +1672,7 @@ export class TurnRenderer {
         // instead -- but the time SPENT reasoning is honest turn metadata
         // ("thought for 2.3s"), so accumulate wall-clock across delta bursts.
         const now = Date.now();
+        this.thinkingLive = true;
         this.pulse.feed(String(event.text ?? "").length || PULSE_WEIGHT.token, now);
         if (this.lastThinkingAt > 0 && now - this.lastThinkingAt < 3000) {
           this.thinkingMs += now - this.lastThinkingAt;
@@ -1674,6 +1682,7 @@ export class TurnRenderer {
       }
 
       case "text_delta": {
+        this.thinkingLive = false;
         this.activity = null;
         this.prose += event.text;
         this.pulse.feed(String(event.text ?? "").length);
@@ -1743,6 +1752,7 @@ export class TurnRenderer {
       }
 
       case "tool_call_start": {
+        this.thinkingLive = false;
         this.pulse.feed(PULSE_WEIGHT.callback);
         this.settleProse();
         this.currentTool = {
@@ -1821,6 +1831,7 @@ export class TurnRenderer {
       }
 
       case "tool_call_end": {
+        this.thinkingLive = false;
         this.pulse.feed(PULSE_WEIGHT.callback);
         this.settleProse();
         const phase = phaseForTool(String(event.output?.toolName ?? ""), event.args ?? {});
@@ -1980,11 +1991,12 @@ export class TurnRenderer {
         // the reason budget (60) were absolute, so a failing step check built
         // a 133-column row and the fixed frame -- which clips rather than
         // reflows -- cut it wherever the window happened to end.
-        const row = F.flowRow(
-          `${F.MARK}${passed ? ok(glyph("verified")) : danger(glyph("failure"))} ` +
-            muted(`step check ${glyph("observed")} ${command} ${passed ? "ok" : "failed"}`) +
-            (passed ? "" : ` ${faint(oneLine(lastNonEmpty(report), 60))}`),
-        );
+        // The same row a check the model ran gets: verb, command, verdict.
+        // "step check · bun test ok" was a third grammar for one thing.
+        const row = [
+          F.toolRow({ name: "check", arg: command, status: passed ? "pass" : "fail" }),
+          ...(passed ? [] : [F.toolNote(oneLine(lastNonEmpty(report), 60), "fail")]),
+        ].join("\n");
         this.addLog(row);
         this.commitTimeline(row);
         if (!passed) {
@@ -2029,15 +2041,25 @@ export class TurnRenderer {
           status: !event.ran ? "not-run" : event.passed ? "passed" : "failed",
           count: event.ran ? commandCount : 0,
         });
-        // Same clip as the step check: the window decides, not the number 100.
-        // At 80 columns this row ran 24 cells past the right edge and the frame
-        // cut the verdict off.
-        const verdictBudget = Math.max(24, F.measure() - F.MARK.length - 2);
-        const verification = F.flowRow(
-          `${F.MARK}${event.passed && event.ran ? ok(glyph("verified")) : event.ran ? danger(glyph("failure")) : faint("o")} ${muted(
-            oneLine(report, verdictBudget) || (event.ran ? "" : "No project checks were detected"),
-          )}`,
-        );
+        // The harness's own checks read like the checks the model ran: on the
+        // rail, a verb, the commands, a verdict. "✓ $ npm test (ok)" beside
+        // "│ ✓ run  bun test" was two grammars for one fact (2026-09-10).
+        const commands = report
+          .split("\n")
+          .filter((line) => line.startsWith("$ "))
+          .map((line) => line.replace(/^\$ /, "").replace(/\s+\((ok|exit \d+)\)$/, ""));
+        const shown = commands.slice(0, 3).join(` ${glyph("observed")} `);
+        const verification = event.ran
+          ? [
+              F.toolRow({
+                name: "check",
+                arg: oneLine(shown || "project checks", Math.max(24, F.measure() - 20)),
+                status: event.passed ? "pass" : "fail",
+                metric: commands.length > 3 ? `${commands.length} commands` : undefined,
+              }),
+              ...(event.passed ? [] : [F.toolNote(oneLine(lastNonEmpty(report), 60), "fail")]),
+            ].join("\n")
+          : F.toolRow({ name: "check", arg: "no project checks were detected", status: "none" });
         this.addLog(verification);
         this.commitTimeline(verification);
         if (event.ran && !event.passed) {
@@ -2400,7 +2422,9 @@ function replaySummary(lines: TranscriptLineView[]): string | null {
   if (edits.size === 0 && reads > 0) metrics.push(plural(reads, "file") + " reviewed");
   if (searches > 0) metrics.push(plural(searches, "search", "searches"));
   if (sources > 0) metrics.push(plural(sources, "source"));
-  if (failures > 0) metrics.push(plural(failures, "failure"));
+  // "1 failure" beside "1 check passed" read as the session's verdict. It is
+  // a count of tool calls that errored, which a repaired run also has.
+  if (failures > 0) metrics.push(plural(failures, "tool call") + " failed");
   // A replay's receipt is a receipt, not a verdict: it counts what the session
   // did and says nothing about whether that was the right thing.
   return `${F.BODY}${faint(F.receiptOf(metrics))}`;

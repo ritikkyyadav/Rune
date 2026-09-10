@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+import { renderToolActivity, setActivityWorkspaceRoot } from "./ui/activity";
+import type { AgentTurnEvent } from "@rune/protocol";
 import { Engine } from "../engine";
 import { formatCostReport, formatRunEconomics } from "../cost-report";
 import type { PermissionHandler, UserPermissionDecision } from "../engine";
@@ -1458,12 +1460,39 @@ async function main() {
     // benchmark harness, and to a person watching. Implies --json for the tail,
     // and leaves exit codes exactly as they were.
     const streamJson = values["stream-json"] === true;
+    // Progress on stderr is the transcript's own committed rows — verb, path,
+    // metric, verdict, a diff for an edit — with the colour stripped. It used
+    // to be "→ edit_file" and nothing else (2026-09-10). Rendered HERE, in the
+    // surface layer: the headless runner is engine-side and draws nothing.
+    setActivityWorkspaceRoot(engine.getWorkspaceRoot());
+    const printToolRows = (event: AgentTurnEvent): void => {
+      if (event.type !== "tool_call_end" || !event.output?.toolName) return;
+      try {
+        const rendered = stripAnsi(
+          renderToolActivity({
+            toolName: event.output.toolName,
+            args: (event.args ?? {}) as Record<string, unknown>,
+            result: event.output.result ?? "",
+            success: event.output.success === true,
+            error: event.output.error,
+            durationMs: event.output.durationMs,
+          }),
+        );
+        for (const line of rendered.split("\n")) {
+          if (line.trim()) process.stderr.write(`${line.replace(/\s+$/, "")}\n`);
+        }
+      } catch {
+        process.stderr.write(
+          `${event.output.toolName} ${event.output.success ? "ok" : "failed"}\n`,
+        );
+      }
+    };
     const result = await runHeadless(engine, sessionId, values.print as string, {
       autoApprove: values["auto-approve"] === true,
       onProgress: (line) => process.stderr.write(`${line}\n`),
       onEvent: streamJson
         ? (event) => process.stdout.write(`${JSON.stringify(event)}\n`)
-        : undefined,
+        : printToolRows,
     });
     process.stdout.write(
       values.json === true || streamJson

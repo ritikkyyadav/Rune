@@ -717,14 +717,41 @@ export function parseDiff(
   let removed = 0;
   let hunks = 0;
   let dropped = 0;
-  for (const source of raw.split("\n")) {
+  const lines = raw.split("\n");
+  // A diff that ends in a newline splits into a final empty segment. That is
+  // the end of the text, not an empty context line: without this it rendered
+  // as one more numbered row below the last real line.
+  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  for (let i = 0; i < lines.length; i++) {
+    const source = lines[i]!;
     if (source.startsWith("--- ") || source.startsWith("+++ ")) continue;
-    const hunk = /^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/.exec(source);
+    const hunk = /^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@(.*)$/.exec(source);
     if (hunk) {
       oldLine = Number(hunk[1]);
-      newLine = Number(hunk[2]);
+      newLine = Number(hunk[3]);
       hunks++;
       if (hunks > 1 && rows.length < limit) rows.push({ kind: "elide", text: "unchanged lines" });
+      // Older native edits glued the hunk's first line onto its header
+      // ("@@ -1,3 +1,5 @@ export function greet…"), so histories written before
+      // 2026-09-10 still carry it. A git diff also puts text there, but that
+      // is a function name from ABOVE the hunk, never a line of it. Tell the
+      // two apart by the counts: only when the body is exactly one context
+      // line short of what the header declares does the trailer belong to it.
+      const trailer = hunk[5] ?? "";
+      if (trailer.startsWith(" ") && trailer.length > 1) {
+        const declaredOld = hunk[2] == null ? 1 : Number(hunk[2]);
+        const declaredNew = hunk[4] == null ? 1 : Number(hunk[4]);
+        let bodyOld = 0;
+        let bodyNew = 0;
+        for (let j = i + 1; j < lines.length && !lines[j]!.startsWith("@@"); j++) {
+          const first = lines[j]![0];
+          if (first !== "+") bodyOld++;
+          if (first !== "-") bodyNew++;
+        }
+        if (bodyOld === declaredOld - 1 && bodyNew === declaredNew - 1) {
+          lines.splice(i + 1, 0, trailer);
+        }
+      }
       continue;
     }
     const kind = source.startsWith("+")

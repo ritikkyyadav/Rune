@@ -23,6 +23,7 @@
 // replay renderer (renderTranscript) -- which can see the whole list -- collapses
 // a run of reads into one row; the live stream cannot look ahead.
 
+import { homedir } from "node:os";
 import { faint, info, muted } from "./theme";
 import { glyph } from "./glyphs";
 import { truncate } from "./render";
@@ -56,9 +57,29 @@ export interface TranscriptLineView {
 const s = (v: unknown): string => (v == null ? "" : String(v));
 const firstLine = (v: string): string => v.split("\n")[0] ?? "";
 
+/**
+ * The workspace root the rows are read against. Tools answer with absolute
+ * paths; a file inside the workspace is shown relative to it (`src/app.ts`),
+ * one under the home directory as `~/…`, and only a path outside both is cut
+ * to its last segments. Before this every row in a run under /private/tmp
+ * read `.../claude-501/rune-live-gFFS/ws/greet.ts` (2026-09-10).
+ */
+let workspaceRoot: string | null = null;
+export function setActivityWorkspaceRoot(root: string | null): void {
+  workspaceRoot = root ? root.replace(/\/+$/, "") : null;
+}
+
 /** Looser shortening for the bare-path file listing: workspace-relative paths
  *  show whole (`src/apps/ipod/ClickWheel.tsx`); only deep/absolute ones cut. */
-function listingPath(p: string): string {
+export function listingPath(p: string): string {
+  if (workspaceRoot && p.startsWith(workspaceRoot + "/")) {
+    p = p.slice(workspaceRoot.length + 1);
+  } else if (workspaceRoot && p === workspaceRoot) {
+    p = ".";
+  } else if (p.startsWith("/")) {
+    const home = homedir();
+    if (home && p.startsWith(home + "/")) p = "~/" + p.slice(home.length + 1);
+  }
   const parts = p.split("/").filter(Boolean);
   if (!p.startsWith("/") && parts.length <= 6) return p;
   if (parts.length <= 4) return p;
