@@ -251,3 +251,36 @@ which remain mixed.
 Phase 2 of the handoff — one durable task lifecycle — is unblocked and needs no external
 dependency for its deterministic fault-injection half. Phase 7's live comparisons remain blocked on
 a provider budget the founder has not established.
+
+### 2026-09-10 (later still) — Phase 1b: the installed TUI, without a model
+
+A follow-on pass to close the four installed-binary smokes Phase 1 left undone — settings
+save/restart at 80×24, `/help`, the model picker, resize — plus tool-row and diff rendering, all
+under a hard no-spend rule after the unintended call above.
+
+**Zero model calls, proven.** Both provider ledgers were snapshotted before and after every command
+and are byte-identical: `~/.rune/rune.db` holds **2,891** `cost` rows before and after, newest still
+`2026-09-10T14:01:18.585Z` (Phase 1's own accident); 26,632 events, 683 sessions, 3,279 incidents,
+all unchanged; `config.toml`, `.env` and `audit.jsonl` unchanged by hash. Only three rune
+invocations were made — `rune --help`, read in full first, and `rune doctor` twice, whose
+implementation is a synchronous function with no `fetch` in it. Nothing was typed into a composer.
+
+**Four of the five interactive items could not run at all.** The sandbox this pass ran under refuses
+to allocate a pseudo-terminal: `/dev/ptmx` is denied outright (`PermissionError [Errno 1]`), the
+legacy `/dev/pty??` fallback reports "out of pty devices", and `script(1)` fails the same way. The
+TUI needs `setRawMode`, `fake-tty.ts` only forces `isTTY` for a `bun --preload` render and cannot
+drive the compiled binary, and `cols()` is `process.stdout.columns || 80` with no environment seam.
+So the start screen, settings persistence, `/help`, the picker and resize are **still unverified on
+the installed binary**, and cancellation was not attempted at all — it needs a running turn.
+A VT screen model, a pty driver and a five-item script were written and left in place
+(`.codex/audit-20260910/handoff/installed/tui/`); **none of it has ever been executed.**
+
+**What did get done.** Tool rows and banded diffs were rendered at 80 and 120 columns from a stored
+session through the real `TurnRenderer` — call rows named against the workspace, a left-elided path,
+a clipped command, counted streak rollups, `✓`/`✗` check rows, rolled-up output, read-back ranges,
+hunk headers on their own line with numbered gutters, and the closing receipt. That is **source-side
+rendering**, not the compiled binary. It is at least the same source: `git diff c053ca4..b75a104 --
+packages crates` is empty and the install-time `DIRTY=1` was docs only, so the version-skew doubt is
+closed and only the compile step is unproven.
+
+Running the script with the sandbox off is the whole remaining job, and it costs nothing.

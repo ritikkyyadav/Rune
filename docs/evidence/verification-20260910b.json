@@ -440,9 +440,48 @@
       "result": "stdout carried ONLY the 320-byte JSON envelope; every diagnostic went to stderr; the envelope reported ok:true, stopReason:\"end_turn\", exit 0",
       "incident": "THIS INVOCATION MADE AN UNINTENDED LIVE MODEL CALL. It was written as a negative test (-p not-a-real-provider, expected to fail before any network), but the bogus provider was ignored and the run completed a real turn on the configured route codex/gpt-5.6-terra: 15,480 input tokens, 2 output tokens, 16.6 s. This violated the no-spend rule for this phase. It is recorded here rather than omitted. No other model call was made.",
       "outputs": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/installed/print-badprovider.out"
+    },
+    {
+      "phase": "1b",
+      "name": "zero model calls, ledger before and after",
+      "exit": 0,
+      "result": "IDENTICAL. ~/.rune/rune.db cost events 2891 -> 2891 (max created_at 2026-09-10T14:01:18.585Z -> 2026-09-10T14:01:18.585Z, still Phase 1's unintended call); events 26632 rows / max id 26632 -> unchanged; sessions 683 -> 683; ~/.rune/blackbox.db incidents 3279 -> 3279; ~/.rune/config.toml sha256 d56abfb8...87f1 unchanged; ~/.rune/audit.jsonl 2867 lines / c67c7ed0...5412 unchanged. The two snapshot files hash the same once the label and wallclock lines are removed: sha256 80afb96acdfa91eff2440fcf446165c989edcc383fec58674570e48795a4972a.",
+      "note": "Phase 1b made exactly three rune invocations, all local-only: `rune --help` (read in full first) and `rune doctor` twice. runDoctor in blackbox-cli.ts is a synchronous function with no fetch and no URL, checked before it was run. No -p, -P, -m, `use`, `models`, `login` or piped mode; no text was ever submitted to a model. scripts/render-live.ts opens the DB with mode=ro and opens no provider.",
+      "framesOrLogs": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/installed/tui/ledger-before.txt and ledger-after.txt"
+    },
+    {
+      "phase": "1b",
+      "name": "rune doctor, before and after the phase",
+      "exit": 0,
+      "result": "identical except two retirement countdowns ticking down (google gpt-5.6-sol 4h 11m -> 4h 4m; openrouter deepseek-v4-flash:free 4d 19h -> 4d 18h). No new incidents, same 7-day counts, same healthy routes (codex, ollama).",
+      "note": "build now reads STALE rather than current: the binary was compiled at c053ca4 and HEAD is b75a104. That commit changed docs only — `git diff c053ca4..b75a104 -- packages crates` is empty — so the installed binary is still built from the current source.",
+      "framesOrLogs": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/installed/tui/doctor-before.txt and doctor-after.txt"
+    },
+    {
+      "phase": "1b",
+      "name": "interactive TUI smokes at 80x24 and 120x40 (start screen, settings save/restart, /help, /model picker, resize)",
+      "result": "COULD NOT RUN. The Bash sandbox this phase ran under refuses to allocate a pseudo-terminal, and the standing instruction was not to disable it. os.openpty() and os.open('/dev/ptmx', O_RDWR) both give PermissionError [Errno 1] Operation not permitted; pty.openpty()'s legacy /dev/pty?? fallback gives 'out of pty devices'; script(1) gives 'openpty: Operation not permitted'.",
+      "note": "No way around it from inside: the TUI needs setRawMode, which needs a tty; scripts/fake-tty.ts only forces isTTY for a render under `bun --preload` and cannot drive the compiled binary; and cols() is `process.stdout.columns || 80` with no environment seam, so width cannot be forced without a tty either. pyte is absent from every Python on this machine and installing it was forbidden, so a minimal VT100/xterm screen model (vtscreen.py), a pty driver (drive.py) and a five-item script (smoke.py) were written instead. smoke.py has NEVER BEEN EXECUTED — it is a proposal, not a tested harness. These five items remain exactly as unverified as they were at the end of Phase 1.",
+      "framesOrLogs": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/installed/tui/pty-blocked.txt"
+    },
+    {
+      "phase": "1b",
+      "name": "tool rows and diffs at 80 and 120 columns (SOURCE-SIDE)",
+      "exit": 0,
+      "result": "Stored session 01a086b7-b2a1-7000-9c64-071ff2efe842 (the 2026-09-09 dogfood run, 215 events, 13 edit calls) replayed through the real TurnRenderer at both widths. Present and inside the measure: call rows naming files against the workspace, a left-elided path when it will not fit, a long command clipped with an ellipsis, counted streak rollups, the harness's own checks in the same grammar with pass and fail marks, output rolled up as '... 34 lines', read-back line ranges, banded unified diffs with the hunk header on its own line plus line numbers and +/- gutters, and the closing per-file receipt.",
+      "note": "SOURCE-SIDE, not the installed binary. render-live.ts imports TurnRenderer from packages/ directly and cannot be pointed at the compiled build. It is the exact source the installed binary was compiled from — `git diff c053ca4..b75a104 -- packages crates` is empty and the DIRTY=1 in rune-compiled.meta was docs only — so the version-skew doubt is closed and the compile-step doubt is not.",
+      "frames": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/installed/tui/render-live-tool-rows.txt, render-live-diff.txt, renders/"
     }
   ],
   "notProven": [
+    {
+      "item": "Cancellation on the installed binary",
+      "detail": "NOT re-verified, and deliberately not attempted in Phase 1b: interrupting a run requires a running model turn, which would have spent. Covered by unit tests on this source only."
+    },
+    {
+      "item": "Installed TUI smokes, second attempt (Phase 1b)",
+      "detail": "Start screen at 80x24, settings save/quit/restart/persist/restore, in-TUI /help, the /model picker open+Escape, and resize 80x24<->120x40 were all attempted in Phase 1b and all blocked before their first run: the Bash sandbox refuses /dev/ptmx (PermissionError [Errno 1]), so no pseudo-terminal could be allocated, and the phase's standing instruction was not to disable the sandbox. A driver and a five-item script were written (.codex/audit-20260910/handoff/installed/tui/) but never executed. Running them with the sandbox off is the whole remaining job and costs nothing."
+    },
     {
       "item": "Ordinary Linux runners",
       "detail": "The containment image runs --privileged because Docker Desktop's VM refuses nested unprivileged user namespaces. Nothing here speaks to an unprivileged/rootless Linux host or a GitHub-hosted runner. The CI job in 0946e42 remains the only evidence for that environment and was not run here."
