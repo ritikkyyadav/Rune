@@ -119,7 +119,7 @@ that exists in one and not the other does not build.
 | ----------------------- | --------------------------------------------- | ----------------------------------- |
 | `ready`                 | status + `protocolVersion`                    | one per connection                  |
 | `engine_status`         | model, provider, context, cost, posture       |                                     |
-| `chat_event`            | `{ sessionId?, event: AgentTurnEvent }`       | 30 members                          |
+| `chat_event`            | `{ sessionId?, event: AgentTurnEvent }`       | 31 members                          |
 | `research_event`        | `{ sessionId?, runId, event: ResearchEvent }` | 9 members                           |
 | `permission_request`    | `{ requestId, prompt }`                       | answer with `respond_permission`    |
 | `question_request`      | `{ requestId, question }`                     | answer with `respond_question`      |
@@ -166,7 +166,13 @@ assistant's text **as settled state**, not as a keystroke-accurate replay. The
 flag says so explicitly rather than letting a client mis-assemble a stream it
 only half-received. Run-level events that have no row of their own (`usage`,
 `fallback`, `retry`, `verification_*`, `handoff`, `step_check`,
-`checkpoint_saved`) are persisted as a compact `run_trace` event.
+`checkpoint_saved`, `turn_complete`, `lifecycle`) are persisted as a compact
+`run_trace` event.
+
+`turn_complete` and `lifecycle` were added in Phase 2 and are what makes the
+ENDING durable: before them a run that hit its turn ceiling with a closed plan
+left no record of how it stopped, and a restart could report on the run it was
+recovering only by guessing.
 
 The host also keeps a bounded per-session ring buffer of recent live frames, so
 a client reconnecting mid-turn sees the tool call that is running right now and
@@ -344,9 +350,18 @@ bun run examples/sdk/policy-bot.ts   # answers permission requests from an allow
 
 ## Exhaustiveness — the drift law
 
-`AgentTurnEvent` has 30 members and is consumed by five reducers: the TUI
-transcript, the TUI formatter, the headless runner, the desktop transcript and
-the desktop trace rail.
+`AgentTurnEvent` has 31 members and is consumed by 4 reducers: the TUI
+transcript (`bin/ui/turn.ts`), the TUI formatter (`bin/ui/events.ts`), the TUI
+shell's own chat loop (`bin/ui/tui.ts`) and the headless runner
+(`headless.ts`). The two desktop reducers this line used to count went with
+the desktop itself; the shell's loop was a live consumer the law could not see
+until Phase 2 made it a `switch`.
+
+A fifth consumer is guarded differently, because it reduces ROWS rather than
+events: the persisted session. `replayEvents` rebuilds the stream from the
+log, and every member must be either in `RUN_TRACE_EVENTS`, replayed from a row
+of its own (`REPLAYED_FROM_ROW`), or listed in `NOT_REPLAYED_EVENTS` with the
+reason it is not durable. Same test file.
 
 Adding a member is a **compile error** in every one of them until each names it,
 because each ends in `assertNever`. A reducer that legitimately ignores a member

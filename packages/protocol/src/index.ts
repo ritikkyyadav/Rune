@@ -37,6 +37,11 @@ export type {
   AgentTurnEvent,
   AgentTurnEventType,
   ChildAgentEvent,
+  TaskLifecycle,
+  TaskLifecycleChild,
+  TaskLifecycleKind,
+  TaskLifecycleMoment,
+  TaskLifecycleStatus,
   WorkflowNodeContext,
 } from "./events";
 export { AGENT_TURN_EVENT_TYPES, isAgentTurnEvent, isAgentTurnEventType } from "./events";

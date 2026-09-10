@@ -156,6 +156,8 @@ import {
   nextUndecided,
   type HeldOutcome,
 } from "./held";
+import { assertNeverSoft } from "@rune/protocol";
+import { filesChangedFrom } from "../../lifecycle";
 import type { AutoModeDeferral } from "../../auto-mode";
 import type { Brief } from "../../brief";
 import { TurnRenderer, userBlock, renderReplay, HEX } from "./turn";
@@ -5357,43 +5359,100 @@ class Tui {
     this.activeLoopId = scheduledLoop?.id ?? null;
 
     try {
+      // ── The TUI's OWN reducer over the event union ──
+      //
+      // It was a chain of `if (ev.type === …)` with no `assertNever` and no
+      // test: a fourth live consumer of the same stream that the drift law
+      // could not see, so a new member compiled clean here and this shell
+      // silently ignored it forever. It is a switch now, it ends in
+      // `assertNeverSoft`, and `tests/unit/protocol/exhaustiveness.test.ts`
+      // names it — every member below is either counted or named as ignored.
       for await (const ev of engine.chat(this.ctx.sessionId, input)) {
         turn.onEvent(ev);
-        if (ev.type === "text_delta") answerText += ev.text;
-        if (ev.type === "stream_reset") answerText = "";
-        if (ev.type === "tool_call_end") {
-          toolCalls++;
-          if (!ev.output?.success) toolErrors++;
-          // The answer landed and the work moved: take the pane off blocked.
-          if (this.warpBlocked) {
-            this.warpBlocked = false;
-            this.warp("tool_complete", { toolName: ev.output?.toolName });
+        switch (ev.type) {
+          case "text_delta":
+            answerText += ev.text;
+            break;
+
+          case "stream_reset":
+            answerText = "";
+            break;
+
+          case "tool_call_end": {
+            toolCalls++;
+            if (!ev.output?.success) toolErrors++;
+            // The answer landed and the work moved: take the pane off blocked.
+            if (this.warpBlocked) {
+              this.warpBlocked = false;
+              this.warp("tool_complete", { toolName: ev.output?.toolName });
+            }
+            if (ev.output?.toolName === "interactive_dashboard") dashboardTouched = true;
+            // Session-wide edited-files readout on the footer. One predicate
+            // for every surface (see filesChangedFrom): before it, this footer
+            // counted write/edit, the transcript counted those plus
+            // apply_patch, the auto-commit scope counted multi_edit and worker
+            // files, and headless counted a fourth set — four answers to "what
+            // did this run change".
+            if (ev.output?.success) {
+              const paths = filesChangedFrom(ev.output.toolName, ev.args);
+              for (const path of paths) {
+                if (!this.filesEdited.has(path)) filesChanged++;
+                this.filesEdited.add(path);
+              }
+            }
+            break;
           }
-        }
-        if (ev.type === "tool_call_end" && ev.output?.toolName === "interactive_dashboard") {
-          dashboardTouched = true;
-        }
-        if (ev.type === "checkpoint_saved") {
-          this.lastCheckpoint = { sessionId: this.ctx.sessionId, label: `v${ev.version}` };
-        }
-        // A quota stop ends the run but names its retry window — captured here
-        // so the finally block can schedule the auto-resume.
-        if (
-          ev.type === "error" &&
-          typeof (ev as { error?: unknown }).error === "string" &&
-          (ev as { error: string }).error.includes("Quota exceeded")
-        ) {
-          quotaStop = (ev as { error: string }).error;
-        }
-        // Session-wide edited-files readout on the footer.
-        if (
-          ev.type === "tool_call_end" &&
-          ev.output?.success &&
-          (ev.output.toolName === "edit_file" || ev.output.toolName === "write_file") &&
-          ev.args?.path
-        ) {
-          this.filesEdited.add(String(ev.args.path));
-          filesChanged++;
+
+          case "checkpoint_saved":
+            this.lastCheckpoint = { sessionId: this.ctx.sessionId, label: `v${ev.version}` };
+            break;
+
+          // A quota stop ends the run but names its retry window — captured
+          // here so the finally block can schedule the auto-resume.
+          case "error":
+            if (ev.error.includes("Quota exceeded")) quotaStop = ev.error;
+            break;
+
+          // ── Named and deliberately not counted by the shell ──
+          // The transcript renderer above (`turn.onEvent`) draws all of these;
+          // this reducer exists only for the shell's own bookkeeping — the
+          // answer buffer, the tool counters, the footer's file set, the
+          // checkpoint label and the quota stop. A member that needs none of
+          // those is named here rather than defaulted.
+          case "thinking_delta":
+          case "tool_call_start":
+          case "tool_call_args_delta":
+          case "turn_complete":
+          case "context_warning":
+          case "notice":
+          case "verification_started":
+          case "verification_completed":
+          case "todo_updated":
+          case "step_check":
+          case "fallback":
+          case "retry":
+          case "usage":
+          case "compaction":
+          case "lifecycle":
+          case "handoff":
+          case "replanning":
+          case "tool_progress":
+          case "task_kind":
+          case "hypothesis":
+          case "hypothesis_updated":
+          case "decision":
+          case "artifact":
+          case "pending_decision":
+          case "decision_resolved":
+          case "decision_record":
+            break;
+
+          default:
+            // Compile-time exhaustiveness: a new member is a type error here
+            // until it is named above. At runtime an event from a NEWER host
+            // is ignored rather than thrown (additive-minor contract).
+            assertNeverSoft(ev, undefined);
+            break;
         }
       }
     } catch (err) {

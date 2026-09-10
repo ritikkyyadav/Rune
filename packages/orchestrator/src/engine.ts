@@ -136,7 +136,7 @@ import { loadOrgPolicy, policyAllowsModel, type LoadedOrgPolicy } from "./org-po
 import { discoverPlugins, RUNE_VERSION, type LoadedPlugin } from "./plugins";
 import { StruggleDetector } from "./struggle-detector";
 import { TaskStateStore } from "./task-state";
-import type { EvidenceRef, PendingDecisionKind } from "@rune/protocol";
+import type { DecisionRecord, EvidenceRef, PendingDecisionKind } from "@rune/protocol";
 import { policyForModel, type ReliabilityPolicy } from "./reliability-policy";
 import {
   NotebookStore,
@@ -326,7 +326,7 @@ export interface TranscriptLine {
  * `tool_result`, `compaction`) or that are not state at all (`text_delta`,
  * `thinking_delta`, the tool-call arg deltas — a keystroke log, not a fact).
  */
-const RUN_TRACE_EVENTS: ReadonlySet<string> = new Set([
+export const RUN_TRACE_EVENTS: ReadonlySet<string> = new Set([
   "usage",
   "fallback",
   "retry",
@@ -339,6 +339,68 @@ const RUN_TRACE_EVENTS: ReadonlySet<string> = new Set([
   "checkpoint_saved",
   "notice",
   "context_warning",
+  // How the run ENDED. It was in no allow-list and had no row of its own, so
+  // the one durable proxies were `task_state.handoff` — written only when the
+  // plan had open steps — and the retro's outcome. A run that hit its turn
+  // ceiling with a fully closed plan left no record at all of how it stopped,
+  // which is why a restart could not report on the run it was recovering.
+  "turn_complete",
+  // The lifecycle projection, so a restart rebuilds the id, the objective,
+  // the constraints and their rungs, the workspace revision, the budget
+  // actually used and the children — instead of re-deriving four of them from
+  // four different places and the rest not at all.
+  "lifecycle",
+]);
+
+/**
+ * Members that come back from a row of their OWN type rather than a
+ * `run_trace` row — see the cases in `replayEvents` below.
+ *
+ * Kept beside `RUN_TRACE_EVENTS` because together with `NOT_REPLAYED_EVENTS`
+ * the three must cover `AGENT_TURN_EVENT_TYPES` exactly. That is the drift law
+ * for the THIRD consumer, the persisted session: the TUI and headless were
+ * guarded by `assertNever` and a source scan, and this reducer — the one the
+ * whole phase is about — could silently stop replaying a member with nothing
+ * to notice it. `tests/unit/protocol/exhaustiveness.test.ts` asserts it.
+ */
+export const REPLAYED_FROM_ROW: ReadonlySet<string> = new Set([
+  // from `assistant_msg`: one settled block, plus a start per tool use
+  "text_delta",
+  "tool_call_start",
+  // from `tool_result`
+  "tool_call_end",
+  // from `compaction` / `auto_compaction`
+  "compaction",
+  // from `system_note` and `notice`
+  "notice",
+  // from `error`
+  "error",
+  // from `checkpoint` and `checkpoint_saved`
+  "checkpoint_saved",
+  // from `decision_record`
+  "decision_record",
+]);
+
+/**
+ * Members that are deliberately NOT reconstructed on replay, and why.
+ *
+ * Naming them is the point: "we do not persist this" is a decision, and a
+ * decision that lives only in the absence of a case is indistinguishable from
+ * an oversight. Anything not here and not in the two sets above fails the
+ * drift law.
+ */
+export const NOT_REPLAYED_EVENTS: ReadonlyMap<string, string> = new Map([
+  ["thinking_delta", "a keystroke log, not state; reasoning is not re-streamed"],
+  ["tool_call_args_delta", "a keystroke log; the settled args come with the call"],
+  ["stream_reset", "a live-stream artifact; replay yields settled text instead"],
+  ["tool_progress", "a heartbeat from a running call; nothing is running on replay"],
+  ["task_kind", "narrative — persisted inside `task_state`, read by `rune audit`"],
+  ["hypothesis", "narrative — inside `task_state`"],
+  ["hypothesis_updated", "narrative — inside `task_state`"],
+  ["decision", "narrative — inside `task_state`"],
+  ["artifact", "narrative — inside `task_state`"],
+  ["pending_decision", "the inbox is state; a surface reads it from `task_state`"],
+  ["decision_resolved", "the inbox is state; a surface reads it from `task_state`"],
 ]);
 
 /**
@@ -446,9 +508,14 @@ export function replayEvents(
                 ? (p.tier as "tool_results" | "summarized")
                 : undefined,
             trigger:
-              p.trigger === "auto" || p.trigger === "requested" || p.trigger === "overflow"
-                ? (p.trigger as "auto" | "requested" | "overflow")
+              p.trigger === "auto" ||
+              p.trigger === "requested" ||
+              p.trigger === "overflow" ||
+              p.trigger === "manual"
+                ? (p.trigger as "auto" | "requested" | "overflow" | "manual")
                 : undefined,
+            failed: p.failed === true ? true : undefined,
+            failureReason: typeof p.failureReason === "string" ? p.failureReason : undefined,
           },
         });
         break;
@@ -489,6 +556,20 @@ export function replayEvents(
             turnCount: num(p.turnCount),
           },
         });
+        break;
+      }
+
+      case "decision_record": {
+        // The closing document. It has had a row since P11.1 and no case
+        // here, so a client that reconnected after the run ended saw every
+        // tool result and not the one artifact the run was for.
+        const record = p.record;
+        if (record && typeof record === "object") {
+          frames.push({
+            seq,
+            event: { type: "decision_record", record: record as DecisionRecord },
+          });
+        }
         break;
       }
 

@@ -30,6 +30,7 @@ import type {
   AgentTurnEvent,
   ChildAgentEvent,
   ResearchEvent,
+  TaskLifecycle,
   WorkflowNodeContext,
 } from "@rune/protocol";
 import { assertNeverSoft } from "@rune/protocol";
@@ -633,6 +634,8 @@ export class TurnRenderer {
   private contextPercent: number | null = null;
   private turnCount = 0;
   private checkpoint: { runId: string; version: number } | null = null;
+  /** The run's lifecycle as of its last boundary. See the `lifecycle` case. */
+  private lifecycle: TaskLifecycle | null = null;
 
   /** Back-compat for callers that used the old separate activity line. */
   activity: string | null = null;
@@ -1922,7 +1925,7 @@ export class TurnRenderer {
       case "hypothesis_updated":
       case "decision": {
         this.flushRoutine();
-        const row = formatEvent(event, { cost: this.opts.getCost?.() });
+        const row = formatEvent(event);
         if (row) {
           this.addLog(row);
           this.commitTimeline(row);
@@ -1949,7 +1952,7 @@ export class TurnRenderer {
 
       case "replanning": {
         this.flushRoutine();
-        const block = formatEvent(event, { cost: this.opts.getCost?.() });
+        const block = formatEvent(event);
         if (block) {
           this.addLog(block);
           this.commitTimeline(block);
@@ -1961,7 +1964,7 @@ export class TurnRenderer {
       case "handoff": {
         // The honest ending for an unfinished run: the state-of-work block.
         this.flushRoutine();
-        const block = formatEvent(event, { cost: this.opts.getCost?.() });
+        const block = formatEvent(event);
         if (block) {
           this.addLog(block);
           this.commitTimeline(block);
@@ -2083,6 +2086,18 @@ export class TurnRenderer {
         return;
       }
 
+      // ─── The lifecycle projection ───
+      // Not a transcript row: the run's whole state at a boundary, arriving
+      // several times a turn. It is LATCHED instead, so the close can say how
+      // the run ended in one vocabulary — before this, `stopReason` reached
+      // the renderer and three of its seven values were dropped on the floor,
+      // and a cancelled run, a lost provider and a finished one all drew the
+      // same closing rows.
+      case "lifecycle": {
+        this.lifecycle = event.lifecycle;
+        return;
+      }
+
       case "checkpoint_saved": {
         // Feeds the task metadata + end-of-turn summary strip; never printed
         // inline (a checkpoint per write would be noise).
@@ -2114,7 +2129,7 @@ export class TurnRenderer {
         // Switching provider ends this provider's retry ladder.
         this.retrying = null;
         this.reroutes++;
-        const block = formatEvent(event, { cost: this.opts.getCost?.() });
+        const block = formatEvent(event);
         if (block) {
           this.flushRoutine();
           this.addLog(block);
@@ -2125,7 +2140,7 @@ export class TurnRenderer {
       }
 
       case "compaction": {
-        const block = formatEvent(event, { cost: this.opts.getCost?.() });
+        const block = formatEvent(event);
         if (block) {
           this.flushRoutine();
           this.addLog(block);
@@ -2149,7 +2164,7 @@ export class TurnRenderer {
         }
         if (/replanning/i.test(message)) this.setPhase("plan");
         if (/unavailable.*Switching to/s.test(message)) this.reroutes++;
-        const block = formatEvent(event, { cost: this.opts.getCost?.() });
+        const block = formatEvent(event);
         if (block) {
           this.flushRoutine();
           this.addLog(block);
@@ -2167,7 +2182,7 @@ export class TurnRenderer {
         this.errored = true;
         this.hardError = true;
         this.failures++;
-        const block = formatEvent(event, { cost: this.opts.getCost?.() });
+        const block = formatEvent(event);
         if (block) {
           this.addLog(block);
           this.commitErrorOnce(block);
@@ -2202,7 +2217,7 @@ export class TurnRenderer {
       case "research_synthesizing":
       case "research_report_delta":
       case "research_complete": {
-        const block = formatEvent(event, { cost: this.opts.getCost?.() });
+        const block = formatEvent(event);
         if (block) {
           this.flushRoutine();
           this.addLog(block);

@@ -122,6 +122,32 @@ function sample(type: string): AgentTurnEvent {
           generatedAt: NOW,
         },
       };
+    case "lifecycle":
+      return {
+        type,
+        moment: "start",
+        lifecycle: {
+          id: "s1",
+          kind: "lead",
+          objective: "why is it slow",
+          constraints: [],
+          workspace: { root: "/w", head: null, dirty: false },
+          status: "running",
+          budget: {
+            turnsUsed: 0,
+            turnsMax: 80,
+            secondWindsUsed: 0,
+            tokensIn: 0,
+            tokensOut: 0,
+            spentUsd: 0,
+            capUsd: null,
+            reservedUsd: 0,
+          },
+          checkpoint: null,
+          evidence: { todos: [], checks: [], verifiedCriteria: 0 },
+          children: [],
+        },
+      };
     default:
       throw new Error(`no sample for ${type} — add one when you add the member`);
   }

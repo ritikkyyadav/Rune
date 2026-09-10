@@ -1,13 +1,21 @@
 /**
  * The drift law.
  *
- * `AgentTurnEvent` has 22 members. Before Phase 2 three separate reducers
- * consumed it through `any` — `TurnRenderer.onEvent`, `formatEvent`, and the
- * desktop's `streamReducer` reading a hand-written copy of the union — so
- * adding a member compiled clean in all three and rendered nothing in any of
- * them. The desktop's copy had drifted both ways: stale `plan_*` members the
- * engine stopped emitting, and four live events (`retry`, `tool_progress`,
- * `step_check`, `handoff`) it had never learned.
+ * `AgentTurnEvent` has 31 members (the count is asserted below, so this
+ * sentence cannot go stale again — it said 22 for nine members). Before
+ * Phase 2 three separate reducers consumed it through `any` —
+ * `TurnRenderer.onEvent`, `formatEvent`, and the desktop's `streamReducer`
+ * reading a hand-written copy of the union — so adding a member compiled clean
+ * in all three and rendered nothing in any of them. The desktop's copy had
+ * drifted both ways: stale `plan_*` members the engine stopped emitting, and
+ * four live events (`retry`, `tool_progress`, `step_check`, `handoff`) it had
+ * never learned.
+ *
+ * Phase 2 added the two consumers the law could not see. The TUI SHELL
+ * (`tui.ts`) reduced the same stream as a chain of `if (ev.type === …)` with
+ * no `assertNever`; and the PERSISTED SESSION — `replayEvents` plus the
+ * `RUN_TRACE_EVENTS` allow-list — is the third consumer this whole phase is
+ * about and nothing stopped it drifting. Both are guarded below.
  *
  * The fix is two-layered, and this file tests the second layer.
  *
@@ -30,6 +38,11 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import {
+  NOT_REPLAYED_EVENTS,
+  REPLAYED_FROM_ROW,
+  RUN_TRACE_EVENTS,
+} from "../../../packages/orchestrator/src/engine";
 import {
   AGENT_TURN_EVENT_TYPES,
   RESEARCH_EVENT_TYPES,
@@ -59,6 +72,14 @@ const REDUCERS = [
     name: "headless runner (headless.ts runHeadless)",
     file: "packages/orchestrator/src/headless.ts",
     from: "for await (const event of engine.chat(",
+  },
+  {
+    // The TUI shell's OWN reducer — the answer buffer, the tool counters, the
+    // footer's file set, the checkpoint label, the quota stop. A fourth live
+    // consumer of the same stream, unguarded until Phase 2.
+    name: "TUI shell (bin/ui/tui.ts chat loop)",
+    file: "packages/orchestrator/src/bin/ui/tui.ts",
+    from: "for await (const ev of engine.chat(this.ctx.sessionId, input))",
   },
 ] as const;
 
@@ -148,9 +169,68 @@ describe("no client redeclares the event union", () => {
   });
 });
 
+describe("the persisted session is a reducer too", () => {
+  // The third consumer. `replayEvents` (engine.ts) rebuilds a session's event
+  // stream from its rows: a member reaches it either through a `run_trace` row
+  // (`RUN_TRACE_EVENTS`) or through a row of its own (`REPLAYED_FROM_ROW`).
+  // Anything else must be a DECISION, recorded in `NOT_REPLAYED_EVENTS` with
+  // the reason — otherwise a member that stopped being persisted looks exactly
+  // like one nobody remembered to persist.
+  const covered = new Set<string>([
+    ...RUN_TRACE_EVENTS,
+    ...REPLAYED_FROM_ROW,
+    ...NOT_REPLAYED_EVENTS.keys(),
+  ]);
+
+  test("every member is persisted, replayed from its own row, or declared unpersisted", () => {
+    const missing = AGENT_TURN_EVENT_TYPES.filter((t) => !covered.has(t));
+    expect(missing).toEqual([]);
+  });
+
+  test("the three persistence sets name nothing that is not an event", () => {
+    const known = new Set<string>(AGENT_TURN_EVENT_TYPES);
+    const invented = [...covered].filter((t) => !known.has(t));
+    expect(invented).toEqual([]);
+  });
+
+  test("the terminal verdict and the lifecycle projection are durable", () => {
+    // Gap 1.8a: a run that hit its ceiling with a closed plan left NO durable
+    // record of how it ended, so a restart could not report on the run it was
+    // recovering. Both of these are what a restart reads.
+    expect(RUN_TRACE_EVENTS.has("turn_complete")).toBe(true);
+    expect(RUN_TRACE_EVENTS.has("lifecycle")).toBe(true);
+  });
+
+  test("every unpersisted member carries a reason, not just an absence", () => {
+    for (const [type, why] of NOT_REPLAYED_EVENTS) {
+      expect(typeof why === "string" && why.length > 10, `${type} has no reason`).toBe(true);
+    }
+  });
+
+  test("replayEvents keeps a deliberate default, not a silent one", () => {
+    const body = reducerBody("packages/orchestrator/src/engine.ts", "export function replayEvents(");
+    // The reducer switches on ROW types, not on event types, so `assertNever`
+    // cannot apply: an unknown row from a NEWER build must be skipped, not
+    // thrown. What the law can require is that the skip is documented.
+    expect(body).toContain("Rows that are not turn events");
+  });
+});
+
 describe("manifests", () => {
   test("AGENT_TURN_EVENT_TYPES has no duplicates", () => {
     expect(new Set(AGENT_TURN_EVENT_TYPES).size).toBe(AGENT_TURN_EVENT_TYPES.length);
+  });
+
+  test("the member count in this file's header is the real one", () => {
+    // The header said 22 for nine members and three consumers for five. A
+    // stale comment on the drift law is the drift law drifting.
+    const header = readFileSync(join(ROOT, "tests/unit/protocol/exhaustiveness.test.ts"), "utf8");
+    expect(header).toContain(`\`AgentTurnEvent\` has ${AGENT_TURN_EVENT_TYPES.length} members`);
+  });
+
+  test("docs/protocol.md counts the reducers this file guards", () => {
+    const doc = readFileSync(join(ROOT, "docs/protocol.md"), "utf8");
+    expect(doc).toContain(`${REDUCERS.length} reducers`);
   });
 
   test("HOST_COMMANDS and HOST_STREAMS have no duplicates", () => {

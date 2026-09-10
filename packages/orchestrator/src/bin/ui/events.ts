@@ -10,7 +10,6 @@ import { text, muted, faint, info, warn } from "./theme";
 import { glyph } from "./glyphs";
 import { visLen, wrap } from "./render";
 import * as F from "./flow";
-import { renderToolCall } from "./tool-call";
 import { formatResearchEvent } from "./research";
 
 const NUMERALS = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"];
@@ -138,36 +137,8 @@ export function formatCompaction(ev: {
  * is the point: before Phase 2 this took `any`, so adding a member to
  * `AgentTurnEvent` compiled clean here and printed nothing forever.
  */
-export function formatEvent(
-  ev: AgentTurnEvent | ResearchEvent,
-  ctx: { cost?: number } = {},
-): string | null {
+export function formatEvent(ev: AgentTurnEvent | ResearchEvent): string | null {
   switch (ev.type) {
-    case "tool_call_end":
-      return renderToolCall({
-        toolName: ev.output.toolName,
-        args: ev.args,
-        result: ev.output.result,
-        success: ev.output.success,
-        error: ev.output.error,
-        durationMs: ev.output.durationMs,
-      });
-
-    case "todo_updated":
-      return F.checklist(
-        "plan",
-        ev.items.map((item: { status: string; content: string }) => ({
-          status:
-            item.status === "completed"
-              ? ("ok" as const)
-              : item.status === "in_progress"
-                ? ("active" as const)
-                : ("none" as const),
-          label: item.content,
-        })),
-        { tone: "muted" },
-      ).join("\n");
-
     case "replanning":
       // New shape: { reason, trigger } (verification kept failing, or a
       // struggle signal). The legacy PlanRunner { failedStep } shape is gone.
@@ -265,9 +236,6 @@ export function formatEvent(
       // is a document the close offers rather than a row in the scrollback.
       return null;
 
-    case "turn_complete":
-      return `${F.BODY}${faint(`${ev.totalTurns} turns | $${(ctx.cost ?? 0).toFixed(4)}`)}`;
-
     case "notice":
     case "context_warning":
       return formatNotice(ev.message);
@@ -296,6 +264,21 @@ export function formatEvent(
     // Streamed live by the TUI (turn.ts) rather than committed as a block, or
     // folded into the status rung / live meters. Listed rather than defaulted
     // so a member added upstream cannot slip past this reducer unnoticed.
+    //
+    // `tool_call_end`, `todo_updated` and `turn_complete` are in this group
+    // because turn.ts renders all three ITSELF and never routes them here.
+    // Each had a full branch of its own until Phase 2 — three renderers for
+    // rows nothing could reach, quietly claiming coverage in the drift law.
+    // The labels stay (the law counts labels, and a member that stops being
+    // handled anywhere must still be named); the dead renderers are gone.
+    //
+    // `lifecycle` is a projection, not a row: the TUI reads it into the
+    // header, the task bar and the closing summary rather than printing the
+    // whole run's state back into the scrollback at every boundary.
+    case "tool_call_end":
+    case "todo_updated":
+    case "turn_complete":
+    case "lifecycle":
     case "text_delta":
     case "thinking_delta":
     case "stream_reset":

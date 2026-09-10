@@ -12,7 +12,12 @@
 // and an exit code out, no cursor addressing, no prompts to answer.
 
 import type { Engine } from "./engine";
-import type { AgentTurnEvent, PermissionPrompt, UserPermissionDecision } from "@rune/protocol";
+import type {
+  AgentTurnEvent,
+  PermissionPrompt,
+  TaskLifecycle,
+  UserPermissionDecision,
+} from "@rune/protocol";
 import { assertNeverSoft } from "@rune/protocol";
 
 export interface HeadlessOptions {
@@ -68,6 +73,16 @@ export interface HeadlessResult {
   outputTokens: number;
   cacheReadTokens: number;
   durationMs: number;
+  /**
+   * The run's lifecycle projection, as of its last boundary.
+   *
+   * Before it, a machine consumer got text, two counters and a token triple:
+   * the turns the run used, what it spent, which acceptance criteria it met,
+   * what its plan still had open and which children it dispatched were all
+   * either absent or recoverable only by reading the database. Absent when the
+   * engine produced no lifecycle event (an older host, or a thrown turn).
+   */
+  lifecycle?: TaskLifecycle;
 }
 
 /** Process exit codes. Distinct so a caller can tell WHY a run failed. */
@@ -127,6 +142,8 @@ export async function runHeadless(
   let fatalError: string | undefined;
   // The loop's own terminal verdict. Last one wins: a turn emits exactly one.
   let stopReason: string | undefined;
+  // The lifecycle projection, latest wins — the last one carries the ending.
+  let lifecycle: TaskLifecycle | undefined;
 
   engine.setPermissionHandler(
     headlessPermissionHandler(opts.autoApprove === true, (p) => {
@@ -212,6 +229,15 @@ export async function runHeadless(
           stopReason = event.stopReason;
           break;
 
+        // ── The lifecycle projection ──
+        // Latest wins: the run emits one at every boundary and the last is the
+        // one that describes how it ended. Carried into the envelope so a
+        // machine consumer reads the turns, the spend, the plan and the
+        // children from the same projection the TUI drew.
+        case "lifecycle":
+          lifecycle = event.lifecycle;
+          break;
+
         case "thinking_delta":
         case "tool_call_args_delta":
         case "verification_started":
@@ -260,6 +286,7 @@ export async function runHeadless(
       outputTokens,
       cacheReadTokens,
       durationMs: Date.now() - started,
+      ...(lifecycle ? { lifecycle } : {}),
     };
   }
 
@@ -278,6 +305,7 @@ export async function runHeadless(
     outputTokens,
     cacheReadTokens,
     durationMs: Date.now() - started,
+    ...(lifecycle ? { lifecycle } : {}),
   };
 }
 
@@ -342,6 +370,12 @@ export function headlessEnvelope(
         cacheReadTokens: r.cacheReadTokens,
       },
       durationMs: r.durationMs,
+      // The lifecycle projection: the id, the objective, the constraints and
+      // their rungs, the workspace revision, the budget actually used, the
+      // plan as it stands and the children this run dispatched. Omitted
+      // entirely when there is none, so the envelope never carries a null
+      // shape a consumer would have to special-case.
+      ...(r.lifecycle ? { lifecycle: r.lifecycle } : {}),
     },
     null,
     opts.compact ? undefined : 2,

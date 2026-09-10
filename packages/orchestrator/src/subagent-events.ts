@@ -87,6 +87,9 @@ export function projectChildEvent(agentId: string, event: AgentTurnEvent): strin
     case "checkpoint_saved":
     case "turn_complete":
     case "tool_progress":
+    // The child's lifecycle projection is its parent's material, not a rung
+    // line: the lead folds a child into its OWN `lifecycle.children[]`.
+    case "lifecycle":
     // Task state a fleet row has no column for: the lead composes the surface,
     // holds the pending-decision inbox, and generates the record.
     case "task_kind":

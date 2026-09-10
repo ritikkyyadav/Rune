@@ -11,7 +11,9 @@
 // and every member it chooses to ignore is named in a case of its own.
 
 import type { ToolCallOutput } from "./tool";
+import type { Criterion } from "./roundtrips";
 import type {
+  CheckRecord,
   DecisionRecord,
   EvidenceRef,
   HandoffReason,
@@ -23,6 +25,107 @@ import type {
   TaskKind,
   TodoItem,
 } from "./task";
+
+// ─── The task lifecycle (Phase 2) ───
+//
+// One read model the TUI, the persisted session and a headless caller can all
+// produce and compare. Before it there were eight lifecycle concepts, each
+// defined in a different module and reaching each of the three consumers by a
+// different route: headless was the only one that read the terminal verdict,
+// the persisted session the only one that kept the objective, and the TUI the
+// only one that ever saw the user's constraints. They agreed on nothing —
+// including which files the run had changed.
+//
+// It is a PROJECTION, not a store and not a coordinator: every field already
+// exists somewhere, and this names one place to read it from.
+
+/**
+ * How a task ended; `running` until it does.
+ *
+ * One vocabulary in place of the two that overlapped on five values:
+ * `turn_complete.stopReason` (7) and `HandoffReason` (8).
+ */
+export type TaskLifecycleStatus =
+  | "running"
+  | "end_turn"
+  | "aborted"
+  | "halted"
+  | "max_turns"
+  | "max_tokens"
+  | "provider_lost"
+  | "open_steps"
+  | "stalled";
+
+/** Lead work, or a delegated child of either kind. */
+export type TaskLifecycleKind = "lead" | "task" | "worker";
+
+/** A child this task dispatched, as its parent can report it. */
+export interface TaskLifecycleChild {
+  /** `task_<uuid>` — the child's own durable id. */
+  id: string;
+  kind: "task" | "worker";
+  status: TaskLifecycleStatus;
+  /** How a worker's writes reached the lead's tree, when it had any. */
+  integration?: "merged" | "retained" | "shared";
+  /** Paths the merge refused, so a conflict is a field and not prose. */
+  conflicts?: string[];
+}
+
+/** What the TUI, the persisted session and a headless caller must agree on. */
+export interface TaskLifecycle {
+  /** `sessions.id` for lead work; `task_<uuid>` for a delegated child. */
+  id: string;
+  /** The parent's `id`; absent for lead work. */
+  parentId?: string;
+  kind: TaskLifecycleKind;
+
+  /** The objective as the spine holds it. Bounded on the wire by the emitter. */
+  objective: string;
+  /** The read-back criteria and their rungs, as they stand. */
+  constraints: Criterion[];
+
+  /** Where the work is, and what revision it was against. */
+  workspace: { root: string; head: string | null; dirty: boolean };
+
+  status: TaskLifecycleStatus;
+
+  budget: {
+    turnsUsed: number;
+    turnsMax: number;
+    secondWindsUsed: number;
+    tokensIn: number;
+    tokensOut: number;
+    spentUsd: number;
+    capUsd: number | null;
+    reservedUsd: number;
+  };
+
+  /** Where a restart would pick up: the last persisted seq, and when. */
+  checkpoint: { seq: number; at: string; compactions: number } | null;
+
+  /** The plan and what moved it. Checks are the most recent ones, not all. */
+  evidence: { todos: TodoItem[]; checks: CheckRecord[]; verifiedCriteria: number };
+
+  /** Children this task dispatched, by id, with their own terminal status. */
+  children: TaskLifecycleChild[];
+}
+
+/**
+ * Why a `lifecycle` event was emitted.
+ *
+ * Carried because the projection is a latest-wins snapshot: without the moment
+ * a consumer can see that something changed and not what kind of thing it was,
+ * which is the difference between a timeline and a gauge.
+ */
+export type TaskLifecycleMoment =
+  | "start"
+  | "steering"
+  | "dispatch"
+  | "child_return"
+  | "compaction"
+  | "checkpoint"
+  | "budget"
+  | "terminal";
 
 export type AgentTurnEvent =
   | { type: "text_delta"; text: string }
@@ -128,11 +231,28 @@ export type AgentTurnEvent =
        * What asked for it. `auto` keeps a 30% verbatim tail; `requested`
        * (`compact_context`) and `overflow` (a provider rejection) cut to the
        * recent exchange, so their tails are legitimately much smaller.
+       * `manual` is the user's own `/compact` — it was persisted as a value
+       * outside this union and normalised away on replay, so a compaction the
+       * user asked for came back indistinguishable from one nobody asked for.
        */
-      trigger?: "auto" | "requested" | "overflow";
+      trigger?: "auto" | "requested" | "overflow" | "manual";
+      /**
+       * The compaction did NOT happen: the summarizer failed and the working
+       * set is unchanged. Emitted so the failure is visible on every surface
+       * rather than only as a `notice` the transcript may have scrolled past —
+       * a run that dies of an over-limit prompt after two silent failures
+       * looked, to all three consumers, like a run that simply errored.
+       */
+      failed?: boolean;
+      failureReason?: string;
     }
   // A durable run-state checkpoint was written (see @rune/shared state.ts).
   | { type: "checkpoint_saved"; runId: string; version: number; turnCount: number }
+  // The task lifecycle, projected. One event carries the id, the objective,
+  // the user's constraints, the workspace revision, the budget, the plan and
+  // the children — so the TUI, the persisted log and a headless caller read
+  // the same numbers instead of each deriving their own. See `TaskLifecycle`.
+  | { type: "lifecycle"; moment: TaskLifecycleMoment; lifecycle: TaskLifecycle }
   // ─── Task-spine events ───
   // The run ended BEFORE finishing (turn ceiling, exhausted context, abort,
   // error) with open todos: `state` is the zero-token "state of work" handoff
@@ -286,6 +406,7 @@ export const AGENT_TURN_EVENT_TYPES = [
   "usage",
   "compaction",
   "checkpoint_saved",
+  "lifecycle",
   "handoff",
   "replanning",
   "tool_progress",
