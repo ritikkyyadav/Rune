@@ -2,10 +2,13 @@ import { describe, expect, test } from "bun:test";
 
 import {
   SUBAGENT_RESULT_SCHEMA,
+  buildChildSummary,
   buildSubagentResult,
+  describeCall,
   parseSubagentResult,
   renderTaskResult,
   renderWorkerResult,
+  toChildStatus,
   validateSubagentResult,
   type SubagentResult,
 } from "../../../packages/orchestrator/src/subagent-result";
@@ -208,5 +211,101 @@ describe("P6B.3 — validation", () => {
     expect(validateSubagentResult("a string").valid).toBe(false);
     expect(validateSubagentResult(null).valid).toBe(false);
     expect(validateSubagentResult([COMPLETE]).valid).toBe(false);
+  });
+});
+
+describe("G24 — the child summary a parent's lifecycle carries", () => {
+  test("a conflicted merge is retained, typed, and lists what conflicted", () => {
+    const child = buildChildSummary({
+      stopReason: "end_turn",
+      integration: "retained",
+      conflicts: ["src/api.ts", "src/client.ts"],
+      branch: "rune/worker-w0198-1",
+    });
+    expect(child).toEqual({
+      status: "end_turn",
+      integration: "retained",
+      conflicts: ["src/api.ts", "src/client.ts"],
+      branch: "rune/worker-w0198-1",
+    });
+  });
+
+  test("a clean merge says no conflicts rather than omitting the field", () => {
+    // "conflicts is missing" and "there were none" must not be the same shape:
+    // a consumer counting conflicts has to be able to tell them apart.
+    expect(buildChildSummary({ stopReason: "end_turn", integration: "merged" })).toEqual({
+      status: "end_turn",
+      integration: "merged",
+      conflicts: [],
+    });
+    // A read-only child integrates nothing, so it claims neither field.
+    expect(buildChildSummary({ stopReason: "end_turn" })).toEqual({ status: "end_turn" });
+  });
+
+  test("stop reasons map onto the lifecycle vocabulary, and never guess 'finished'", () => {
+    expect(toChildStatus("max_turns")).toBe("max_turns");
+    expect(toChildStatus("aborted")).toBe("aborted");
+    expect(toChildStatus("max_tokens")).toBe("max_tokens");
+    // A budget is a deliberate stop with the work kept; neither has a member.
+    expect(toChildStatus("cost_budget")).toBe("halted");
+    expect(toChildStatus("time_budget")).toBe("halted");
+    // A run that cannot say how it ended did not end well.
+    expect(toChildStatus("")).toBe("stalled");
+    expect(toChildStatus(undefined)).toBe("stalled");
+    expect(toChildStatus("something new")).toBe("stalled");
+    // The contract has no `error` member; a child that died on one is stalled.
+    expect(toChildStatus("error")).toBe("stalled");
+  });
+});
+
+describe("a worker report that was never written still says so", () => {
+  const partial = (over: Partial<SubagentResult> = {}): SubagentResult =>
+    buildSubagentResult({
+      finalText: "",
+      toolCallCount: 12,
+      stopReason: "max_turns",
+      trail: ["glob src/f1.ts", "read_file src/api.ts"],
+      filesChanged: ["src/api.ts"],
+      ...over,
+    });
+
+  test("the worker renderer labels it INCOMPLETE and names the cause", () => {
+    // The scout's renderer has done both since P6B.3; the worker's did neither,
+    // so a build that ran out of turns reached the lead reading like a report.
+    const text = renderWorkerResult(partial(), "/tmp/rune-nonexistent");
+    expect(text).toContain("INCOMPLETE");
+    expect(text).toContain("ran out of turns");
+    expect(text).toContain("Stopped: max_turns");
+    expect(text).toContain("not a report");
+  });
+
+  test("it carries the tool receipts as well as the manifest", () => {
+    const text = renderWorkerResult(partial(), "/tmp/rune-nonexistent");
+    expect(text).toContain("It ran 12 tool calls, covering:");
+    expect(text).toContain("glob src/f1.ts");
+    expect(text).toContain("read_file src/api.ts");
+    // The measured half is still there and still measured.
+    expect(text).toContain("WORKER MANIFEST");
+    expect(text).toContain("MISSING — claimed but not on disk");
+  });
+
+  test("a complete report is unchanged: no banner, no receipts, no stop line", () => {
+    const text = renderWorkerResult(
+      { ...COMPLETE, filesChanged: ["a.ts"], summary: "Built it.", stopReason: "end_turn" },
+      "/tmp/x",
+    );
+    expect(text).not.toContain("INCOMPLETE");
+    expect(text).not.toContain("Stopped:");
+    expect(text).not.toContain("covering:");
+    expect(text.startsWith("Built it.")).toBe(true);
+  });
+
+  test("the receipt names the subject, not just the tool", () => {
+    // `args.path` alone made every glob/grep receipt read as a bare tool name.
+    expect(describeCall({ path: "src/api.ts" })).toBe(" src/api.ts");
+    expect(describeCall({ pattern: "src/**/*.ts" })).toBe(" src/**/*.ts");
+    expect(describeCall({ query: "retry" })).toBe(" retry");
+    expect(describeCall(undefined)).toBe("");
+    expect(describeCall({ recursive: true })).toBe("");
   });
 });

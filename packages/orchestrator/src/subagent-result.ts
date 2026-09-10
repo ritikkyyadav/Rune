@@ -2,6 +2,7 @@ import { isAbsolute, resolve } from "node:path";
 import { readFileSync, statSync } from "node:fs";
 
 import type { LlmGateway, ProviderName, ResponseFormat } from "@rune/llm-gateway";
+import type { TaskLifecycleChild, TaskLifecycleStatus } from "@rune/protocol";
 
 /**
  * The delegation result contract.
@@ -83,6 +84,7 @@ export const SUBAGENT_RESULT_SCHEMA: Record<string, unknown> = {
     toolCallCount: { type: "integer" },
     integration: { type: "string", enum: ["merged", "retained", "shared"] },
     branch: { type: "string" },
+    conflicts: { type: "array", items: { type: "string" } },
   },
 };
 
@@ -90,6 +92,77 @@ export const SUBAGENT_RESPONSE_FORMAT: ResponseFormat = {
   type: "json_schema",
   jsonSchema: SUBAGENT_RESULT_SCHEMA,
 };
+
+// ─── The child summary a parent's lifecycle carries ───
+
+/**
+ * One entry of the lifecycle contract's `children[]`, produced by the child.
+ *
+ * A conflicted worker merge stays `success: true` — the work is retained on its
+ * branch, not lost, and calling that a failed tool call would tell the model to
+ * throw away a real build. But it was ONLY ever visible as the prose block
+ * `[MERGE CONFLICTS — …]` inside the result text, which no machine consumer
+ * reads: the headless envelope and the TUI both saw an unqualified success.
+ * This is that fact as a typed field.
+ *
+ * It IS the protocol's `TaskLifecycleChild`, minus the two fields a child cannot
+ * know about itself — `withDelegatedSessions` mints the id and knows the kind,
+ * so it completes the record on the way out. Typed against the contract rather
+ * than merely shaped like it, so a change there breaks this at compile time.
+ */
+export type ChildLifecycleStatus = TaskLifecycleStatus;
+
+export interface ChildSummary extends Omit<TaskLifecycleChild, "id" | "kind"> {
+  id?: TaskLifecycleChild["id"];
+  kind?: TaskLifecycleChild["kind"];
+  /** The retained branch. Not in the contract; the lead needs somewhere to look. */
+  branch?: string;
+}
+
+const CHILD_STATUSES: Record<string, ChildLifecycleStatus> = {
+  end_turn: "end_turn",
+  aborted: "aborted",
+  halted: "halted",
+  max_turns: "max_turns",
+  max_tokens: "max_tokens",
+  provider_lost: "provider_lost",
+  open_steps: "open_steps",
+  stalled: "stalled",
+  running: "running",
+  // A budget is a deliberate stop with the work kept, which is what "halted"
+  // means in the contract; neither has a member of its own.
+  cost_budget: "halted",
+  time_budget: "halted",
+};
+
+/**
+ * The child's stop reason in the lifecycle's vocabulary.
+ *
+ * An unknown or missing reason becomes `stalled` rather than `end_turn`: a run
+ * that cannot say how it ended did not end well, and the one direction this
+ * must never guess in is "finished". A child that died on an error lands there
+ * too — the contract has no `error` member, and "stalled" is what it means.
+ */
+export function toChildStatus(stopReason: string | undefined): ChildLifecycleStatus {
+  return CHILD_STATUSES[String(stopReason ?? "").trim()] ?? "stalled";
+}
+
+/** Build the typed summary from what the run observed. */
+export function buildChildSummary(observed: {
+  stopReason?: string;
+  integration?: "merged" | "retained" | "shared";
+  conflicts?: string[];
+  branch?: string;
+}): ChildSummary {
+  return {
+    status: toChildStatus(observed.stopReason),
+    ...(observed.integration ? { integration: observed.integration } : {}),
+    // Always present when there is an integration to speak of, so a consumer
+    // can read "no conflicts" rather than "the field is missing".
+    ...(observed.integration ? { conflicts: observed.conflicts ?? [] } : {}),
+    ...(observed.branch ? { branch: observed.branch } : {}),
+  };
+}
 
 // ─── Parsing ───
 
@@ -197,6 +270,25 @@ export function validateSubagentResult(value: unknown): { valid: boolean; proble
   if (!["high", "medium", "low"].includes(String(obj.confidence)))
     problems.push("confidence invalid");
   return { valid: problems.length === 0, problems };
+}
+
+/**
+ * The subject of one tool call, for a receipt line.
+ *
+ * Lived in subagent.ts. It is here because `worker` needed it too and had only
+ * `args.path`: a worker whose receipts were all `glob` or `grep` calls came back
+ * saying it ran twelve tool calls "covering: glob", which is not a receipt.
+ */
+export function describeCall(args: Record<string, unknown> | undefined): string {
+  if (!args) return "";
+  for (const key of ["path", "pattern", "query", "name", "glob"]) {
+    const value = args[key];
+    if (typeof value === "string" && value.trim()) {
+      const v = value.length > 80 ? `${value.slice(0, 79)}…` : value;
+      return ` ${v}`;
+    }
+  }
+  return "";
 }
 
 // ─── Construction from an observed run ───
@@ -361,14 +453,36 @@ export function renderWorkerResult(
   opts: { conflicts?: string[]; branch?: string } = {},
 ): string {
   const calls = `${result.toolCallCount} tool call${result.toolCallCount === 1 ? "" : "s"}`;
-  const head = result.summary;
-  const parts: string[] = [head];
+  // A worker that wrote no report is not a worker that did nothing. It hit its
+  // turn ceiling, or a budget, or ended on a tool call — and it still edited
+  // files and left tool receipts. The scout's renderer has said INCOMPLETE and
+  // named the cause since P6B.3; the worker's said neither, so a run that ran
+  // out of turns mid-build reached the lead reading like a finished account.
+  const incomplete = result.findings.length === 0 && result.confidence === "low";
+  const parts: string[] = incomplete
+    ? [
+        `INCOMPLETE — ${result.summary} What follows is what the harness measured, not a report.`,
+        ...(result.stopReason ? ["", `Stopped: ${result.stopReason}.`] : []),
+      ]
+    : [result.summary];
 
   if (result.findings.length) {
     parts.push("", "Findings:", ...result.findings.slice(0, MAX_LISTED).map((f) => `  · ${f}`));
   }
   if (result.unresolved.length) {
     parts.push("", "Unresolved:", ...result.unresolved.slice(0, MAX_LISTED).map((u) => `  · ${u}`));
+  }
+  // The ground covered. Only worth the parent's context when the prose did not
+  // survive — a complete report already says what the worker did.
+  if (incomplete && result.filesExamined.length) {
+    const shown = result.filesExamined.slice(0, MAX_LISTED);
+    const elided = Math.max(0, result.filesExamined.length - shown.length);
+    parts.push(
+      "",
+      `It ran ${calls}, covering:`,
+      ...shown.map((t) => `  · ${t}`),
+      ...(elided > 0 ? [`  · … and ${elided} more`] : []),
+    );
   }
 
   const paths = [...result.filesChanged].sort();

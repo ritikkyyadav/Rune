@@ -505,3 +505,270 @@ describe("worker isolation contract", () => {
     },
   );
 });
+
+/**
+ * G24 — a conflicted merge keeps `success: true` and stops being invisible.
+ *
+ * The work is retained on the worker's branch, not lost, so failing the tool
+ * call would tell the model to throw a real build away. But the conflict was
+ * only ever the prose block `[MERGE CONFLICTS — …]` inside the result text,
+ * which no machine consumer reads: the headless envelope and the TUI both saw
+ * an unqualified success.
+ */
+describe("G24 — a conflicted worker merge is a typed field, not only prose", () => {
+  function gitRepo(): string {
+    const root = ws();
+    for (const args of [
+      ["init", "-q", "-b", "main"],
+      ["config", "user.email", "t@example.com"],
+      ["config", "user.name", "T"],
+    ])
+      spawnSync("git", args, { cwd: root });
+    writeFileSync(join(root, "README.md"), "# base\n");
+    spawnSync("git", ["add", "-A"], { cwd: root });
+    spawnSync("git", ["commit", "-q", "-m", "base"], { cwd: root });
+    return root;
+  }
+
+  test.skipIf(!HAS_RUST_BIN)(
+    "conflicts and integration reach `structured`, and the child summary carries both",
+    async () => {
+      const root = gitRepo();
+      let call = 0;
+      const gateway = {
+        inferStream: async function* () {
+          call++;
+          if (call === 1) {
+            yield { type: "tool_use_start", toolCallId: "t1", toolName: "write_file" };
+            yield {
+              type: "tool_use_stop",
+              toolCallId: "t1",
+              toolInput: { path: "widget.ts", content: "export const widget = () => 42;\n" },
+            };
+            yield { type: "message_stop", stopReason: "tool_use", usage: {} };
+          } else {
+            // The lead edits the same file while the worker is running. This is
+            // the concurrent-lead-edit shape worker-worktree.test.ts pins at the
+            // merge layer; here it has to survive all the way to the caller.
+            writeFileSync(join(root, "widget.ts"), "export const widget = () => 1;\n");
+            yield {
+              type: "content_delta",
+              contentIndex: 0,
+              delta: { type: "text_delta", text: "Created widget.ts." },
+            };
+            yield { type: "message_stop", stopReason: "end_turn", usage: {} };
+          }
+        },
+      };
+      const tool = createWorkerTool({
+        binaryPath: RUST_BIN,
+        resolve: () => ({ gateway: gateway as any, model: "m", provider: "google" as any }),
+      });
+      const out = await tool.execute({
+        toolName: "worker",
+        callId: "c1",
+        args: { prompt: "Create widget.ts", files: ["widget.ts"] },
+        sessionId: "0198cccc-5555-7000-8000-eeeeeeeeeeee",
+        workspaceRoot: root,
+      } as ToolCallInput);
+
+      // The work is retained, so the call is not a failure.
+      expect(out.success).toBe(true);
+      expect(out.result).toContain("MERGE CONFLICTS");
+      // ... and now a consumer can count it without reading prose.
+      expect(out.structured?.integration).toBe("retained");
+      expect(out.structured?.conflicts).toEqual(["widget.ts"]);
+      expect(out.structured?.branch).toContain("rune/worker-w0198cccc-");
+      // The §4 `children[]` shape.
+      expect(out.structured?.child).toMatchObject({
+        status: "end_turn",
+        integration: "retained",
+        conflicts: ["widget.ts"],
+      });
+      // The lead's own edit is still the lead's.
+      expect(readFileSync(join(root, "widget.ts"), "utf8")).toContain("() => 1");
+    },
+  );
+
+  test.skipIf(!HAS_RUST_BIN)(
+    "a clean merge reports no conflicts rather than no field",
+    async () => {
+      const root = gitRepo();
+      let call = 0;
+      const gateway = {
+        inferStream: async function* () {
+          call++;
+          if (call === 1) {
+            yield { type: "tool_use_start", toolCallId: "t1", toolName: "write_file" };
+            yield {
+              type: "tool_use_stop",
+              toolCallId: "t1",
+              toolInput: { path: "widget.ts", content: "export const widget = () => 42;\n" },
+            };
+            yield { type: "message_stop", stopReason: "tool_use", usage: {} };
+          } else {
+            yield {
+              type: "content_delta",
+              contentIndex: 0,
+              delta: { type: "text_delta", text: "Created widget.ts." },
+            };
+            yield { type: "message_stop", stopReason: "end_turn", usage: {} };
+          }
+        },
+      };
+      const tool = createWorkerTool({
+        binaryPath: RUST_BIN,
+        resolve: () => ({ gateway: gateway as any, model: "m", provider: "google" as any }),
+      });
+      const out = await tool.execute({
+        toolName: "worker",
+        callId: "c1",
+        args: { prompt: "Create widget.ts", files: ["widget.ts"] },
+        sessionId: "0198dddd-6666-7000-8000-ffffffffffff",
+        workspaceRoot: root,
+      } as ToolCallInput);
+
+      expect(out.success).toBe(true);
+      expect(out.structured?.integration).toBe("merged");
+      expect(out.structured?.conflicts).toEqual([]);
+      expect(out.structured?.child).toMatchObject({ integration: "merged", conflicts: [] });
+      expect(out.result).not.toContain("MERGE CONFLICTS");
+    },
+  );
+});
+
+/**
+ * "No summary" never erases useful work — the worker half.
+ *
+ * The scout stopped failing on this in P6B.3. `worker` still did: it passed
+ * `trail: []` and bailed on `!trimmed && changed.size === 0`, so a worker that
+ * read a dozen files and ran out of turns before writing its report came back
+ * as a bare failure with every receipt discarded.
+ */
+describe("a worker that wrote no report still returns its work and its cause", () => {
+  /**
+   * A "model" that never stops calling a tool and never writes a report.
+   *
+   * `glob` on purpose: it is TypeScript-native (no rune-tools binary) and its
+   * calls SUCCEED against real seeded files, so the run marches its whole turn
+   * budget instead of tripping the repeated-failure breaker first — the same
+   * reason worker-report-provenance.test.ts uses it for the turn clock.
+   */
+  function toolOnlyGateway() {
+    let turn = 0;
+    return {
+      inferStream: async function* () {
+        turn++;
+        yield { type: "tool_use_start", toolCallId: `t${turn}`, toolName: "glob" };
+        yield {
+          type: "tool_use_stop",
+          toolCallId: `t${turn}`,
+          toolInput: { pattern: `src/f${turn}.ts` },
+        };
+        yield { type: "message_stop", stopReason: "tool_use", usage: {} };
+      },
+    };
+  }
+
+  test("a tool-heavy worker that hits max_turns keeps its receipts and names the cause", async () => {
+    const root = ws();
+    mkdirSync(join(root, "src"), { recursive: true });
+    for (let i = 1; i <= 14; i++) writeFileSync(join(root, "src", `f${i}.ts`), "export {};\n");
+    const tool = createWorkerTool({
+      binaryPath: "/nonexistent/rune-tools",
+      resolve: () => ({ gateway: toolOnlyGateway() as any, model: "m", provider: "google" as any }),
+    });
+    const out = await tool.execute({
+      toolName: "worker",
+      callId: "c1",
+      args: { prompt: "Build widget.ts", files: ["widget.ts"], effort: "quick" },
+      sessionId: "s",
+      workspaceRoot: root,
+    } as ToolCallInput);
+
+    // It used to be `success: false, "Worker produced no changes and no report"`.
+    expect(out.success).toBe(true);
+    expect(out.result).toContain("INCOMPLETE");
+    expect(out.result).toContain("ran out of turns");
+    expect(out.result).toContain("Stopped: max_turns");
+    // The ground it covered, which is the parent's shortest path to finishing.
+    expect(out.result).toContain("glob");
+    expect(out.result).toContain("src/f1.ts");
+    expect(out.result).toContain("src/f2.ts");
+    expect(out.structured?.stopReason).toBe("max_turns");
+    expect((out.structured?.filesExamined as string[]).length).toBeGreaterThan(1);
+    expect(out.structured?.confidence).toBe("low");
+    expect(out.structured?.child).toMatchObject({ status: "max_turns" });
+  });
+
+  test.skipIf(!HAS_RUST_BIN)(
+    "a worker that edited files then returned an empty final surfaces the edits, not a failure",
+    async () => {
+      const root = ws();
+      let call = 0;
+      const gateway = {
+        inferStream: async function* () {
+          call++;
+          if (call <= 2) {
+            yield { type: "tool_use_start", toolCallId: `t${call}`, toolName: "write_file" };
+            yield {
+              type: "tool_use_stop",
+              toolCallId: `t${call}`,
+              toolInput: {
+                path: `part${call}.ts`,
+                content: `export const part${call} = ${call};\n`,
+              },
+            };
+            yield { type: "message_stop", stopReason: "tool_use", usage: {} };
+          } else {
+            // Two real edits, then nothing said about them.
+            yield { type: "message_stop", stopReason: "end_turn", usage: {} };
+          }
+        },
+      };
+      const tool = createWorkerTool({
+        binaryPath: RUST_BIN,
+        resolve: () => ({ gateway: gateway as any, model: "m", provider: "google" as any }),
+      });
+      const out = await tool.execute({
+        toolName: "worker",
+        callId: "c1",
+        args: { prompt: "Build both parts", files: ["part1.ts", "part2.ts"] },
+        sessionId: "s",
+        workspaceRoot: root,
+      } as ToolCallInput);
+
+      expect(out.success).toBe(true);
+      // Harness-measured, never the model's claim — it made none.
+      expect((out.structured?.filesChanged as string[]).sort()).toEqual(["part1.ts", "part2.ts"]);
+      expect(out.structured?.confidence).toBe("low");
+      expect(String((out.structured?.unresolved as string[])[0])).toContain("wrote no summary");
+      expect(out.result).toContain("INCOMPLETE");
+      expect(out.result).toContain("WORKER MANIFEST");
+      expect(out.structured?.child).toMatchObject({ status: "end_turn" });
+      expect(readFileSync(join(root, "part2.ts"), "utf8")).toContain("part2 = 2");
+    },
+  );
+
+  test("nothing written, nothing changed AND nothing done is still the one genuine failure", async () => {
+    const root = ws();
+    const silent = {
+      inferStream: async function* () {
+        yield { type: "message_stop", stopReason: "end_turn", usage: {} };
+      },
+    };
+    const tool = createWorkerTool({
+      binaryPath: "/nonexistent/rune-tools",
+      resolve: () => ({ gateway: silent as any, model: "m", provider: "google" as any }),
+    });
+    const out = await tool.execute({
+      toolName: "worker",
+      callId: "c1",
+      args: { prompt: "Build it", files: ["widget.ts"] },
+      sessionId: "s",
+      workspaceRoot: root,
+    } as ToolCallInput);
+    expect(out.success).toBe(false);
+    expect(out.error).toContain("Worker produced");
+  });
+});

@@ -1,12 +1,15 @@
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
   lstatSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   cpSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import {
@@ -101,6 +104,19 @@ export interface MergeOutcome {
 }
 
 const WORKTREE_DIR = join(".rune", "worktrees");
+/**
+ * Where the worker fleet's own bookkeeping lives: the durable id counter and
+ * one owner record per live checkout.
+ *
+ * Inside `.rune/worktrees` because that directory is already gitignored, and
+ * dot-prefixed because `git worktree list` — which is what `listRunWorktrees`
+ * reads — never sees it, so a detached RUN worktree can never be mistaken for
+ * a worker's and reaped.
+ */
+const WORKER_STATE_DIR = join(WORKTREE_DIR, ".workers");
+const WORKER_IDS_FILE = "ids.json";
+/** Sessions kept in the id ledger. Older ones cannot collide: their branches exist. */
+const MAX_TRACKED_SESSIONS = 32;
 
 function git(
   cwd: string,
@@ -125,6 +141,234 @@ function safeId(id: string): string {
   return id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 48);
 }
 
+// ─── Durable worker identity ───
+//
+// `let workerSeq = 0; const workerId = \`w${++workerSeq}\`` reset to zero on
+// every process start. After a crash the next dispatch was `w1` again, while
+// `.rune/worktrees/w1` and `refs/heads/rune/worker-w1` both still existed — so
+// `createWorkerWorktree` threw `WorkerIsolationError`, `worker.ts` caught it,
+// and the worker silently degraded to a shell-less shared-tree run. One crash
+// therefore degraded EVERY later worker in that repository until somebody
+// deleted the branch by hand, and the branch is the one thing that must never
+// be deleted.
+//
+// The fix is two halves. Ids now derive from the session plus a counter that
+// survives the process, so a restart cannot collide with itself; and the reaper
+// below clears the checkouts a dead process left behind, keeping their branches.
+
+interface WorkerIdLedger {
+  version: 1;
+  sessions: Record<string, { n: number; at: number }>;
+}
+
+/** Per-process floor, so the sequence still advances when the ledger cannot be written. */
+const memorySeq = new Map<string, number>();
+let anonymousKey: string | undefined;
+
+function sessionKey(sessionId?: string): string {
+  const clean = String(sessionId ?? "")
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .toLowerCase();
+  if (clean) return clean.slice(0, 8);
+  // No session to key on (a direct tool call, a test): one stable key per
+  // process, which still cannot collide with another process's workers.
+  anonymousKey ??= randomBytes(4).toString("hex");
+  return anonymousKey;
+}
+
+/**
+ * The next worker id for this session: `w<session prefix>-<n>`, where `n`
+ * survives a restart.
+ *
+ * Best-effort persistence by design — a repository where the ledger cannot be
+ * written still gets monotonic ids within the process, which is the pre-existing
+ * guarantee, rather than a failed dispatch.
+ */
+export function allocateWorkerId(repoRoot: string, sessionId?: string): string {
+  const key = sessionKey(sessionId);
+  const dir = join(repoRoot, WORKER_STATE_DIR);
+  const file = join(dir, WORKER_IDS_FILE);
+  let ledger: WorkerIdLedger = { version: 1, sessions: {} };
+  try {
+    const raw = JSON.parse(readFileSync(file, "utf8")) as WorkerIdLedger;
+    if (raw?.version === 1 && raw.sessions && typeof raw.sessions === "object") ledger = raw;
+  } catch {
+    // Missing or corrupt: start a fresh ledger rather than refusing to dispatch.
+  }
+  const persisted = Number(ledger.sessions[key]?.n);
+  const next = Math.max(Number.isFinite(persisted) ? persisted : 0, memorySeq.get(key) ?? 0) + 1;
+  memorySeq.set(key, next);
+  ledger.sessions[key] = { n: next, at: Date.now() };
+  const kept = Object.entries(ledger.sessions)
+    .sort((a, b) => (b[1]?.at ?? 0) - (a[1]?.at ?? 0))
+    .slice(0, MAX_TRACKED_SESSIONS);
+  ledger.sessions = Object.fromEntries(kept);
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(file, JSON.stringify(ledger));
+  } catch {
+    // The in-memory floor above still holds for the rest of this process.
+  }
+  return `w${key}-${next}`;
+}
+
+/** Who owns a live checkout. Written beside it; read only by the reaper. */
+interface WorkerOwner {
+  version: 1;
+  workerId: string;
+  pid: number;
+  path: string;
+  branch: string;
+  sessionId?: string;
+  at: number;
+}
+
+function ownerRecordPath(repoRoot: string, workerId: string): string {
+  return join(repoRoot, WORKER_STATE_DIR, `${safeId(workerId)}.owner.json`);
+}
+
+function writeOwnerRecord(repoRoot: string, owner: WorkerOwner): void {
+  try {
+    mkdirSync(join(repoRoot, WORKER_STATE_DIR), { recursive: true });
+    writeFileSync(ownerRecordPath(repoRoot, owner.workerId), JSON.stringify(owner));
+  } catch {
+    // No record means the reaper will LEAVE this checkout in place later, which
+    // is the safe side of the failure: it never destroys what it cannot attribute.
+  }
+}
+
+function dropOwnerRecord(repoRoot: string, workerId: string): void {
+  try {
+    rmSync(ownerRecordPath(repoRoot, workerId), { force: true });
+  } catch {
+    /* a stale record is reaped on the next pass */
+  }
+}
+
+function defaultPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM means the process exists and belongs to someone else — alive.
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** One checkout the reaper looked at, and what it did about it. */
+export interface WorkerReapEntry {
+  workerId: string;
+  path: string;
+  branch?: string;
+  outcome: "reaped" | "kept";
+  /** Uncommitted work was committed onto the worker's branch before removal. */
+  committed?: boolean;
+  /** Why it was kept. */
+  reason?: string;
+}
+
+/**
+ * Clear the checkouts of workers whose process is gone, and keep their work.
+ *
+ * The order is the whole point. A crashed worker's uncommitted changes exist in
+ * exactly one place — its checkout — and its `rune/worker-*` branch is the only
+ * thing that survives the directory. So every removal COMMITS FIRST, onto that
+ * worker's own branch, and a commit that fails leaves the directory alone and
+ * says so. Branches are never deleted here, by any path.
+ *
+ * A checkout with no owner record is left in place: it belongs to an older Rune,
+ * to a concurrent instance, or to a detached run, and none of those are ours to
+ * judge dead.
+ */
+export function reapWorkerWorktrees(
+  repoRoot: string,
+  opts: { pidAlive?: (pid: number) => boolean } = {},
+): WorkerReapEntry[] {
+  const alive = opts.pidAlive ?? defaultPidAlive;
+  const report: WorkerReapEntry[] = [];
+  if (!isGitRepo(repoRoot)) return report;
+  let names: string[];
+  try {
+    names = readdirSync(join(repoRoot, WORKER_STATE_DIR));
+  } catch {
+    return report; // nothing has ever run here
+  }
+  let removedAny = false;
+  for (const name of names) {
+    if (!name.endsWith(".owner.json")) continue;
+    const workerId = name.slice(0, -".owner.json".length);
+    const file = join(repoRoot, WORKER_STATE_DIR, name);
+    let owner: WorkerOwner | undefined;
+    try {
+      owner = JSON.parse(readFileSync(file, "utf8")) as WorkerOwner;
+    } catch {
+      /* handled below */
+    }
+    if (!owner || typeof owner.pid !== "number" || typeof owner.path !== "string") {
+      report.push({
+        workerId,
+        path: "",
+        outcome: "kept",
+        reason: "its owner record is unreadable, so the checkout cannot be attributed",
+      });
+      continue;
+    }
+    if (alive(owner.pid)) continue; // a running worker owns it
+    if (!existsSync(owner.path)) {
+      dropOwnerRecord(repoRoot, workerId);
+      removedAny = true;
+      continue;
+    }
+    const branch = owner.branch || `rune/worker-${safeId(workerId)}`;
+    const keep = (reason: string) =>
+      report.push({ workerId, path: owner!.path, branch, outcome: "kept", reason });
+
+    // ── Commit first. The branch is the only copy of this work. ──
+    let committed = false;
+    const status = git(owner.path, ["status", "--porcelain"]);
+    if (!status.ok) {
+      keep(`its checkout is not a usable git worktree (${status.stderr || "git status failed"})`);
+      continue;
+    }
+    if (status.stdout) {
+      // `add -A` inside the worker's OWN checkout: everything here belongs to
+      // that worker by construction, and the alternative is losing it.
+      const staged = git(owner.path, ["add", "-A"]);
+      if (!staged.ok) {
+        keep(`its uncommitted work could not be staged (${staged.stderr})`);
+        continue;
+      }
+      const commit = git(owner.path, [
+        "-c",
+        "user.name=Rune",
+        "-c",
+        "user.email=rune@localhost",
+        "-c",
+        "commit.gpgSign=false",
+        "commit",
+        "--no-verify",
+        "-qm",
+        `rune(worker): recovered from an interrupted ${workerId}`,
+      ]);
+      if (!commit.ok) {
+        keep(`its uncommitted work could not be committed to ${branch} (${commit.stderr})`);
+        continue;
+      }
+      committed = true;
+    }
+    const removed = git(repoRoot, ["worktree", "remove", "--force", owner.path]);
+    if (!removed.ok) {
+      keep(`its checkout could not be removed (${removed.stderr})`);
+      continue;
+    }
+    dropOwnerRecord(repoRoot, workerId);
+    removedAny = true;
+    report.push({ workerId, path: owner.path, branch, outcome: "reaped", committed });
+  }
+  if (removedAny) git(repoRoot, ["worktree", "prune"]);
+  return report;
+}
+
 /**
  * Create a worker's worktree, seeded from the lead's working tree.
  *
@@ -144,7 +388,11 @@ function safeId(id: string): string {
  * Either way the half-made checkout and its branch are removed before the
  * throw.
  */
-export function createWorkerWorktree(repoRoot: string, workerId: string): WorkerWorktree | null {
+export function createWorkerWorktree(
+  repoRoot: string,
+  workerId: string,
+  opts: { sessionId?: string; pid?: number } = {},
+): WorkerWorktree | null {
   if (!isGitRepo(repoRoot)) return null;
   const id = safeId(workerId);
   const base = join(repoRoot, WORKTREE_DIR);
@@ -204,6 +452,16 @@ export function createWorkerWorktree(repoRoot: string, workerId: string): Worker
     const provisionStarted = performance.now();
     const provisioned = provisionWorkerDependencies(repoRoot, path);
     const provisionMs = Math.round(performance.now() - provisionStarted);
+    // Who to blame for this directory if the process never comes back.
+    writeOwnerRecord(repoRoot, {
+      version: 1,
+      workerId: id,
+      pid: opts.pid ?? process.pid,
+      path,
+      branch,
+      ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
+      at: Date.now(),
+    });
     return {
       path,
       branch,
@@ -379,6 +637,8 @@ export function removeWorkerWorktree(
     throw new Error(`Worker checkout retained because it still has uncommitted work: ${wt.path}`);
   git(repoRoot, ["worktree", "remove", "--force", wt.path]);
   if (!keepBranch) git(repoRoot, ["branch", "-D", wt.branch]);
+  // The directory is gone, so the reaper has nothing left to attribute.
+  dropOwnerRecord(repoRoot, wt.branch.replace(/^rune\/worker-/, ""));
 }
 
 /**

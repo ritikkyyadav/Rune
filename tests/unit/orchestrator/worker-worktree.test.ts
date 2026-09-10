@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -13,8 +14,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  allocateWorkerId,
   createWorkerWorktree,
   mergeWorkerWorktree,
+  reapWorkerWorktrees,
   removeWorkerWorktree,
   runWorktreeChecks,
   saveWorkerChanges,
@@ -363,4 +366,149 @@ test("a worktree reports what its provisioning cost", () => {
   expect(wt.provisioning!.snapshotMs).toBeGreaterThanOrEqual(0);
   expect(wt.provisioning!.provisionMs).toBeGreaterThanOrEqual(0);
   removeWorkerWorktree(repo, wt, false);
+});
+
+/**
+ * G13 — worker ids survive a restart, and the checkouts of dead workers do not.
+ *
+ * `let workerSeq = 0` reset on every process start, so after a crash the next
+ * dispatch was `w1` again while `.rune/worktrees/w1` and `rune/worker-w1` both
+ * still existed. `createWorkerWorktree` threw, `worker.ts` caught it, and the
+ * worker silently degraded to a shell-less shared-tree run — permanently, for
+ * every later worker in that repository, until somebody deleted the branch by
+ * hand. The branch is the one thing that must never be deleted.
+ */
+describe("G13 — durable worker identity", () => {
+  test("ids are keyed to the session and advance within it", () => {
+    const repo = makeRepo();
+    expect(allocateWorkerId(repo, "0198f3ab-1111-7000-8000-aaaaaaaaaaaa")).toBe("w0198f3ab-1");
+    expect(allocateWorkerId(repo, "0198f3ab-1111-7000-8000-aaaaaaaaaaaa")).toBe("w0198f3ab-2");
+    // A different session never collides with the first, even at counter 1.
+    expect(allocateWorkerId(repo, "0198ffff-2222-7000-8000-bbbbbbbbbbbb")).toBe("w0198ffff-1");
+  });
+
+  test("a restarted process resumes the counter instead of returning to w1", () => {
+    const repo = makeRepo();
+    const session = "0198aaaa-3333-7000-8000-cccccccccccc";
+    expect(allocateWorkerId(repo, session)).toBe("w0198aaaa-1");
+    expect(allocateWorkerId(repo, session)).toBe("w0198aaaa-2");
+
+    // A genuinely fresh process — the module-level counter starts at zero in it,
+    // so anything but w0198aaaa-3 means the ledger was not read.
+    const child = spawnSync(
+      process.execPath,
+      [
+        "-e",
+        `const {allocateWorkerId} = await import(${JSON.stringify(
+          join(import.meta.dir, "../../../packages/orchestrator/src/worker-worktree.ts"),
+        )});` +
+          `console.log(allocateWorkerId(${JSON.stringify(repo)}, ${JSON.stringify(session)}))`,
+      ],
+      { encoding: "utf8" },
+    );
+    expect(child.status).toBe(0);
+    expect((child.stdout ?? "").trim()).toBe("w0198aaaa-3");
+  });
+
+  test("after a restart the new id does not collide with the retained branch", () => {
+    const repo = makeRepo();
+    const session = "0198bbbb-4444-7000-8000-dddddddddddd";
+    const first = allocateWorkerId(repo, session);
+    const wt = createWorkerWorktree(repo, first, { sessionId: session })!;
+    // The worker failed: its checkout goes, its branch is kept — the shape that
+    // used to poison every later dispatch.
+    writeFileSync(join(wt.path, "src", "base.ts"), "export const base = 2;\n");
+    saveWorkerChanges(wt, ["src/base.ts"], "half a build");
+    removeWorkerWorktree(repo, wt, true);
+    expect(git(repo, ["branch", "--list", wt.branch])).toContain(wt.branch);
+
+    const second = allocateWorkerId(repo, session);
+    expect(second).not.toBe(first);
+    // Before this the second dispatch threw WorkerIsolationError here.
+    const again = createWorkerWorktree(repo, second, { sessionId: session })!;
+    expect(again.path).not.toBe(wt.path);
+    removeWorkerWorktree(repo, again, false);
+  });
+});
+
+describe("G13 — the startup reaper", () => {
+  test("a dead worker's uncommitted work is committed to its branch, then the checkout goes", () => {
+    const repo = makeRepo();
+    const wt = createWorkerWorktree(repo, "wdead-1", { sessionId: "s", pid: 999_999 })!;
+    // Killed mid-build: the edit exists only in the checkout.
+    writeFileSync(join(wt.path, "src", "base.ts"), "export const base = 99;\n");
+    writeFileSync(join(wt.path, "src", "new.ts"), "export const added = true;\n");
+
+    const report = reapWorkerWorktrees(repo, { pidAlive: () => false });
+
+    expect(report).toHaveLength(1);
+    expect(report[0]).toMatchObject({ outcome: "reaped", committed: true, branch: wt.branch });
+    // The checkout is gone and git no longer lists it.
+    expect(existsSync(wt.path)).toBe(false);
+    expect(git(repo, ["worktree", "list", "--porcelain"])).not.toContain(wt.path);
+    // The branch survives — and it now holds the work that was only on disk.
+    expect(git(repo, ["branch", "--list", wt.branch])).toContain(wt.branch);
+    expect(git(repo, ["show", `${wt.branch}:src/base.ts`])).toContain("base = 99");
+    expect(git(repo, ["show", `${wt.branch}:src/new.ts`])).toContain("added = true");
+  });
+
+  test("a live worker's checkout is never touched", () => {
+    const repo = makeRepo();
+    const wt = createWorkerWorktree(repo, "walive-1", { sessionId: "s" })!;
+    writeFileSync(join(wt.path, "src", "base.ts"), "export const base = 3;\n");
+    expect(reapWorkerWorktrees(repo, { pidAlive: () => true })).toEqual([]);
+    expect(existsSync(wt.path)).toBe(true);
+    expect(readFileSync(join(wt.path, "src", "base.ts"), "utf8")).toContain("base = 3");
+    removeWorkerWorktree(repo, wt, false);
+  });
+
+  test("a checkout it cannot attribute is left alone", () => {
+    const repo = makeRepo();
+    // A detached RUN worktree, or one made by an older Rune: no owner record,
+    // so it is nobody's to declare dead.
+    const wt = createWorkerWorktree(repo, "worphan-1")!;
+    rmSync(join(repo, ".rune", "worktrees", ".workers", "worphan-1.owner.json"), { force: true });
+    expect(reapWorkerWorktrees(repo, { pidAlive: () => false })).toEqual([]);
+    expect(existsSync(wt.path)).toBe(true);
+    removeWorkerWorktree(repo, wt, false);
+  });
+
+  test("when the work cannot be committed the directory stays and the reaper says why", () => {
+    const repo = makeRepo();
+    const wt = createWorkerWorktree(repo, "wstuck-1", { sessionId: "s", pid: 999_999 })!;
+    writeFileSync(join(wt.path, "src", "base.ts"), "export const base = 7;\n");
+    // A linked worktree keeps its git dir in the parent repo; making it
+    // read-only is the cheapest deterministic way to fail the commit.
+    const gitDir = join(repo, ".git", "worktrees", "wstuck-1");
+    chmodSync(gitDir, 0o555);
+    try {
+      const report = reapWorkerWorktrees(repo, { pidAlive: () => false });
+      expect(report).toHaveLength(1);
+      expect(report[0]!.outcome).toBe("kept");
+      expect(report[0]!.reason).toBeTruthy();
+      // The HARD RULE: uncommitted work is never destroyed to tidy a directory.
+      expect(existsSync(wt.path)).toBe(true);
+      expect(readFileSync(join(wt.path, "src", "base.ts"), "utf8")).toContain("base = 7");
+      expect(git(repo, ["branch", "--list", wt.branch])).toContain(wt.branch);
+    } finally {
+      chmodSync(gitDir, 0o755);
+    }
+  });
+
+  test("a clean dead checkout is removed without a recovery commit, branch kept", () => {
+    const repo = makeRepo();
+    const wt = createWorkerWorktree(repo, "wclean-1", { sessionId: "s", pid: 999_999 })!;
+    const before = git(repo, ["rev-parse", wt.branch]);
+    const report = reapWorkerWorktrees(repo, { pidAlive: () => false });
+    expect(report[0]).toMatchObject({ outcome: "reaped", committed: false });
+    expect(existsSync(wt.path)).toBe(false);
+    // Nothing was invented on the branch, and nothing was deleted from it.
+    expect(git(repo, ["rev-parse", wt.branch])).toBe(before);
+  });
+
+  test("a workspace that is not a git repository is not an error", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rune-wt-plain-"));
+    dirs.push(dir);
+    expect(reapWorkerWorktrees(dir, { pidAlive: () => false })).toEqual([]);
+  });
 });

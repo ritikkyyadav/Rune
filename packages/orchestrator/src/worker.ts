@@ -3,6 +3,9 @@ import {
   withDelegatedSessions,
   delegatedHistory,
   bindDelegatedLoop,
+  bindDelegatedBudget,
+  delegatedBudgetSeed,
+  checkpointDelegated,
   delegatedFallback,
   delegatedWorkerSnapshot,
   retainDelegatedWorker,
@@ -45,7 +48,9 @@ import {
 import { AgentLoop } from "./agent-loop";
 import {
   SUBAGENT_RESULT_SCHEMA,
+  buildChildSummary,
   buildSubagentResult,
+  describeCall,
   renderWorkerResult,
   repairToSchema,
 } from "./subagent-result";
@@ -53,16 +58,20 @@ import {
   checkBudget,
   describeBreach,
   resolveSubagentBudget,
+  resumeBudgetState,
   type BudgetBreach,
 } from "./subagent-budget";
 import { CostTracker } from "@rune/llm-gateway";
 import {
+  allocateWorkerId,
   createWorkerWorktree,
   mergeWorkerWorktree,
+  reapWorkerWorktrees,
   removeWorkerWorktree,
   runWorktreeChecks,
   saveWorkerChanges,
   restoreWorkerChanges,
+  type WorkerReapEntry,
   type WorkerWorktree,
 } from "./worker-worktree";
 import { WorkerSnapshotError } from "./worker-snapshot";
@@ -72,6 +81,8 @@ import { ContextEngine } from "./context-engine";
 const DEFAULT_MAX_TURNS = 24;
 const DEFAULT_MAX_TOKENS = 12_000;
 const MAX_OWNED_FILES = 32;
+/** Tool receipts carried back when the worker wrote no report. Same bound as the scout's. */
+const MAX_TRAIL_ENTRIES = 24;
 
 /** Per-call budget presets: how much room one worker's build gets. */
 const EFFORT_PRESETS: Record<string, { maxTurns: number; maxTokens: number }> = {
@@ -139,6 +150,17 @@ export interface WorkerDeps {
     claim(paths: string[], label: string): { ok: boolean; error?: string; note?: string };
     release(label: string): void;
   };
+  /**
+   * Clear the checkouts left behind by workers whose process died, once per
+   * process per repository, before the first dispatch can collide with one.
+   * Default true; the branches are always kept. Set false only where something
+   * else already reaps (a supervising host, a test).
+   */
+  reapWorktrees?: boolean;
+  /** What the reaper did, for the session's incident trail. */
+  onWorktreeReap?: (report: WorkerReapEntry[]) => void;
+  /** Test seam: liveness probe used by the reaper (default `process.kill(pid, 0)`). */
+  pidAlive?: (pid: number) => boolean;
 }
 
 export const WORKER_TOOL_SCHEMA: ToolSchema = {
@@ -444,13 +466,33 @@ export function workerSystemPrompt(ownedList: string): string {
   ].join("\n");
 }
 
-let workerSeq = 0;
+/**
+ * Repositories this process has already reaped.
+ *
+ * Module-level so several engines in one process do not each walk the same
+ * `.rune/worktrees`, and so the pass happens exactly once — at the first
+ * dispatch, which is the moment before a stale checkout could collide with a
+ * new one.
+ */
+const reapedRoots = new Set<string>();
 
 /** Create the `worker` tool. One shared claims table per tool instance (= per engine). */
 export function createWorkerTool(deps: WorkerDeps): ToolHandler {
   const claims = new OwnershipClaims();
   const maxTurns = deps.maxTurns ?? DEFAULT_MAX_TURNS;
   const maxTokens = deps.maxTokens ?? DEFAULT_MAX_TOKENS;
+
+  function reapOnce(repoRoot: string): void {
+    if (deps.reapWorktrees === false || reapedRoots.has(repoRoot)) return;
+    reapedRoots.add(repoRoot);
+    try {
+      const report = reapWorkerWorktrees(repoRoot, { pidAlive: deps.pidAlive });
+      if (report.length) deps.onWorktreeReap?.(report);
+    } catch {
+      // Housekeeping never blocks a dispatch. Worst case a stale checkout
+      // stays, and durable ids mean it no longer collides with this worker.
+    }
+  }
 
   return withDelegatedSessions(
     {
@@ -489,7 +531,12 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
       execute: async (input: ToolCallInput): Promise<ToolCallOutput> => {
         const start = performance.now();
         let returned: ToolCallOutput | undefined;
-        const workerId = `w${++workerSeq}`;
+        // Before the id is minted, not after: the checkouts a dead process left
+        // are exactly what this id used to collide with.
+        reapOnce(input.workspaceRoot);
+        // Durable across a restart — see allocateWorkerId. `w1` on every process
+        // start is what degraded every later worker in a repository after a crash.
+        const workerId = allocateWorkerId(input.workspaceRoot, input.sessionId);
         const { prompt, files, context, tier, effort } = input.args as {
           prompt: string;
           files: string[];
@@ -549,7 +596,9 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
         try {
           if (deps.worktrees !== false) {
             try {
-              worktree = createWorkerWorktree(input.workspaceRoot, workerId);
+              worktree = createWorkerWorktree(input.workspaceRoot, workerId, {
+                sessionId: input.sessionId,
+              });
             } catch (error) {
               // A snapshot that would be PARTIAL is refused outright: stale code
               // under a green report is worse than no worker. A checkout that
@@ -646,6 +695,11 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
           const changed = new Set<string>(restoredPaths);
           let loopError: string | undefined;
           let stopReason = "";
+          // The ground this worker covered, deduplicated and bounded. A worker
+          // passed `trail: []` and so had no receipts to fall back on: one that
+          // read twelve files, changed nothing and wrote no report came back as
+          // a bare failure with everything it had learned thrown away.
+          const trail: string[] = [];
           // Same contract as the scout's: checked between turns, and a breach
           // stops the worker and returns what it built rather than discarding it.
           // For a worker that matters more, not less — its output is files.
@@ -654,7 +708,17 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
             deadlineMs: input.args.deadlineMs ?? deps.budgetDefaults?.deadlineMs,
           });
           const costTracker = new CostTracker();
-          const budgetState = { spentUsd: 0, startedAt: Date.now() };
+          // Seeded from the checkpoint, not from zero. A `task_id` resumed five
+          // times used to get five full cost caps and five fresh deadline
+          // clocks, so the budget bounded one call and never the task.
+          const priorSpend = delegatedBudgetSeed();
+          const budgetState = resumeBudgetState(priorSpend);
+          let turnsUsed = priorSpend?.turnsUsed ?? 0;
+          bindDelegatedBudget(() => ({
+            spentUsd: budgetState.spentUsd,
+            elapsedMs: Date.now() - budgetState.startedAt,
+            turnsUsed,
+          }));
           let breach: BudgetBreach | null = null;
           // Filled by P6B.2 when the worker runs its own checks in its worktree,
           // and by P6B.1 when the merge back reports conflicts. `not_run` until
@@ -698,8 +762,11 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
               // run completely dark for their whole multi-minute build. The
               // worker id keys the note to ONE member of a parallel fleet.
               {
-                const p = typeof event.args?.path === "string" ? ` ${event.args.path}` : "";
-                input.onProgress?.(`${workerId} ${event.output.toolName}${p}`);
+                // Same subject extraction as the scout's: `args.path` alone
+                // made every glob/grep receipt read as a bare tool name.
+                const label = `${event.output.toolName}${describeCall(event.args)}`;
+                input.onProgress?.(`${workerId} ${label}`);
+                if (trail.length < MAX_TRAIL_ENTRIES && !trail.includes(label)) trail.push(label);
               }
               if (
                 event.output?.success &&
@@ -708,7 +775,13 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
               ) {
                 changed.add(event.args.path);
               }
+              // The resume checkpoint, saved HERE rather than only after the
+              // worker returns. A crash four minutes into a build used to lose
+              // the whole child transcript and leave the parent holding a
+              // task_id that resolved to nothing. See checkpointDelegated.
+              checkpointDelegated();
             } else if (event.type === "usage") {
+              turnsUsed++;
               budgetState.spentUsd += costTracker.estimate(event.model ?? live.model, {
                 inputTokens: event.inputTokens,
                 outputTokens: event.outputTokens,
@@ -726,7 +799,14 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
           }
 
           const trimmed = report.trim();
-          if (!trimmed && changed.size === 0) {
+          // Nothing written, nothing changed AND nothing done: there is no
+          // result to salvage. That last clause is new, and it is the whole
+          // difference — a worker that read a dozen files, changed none of them
+          // and ran out of turns before writing its report used to come back as
+          // a bare failure with every receipt discarded, which is exactly the
+          // shape the scout stopped failing on in P6B.3. Its ground is the
+          // parent's shortest path to finishing the job itself.
+          if (!trimmed && changed.size === 0 && toolCalls === 0) {
             // Name the model on the failure path too: a demoted worker that then
             // built nothing is the clearest signal the fallback could not do the
             // job, and the lead needs that to decide whether to retry or wait.
@@ -768,7 +848,7 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
                 toolCallCount: toolCalls,
                 stopReason,
                 loopError,
-                trail: [],
+                trail,
                 filesChanged: [...changed],
                 servedBy: servedBy ?? undefined,
                 checks: "failed",
@@ -783,7 +863,18 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
                 toolName: input.toolName,
                 success: true,
                 result: renderWorkerResult(result, worktree.path, { branch: worktree.branch }),
-                structured: { ...result, integration: "retained", branch: worktree.branch },
+                structured: {
+                  ...result,
+                  integration: "retained",
+                  branch: worktree.branch,
+                  conflicts: [],
+                  child: buildChildSummary({
+                    stopReason,
+                    integration: "retained",
+                    conflicts: [],
+                    branch: worktree.branch,
+                  }),
+                },
                 durationMs: Math.round(performance.now() - start),
               };
               return returned;
@@ -821,7 +912,7 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
             toolCallCount: toolCalls,
             stopReason,
             loopError,
-            trail: [],
+            trail,
             filesChanged: [...changed],
             servedBy: servedBy ?? undefined,
             checks: checkOutcome,
@@ -848,6 +939,7 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
                 stopReason,
                 servedBy: servedBy ?? undefined,
                 checks: checkOutcome ?? repaired.checks,
+                filesExamined: repaired.filesExamined.length ? repaired.filesExamined : trail,
               };
             }
           }
@@ -884,6 +976,11 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
             (isolationNote ? `${isolationNote}\n\n` : "") +
             isolationLine +
             (teamNote ? `${teamNote}\n\n` : "");
+          const integration: "merged" | "retained" | "shared" = worktree
+            ? keepBranch
+              ? "retained"
+              : "merged"
+            : "shared";
           returned = {
             callId: input.callId,
             toolName: input.toolName,
@@ -896,10 +993,23 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
               }),
             structured: {
               ...result,
-              integration: worktree ? (keepBranch ? "retained" : "merged") : "shared",
+              integration,
+              // A conflicted merge keeps success:true — the work is retained on
+              // its branch, not lost, and failing the call would tell the model
+              // to throw a real build away. But the conflict was visible ONLY as
+              // the `[MERGE CONFLICTS — …]` prose block, so the headless
+              // envelope and the TUI both read an unqualified success. Typed,
+              // it can be counted.
+              conflicts: mergeConflicts,
               ...(keepBranch && worktree ? { branch: worktree.branch } : {}),
               ...(isolationNote ? { isolationNote } : {}),
               ...(provisioning ? { provisioning } : {}),
+              child: buildChildSummary({
+                stopReason,
+                integration,
+                conflicts: mergeConflicts,
+                branch: keepBranch && worktree ? worktree.branch : undefined,
+              }),
             },
             durationMs: Math.round(performance.now() - start),
           };
