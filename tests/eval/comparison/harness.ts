@@ -92,6 +92,11 @@ export function prepareHarness(
         process.env.RUNE_CREDENTIALS_PATH ?? join(sourceHome, "credentials.json"),
       RUNE_CREDENTIAL_INDEX_PATH:
         process.env.RUNE_CREDENTIAL_INDEX_PATH ?? join(sourceHome, "credentials.index.json"),
+      // Saved API keys (`/keys set`) live in the home's secrets.json, not the
+      // secure store. Without this the isolated profile had no ollama-turbo
+      // key, the arm fell through to a retired fallback model and exited in
+      // under a second as "no model usage" (2026-09-10).
+      RUNE_SECRETS_PATH: process.env.RUNE_SECRETS_PATH ?? join(sourceHome, "secrets.json"),
     });
     write(
       env.RUNE_CONFIG_PATH!,

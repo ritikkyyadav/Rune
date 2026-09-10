@@ -228,6 +228,27 @@ const NO_VALUE = new Set([
   "-u",
 ]);
 
+/**
+ * Inline scripts are the executed program itself. One counts as a check when
+ * it can fail on its own verdict: an assertion, an expectation, a non-zero
+ * exit or a raise. A script that only prints is not one, whatever it prints.
+ * (Pilot J, 2026-09-10: a `bun -e '…assert.deepEqual(…)…'` probe passed and
+ * was cited twice, and "nothing on record" cost three completions.)
+ */
+const INLINE_FLAGS: Record<string, readonly string[]> = {
+  node: ["-e", "--eval", "-p", "--print"],
+  bun: ["-e", "--eval", "-p", "--print"],
+  deno: ["eval"],
+  python: ["-c"],
+  ruby: ["-e"],
+  perl: ["-e"],
+};
+const INLINE_ASSERTION =
+  /\bassert\b|\bexpect\s*\(|process\.exit\s*\(\s*[1-9]|sys\.exit\s*\(\s*[1-9]|\braise\b|\bthrow\b/;
+function inlineCheck(script: string): boolean {
+  return !script.includes(OPAQUE) && INLINE_ASSERTION.test(script);
+}
+
 const base = (path: string) =>
   path
     .split(/[\\/]/)
@@ -299,6 +320,10 @@ function checks(input: string[], depth = 0): boolean {
     if (program !== "bun") return false;
   }
   if (/^(python[23]?(?:\.\d+)?|node|bun|deno|bash|sh|zsh|ruby|perl)$/.test(program)) {
+    const inlineFlags = /^python/.test(program) ? INLINE_FLAGS.python : INLINE_FLAGS[program];
+    if (inlineFlags?.includes(words[0] ?? "") && typeof words[1] === "string") {
+      return inlineCheck(words[1]);
+    }
     if (/^python/.test(program) && words[0] === "-m")
       return /^(pytest|unittest|mypy)$/.test(words[1] ?? "");
     if (program === "node" && (words[0] === "--test" || words[0] === "--check")) return true;
