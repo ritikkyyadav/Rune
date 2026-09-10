@@ -44,6 +44,22 @@ export type AutoModeRisk = "low" | "medium" | "high" | "critical";
 export type AutoModeTier = "safe" | "workspace" | "classifier";
 /** How much of the supervised tier the out-of-band supervisor reads. */
 export type SupervisorScope = "all" | "unusual" | "off";
+
+/**
+ * Tools that change nothing outside the run's own ledger: a read-back, a
+ * citation, a plan edit, a question to the user, a schema load. Under the
+ * default `unusual` scope they are not worth a reviewer call — Pilot H
+ * (2026-09-09) spent a frontier-model screen on a `read_back` the mechanical
+ * tier had already cleared.
+ */
+export const HARNESS_BOOKKEEPING_TOOLS: ReadonlySet<string> = new Set([
+  "read_back",
+  "record_evidence",
+  "todo_write",
+  "ask_user",
+  "load_tools",
+  "compact_context",
+]);
 /** What Auto does with a shell command that will not run inside the OS sandbox. */
 export type UnsandboxedShellPolicy = "review" | "ask" | "allow";
 
@@ -1855,6 +1871,9 @@ export class AutoModeRun {
     const config = this.controller.getConfig();
     if (config.supervisor === "off") {
       return { reason: "the background supervisor is off", record: false };
+    }
+    if (config.supervisor === "unusual" && HARNESS_BOOKKEEPING_TOOLS.has(action.toolName)) {
+      return { reason: "harness bookkeeping with no effect outside the run", record: false };
     }
     if (
       config.supervisor === "unusual" &&

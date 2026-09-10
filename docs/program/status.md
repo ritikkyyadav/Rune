@@ -1,5 +1,43 @@
 # Program status
 
+**2026-09-10, later: the step-count leaks.** Finish gates, nudges and the second wind now tag
+what they append and the engine persists it (`user_msg` with a `harness` field); a plan with
+every step completed and evidenced stands the execution-evidence and fix-verified gates down;
+the check log is written at execution time and serial calls are barriers, so `bash` then
+`record_evidence` in one response cites a check already on record (one completion fewer, in
+the engine regression); the recurrence detector counts failures and deterministic refusals and
+ends the run resumably on the second recurrence; narrate-then-silence is accepted after one
+nudge; bookkeeping tools skip the supervisor screen. All five dogfood findings are addressed.
+Full-suite confirmation, reinstall and commit wait on the machine: it is in clamshell sleep on
+battery, awake for seconds at a time (`pmset -g log`). Details: [harness status](../harness-status.md).
+
+**2026-09-10, the Pilot H trace, read from its own database.** Per-completion cost was identical
+to OpenCode's; the gap was 13 completions to 9. Three went to the command classifier rejecting
+executed compound checks (fixed in the working tree, verified against the exact commands), and
+the prompt cache froze at 12,160 tokens for nine completions — about a quarter of the spend —
+from the first request that carried the plan-ledger block as a trailing user message. Rune's
+request items were a byte-identical prefix of the next request's, so this is the Codex backend's
+behaviour, reproduced live with `scripts/verify-codex-tail-cache.ts` on gpt-5.6-sol: the loop
+that ends on `function_call_output` extends its cache every turn, the loop that ends on a user
+message does not. On `codex` the ephemeral tail now rides inside the last tool output
+(`foldsEphemeralTail`); other hosts are unchanged. Unit **4,363 / 0** unsandboxed, the new
+integration suites 14 / 14, mock **63 / 63**, typecheck and formatting clean; installed as `v0.4.1-dev+99a22f8`
+CLI `a2be4b86…`. Pilot I was unscored (429); the paired re-run on this build is the measurement
+that is still owed. Details: [harness status](../harness-status.md).
+
+**2026-09-09, audit follow-through — browser containment and verification receipts.**
+The live frontend pilot exposed two connected defects: Chromium crashed under the macOS shell
+profile, and a successful `node browser-test.mjs` did not count as verification. Narrow startup
+allowances now support foreground/background browser checks with the tested path denials intact.
+Command classification now recognizes executed check scripts, and the plan, citation log and
+live/replayed lessons share the child exit verdict. Failed commands and echoed test names no
+longer acquire positive citations. Working fixes on `ae1847c` are installed as
+`v0.4.1-dev+ae1847c`: unit **4,309 / 0**, integration **141 / 0**, Rust **94 / 0**, mock **63 / 63**;
+the existing filesystem/toolchain skips remain disclosed. A live verification of the existing
+frontend ran its check once, read the screenshots and closed cleanly in 53.4 s / $0.0647 estimated
+list cost, six primary calls. This is a targeted regression check, not competitive parity.
+Full comparisons, qualifications and artifact hashes: [audit follow-through](../audit-followthrough-20260908.md).
+
 **2026-09-09, the first fully green CI run, and v0.4.1.** Lane P13.3 took the Windows unit job from
 about nineteen failures to two using only the CI log: two were product defects — the plugin
 integrity digest hashed raw bytes, so a `core.autocrlf` checkout failed every plugin's verification,
@@ -21,10 +59,10 @@ re-authenticated `gh`: install, `--version`, `doctor`, `tools-smoke` and a real 
 passed on the fresh Windows runner; only `rune serve --check` failed, at "opening a session over the
 websocket", after a 21 s connect timeout — the server talks to its session hosts over a unix socket,
 which is the Windows gap; lane P13.2 is on it with the CI Windows job as the only test bed. The
-comparison harness in `tests/eval/comparison/` recorded its **first run**: Rune (installed binary,
+comparison harness in `tests/eval/comparison/` recorded its **first paired free-route series**: Rune (installed binary,
 `ollama-turbo`) against OpenCode 1.18.23 (`ollama-cloud`, its own key) on the identical
 `gpt-oss:120b`, three tasks × two runs — **Rune 6 / 6, OpenCode 2 / 6**, Rune about twice the
-tokens per task, equal wall time —
+estimated list-equivalent cost across all attempts, similar mean wall time —
 [docs/evidence/comparison-live-20260908.md](../evidence/comparison-live-20260908.md). The
 sub-agent layer was watched live for the first time: three `task` reviewers fanned out on a free
 route, their findings merged into a severity-ordered review, two fixes landed with tests, 11 / 11 —

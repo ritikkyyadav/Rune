@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "kind": "local-live-pilot",
+  "startedAt": "2026-09-08T07:37:32.152Z",
+  "limits": {
+    "perTaskListUsd": 2,
+    "timeoutMs": 300000,
+    "runs": 1
+  },
+  "model": "gpt-5.6-sol",
+  "providers": {
+    "rune": "codex",
+    "opencode": "openai"
+  },
+  "provenance": {
+    "runeSha": "5b795e48c47cb881ac1b05939e444a01f24b17e3",
+    "dirtyPatchSha256": "6f22973854c822563e385cfb35edfe773a3f671773a2afebe66a2af3a2c9d9ac",
+    "taskDigest": "5fd97f19c54b1022761dedc21a6157f256718311a6fb33f4d94d0dc8a0cc674a",
+    "runeExecutableSha256": "788e1a197173a37ae8a97c4465fad9b9ffcc7d56e83d5937bcf12730872b60d5",
+    "runeCommand": [
+      "/Users/ritikyadav890/.rune/bin/rune-compiled"
+    ],
+    "opencodeCommand": [
+      "opencode"
+    ],
+    "versions": {
+      "rune": "Rune v0.4.0",
+      "opencode": "1.18.23"
+    }
+  },
+  "limitations": [
+    "Small internally authored pilot; not SWE-bench or Terminal-Bench and not an overall capability score.",
+    "Same selected primary model and high reasoning; each harness retains its own tools, orchestration, prompts and helper routing.",
+    "Dollar figures use Rune's shared versioned pricing table, not subscription invoices. Unknown prices stay null.",
+    "Rune reserves dollars before requests; OpenCode is stopped after a reported step crosses the common ceiling. Any overshoot is recorded and cannot count as an on-budget success."
+  ],
+  "results": [
+    {
+      "sourceBefore": "788e1a197173a37ae8a97c4465fad9b9ffcc7d56e83d5937bcf12730872b60d5",
+      "sourceChanged": false,
+      "task": "csv-state-machine",
+      "run": 1,
+      "arm": "rune",
+      "exitCode": 0,
+      "durationMs": 262750,
+      "listUsd": 0.1689275,
+      "models": [
+        "codex/gpt-5.6-sol"
+      ],
+      "entries": 12,
+      "estimated": true,
+      "scored": true,
+      "acceptancePassed": true,
+      "onBudget": true,
+      "success": true,
+      "evidence": "/tmp/rune-head-to-head-20260908-d/csv-state-machine-1-rune",
+      "patchSha256": "317c235b8ffe504873936fbd77a865298677114ad1ad8747998fc92817c9ada1",
+      "completedAt": "2026-09-08T07:41:56.210Z"
+    },
+    {
+      "sourceBefore": "788e1a197173a37ae8a97c4465fad9b9ffcc7d56e83d5937bcf12730872b60d5",
+      "sourceChanged": false,
+      "task": "csv-state-machine",
+      "run": 1,
+      "arm": "opencode",
+      "exitCode": 0,
+      "durationMs": 164197,
+      "listUsd": 0.08149625,
+      "models": [
+        "gpt-5.6-sol"
+      ],
+      "entries": 10,
+      "estimated": true,
+      "scored": true,
+      "acceptancePassed": true,
+      "onBudget": true,
+      "success": true,
+      "evidence": "/tmp/rune-head-to-head-20260908-d/csv-state-machine-1-opencode",
+      "patchSha256": "58191d6cee7a77da531bb49ac157741a41b666879a5f3362fae57a99acb67fd4",
+      "completedAt": "2026-09-08T07:44:40.541Z"
+    }
+  ]
+}

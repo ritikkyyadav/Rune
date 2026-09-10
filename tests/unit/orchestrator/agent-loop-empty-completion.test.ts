@@ -8,6 +8,7 @@
 import { describe, test, expect } from "bun:test";
 import { AgentLoop } from "../../../packages/orchestrator/src/agent-loop";
 import type { AgentTurnEvent } from "../../../packages/orchestrator/src/agent-loop";
+import { TaskStateStore } from "../../../packages/orchestrator/src/task-state";
 
 async function collect(gen: AsyncGenerator<AgentTurnEvent>): Promise<AgentTurnEvent[]> {
   const out: AgentTurnEvent[] = [];
@@ -54,6 +55,145 @@ function loopWith(gateway: any) {
 }
 
 describe("AgentLoop — empty completions never end a run silently", () => {
+  test.each([true, false])(
+    "tool-only work followed by silence recovers or fails explicitly (recover=%s)",
+    async (recover) => {
+      let calls = 0;
+      let executions = 0;
+      const state = new TaskStateStore();
+      const gateway = {
+        inferStream: async function* () {
+          calls++;
+          if (calls === 1) {
+            yield { type: "tool_use_start", toolCallId: "read-1", toolName: "read_file" };
+            yield {
+              type: "tool_use_stop",
+              toolCallId: "read-1",
+              toolInput: { path: "answer.txt" },
+            };
+            yield stopEvent("tool_use");
+          } else if (recover && calls === 3) {
+            yield textDelta("The fixture contains 42.");
+            yield stopEvent("end_turn");
+          } else {
+            yield {
+              type: "message_stop",
+              stopReason: "end_turn",
+              usage: { inputTokens: 0, outputTokens: 0 },
+            };
+          }
+        },
+      };
+      const registry = {
+        toLlmTools: () => [],
+        get: () => ({ schema: { name: "read_file", category: "read", permissionLevel: "auto" } }),
+        execute: async (input: { callId: string; toolName: string }) => {
+          executions++;
+          return { ...input, success: true, result: "42", durationMs: 0 };
+        },
+      };
+      const loop = new AgentLoop(
+        { model: "m", provider: "google", maxTurns: 8, taskState: state },
+        gateway as any,
+        registry as any,
+      );
+      const events = await collect(
+        loop.run("Read the fixture and tell me the value.", "s1", "/tmp"),
+      );
+      expect(executions).toBe(1); // retry the response, not the completed work
+      expect(calls).toBe(recover ? 3 : 4);
+      expect(
+        loop.getMessages().filter((m) => m.role === "assistant" && m.content.length === 0),
+      ).toHaveLength(0);
+      if (recover) {
+        expect(events.some((e) => e.type === "text_delta" && e.text.includes("42"))).toBe(true);
+        expect(events.some((e) => e.type === "error")).toBe(false);
+      } else {
+        const error = events.find((e) => e.type === "error");
+        expect(error?.type === "error" && error.error).toContain(
+          "recorded tool results are retained",
+        );
+        expect(events.some((e) => e.type === "turn_complete" && e.stopReason === "end_turn")).toBe(
+          false,
+        );
+        expect(
+          events.some((e) => e.type === "turn_complete" && e.stopReason === "provider_lost"),
+        ).toBe(true);
+      }
+    },
+  );
+
+  test.each([true, false])(
+    "narration, tool results, then silence: one nudge, then the finish is accepted (answers=%s)",
+    async (answers) => {
+      let calls = 0;
+      let executions = 0;
+      const gateway = {
+        inferStream: async function* () {
+          calls++;
+          if (calls === 1) {
+            yield textDelta("Running the fixture read now.");
+            yield { type: "tool_use_start", toolCallId: "read-1", toolName: "read_file" };
+            yield {
+              type: "tool_use_stop",
+              toolCallId: "read-1",
+              toolInput: { path: "answer.txt" },
+            };
+            yield stopEvent("tool_use");
+          } else if (answers && calls === 3) {
+            yield textDelta("The fixture contains 42.");
+            yield stopEvent("end_turn");
+          } else {
+            yield {
+              type: "message_stop",
+              stopReason: "end_turn",
+              usage: { inputTokens: 0, outputTokens: 0 },
+            };
+          }
+        },
+      };
+      const registry = {
+        toLlmTools: () => [],
+        get: () => ({ schema: { name: "read_file", category: "read", permissionLevel: "auto" } }),
+        execute: async (input: { callId: string; toolName: string }) => {
+          executions++;
+          return { ...input, success: true, result: "42", durationMs: 0 };
+        },
+      };
+      const loop = new AgentLoop(
+        { model: "m", provider: "google", maxTurns: 8 },
+        gateway as any,
+        registry as any,
+      );
+      const events = await collect(
+        loop.run("Read the fixture and tell me the value.", "s1", "/tmp"),
+      );
+      expect(executions).toBe(1);
+      // One empty completion earns the nudge; the second is accepted on the
+      // earlier narration — never a third request, never an error.
+      expect(calls).toBe(3);
+      expect(events.some((e) => e.type === "error")).toBe(false);
+      expect(events.some((e) => e.type === "turn_complete" && e.stopReason === "end_turn")).toBe(
+        true,
+      );
+      const nudge = loop
+        .getMessages()
+        .find(
+          (m) =>
+            m.role === "user" &&
+            m.content.some(
+              (b: any) => b.type === "text" && b.text.includes("not provided an answer"),
+            ),
+        );
+      expect(nudge).toBeDefined();
+      expect(loop.originOf(nudge!)).toBe("nudge:empty-completion");
+      expect(
+        events.some((e) => e.type === "notice" && e.message.includes("finishing on what it said")),
+      ).toBe(!answers);
+      expect(events.some((e) => e.type === "text_delta" && e.text.includes("42"))).toBe(answers);
+    },
+  );
+
   test("stopReason tool_use with zero tool calls: retries twice, then fails LOUDLY", async () => {
     let calls = 0;
     const gateway = {
@@ -117,6 +257,20 @@ describe("AgentLoop — empty completions never end a run silently", () => {
     const loop = loopWith(gateway);
     const events = await collect(loop.run("say hi", "s1", "/tmp"));
 
+    expect(calls).toBe(3);
+    expect(events.some((e) => e.type === "error")).toBe(true);
+  });
+
+  test("text accompanying a missing promised tool call cannot reset the empty-response ceiling", async () => {
+    let calls = 0;
+    const loop = loopWith({
+      inferStream: async function* () {
+        calls++;
+        yield textDelta("Calling the tool now.");
+        yield stopEvent("tool_use");
+      },
+    });
+    const events = await collect(loop.run("Read the fixture.", "s1", "/tmp"));
     expect(calls).toBe(3);
     expect(events.some((e) => e.type === "error")).toBe(true);
   });

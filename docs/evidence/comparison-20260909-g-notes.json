@@ -1,0 +1,14 @@
+{
+  "recordedAt": "2026-09-09",
+  "originalReport": "comparison-20260909-g.json",
+  "originalReportSha256": "4cbde4b86d6ffdd9e495927c60f6a58f8669c049e68c3132bb7044d2dc60b07b",
+  "pairedComparable": false,
+  "qualifications": [
+    "Rune passed independent artifact acceptance and its sandboxed browser checks but did not complete within 600 seconds. Keep it as an incomplete run.",
+    "The custom Node test command returned exit 0 but was not recognized by the plan's verification classifier. The trace shows repeated bookkeeping attempts. This is a runtime defect, not a grader correction or a provider-quota exclusion.",
+    "OpenCode's recorded timeout took 1131552 ms against a 600000 ms deadline. The reason for the delayed timer was not established. Exclude that arm from timing and completion comparisons despite the original aggregate's scored=true field.",
+    "Both binaries used by Rune were frozen before dispatch. Later changes to the checkout or installed CLI are not part of this measurement."
+  ],
+  "nativeExecutableSha256": "7d9171836f3e70dc96e32e19acd63fca279ffca2f4946f583f16c842b44d26f6",
+  "rawLogsPublished": false
+}

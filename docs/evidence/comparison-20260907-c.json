@@ -1,0 +1,81 @@
+{
+  "schema": 1,
+  "kind": "local-live-pilot",
+  "startedAt": "2026-09-07T13:37:36.833Z",
+  "limits": {
+    "perTaskListUsd": 4,
+    "timeoutMs": 600000,
+    "runs": 1
+  },
+  "model": "gpt-5.6-sol",
+  "providers": {
+    "rune": "codex",
+    "opencode": "openai"
+  },
+  "provenance": {
+    "runeSha": "8d7c89f3158b84a666dc13083eb39c13e41ddbf2",
+    "dirtyPatchSha256": "a2026ef0c62893802f499f2d6a5562c1af417aacd7bb3784dddad33f3738068d",
+    "taskDigest": "f4ac471148ea6a9caaff274d5eebaeac8cf47eb64211a2e24904b0f1308b718b",
+    "runeExecutableSha256": "33025ce8db824f2959d6deccb24b849364c5ad24bb9ca52057b0bdd3df6fd73e",
+    "runeCommand": [
+      "/Users/ritikyadav890/.rune/bin/rune-compiled"
+    ],
+    "opencodeCommand": [
+      "opencode"
+    ],
+    "versions": {
+      "rune": "Rune v0.3.0-dev+8d7c89f",
+      "opencode": "1.18.23"
+    }
+  },
+  "limitations": [
+    "Small internally authored pilot; not SWE-bench or Terminal-Bench and not an overall capability score.",
+    "Same selected primary model and high reasoning; each harness retains its own tools, orchestration, prompts and helper routing.",
+    "Dollar figures use Rune's shared versioned pricing table, not subscription invoices. Unknown prices stay null.",
+    "Rune reserves dollars before requests; OpenCode is stopped after a reported step crosses the common ceiling. Any overshoot is recorded and cannot count as an on-budget success."
+  ],
+  "results": [
+    {
+      "sourceBefore": "33025ce8db824f2959d6deccb24b849364c5ad24bb9ca52057b0bdd3df6fd73e",
+      "sourceChanged": false,
+      "task": "responsive-project-board",
+      "run": 1,
+      "arm": "rune",
+      "exitCode": 1,
+      "durationMs": 445648,
+      "listUsd": 0.21874200000000002,
+      "models": [
+        "codex/gpt-5.6-sol"
+      ],
+      "entries": 8,
+      "estimated": true,
+      "scored": true,
+      "acceptancePassed": false,
+      "onBudget": true,
+      "success": false,
+      "evidence": "/tmp/rune-head-to-head-20260907-c/responsive-project-board-1-rune",
+      "patchSha256": "3b89d861251b224c4dabf8c7097fb78b76e622bec3ae09e7a0bed3f7656e402a",
+      "completedAt": "2026-09-07T13:45:35.048Z"
+    },
+    {
+      "sourceBefore": "33025ce8db824f2959d6deccb24b849364c5ad24bb9ca52057b0bdd3df6fd73e",
+      "sourceChanged": false,
+      "task": "responsive-project-board",
+      "run": 1,
+      "arm": "opencode",
+      "exitCode": 1,
+      "durationMs": 74758,
+      "listUsd": null,
+      "models": [],
+      "entries": 0,
+      "estimated": false,
+      "scored": false,
+      "acceptancePassed": false,
+      "onBudget": false,
+      "success": false,
+      "evidence": "/tmp/rune-head-to-head-20260907-c/responsive-project-board-1-opencode",
+      "patchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completedAt": "2026-09-07T13:47:21.006Z"
+    }
+  ]
+}

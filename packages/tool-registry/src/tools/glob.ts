@@ -86,7 +86,13 @@ async function safeReaddir(dir: string) {
   }
 }
 
-async function walk(dir: string, ignore: Set<string>, out: string[], cap: number): Promise<void> {
+async function walk(
+  dir: string,
+  ignore: Set<string>,
+  out: string[],
+  cap: number,
+  onDirectory: (path: string) => void,
+): Promise<void> {
   if (out.length >= cap) return;
   for (const entry of await safeReaddir(dir)) {
     if (out.length >= cap) return;
@@ -94,7 +100,8 @@ async function walk(dir: string, ignore: Set<string>, out: string[], cap: number
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
       if (ignore.has(entry.name)) continue;
-      await walk(full, ignore, out, cap);
+      onDirectory(full);
+      await walk(full, ignore, out, cap, onDirectory);
     } else if (entry.isFile()) {
       out.push(full);
     }
@@ -139,7 +146,11 @@ export function createGlobHandler(): ToolHandler {
       const regex = globToRegExp(args.pattern);
 
       const allFiles: string[] = [];
-      await walk(base, ignore, allFiles, 100000);
+      let matchingDirectories = 0;
+      await walk(base, ignore, allFiles, 100000, (directory) => {
+        const rel = relative(base, directory).split(sep).join("/");
+        if (regex.test(rel)) matchingDirectories++;
+      });
 
       const matches: string[] = [];
       for (const full of allFiles) {
@@ -157,7 +168,11 @@ export function createGlobHandler(): ToolHandler {
           callId: input.callId,
           toolName: input.toolName,
           success: true,
-          result: `No files matched pattern: ${args.pattern}`,
+          result:
+            `No files matched pattern: ${args.pattern}` +
+            (matchingDirectories
+              ? `. ${matchingDirectories} matching director${matchingDirectories === 1 ? "y was" : "ies were"} skipped because glob returns files. Use **/* to search their contents.`
+              : ""),
           durationMs,
         };
       }

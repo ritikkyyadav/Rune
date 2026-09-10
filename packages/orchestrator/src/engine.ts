@@ -146,6 +146,7 @@ import {
   stackKey as notebookStackKey,
 } from "./notebook";
 import type { NotebookBlock, NotebookEntry, ToolObservation } from "./notebook";
+import { toolObservation } from "./notebook/capture";
 import { deriveRunRetro, recordLessons } from "./retro";
 import { PLAYBOOK_PENDING_REL, PLAYBOOK_REL, writePlaybook } from "./playbook";
 import type { PermissionScope, PermissionMode, PermissionModeInput } from "./permissions";
@@ -198,7 +199,7 @@ import {
   // one place the "no surface reaches into the engine, no engine reaches into a
   // surface" invariant leaked, and closing it is a gate on Phase 2.
   isVerificationCommand,
-  summarizeCheck,
+  bashCheckVerdict,
   type Brief,
   type BriefHandler,
 } from "./brief";
@@ -2852,7 +2853,7 @@ export class Engine {
 
       const handler = this.registry.get(toolName);
       if (!handler) {
-        return { allowed: false, reason: `Unknown tool: ${toolName}` };
+        return { allowed: false, reason: this.registry.unknownToolMessage(toolName) };
       }
 
       // User-defined preToolUse hooks may veto the call (e.g. protect paths).
@@ -4815,6 +4816,26 @@ export class Engine {
         priorMessages,
         contextEngine: this.contextEngine,
         retrievedChunks: repoMapChunks,
+        // The check log, written the moment a shell check returns and before
+        // the next call in the same batch runs — so `bash` followed by
+        // `record_evidence` in ONE response cites a check that is already on
+        // record. It was written from the tool_call_end event before, which
+        // arrives after the whole batch: a same-response citation then read
+        // "nothing on record" and cost the model another completion.
+        onToolExecuted: ({ toolName, args, output }) => {
+          if (toolName !== CHECK_SOURCE_TOOL) return;
+          const command = String(args.command ?? "");
+          if (!command || !isVerificationCommand(command)) return;
+          const verdict = bashCheckVerdict(output);
+          this.checkLog.record({
+            command,
+            passed: verdict.passed,
+            at: Date.now(),
+            summary: verdict.summary,
+            ...(verdict.exitCode != null ? { exitCode: verdict.exitCode } : {}),
+            durationMs: output.durationMs,
+          });
+        },
         verifier: this.verifier ?? undefined,
         nativeGrounding: this.config.search?.nativeGrounding ?? true,
         thinkingEffort: this.config.reasoningEffort,
@@ -4861,6 +4882,7 @@ export class Engine {
       run: (msg: string, sid: string, ws: string, sig?: AbortSignal) => loop.run(msg, sid, ws, sig),
       getMessages: () => loop.getMessages(),
       takePendingPersist: () => loop.takePendingPersist(),
+      originOf: (m: Message) => loop.originOf(m),
     };
     // Expose the live loop so interject() can steer this run mid-flight.
     this.liveLoop = loop;
@@ -4899,7 +4921,7 @@ export class Engine {
     // (verification prompts, evidence gate, compaction summaries, the initial
     // user message — persisted separately above) don't carry the interjection
     // marker and stay unpersisted.
-    const persistOne = (m: Message): void => {
+    const persistOne = (m: Message, origin?: string): void => {
       if (m.role === "assistant") {
         const payload = messageToAssistantPayload(m);
         if (payload.content.length > 0 || payload.toolUses.length > 0) {
@@ -4914,11 +4936,19 @@ export class Engine {
         const raw = first && first.type === "text" ? parseInterjection(first.text) : null;
         if (raw) {
           this.sessions.appendEvent(sessionId, { type: "user_msg", payload: { content: raw } });
+        } else if (origin && first && first.type === "text") {
+          // A finish gate, a loop nudge or the second wind re-prompted the
+          // model. Not the user's words — but it is why the run went on, and
+          // a detached run's database has to show it.
+          this.sessions.appendEvent(sessionId, {
+            type: "user_msg",
+            payload: { content: first.text, harness: origin },
+          });
         }
       }
     };
     const persistPending = (): void => {
-      for (const m of runner.takePendingPersist()) persistOne(m);
+      for (const m of runner.takePendingPersist()) persistOne(m, runner.originOf(m));
     };
 
     let runError: string | null = null;
@@ -5045,12 +5075,7 @@ export class Engine {
 
         // Notebook: observe every tool call (free — the events exist anyway).
         if (event.type === "tool_call_end" && this.notebookStore && nbObservations.length < 200) {
-          nbObservations.push({
-            toolName: event.output.toolName,
-            args: event.args,
-            success: event.output.success,
-            error: event.output.error,
-          });
+          nbObservations.push(toolObservation(event.output.toolName, event.args, event.output));
         }
 
         // Black box: trail + failure classification. One chokepoint sees every
@@ -5094,21 +5119,9 @@ export class Engine {
         // citation, and the whole read_back/record_evidence ledger was
         // unreachable at runtime while its unit tests passed on a hand-built
         // log. TOOL_NAME is shared with the test that now guards this.
-        if (event.type === "tool_call_end" && event.output.toolName === CHECK_SOURCE_TOOL) {
-          const command = String(
-            (event.args as Record<string, unknown> | undefined)?.command ?? "",
-          );
-          if (command && isVerificationCommand(command)) {
-            this.checkLog.record({
-              command,
-              passed: event.output.success,
-              at: Date.now(),
-              summary: summarizeCheck(
-                event.output.success ? event.output.result : (event.output.error ?? ""),
-              ),
-            });
-          }
-        }
+        // (Recorded in the loop's onToolExecuted hook, wired at the AgentLoop
+        // construction above — at execution time, before the next call in the
+        // same batch, not from this event, which arrives after the batch.)
 
         // Audit tool calls with security post-processing
         if (event.type === "tool_call_end") {

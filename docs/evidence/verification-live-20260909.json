@@ -1,0 +1,53 @@
+{
+  "kind": "targeted-live-verification",
+  "startedAt": "2026-09-09T12:58:27.864Z",
+  "completedAt": "2026-09-09T12:59:21.265Z",
+  "limits": {
+    "listUsd": 1,
+    "timeoutMs": 240000
+  },
+  "provenance": {
+    "cliSha256": "1321e88060a9c60d3f943393b819fe83ea566fd0544866eb775c046a6b8ed791",
+    "nativeSha256": "4aedd8ed0b215ff04a308d884d2d6caa75684f43d4006ccac78414a349e3c287",
+    "sourcesBefore": {
+      "index.html": "fc2c5b2e0d05fe4c58bc4b64a251c81bf210bac8184302cdb6d35d5b436f5b88",
+      "projects.json": "f1b46eb791b31f41fab9a097d6aaeba252ef12562ed584de0618369afd7df65c",
+      "browser-test.mjs": "c79604461a6711a7019374d41b919c61cf318e7956e7c5b24ed84febbe977353"
+    }
+  },
+  "exitCode": 0,
+  "durationMs": 53363,
+  "cost": {
+    "listUsd": 0.064698,
+    "models": ["codex/gpt-5.6-sol"],
+    "entries": 6,
+    "estimated": true
+  },
+  "providerFailure": null,
+  "sourcesUnchanged": true,
+  "qualifications": [
+    "An instructed verification of Pilot G's existing artifact in a separate workspace and profile, not a fresh coding task or a paired benchmark.",
+    "Dollar figures are estimated list-equivalent costs, not subscription invoices."
+  ],
+  "receipts": {
+    "bashCalls": 1,
+    "exitCode": 0,
+    "sandboxed": true,
+    "screenshotsRead": 2,
+    "stepStatus": "completed",
+    "checksPassed": 1,
+    "checksFailed": 0,
+    "unproven": null,
+    "stopReason": "end_turn",
+    "usageByRole": {
+      "primary": 6
+    },
+    "retroChecks": {
+      "passed": 1,
+      "failed": 0,
+      "lastPassed": "FIELDNOTES_URL=http://127.0.0.1:60367 node browser-test.mjs"
+    }
+  },
+  "privateTraceSha256": "6766a91efc536b40e809e6643406cc6cd691cb57c77563f7f655aa7a7eaffdb7",
+  "installedArtifactsUnchanged": true
+}

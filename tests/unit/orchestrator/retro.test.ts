@@ -81,6 +81,29 @@ function stateRow(mutate: (s: TaskStateStore) => void): EventRow {
 }
 
 describe("observationsFromRows", () => {
+  test("native shell exit codes survive replay into checks and learned lessons", () => {
+    const rows = [
+      ...turn([
+        bash(
+          "node browser-test.mjs",
+          true,
+          JSON.stringify({ exit_code: 1, stdout: "", stderr: "AssertionError: output changed" }),
+        ),
+      ]),
+      ...turn([
+        bash("bun test", true, JSON.stringify({ exit_code: 0, stdout: "12 pass", stderr: "" })),
+      ]),
+      ...turn([bash("node check.mjs", true, JSON.stringify({ exit_code: 0, timed_out: true }))]),
+    ];
+    const observations = observationsFromRows(rows);
+    expect(observations.map((o) => o.success)).toEqual([false, true, false]);
+    expect(observations[0].error).toContain("output changed");
+    expect(deriveRunRetro(rows)!.checks).toEqual({ passed: 1, failed: 2, lastPassed: "bun test" });
+    expect(
+      retroLessons(observations).some((lesson) => lesson.command === "node browser-test.mjs"),
+    ).toBe(false);
+  });
+
   test("joins tool uses to their results and keeps the error text", () => {
     seq = 0;
     const rows = [

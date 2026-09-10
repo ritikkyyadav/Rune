@@ -1,0 +1,129 @@
+{
+  "kind": "local-verification",
+  "recordedAt": "2026-09-08",
+  "sourceCommit": "9715b6b126aabf46d1194d786f74fc492d7536e5",
+  "trackedPatchSha256": "dee9633f9649cb1e8aeed54b62db7a7ef289641b533d3f6cbd06aa061d2f588a",
+  "version": "Rune v0.4.0-dev+9715b6b",
+  "executables": {
+    "rune": {
+      "path": "/Users/ritikyadav890/.rune/bin/rune-compiled",
+      "sha256": "dcd380f39be23d77e666dc8e8f5e1b1ab34d1b2abf61ab7cf87f8d8051501478"
+    },
+    "runeTools": {
+      "path": "/Users/ritikyadav890/.rune/bin/rune-tools",
+      "sha256": "1362fd5eaecba42a7412e002b07f793ccc8e274239f9f4ebf791a46b7365c666"
+    }
+  },
+  "checks": [
+    {
+      "name": "unit",
+      "command": "bun test tests/unit </dev/null",
+      "privateLog": "/tmp/rune-current-unit-final.log",
+      "logSha256": "fb714dbe15cce2e1cb346224ad8dd5b53ef25127432bc826e370c2ace52cb555",
+      "result": {
+        "passed": 4232,
+        "skipped": 1,
+        "failed": 0,
+        "files": 348
+      }
+    },
+    {
+      "name": "integration",
+      "command": "bun test tests/integration </dev/null",
+      "privateLog": "/tmp/rune-current-integration.log",
+      "logSha256": "1bb3c042ce3ee90933648b69da747c8e244d14c0a01a260f5a871cb5c8bda1f9",
+      "result": {
+        "passed": 130,
+        "skipped": 5,
+        "failed": 0,
+        "files": 30
+      }
+    },
+    {
+      "name": "typecheck",
+      "command": "bun run typecheck --force",
+      "privateLog": "/tmp/rune-current-typecheck-final.log",
+      "logSha256": "ac0ed165db07b851e979a9516a0c8dd809274cc5535652d79d2d1c53b8025640",
+      "result": {
+        "passedTasks": 14,
+        "cachedTasks": 0
+      }
+    },
+    {
+      "name": "lint",
+      "command": "bun run lint --force",
+      "privateLog": "/tmp/rune-current-lint.log",
+      "logSha256": "8729b4590758a8fa06a6e9010c76ba7c1fa0cf15ccdad69ab7ed537136753fbb",
+      "result": {
+        "passedTasks": 7,
+        "cachedTasks": 0
+      }
+    },
+    {
+      "name": "mock-eval",
+      "command": "bun run eval",
+      "privateLog": "/tmp/rune-current-mock.log",
+      "logSha256": "6dc2798b39f5589dd33da05afff2e3777e612abd54f3dda882e0be526f0ec9c5",
+      "result": {
+        "passed": 63,
+        "total": 63,
+        "governanceCompletionsPerTask": 0.26,
+        "baselineChanged": false
+      }
+    },
+    {
+      "name": "rust",
+      "command": "cargo test --workspace",
+      "privateLog": "/tmp/rune-20260908-rust.log",
+      "logSha256": "713d6ace65f8d1430b74ac8d2b73ea0bb5ba38cfa923b37d2c915204d30d2cfc",
+      "result": {
+        "passed": 94,
+        "failed": 0,
+        "qualification": "Earlier September 8 run; crates, Cargo manifests and Cargo.lock unchanged through this revision."
+      }
+    },
+    {
+      "name": "guarded-install",
+      "command": "bash scripts/install.sh",
+      "privateLog": "/tmp/rune-current-install.log",
+      "logSha256": "f3a53680c4b56b0f8822cfb2e36cb4bdfb15370674d52b3580ce322f12aadf2e",
+      "result": {
+        "passed": true,
+        "overrideUsed": false
+      }
+    }
+  ],
+  "terminalSettings": {
+    "terminal": {
+      "rows": 24,
+      "columns": 80
+    },
+    "checks": [
+      "visible title and selected first row",
+      "existing budget and parallel values restored",
+      "evidence gate changed through picker",
+      "new process restored refuse",
+      "two clean exits",
+      "zero model usage events"
+    ],
+    "modelUsageEvents": 0,
+    "privateReceiptSha256": "68942a210738875a5b49a109ae80e5b15a0defb753ce6493917818297c2e9a4c"
+  },
+  "installedSmoke": {
+    "minimalShell": "/bin/zsh -f",
+    "versionMatches": true,
+    "nativeWriteReadEditBash": true,
+    "minimalPathWarning": "Configured npx MCP cannot resolve under the intentionally stripped PATH.",
+    "normalLoginShell": "/bin/zsh -lic",
+    "normalLoginCommand": "/Users/ritikyadav890/.alan/bin/rune",
+    "normalMcpConfigValid": true,
+    "liveMcpConnectionTested": false
+  },
+  "qualifications": [
+    "The unit skip requires a case-sensitive filesystem.",
+    "The five integration skips require missing Go/Java toolchains.",
+    "This is macOS verification; it does not establish Linux or Windows runtime isolation.",
+    "Mock evaluations do not establish live coding capability.",
+    "Full logs and provider event streams are private; aggregate reports contain no credential stores."
+  ]
+}

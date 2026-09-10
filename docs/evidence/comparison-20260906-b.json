@@ -1,0 +1,172 @@
+{
+  "schema": 1,
+  "kind": "local-live-pilot",
+  "startedAt": "2026-09-06T11:47:39.768Z",
+  "limits": {
+    "perTaskListUsd": 2,
+    "timeoutMs": 240000,
+    "runs": 1
+  },
+  "model": "gpt-5.6-sol",
+  "providers": {
+    "rune": "codex",
+    "opencode": "openai"
+  },
+  "provenance": {
+    "runeSha": "8d7c89f3158b84a666dc13083eb39c13e41ddbf2",
+    "dirtyPatchSha256": "11563a3c933abab090c8fb281e22e4243e4bdc94bf7448a6fd66a7f83e03a2d1",
+    "taskDigest": "00931a9bb12af7ab95d494e2009b9db1750841c4992cfa1b6e6d2c4d7b9692dd",
+    "runeCommand": [
+      "/Users/ritikyadav890/.bun/bin/bun",
+      "/Users/ritikyadav890/Project/Alan/packages/orchestrator/src/bin/rune-cli.ts"
+    ],
+    "opencodeCommand": [
+      "opencode"
+    ],
+    "versions": {
+      "rune": "Rune v0.3.0-dev",
+      "opencode": "1.18.23"
+    }
+  },
+  "limitations": [
+    "Small internally authored pilot; not SWE-bench or Terminal-Bench and not an overall capability score.",
+    "Same selected primary model and high reasoning; each harness retains its own tools, orchestration, prompts and helper routing.",
+    "Dollar figures use Rune's shared versioned pricing table, not subscription invoices. Unknown prices stay null.",
+    "Rune reserves dollars before requests; OpenCode is stopped after a reported step crosses the common ceiling. Any overshoot is recorded and cannot count as an on-budget success."
+  ],
+  "results": [
+    {
+      "sourceBefore": "f0156e13b06919d265fd467177d2ca55640d81840861d870897d6b4bddf38058",
+      "sourceChanged": false,
+      "task": "csv-state-machine",
+      "run": 1,
+      "arm": "rune",
+      "exitCode": 0,
+      "durationMs": 156050,
+      "listUsd": 0.2529295,
+      "models": [
+        "codex/gpt-5.6-sol"
+      ],
+      "entries": 21,
+      "estimated": true,
+      "scored": true,
+      "acceptancePassed": true,
+      "onBudget": true,
+      "success": true,
+      "evidence": "/tmp/rune-head-to-head-20260906-b/csv-state-machine-1-rune",
+      "patchSha256": "551c64b315ad911f2813a3a5457f9b53af9c0217d7862c4b81d15ed0d53172d8",
+      "completedAt": "2026-09-06T11:50:16.891Z"
+    },
+    {
+      "sourceBefore": "f0156e13b06919d265fd467177d2ca55640d81840861d870897d6b4bddf38058",
+      "sourceChanged": false,
+      "task": "csv-state-machine",
+      "run": 1,
+      "arm": "opencode",
+      "exitCode": 0,
+      "durationMs": 99360,
+      "listUsd": 0.06532825,
+      "models": [
+        "gpt-5.6-sol"
+      ],
+      "entries": 10,
+      "estimated": true,
+      "scored": true,
+      "acceptancePassed": true,
+      "onBudget": true,
+      "success": true,
+      "evidence": "/tmp/rune-head-to-head-20260906-b/csv-state-machine-1-opencode",
+      "patchSha256": "14e15a03576310557d052cb66d6d23675709b81a1100d36a8f029ba7bc298a5d",
+      "completedAt": "2026-09-06T11:51:56.368Z"
+    },
+    {
+      "sourceBefore": "f0156e13b06919d265fd467177d2ca55640d81840861d870897d6b4bddf38058",
+      "sourceChanged": false,
+      "task": "working-tree-integration",
+      "run": 1,
+      "arm": "opencode",
+      "exitCode": 0,
+      "durationMs": 71054,
+      "listUsd": 0.04933075,
+      "models": [
+        "gpt-5.6-sol"
+      ],
+      "entries": 9,
+      "estimated": true,
+      "scored": true,
+      "acceptancePassed": true,
+      "onBudget": true,
+      "success": true,
+      "evidence": "/tmp/rune-head-to-head-20260906-b/working-tree-integration-1-opencode",
+      "patchSha256": "2fb24f46d4a73b84454358acf0ec5006dc44d018f122d484b5b72a40fcd9c6af",
+      "completedAt": "2026-09-06T11:53:07.642Z"
+    },
+    {
+      "sourceBefore": "f0156e13b06919d265fd467177d2ca55640d81840861d870897d6b4bddf38058",
+      "sourceChanged": false,
+      "task": "working-tree-integration",
+      "run": 1,
+      "arm": "rune",
+      "exitCode": 0,
+      "durationMs": 164588,
+      "listUsd": 0.26753374999999996,
+      "models": [
+        "codex/gpt-5.6-sol"
+      ],
+      "entries": 24,
+      "estimated": true,
+      "scored": true,
+      "acceptancePassed": true,
+      "onBudget": true,
+      "success": true,
+      "evidence": "/tmp/rune-head-to-head-20260906-b/working-tree-integration-1-rune",
+      "patchSha256": "154702daebb20247b1ce715b7f9ab2fbff36f80642c1f4baa1aa4d305b4a1877",
+      "completedAt": "2026-09-06T11:55:52.608Z"
+    },
+    {
+      "sourceBefore": "f0156e13b06919d265fd467177d2ca55640d81840861d870897d6b4bddf38058",
+      "sourceChanged": false,
+      "task": "dependent-migration",
+      "run": 1,
+      "arm": "rune",
+      "exitCode": 143,
+      "durationMs": 240040,
+      "stopped": "timeout",
+      "listUsd": 0.34010825,
+      "models": [
+        "codex/gpt-5.6-sol"
+      ],
+      "entries": 25,
+      "estimated": true,
+      "scored": true,
+      "acceptancePassed": true,
+      "onBudget": false,
+      "success": false,
+      "evidence": "/tmp/rune-head-to-head-20260906-b/dependent-migration-1-rune",
+      "patchSha256": "5a0dd834c10aba05742a7917b159efcdc2dba24df11efde740dc12f3a2367c48",
+      "completedAt": "2026-09-06T11:59:53.024Z"
+    },
+    {
+      "sourceBefore": "f0156e13b06919d265fd467177d2ca55640d81840861d870897d6b4bddf38058",
+      "sourceChanged": false,
+      "task": "dependent-migration",
+      "run": 1,
+      "arm": "opencode",
+      "exitCode": 0,
+      "durationMs": 132049,
+      "listUsd": 0.10045875,
+      "models": [
+        "gpt-5.6-sol"
+      ],
+      "entries": 10,
+      "estimated": true,
+      "scored": true,
+      "acceptancePassed": true,
+      "onBudget": true,
+      "success": true,
+      "evidence": "/tmp/rune-head-to-head-20260906-b/dependent-migration-1-opencode",
+      "patchSha256": "b698e58ea75a13b8f78684465d2a7f9ab8efef9c2590d4860457019b375ce714",
+      "completedAt": "2026-09-06T12:02:05.227Z"
+    }
+  ]
+}

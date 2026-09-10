@@ -42,16 +42,7 @@ import { TASK_KINDS } from "@rune/protocol";
  * where it was born — no engine module may import a surface module, and a gate
  * on Phase 2 counts the violations.
  */
-export function isVerificationCommand(command: string): boolean {
-  const cmd = command.toLowerCase();
-  return (
-    /(^|[\s;&|])(test|tests|pytest|vitest|jest|mocha)([\s;&|]|$)/.test(cmd) ||
-    /(^|[\s;&|])(lint|eslint|ruff|mypy|typecheck|tsc|check|build)([\s;&|]|$)/.test(cmd) ||
-    /\b(cargo\s+(test|check|clippy)|go\s+test|swift\s+test|xcodebuild|gradle\w*\s+test|mvn\w*\s+test)\b/.test(
-      cmd,
-    )
-  );
-}
+export { isVerificationCommand } from "./verification-command";
 
 export const CLAIM_RUNGS: readonly ClaimRung[] = [
   "suspected",
@@ -107,7 +98,7 @@ export class BriefLedger {
     return this.brief.criteria.length;
   }
 
-  /** Every criterion verified. The ONLY definition of done this codebase has. */
+  /** Every criterion carries a recorded parent failure followed by a pass. */
   get complete(): boolean {
     return this.total > 0 && this.met === this.total;
   }
@@ -369,8 +360,8 @@ export interface CheckRun {
   /**
    * The exit code the runtime read, and how long the command took. Present for
    * checks the HARNESS ran (the verifier reads both directly); absent for
-   * checks the model ran through `bash`, where the tool result carries a
-   * success flag rather than a code. "No data" is null, never zero.
+   * checks from embedders without a structured shell result. Native `bash`
+   * carries the child exit code inside its result JSON. "No data" is null, never zero.
    */
   exitCode?: number;
   durationMs?: number;
@@ -508,13 +499,17 @@ export function rungForCommand(log: CheckLog, command: string): RungVerdict {
         ? `parent-commit check inconclusive: ${parent.reason ?? "unknown"}`
         : undefined;
 
-  if (runs.length >= 2) {
+  // Failed attempts are not successful reproductions. A new failure also
+  // breaks the streak; two earlier passes cannot certify today's recovery.
+  let passingStreak = 0;
+  for (let i = runs.length - 1; i >= 0 && runs[i]!.passed; i--) passingStreak++;
+  if (passingStreak >= 2) {
     return {
       ok: true,
       rung: "reproduced",
       evidence: {
         ...base,
-        detail: joinDetail(joinDetail(last.summary, `passed ${runs.length} times`), note ?? ""),
+        detail: joinDetail(joinDetail(last.summary, `passed ${passingStreak} times`), note ?? ""),
       },
     };
   }
@@ -541,7 +536,9 @@ export const RECORD_EVIDENCE_SCHEMA: ToolSchema = {
     "the pre-change tree in a throwaway checkout: only a command that FAILS there and passes now " +
     "earns 'verified'. If it passes there too, your change is not why it is green, and the " +
     "receipt will say so. Anything else is weaker, and that is the honest answer. Call this as " +
-    "you go, not at the end.",
+    "you go, not at the end — and in the SAME response as the check when you can: put the bash " +
+    "call first and record_evidence after it. The calls run in order, and the runtime reads the " +
+    "check's real exit code before it records, so the citation costs no extra turn.",
   inputSchema: {
     type: "object",
     properties: {
@@ -644,6 +641,7 @@ export function createRecordEvidenceTool(
                 : "the claim";
         return reply(
           `Noted for ${about}: ${verdict.rung} — ${RUNG_MEANING[verdict.rung]} ` +
+            (verdict.evidence.detail ? `Receipt: ${verdict.evidence.detail}. ` : "") +
             "No read_back criteria are in play, so this settles no criterion.",
         );
       }
@@ -684,7 +682,11 @@ export function createRecordEvidenceTool(
       if (!moved.ok) return reply(moved.reason);
       return reply(
         `Recorded as ${verdict.rung}: ${RUNG_MEANING[verdict.rung]} ` +
-          `(${ledger.met} of ${ledger.total} criteria verified)`,
+          (verdict.evidence.detail ? `Receipt: ${verdict.evidence.detail}. ` : "") +
+          `(${ledger.met} of ${ledger.total} criteria verified)` +
+          (verdict.rung === "verified"
+            ? ""
+            : ". Passing evidence is recorded. This rung does not request another run; report its scope and limits. Repeat checks when code or requirements change, not solely to raise the rung."),
       );
     },
   };
@@ -719,4 +721,50 @@ export function summarizeCheck(raw: string): string | undefined {
   const counted = errored ?? reversed.find((l) => /\d+\s*(\/|of|pass|fail|error)/i.test(l));
   const chosen = counted ?? lines[lines.length - 1]!;
   return chosen.length > 90 ? chosen.slice(0, 87) + "..." : chosen;
+}
+
+/** The shell tool reports whether it launched; a check is judged by the child exit.
+ * Shared by the plan, citations, retrospective and learned command facts. */
+export function bashCheckVerdict(output: { success: boolean; result?: string; error?: string }): {
+  passed: boolean;
+  summary: string;
+  exitCode?: number;
+} {
+  if (!output.success) {
+    return {
+      passed: false,
+      summary:
+        (output.error ?? output.result ?? "").trim().split("\n").at(-1)?.trim().slice(0, 160) ||
+        "failed",
+    };
+  }
+  let exitCode: number | undefined;
+  let timedOut = false;
+  let stdout = "";
+  let stderr = "";
+  try {
+    const parsed = JSON.parse(output.result ?? "") as Record<string, unknown>;
+    if (typeof parsed.exit_code === "number") exitCode = parsed.exit_code;
+    timedOut = parsed.timed_out === true;
+    if (typeof parsed.stdout === "string") stdout = parsed.stdout;
+    if (typeof parsed.stderr === "string") stderr = parsed.stderr;
+  } catch {
+    // Not the shell's JSON shape (a stubbed tool, an embedder's own runner).
+    // Fall back to the flag, which is what this did before it read the code.
+    return { passed: true, summary: "ok" };
+  }
+  const passed = !timedOut && (exitCode == null || exitCode === 0);
+  if (passed) return { passed: true, summary: "ok", ...(exitCode != null ? { exitCode } : {}) };
+  // BOTH streams, through the shared ladder. Runners disagree about where the
+  // verdict goes -- `bun test` writes the failure to stderr and leaves stdout
+  // holding nothing but its own version banner, which is exactly the line a
+  // stdout-only reading would quote back as the reason a theory was ruled out.
+  const summary =
+    summarizeCheck([stdout, stderr].filter(Boolean).join("\n")) ??
+    (timedOut ? "timed out" : "failed");
+  return {
+    passed: false,
+    summary: summary.slice(0, 160),
+    ...(exitCode != null ? { exitCode } : {}),
+  };
 }

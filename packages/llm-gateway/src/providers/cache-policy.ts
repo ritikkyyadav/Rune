@@ -85,6 +85,32 @@ const POLICY: Record<string, CacheBreakpointPolicy> = {
   custom: "none",
 };
 
+/**
+ * Whether the harness's ephemeral tail (plan ledger, team presence, turn
+ * budget) must ride INSIDE the last stable message on this host instead of as
+ * a trailing `user` message after it.
+ *
+ * MEASURED 2026-09-10 against the Codex backend on gpt-5.6-sol
+ * (`scripts/verify-codex-tail-cache.ts`, and Pilots G/H in
+ * docs/audit-followthrough-20260908.md): the request items Rune sent were a
+ * byte-identical prefix of the next request's, yet once a request ended on
+ * the ledger user message the backend stopped extending the prompt cache —
+ * Pilot H read 12,160 cached tokens against prompts growing from 14,927 to
+ * 18,212 for nine completions in a row, re-billing the whole conversation
+ * tail every turn; Pilot G sat at 10,496 for sixteen. The same tool loop that
+ * ends on `function_call_output` (the Codex CLI's shape) extends every turn,
+ * and so does the same block appended to the last tool output. This is
+ * consistent with the documented Responses behaviour that a new user turn
+ * drops earlier reasoning items from the rendered context: the entry written
+ * for a request that ends on a user message then matches nothing Rune sends
+ * next. Only codex has been measured; every other host keeps the tail as the
+ * user message the loop has always sent, which Anthropic-style breakpoints
+ * and the Chat Completions hosts have been measured to cache correctly.
+ */
+export function foldsEphemeralTail(providerId: string): boolean {
+  return providerId === "codex";
+}
+
 /** The declared cache-breakpoint policy for a provider id. */
 export function cacheBreakpointPolicyFor(providerId: string): CacheBreakpointPolicy {
   return POLICY[providerId] ?? "none";

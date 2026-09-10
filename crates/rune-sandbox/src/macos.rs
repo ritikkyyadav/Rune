@@ -156,6 +156,15 @@ impl MacOsSandbox {
 (allow signal)
 (allow process-info*)
 
+;; Chromium's power observer dereferences a failed IONotificationPort when the
+;; power client is denied. Its browser process also registers a PID-qualified
+;; rendezvous service before launching renderers. These narrow startup grants
+;; let Playwright verify local pages without escaping the shell sandbox.
+;; RootDomainUserClient is also permitted by Chromium's renderer.sb profile.
+(allow iokit-open (iokit-user-client-class "RootDomainUserClient"))
+(allow mach-register
+    (global-name-regex #"^org\.chromium\.Chromium\.MachPortRendezvousServer\.[0-9]+$"))
+
 ;; Broad reads so dyld + real tooling work (see fn docs).
 (allow file-read*)
 

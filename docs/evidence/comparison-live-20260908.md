@@ -1,6 +1,8 @@
 # Rune vs OpenCode, same model, same fixtures — 2026-09-08
 
-The first recorded run of the comparison harness in `tests/eval/comparison/`. Both agents ran
+The first recorded paired free-route series of the comparison harness in `tests/eval/comparison/`.
+Earlier subscription-route pilots are in the [audit follow-through](../audit-followthrough-20260908.md).
+Both agents ran
 the identical model, `gpt-oss:120b`, through their own existing ollama.com credentials
 (Rune `ollama-turbo`, OpenCode 1.18.23 `ollama-cloud`), on byte-identical fresh fixtures, with
 acceptance checked by the harness outside either agent's workspace. Rune's arm was the installed
@@ -35,9 +37,9 @@ reported usage; they are not invoices, and both routes billed nothing.
 - **Completion.** Rune finished every task; OpenCode finished a third. One OpenCode run ended
   after seven seconds having done almost nothing, a shape the 2026-09-03 trial also saw on this
   endpoint. This is the pitch the README makes, now at six runs per arm instead of one.
-- **Cost.** Rune spent about twice OpenCode's tokens per task, roughly 1.9× on the runs both
-  passed. That is the price of the plan ledger, evidence recording and verification steps, and
-  it is the number the prompt-overhead work is chipping at.
+- **Cost.** Rune's estimated list cost was about twice OpenCode's per task, roughly 1.9× on the
+  runs both passed. This comparison does not isolate the contribution of the plan ledger,
+  evidence recording, verification, or cache use; that requires an ablation.
 - **Speed.** Equal within noise.
 
 ## Limits, as the harness itself states them
