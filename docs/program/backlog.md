@@ -291,6 +291,37 @@ Found 2026-09-03 by P10.6 (integration proofs):
   the rail narrows below some width — found in P10.9
 - (withdrawn) A P11.2 note claimed the mock suite scores 23/62 on `gear/phase-0-stabilize` and that `bun run eval` "cannot gate anything". Not reproducible: `git archive 02eee64` into a clean directory with its own `bun install` scores 62/62 with and without `RUNE_TOOLS_BINARY`, and every merge gate since has printed 62/62. A mock-suite score far below the baseline is an environment fault first (missing tools binary, stale or shared worktree state); run the export experiment before recording a regression — found while merging #24
 
+Found by the first Linux containment run in CI (2026-09-10, run 34451241298 on
+`lane/linux-containment`, 140 pass / 7 fail — the job had skipped every one of these suites
+before because CI exported `RUNE_TOOLS_BIN` while they read `RUNE_TOOLS_BINARY`, and the runner had
+no bubblewrap):
+
+- `crates/rune-sandbox/src/linux.rs` — a write OUTSIDE the workspace succeeds under bwrap: the
+  background-sandbox test's `printf forbidden > ../outside.txt` completed. Bubblewrap leaves the
+  synthetic parents of bind destinations writable; sealing the root read-only after mounting
+  (`--remount-ro /`) is the fix, in flight in the Codex session's working tree — Linux CI — Claude
+- `crates/rune-sandbox/src/linux.rs` — the sandboxed shell cannot see toolchains under the home
+  directory: `bun run check` exited 127 (command not found) inside bwrap while `node …` ran, so a
+  project whose runner lives in `~/.bun`, `~/.cargo`, `~/.nvm` or `~/.pyenv` cannot run its own checks
+  on Linux. macOS reads the home broadly and denies only secrets; Linux binds a fixed list. Bind the
+  home read-only with the secret directories masked — Linux CI — Claude
+- `packages/tool-registry/src/tools/plugin-tools.ts` — under the real Linux sandbox plugin tools
+  register zero tools and the scope/endpoint/network denials never run (four
+  plugin-tools-sandbox tests plus the `rune plugin add` tool-plugin test); in flight in the Codex
+  session's working tree — Linux CI — Claude
+
+Found in the Pilot J trace (2026-09-10, `docs/evidence/pilot-j-trace-20260910.md`):
+
+- `packages/orchestrator/src/engine.ts` (just-in-time doctrine) — each section the JIT doctrine
+  adds to the system prompt invalidates the whole prompt-cache prefix: two full misses in Pilot J,
+  about 27,000 uncached tokens, a fifth of the run's input spend. Serve late sections as tail text
+  the way the ledger rides (`withTailFolded`) instead of editing the system prompt mid-run; measure
+  on a paired run before claiming the saving — Pilot J — Claude
+- `packages/orchestrator/src/brief.ts` (`record_evidence`) — the refusal for a command that ran
+  but is not a recognized check says "a citation to a command that never ran is not evidence";
+  the command had run, and the model rewords it for three completions. Say "ran, exit 0, not a
+  recognized check — cite a check command or write the probe as a test file" — Pilot J — Claude
+
 Found during the first dogfood run (2026-09-09, Rune fixing `todo_write` in its own tree on `ollama-turbo/gpt-oss:120b`, sessions 01a086b0 and 01a086b4). All five addressed in the working tree by 2026-09-10 (uncommitted): the first and last by the Codex session (`unknownToolMessage`, the glob directory count), the middle three on 2026-09-10 — the recurrence detector now counts failures and deterministic refusals, keyed on the tool for refusals, and ends the run resumably the second time the same answer recurs; every finish gate, nudge and second wind tags the message it appends (`gate:open-steps`, `nudge:result-loop`, …) and the engine persists it as a `user_msg` event with a `harness` field, so a detached run's database shows what re-prompted the model; a plan with every step completed and evidenced stands the execution-evidence and fix-verified gates down; and an empty `end_turn` after tool results the model never spoke to gets one nudge and is then accepted on the earlier narration. Tests: `agent-loop-recurrence-escalation`, `agent-loop-finish-gates`, `agent-loop-empty-completion`, `engine-command-evidence` (`open-step`).
 
 - `packages/orchestrator/src/engine.ts:2856` — "Unknown tool: search" answers a hallucinated name with nothing to act on; the model retried it five times in one session (eleven completions after the work was committed). Name the nearest real tools (`grep`, `search_code`, `glob`) in the refusal, the way the sweet-shop `skill` fix did — dogfood run — Claude

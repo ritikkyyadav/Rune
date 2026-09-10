@@ -6,7 +6,7 @@
  */
 
 import { describe, test, expect } from "bun:test";
-import { AgentLoop } from "../../../packages/orchestrator/src/agent-loop";
+import { AgentLoop, misencodedToolCall } from "../../../packages/orchestrator/src/agent-loop";
 import type { AgentTurnEvent } from "../../../packages/orchestrator/src/agent-loop";
 import { TaskStateStore } from "../../../packages/orchestrator/src/task-state";
 
@@ -251,6 +251,94 @@ describe("AgentLoop — empty completions never end a run silently", () => {
         (e) => e.type === "notice" && e.message.includes("the edits above are the result"),
       ),
     ).toBe(true);
+  });
+
+  test("tool arguments printed as text are nudged into a real call, not accepted as the answer", async () => {
+    // Free-route gpt-oss:120b, 2026-09-10: `{"paths": ["csv.ts"]}` as the whole
+    // reply, then end_turn; the run ended after one completion with nothing read.
+    let calls = 0;
+    let executions = 0;
+    const READ_MANY = {
+      name: "read_many",
+      description: "read files",
+      inputSchema: {
+        type: "object",
+        properties: { paths: { type: "array", items: { type: "string" } } },
+        required: ["paths"],
+      },
+    };
+    const gateway = {
+      inferStream: async function* () {
+        calls++;
+        if (calls === 1) {
+          yield textDelta('{\n  "paths": [\n    "csv.ts"\n  ]\n}');
+          yield stopEvent("end_turn");
+        } else if (calls === 2) {
+          yield { type: "tool_use_start", toolCallId: "r-1", toolName: "read_many" };
+          yield { type: "tool_use_stop", toolCallId: "r-1", toolInput: { paths: ["csv.ts"] } };
+          yield stopEvent("tool_use");
+        } else {
+          yield textDelta("csv.ts splits on newlines.");
+          yield stopEvent("end_turn");
+        }
+      },
+    };
+    const registry = {
+      toLlmTools: () => [READ_MANY],
+      get: () => ({ schema: { ...READ_MANY, category: "read", permissionLevel: "auto" } }),
+      execute: async (input: { callId: string; toolName: string }) => {
+        executions++;
+        return { ...input, success: true, result: "contents", durationMs: 0 };
+      },
+    };
+    const loop = new AgentLoop(
+      { model: "m", provider: "google", maxTurns: 8 },
+      gateway as any,
+      registry as any,
+    );
+    const events = await collect(loop.run("What does csv.ts do?", "s1", "/tmp"));
+    expect(calls).toBe(3);
+    expect(executions).toBe(1);
+    expect(events.some((e) => e.type === "error")).toBe(false);
+    expect(events.some((e) => e.type === "turn_complete" && e.stopReason === "end_turn")).toBe(
+      true,
+    );
+    const nudge = loop
+      .getMessages()
+      .find(
+        (m) =>
+          m.role === "user" &&
+          m.content.some((b: any) => b.type === "text" && b.text.includes("printed as text")),
+      );
+    expect(nudge).toBeDefined();
+    expect(loop.originOf(nudge!)).toBe("nudge:misencoded-call");
+    expect(events.some((e) => e.type === "text_delta" && e.text.includes("splits on"))).toBe(true);
+  });
+
+  test("misencodedToolCall: only an object that fits one advertised schema counts", () => {
+    const tools = [
+      {
+        name: "read_many",
+        description: "",
+        inputSchema: { type: "object", properties: { paths: {} }, required: ["paths"] },
+      },
+      {
+        name: "write_file",
+        description: "",
+        inputSchema: {
+          type: "object",
+          properties: { path: {}, content: {} },
+          required: ["path", "content"],
+        },
+      },
+    ];
+    expect(misencodedToolCall('{"paths": ["a.ts"]}', tools)).toBe("read_many");
+    expect(misencodedToolCall('{"path": "a.ts"}', tools)).toBeNull(); // content missing
+    expect(misencodedToolCall('{"paths": ["a.ts"], "extra": 1}', tools)).toBeNull();
+    expect(misencodedToolCall('The file has {"paths": []} in it.', tools)).toBeNull();
+    expect(misencodedToolCall("[]", tools)).toBeNull();
+    expect(misencodedToolCall("{}", tools)).toBeNull();
+    expect(misencodedToolCall('{"paths": []}', [])).toBeNull();
   });
 
   test("stopReason tool_use with zero tool calls: retries twice, then fails LOUDLY", async () => {
