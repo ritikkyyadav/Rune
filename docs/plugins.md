@@ -247,14 +247,34 @@ or they die on startup, and "somewhere" must not be the user's workspace.
 
 **What "declared endpoints" means, exactly.** Seatbelt's `remote ip` filter
 accepts a port and either `*` or `localhost`; it rejects a literal address
-outright ("host must be \* or localhost"). So on macOS `api.example.com:443` is
-enforced as _outbound to port 443, denied everywhere else_, and
-`127.0.0.1:8787` as _loopback port 8787 only_. That is kernel-enforced and much
-narrower than "the network", but it is not per-host, and the plan reports
-`host_enforcement: "port"` rather than letting anything claim otherwise. On
-Linux, bubblewrap's isolation is all-or-nothing (`--unshare-net`), reported as
-`all-or-nothing`: there, the host list is disclosure. A host with no port is
-accepted and reported as widening to every port.
+outright ("host must be \* or localhost"). So `127.0.0.1:8787` is enforced on
+macOS as _loopback port 8787 only_ — the declaration in full — while
+`api.example.com:443` can only become _any host on port 443_. The second is a
+**widening of a restriction the manifest asked for**, and the plan says which
+happened:
+
+| `host_enforcement` | means                                             | tool starts?         |
+| ------------------ | ------------------------------------------------- | -------------------- |
+| `host-and-port`    | every declared endpoint is enforced as written    | yes                  |
+| `port`             | macOS: a named host became `*` on that port       | only with the opt-in |
+| `all-or-nothing`   | Linux: bubblewrap grants the network or denies it | only with the opt-in |
+| `none`             | nothing is enforced                               | only with the opt-in |
+
+Anything but `host-and-port` is refused unless `[extensions]
+allowUnsandboxedTools` names the plugin, and the notice carries the widening
+itself — `declared "api.example.com:443" is enforced as "*:443" — ANY host on
+port 443` — not just the words "not enforced". A host with no port widens the
+same way and is reported the same way. On Linux the host list is disclosure
+rather than a filter, and a `network` tool that declares **no** hosts is now
+told that everything outbound is denied instead of starting with a silently
+dead network.
+
+> **Behaviour change (F1, 2026-09-11).** macOS used to report
+> `host_enforcement: "port"` for every plan, and the caller read that as
+> "enforced" — so a manifest declaring `api.example.com:443` ran with
+> `*:443` and an empty notes list, while the identical manifest was refused on
+> Linux. A plugin that declares a named host now needs
+> `allowUnsandboxedTools` on macOS too. Loopback endpoints are unaffected.
 
 ### The protocol
 

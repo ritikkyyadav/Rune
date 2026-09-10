@@ -181,6 +181,13 @@ export interface PluginToolSpawnPlan {
   argv: string[];
   mechanism: string;
   os_isolation: boolean;
+  /**
+   * What the launch enforces about the DECLARED endpoints: `"host-and-port"`
+   * (every one, as written), `"port"` (macOS Seatbelt, when a named host had
+   * to become `*` on that port), `"all-or-nothing"` (Linux bubblewrap), or
+   * `"none"`. Anything but `"host-and-port"` is a widening of what the
+   * manifest asked for, and is refused without an opt-in.
+   */
   host_enforcement: string;
   notes: string[];
   env?: Record<string, string>;
@@ -349,12 +356,19 @@ export class PluginToolServer {
 
     // A declared endpoint is a restriction. Do not quietly turn it into
     // unrestricted networking on backends that cannot enforce that scope.
+    //
+    // `"host-and-port"` is the only answer that means "as declared". macOS
+    // reported `"port"` for every plan and this read it as enforced, so a
+    // declared `api.example.com:443` ran as `*:443` — any host on that port —
+    // with nothing logged and nothing to opt into. Now macOS says `"port"`
+    // only when it actually widened something, and a widening lands here, on
+    // the same refusal Linux has always taken.
     let unenforcedEndpoints = false;
     if (
       decl.capability === "network" &&
       (decl.hosts?.length ?? 0) > 0 &&
       plan.os_isolation &&
-      plan.host_enforcement !== "port"
+      plan.host_enforcement !== "host-and-port"
     ) {
       if (!unsandboxedToolsAllowed(this.opts.allowUnsandboxed, this.opts.plugin)) {
         this.cleanupScratch();
@@ -363,12 +377,15 @@ export class PluginToolServer {
           tools: [],
           plan,
           message:
-            `plugin "${this.opts.plugin}" tool "${decl.id}" was not started: ${plan.mechanism} cannot enforce its declared network endpoints. ` +
+            `plugin "${this.opts.plugin}" tool "${decl.id}" was not started: ${plan.mechanism} cannot enforce its declared network endpoints ` +
+            `(host_enforcement: ${plan.host_enforcement})${plan.notes.length ? ` — ${plan.notes.join("; ")}` : ""}. ` +
             `Set [extensions] allowUnsandboxedTools = ["${this.opts.plugin}"] only to explicitly allow networking without that restriction.`,
         };
       }
       pluginToolLog.warn(
-        `plugin "${this.opts.plugin}" tool "${decl.id}" has unrestricted network access by explicit allowUnsandboxedTools opt-in; filesystem isolation remains active.`,
+        `plugin "${this.opts.plugin}" tool "${decl.id}" has network access wider than it declared ` +
+          `(host_enforcement: ${plan.host_enforcement}) by explicit allowUnsandboxedTools opt-in; ` +
+          `filesystem isolation remains active.`,
       );
       // The opt-in belongs on the same surface that says "UNSANDBOXED", not
       // only in a log line nobody reads: the tool DID start, and the scope it
@@ -486,8 +503,9 @@ export class PluginToolServer {
     const startNotes = [
       ...(unenforcedEndpoints
         ? [
-            `its declared network endpoints (${(decl.hosts ?? []).join(", ")}) are NOT enforced by ` +
-              `${plan.mechanism} — allowUnsandboxedTools accepted unrestricted networking`,
+            `its declared network endpoints (${(decl.hosts ?? []).join(", ")}) are NOT enforced as written by ` +
+              `${plan.mechanism} (host_enforcement: ${plan.host_enforcement}) — allowUnsandboxedTools ` +
+              `accepted the wider access`,
           ]
         : []),
       ...plan.notes,

@@ -155,6 +155,36 @@ supervisor used to compete with the acting agent for the same quota on every `np
 nearly a third of its flags did not survive the reasoned pass. See
 [`auto-mode.md`](auto-mode.md#user-configuration) for the keys and their live forms.
 
+## When a command outlives its call
+
+Three things stop a tool child from surviving the session that started it, and
+one shape gets past all three.
+
+1. **The watchdog.** `rune-tools` polls its own parent; when the engine dies it
+   SIGKILLs its command's whole process group and exits, measured at ~250 ms.
+2. **The group kill.** Every sandbox backend puts the command in its OWN
+   process group, so one signal reaches the shell, its pipelines and anything
+   they started — and never reaches the engine's group or your shell.
+3. **The restart reaper.** The pid, the process group and the kernel's START
+   TIME for that pid are written to `<workspace>/.rune/tool-children.jsonl`
+   before the spawn and removed after it, by both spawn paths. A starting
+   engine kills every row whose owner is gone and whose child is still alive
+   **and still the process the row names** — same pid, same start time. A pid
+   is a number the kernel hands back out, so a row it cannot verify is
+   forgotten rather than signalled; the report says `identity mismatch`. On
+   Windows there is no start time to read, so a row there is still killed on
+   liveness alone, inside the 24-hour window.
+
+**The escape: a child that leaves its process group.** A command that calls
+`setsid(2)` — `setsid`, `nohup … &` in some shells, `start_new_session=True`,
+a daemon that double-forks — is no longer in the group any of the above
+signals, and on **macOS and on the no-backend path it survives**. Measured:
+a `start_new_session=True` child is still running after the group kill. On
+Linux bubblewrap puts the command in its own PID namespace, so a daemonised
+grandchild dies with the namespace and nothing escapes. Treat "a tool that
+daemonises itself on macOS" as out of scope for cleanup: stop it the way you
+would stop any daemon you started.
+
 ## When the sandbox cannot isolate
 
 A machine with no backend (Windows, a mac without `sandbox-exec`) runs commands with path-guard

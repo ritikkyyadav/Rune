@@ -7,8 +7,11 @@
 #  behind); the pre-rename launchers and binaries (gear, alan, berne, elio) are
 #  removed from ~/.rune/bin.
 #
-#  Usage: bash scripts/install.sh
+#  Usage: bash scripts/install.sh [--prune-backups]
 #         (run from the repo root, or from any path — it self-locates)
+#         --prune-backups  also delete all but the newest 5 backup generations
+#                          in ~/.rune/bin (or set RUNE_PRUNE_BACKUPS=1).
+#                          Without it, they are only reported.
 # ──────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -26,6 +29,18 @@ _resolve_script_dir() {
 
 SCRIPT_DIR="$(_resolve_script_dir)"
 RUNE_ROOT="$(cd -P "$SCRIPT_DIR/.." && pwd)"
+
+# ─── Arguments ───
+# Deleting a backup is the one irreversible thing this script can do, so it
+# needs to be asked for. An unrecognised flag is a warning, not a failure: this
+# script is piped into bash from the web and must not die on a stray argument.
+PRUNE_BACKUPS="${RUNE_PRUNE_BACKUPS:-0}"
+for arg in "$@"; do
+  case "$arg" in
+    --prune-backups) PRUNE_BACKUPS=1 ;;
+    *) echo "  install.sh: ignoring unrecognised argument '$arg'" >&2 ;;
+  esac
+done
 
 # ─── Colors ───
 red()    { printf '\033[38;5;166m%s\033[0m' "$*"; }
@@ -382,6 +397,75 @@ echo "  $(green '✓') CLI checksum: $(dim "$CLI_SHA256")"
 if [ "$INSTALL_FILE_GUARD" = "macos-uchg" ]; then
   echo "  $(green '✓') Legacy-installer guard: $(dim 'macOS user-immutable artifacts')"
 fi
+
+# ─── Backups: always counted, deleted only when asked ───
+# Every install copies the four installed artifacts aside before replacing
+# them (`.backup-<epoch>`), and until now nothing ever removed one. V1 found
+# 97 files, 24 generations and 2.0 GB sitting in ~/.rune/bin. A backup is also
+# the only way back from a bad install, so the default is to SAY so and let the
+# person decide; `--prune-backups` (or RUNE_PRUNE_BACKUPS=1) does the deleting.
+BACKUP_KEEP=5
+
+# Every `*.backup-<stamp>` file in the install directory, newest stamp first.
+backup_files() {
+  find "$INSTALL_DIR" -maxdepth 1 -type f -name '*.backup-*' 2>/dev/null
+}
+# Kilobytes used by the files on stdin (one path per line). `du -k` is the one
+# size query that means the same thing on BSD and GNU.
+backup_kb() {
+  tr '\n' '\0' | xargs -0 du -k 2>/dev/null | awk '{t += $1} END {print t + 0}'
+}
+mb_of() { awk -v k="$1" 'BEGIN { printf "%.1f", k / 1024 }'; }
+
+report_backups() {
+  local all count stamps generations doomed kb reclaim_kb
+  all="$(backup_files)"
+  [ -n "$all" ] || return 0
+  count="$(printf '%s\n' "$all" | wc -l | tr -d ' ')"
+  # One generation per install: the four names share a stamp.
+  stamps="$(printf '%s\n' "$all" | sed 's/.*\.backup-//' | sort -rn -u)"
+  generations="$(printf '%s\n' "$stamps" | wc -l | tr -d ' ')"
+  kb="$(printf '%s\n' "$all" | backup_kb)"
+
+  if [ "$generations" -le "$BACKUP_KEEP" ]; then
+    echo "  $(dim "Backups: $count files, $generations generations, $(mb_of "$kb") MB in $INSTALL_DIR")"
+    return 0
+  fi
+
+  # Everything older than the newest $BACKUP_KEEP stamps.
+  local old_stamps
+  old_stamps="$(printf '%s\n' "$stamps" | tail -n +"$((BACKUP_KEEP + 1))")"
+  doomed=""
+  local stamp
+  while IFS= read -r stamp; do
+    [ -n "$stamp" ] || continue
+    local match
+    match="$(printf '%s\n' "$all" | grep -- "\.backup-$stamp\$" || true)"
+    [ -n "$match" ] || continue
+    doomed="${doomed}${match}
+"
+  done <<EOF
+$old_stamps
+EOF
+  doomed="$(printf '%s' "$doomed" | sed '/^$/d')"
+  [ -n "$doomed" ] || return 0
+  reclaim_kb="$(printf '%s\n' "$doomed" | backup_kb)"
+
+  if [ "$PRUNE_BACKUPS" = "1" ]; then
+    printf '%s\n' "$doomed" | while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      [ "$INSTALL_FILE_GUARD" != "macos-uchg" ] || chflags nouchg "$f" 2>/dev/null || true
+      rm -f -- "$f"
+    done
+    echo "  $(green '✓') Pruned $(printf '%s\n' "$doomed" | wc -l | tr -d ' ') backup files, $(mb_of "$reclaim_kb") MB freed"
+    echo "    $(dim "Kept the newest $BACKUP_KEEP generations of $generations.")"
+  else
+    echo "  $(yellow '!') Backups: $count files, $generations generations, $(mb_of "$kb") MB in $INSTALL_DIR"
+    echo "    $(dim "Keeping the newest $BACKUP_KEEP would reclaim $(mb_of "$reclaim_kb") MB. Nothing was deleted.")"
+    echo "    $(bold './scripts/install.sh --prune-backups')  $(dim '(or RUNE_PRUNE_BACKUPS=1)')"
+  fi
+}
+report_backups
 
 # Prune the pre-rename launchers (they pointed at the same binary) and the
 # previous name's installed artifacts, which the promotion above superseded.

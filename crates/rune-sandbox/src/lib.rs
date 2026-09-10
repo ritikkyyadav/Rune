@@ -55,10 +55,10 @@ pub(crate) fn escape_sbpl(s: &str) -> String {
 /// list plus an omission.
 ///
 /// macOS reads broadly and denies these explicitly. Linux binds nothing from
-/// $HOME except the named toolchain roots, so the same stores are unreachable
-/// by construction — and `linux::tests` uses this list to keep it that way,
-/// which is why it is compiled there for tests.
-#[cfg(any(target_os = "macos", all(test, target_os = "linux")))]
+/// $HOME except the named toolchain roots — and checks each one against this
+/// list at bind time (`linux::resolve_toolchain_root`), because a root that is
+/// a symlink can resolve into a store the fixed list never named.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) fn credential_deny_paths() -> Vec<PathBuf> {
     let home = dirs::home_dir().unwrap_or_default();
     vec![

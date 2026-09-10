@@ -31,13 +31,17 @@
 //!
 //! Seatbelt's `remote ip` filter accepts a **port** and either `*` or
 //! `localhost` as the host — it rejects a literal address outright ("host must
-//! be \* or localhost"). So on macOS a declared `api.example.com:443` is
-//! enforced as "outbound to port 443, denied everywhere else", and a declared
-//! `127.0.0.1:8787` is enforced as "loopback port 8787 only". That is real,
-//! kernel-enforced, and narrower than the host list reads; it is not per-host,
-//! and this module reports `host_enforcement: "port"` rather than letting a
-//! caller claim otherwise. On Linux, bubblewrap's network isolation is
-//! all-or-nothing (`--unshare-net`), reported as such.
+//! be \* or localhost"). So a declared `127.0.0.1:8787` IS enforced as
+//! "loopback port 8787 only" — the declaration in full — while a declared
+//! `api.example.com:443` can only become "any host on port 443". That second
+//! case is a widening of a restriction the manifest asked for, so the plan
+//! reports `host_enforcement: "port"` for it and `"host-and-port"` only when
+//! every declared endpoint survived intact; the caller refuses the widened
+//! case unless the user opted the plugin in, exactly as it does on Linux.
+//! Until V1, macOS reported `"port"` for both and the caller read that as
+//! "enforced", so `api.example.com:443` ran as `*:443` with nothing said.
+//! On Linux, bubblewrap's network isolation is all-or-nothing
+//! (`--unshare-net`), reported as such.
 
 use std::path::{Path, PathBuf};
 
@@ -107,7 +111,10 @@ pub struct SpawnPlan {
     pub mechanism: &'static str,
     /// True only when an OS-level isolation backend is actually wrapping it.
     pub os_isolation: bool,
-    /// "port" (macOS), "all-or-nothing" (Linux), "none" (unsandboxed).
+    /// What the launch actually enforces about the DECLARED endpoints:
+    /// `"host-and-port"` (every one of them, as written), `"port"` (macOS,
+    /// when a non-loopback host had to be widened to `*`), `"all-or-nothing"`
+    /// (Linux), or `"none"` (nothing is enforced at all).
     pub host_enforcement: &'static str,
     /// Anything the caller must say out loud — e.g. an unparseable host entry.
     pub notes: Vec<String>,
@@ -158,8 +165,20 @@ fn parse_endpoint(raw: &str) -> Option<Endpoint> {
     })
 }
 
+/// A built profile and what it turned out to enforce about the declared hosts.
 #[cfg(target_os = "macos")]
-fn seatbelt_profile(workspace: &Path, req: &SpawnRequest, notes: &mut Vec<String>) -> String {
+struct SeatbeltProfile {
+    profile: String,
+    /// `"host-and-port"` or `"port"` — see [`SpawnPlan::host_enforcement`].
+    host_enforcement: &'static str,
+}
+
+#[cfg(target_os = "macos")]
+fn seatbelt_profile(
+    workspace: &Path,
+    req: &SpawnRequest,
+    notes: &mut Vec<String>,
+) -> SeatbeltProfile {
     let workspace = real(workspace);
     let plugin_root = real(&req.plugin_root);
     let scratch = real(&req.scratch_dir);
@@ -201,8 +220,11 @@ fn seatbelt_profile(workspace: &Path, req: &SpawnRequest, notes: &mut Vec<String
     }
     let writable = writable.join("\n");
 
-    // Network.
+    // Network. `widened` is set by any endpoint the profile could not express
+    // as narrowly as the manifest wrote it — every non-loopback host, because
+    // Seatbelt has no host filter, and any endpoint with no port.
     let mut network = String::from("(deny network*)\n");
+    let mut widened = false;
     if req.capability.wants_network() {
         if req.hosts.is_empty() {
             notes.push(
@@ -222,13 +244,18 @@ fn seatbelt_profile(workspace: &Path, req: &SpawnRequest, notes: &mut Vec<String
                         "(allow network-outbound (remote ip \"{host}:{port}\"))\n"
                     ));
                     if !endpoint.loopback {
+                        widened = true;
+                        notes.push(format!(
+                            "Seatbelt filters by port, not by host: declared \"{raw}\" is enforced as \"*:{port}\" — ANY host on port {port}",
+                        ));
                         // Names have to resolve before the connect can happen.
                         network.push_str("(allow network-outbound (remote ip \"*:53\"))\n");
                     }
                 }
                 None => {
+                    widened = true;
                     notes.push(format!(
-                        "declared host \"{raw}\" has no port — Seatbelt filters by port, so this allows every port",
+                        "declared host \"{raw}\" has no port — Seatbelt filters by port, so this is enforced as \"{host}:*\": every port",
                     ));
                     network.push_str(&format!(
                         "(allow network-outbound (remote ip \"{host}:*\"))\n"
@@ -238,7 +265,7 @@ fn seatbelt_profile(workspace: &Path, req: &SpawnRequest, notes: &mut Vec<String
         }
     }
 
-    format!(
+    let profile = format!(
         r#"(version 1)
 (deny default)
 (allow process-exec*)
@@ -264,7 +291,11 @@ fn seatbelt_profile(workspace: &Path, req: &SpawnRequest, notes: &mut Vec<String
 (allow file-write* (subpath "/dev"))
 
 {network}"#
-    )
+    );
+    SeatbeltProfile {
+        profile,
+        host_enforcement: if widened { "port" } else { "host-and-port" },
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -303,12 +334,22 @@ fn bwrap_args(workspace: &Path, req: &SpawnRequest, notes: &mut Vec<String>) -> 
 
     args.extend_from_slice(&["--remount-ro".to_string(), "/".to_string()]);
     args.push("--unshare-all".to_string());
-    if req.capability.wants_network() && !req.hosts.is_empty() {
-        args.push("--share-net".to_string());
-        notes.push(
-            "bubblewrap's network isolation is all-or-nothing: the declared hosts are disclosure on Linux, not a filter"
-                .to_string(),
-        );
+    if req.capability.wants_network() {
+        if req.hosts.is_empty() {
+            // The same sentence the Seatbelt profile emits. Without it a
+            // `network` tool with no hosts started on Linux with no network
+            // and no explanation of why its connections failed.
+            notes.push(
+                "capability is `network` but the manifest declares no hosts — everything outbound is denied"
+                    .to_string(),
+            );
+        } else {
+            args.push("--share-net".to_string());
+            notes.push(
+                "bubblewrap's network isolation is all-or-nothing: the declared hosts are disclosure on Linux, not a filter"
+                    .to_string(),
+            );
+        }
     }
     args.push("--new-session".to_string());
     args.extend_from_slice(&["--cap-drop".to_string(), "ALL".to_string()]);
@@ -336,11 +377,11 @@ pub fn plan_spawn(workspace_root: &Path, req: &SpawnRequest) -> SpawnPlan {
     {
         use crate::macos::MacOsSandbox;
         if MacOsSandbox::is_available() {
-            let profile = seatbelt_profile(workspace_root, req, &mut notes);
+            let built = seatbelt_profile(workspace_root, req, &mut notes);
             let mut argv = vec![
                 "sandbox-exec".to_string(),
                 "-p".to_string(),
-                profile,
+                built.profile,
                 req.program.clone(),
             ];
             argv.extend(req.args.iter().cloned());
@@ -348,7 +389,7 @@ pub fn plan_spawn(workspace_root: &Path, req: &SpawnRequest) -> SpawnPlan {
                 argv,
                 mechanism: "seatbelt",
                 os_isolation: true,
-                host_enforcement: "port",
+                host_enforcement: built.host_enforcement,
                 notes,
                 env,
             };
@@ -442,7 +483,8 @@ mod tests {
             Path::new("/ws"),
             &request(ToolCapability::WorkspaceRead),
             &mut notes,
-        );
+        )
+        .profile;
         assert!(read.contains("(deny network*)"));
         assert!(!read.contains("network-outbound"));
         // A read capability may not write the workspace.
@@ -452,7 +494,8 @@ mod tests {
             Path::new("/ws"),
             &request(ToolCapability::WorkspaceWrite),
             &mut notes,
-        );
+        )
+        .profile;
         assert!(write.contains("/ws"));
         assert!(write.contains("(deny network*)"));
 
@@ -460,13 +503,15 @@ mod tests {
             Path::new("/ws"),
             &request(ToolCapability::Network),
             &mut notes,
-        );
+        )
+        .profile;
         assert!(net.contains("(allow network-outbound (remote ip \"localhost:8787\"))"));
         assert!(net.contains("(allow network-outbound (remote ip \"*:443\"))"));
         // A network tool does not get to read the workspace.
         assert!(net.contains("require-not"));
 
-        let none = seatbelt_profile(Path::new("/ws"), &request(ToolCapability::None), &mut notes);
+        let none =
+            seatbelt_profile(Path::new("/ws"), &request(ToolCapability::None), &mut notes).profile;
         assert!(none.contains("require-not"));
         assert!(!none.contains("network-outbound"));
     }
@@ -477,8 +522,77 @@ mod tests {
         let mut notes = Vec::new();
         let mut req = request(ToolCapability::Network);
         req.hosts = vec!["api.example.com".to_string()];
-        let profile = seatbelt_profile(Path::new("/ws"), &req, &mut notes);
-        assert!(profile.contains("(remote ip \"*:*\")"));
+        let built = seatbelt_profile(Path::new("/ws"), &req, &mut notes);
+        assert!(built.profile.contains("(remote ip \"*:*\")"));
         assert!(notes.iter().any(|n| n.contains("no port")));
+        assert_eq!(built.host_enforcement, "port");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_named_host_is_reported_as_widened_to_its_whole_port() {
+        // The claim V1 disproved: macOS said `host_enforcement: "port"` and
+        // the caller read that as "the declaration is enforced", so
+        // `api.example.com:443` ran as `*:443` with `notes: []`.
+        let mut notes = Vec::new();
+        let mut req = request(ToolCapability::Network);
+        req.hosts = vec!["api.example.com:443".to_string()];
+        let built = seatbelt_profile(Path::new("/ws"), &req, &mut notes);
+        assert!(built.profile.contains("(remote ip \"*:443\")"));
+        assert_eq!(built.host_enforcement, "port");
+        assert!(
+            notes.iter().any(|n| n.contains("ANY host on port 443")),
+            "{notes:?}"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_loopback_endpoint_is_enforced_exactly_as_declared() {
+        // Seatbelt DOES have a `localhost` host, so this declaration survives
+        // intact and must not be dragged into the refusal with the rest.
+        let mut notes = Vec::new();
+        let mut req = request(ToolCapability::Network);
+        req.hosts = vec!["127.0.0.1:8787".to_string()];
+        let built = seatbelt_profile(Path::new("/ws"), &req, &mut notes);
+        assert!(
+            built
+                .profile
+                .contains("(allow network-outbound (remote ip \"localhost:8787\"))")
+        );
+        assert_eq!(built.host_enforcement, "host-and-port");
+        assert!(notes.is_empty(), "{notes:?}");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn one_widened_endpoint_widens_the_whole_plan() {
+        // The mixed list from `request()`: loopback plus a named host. The
+        // weakest endpoint decides, because the tool gets all of them.
+        let plan = plan_spawn(Path::new("/ws"), &request(ToolCapability::Network));
+        if plan.os_isolation {
+            assert_eq!(plan.host_enforcement, "port");
+            assert!(
+                plan.notes
+                    .iter()
+                    .any(|n| n.contains("ANY host on port 443")),
+                "{:?}",
+                plan.notes
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_network_plugin_with_no_hosts_is_told_why_nothing_connects() {
+        let mut notes = Vec::new();
+        let mut req = request(ToolCapability::Network);
+        req.hosts = vec![];
+        let args = bwrap_args(Path::new("/ws"), &req, &mut notes);
+        assert!(!args.iter().any(|a| a == "--share-net"));
+        assert!(
+            notes.iter().any(|n| n.contains("declares no hosts")),
+            "{notes:?}"
+        );
     }
 }

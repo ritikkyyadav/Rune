@@ -609,7 +609,7 @@ describe("a backend that isolates but cannot filter endpoints", () => {
         expect(started.handlers.length).toBeGreaterThan(0);
         // The opt-in is not a silent grant: the same surface that reports
         // UNSANDBOXED reports the scope this tool did not get.
-        expect(started.notices.join(" ")).toContain("are NOT enforced by bubblewrap");
+        expect(started.notices.join(" ")).toContain("are NOT enforced as written by bubblewrap");
         expect(started.notices.join(" ")).toContain("127.0.0.1:8787");
       } finally {
         await Promise.all(started.servers.map((s) => s.stop()));
@@ -642,6 +642,103 @@ describe("a backend that isolates but cannot filter endpoints", () => {
         workspaceRoot: workspace,
         declarations: [{ ...netDeclaration, hosts: [] }],
         planner: allOrNothingPlanner,
+      });
+      try {
+        expect(started.handlers.length).toBeGreaterThan(0);
+        expect(started.notices.join(" ")).not.toContain("cannot enforce");
+      } finally {
+        await Promise.all(started.servers.map((s) => s.stop()));
+      }
+    },
+    30_000,
+  );
+});
+
+describe("a backend that filters by port but not by host", () => {
+  // What Seatbelt reports on macOS for a NAMED host: real OS isolation, and a
+  // rule that can only say "any host on port 443". Until V1 the plan called
+  // that `"port"` whatever the hosts were, and `"port"` was read as enforced —
+  // so `api.example.com:443` ran as `*:443` with an empty notes list and no
+  // opt-in. Stated as a planner so both halves are provable on either OS.
+  const portOnlyPlanner = (): PluginToolSpawnPlan => ({
+    argv: ["python3", "-u", "tools/net.py"],
+    mechanism: "seatbelt",
+    os_isolation: true,
+    host_enforcement: "port",
+    notes: [
+      'Seatbelt filters by port, not by host: declared "api.example.com:443" is enforced as "*:443" — ANY host on port 443',
+    ],
+  });
+
+  /** The same backend, for a declaration it CAN enforce as written. */
+  const loopbackPlanner = (): PluginToolSpawnPlan => ({
+    argv: ["python3", "-u", "tools/net.py"],
+    mechanism: "seatbelt",
+    os_isolation: true,
+    host_enforcement: "host-and-port",
+    notes: [],
+  });
+
+  const namedHost = {
+    id: "net",
+    command: ["python3", "-u", "tools/net.py"],
+    capability: "network" as const,
+    hosts: ["api.example.com:443"],
+  };
+
+  test.skipIf(!PYTHON)(
+    "refuses a named host rather than silently widening it to the whole port",
+    async () => {
+      const started = await startPluginTools({
+        plugin: "rune-example-tools",
+        pluginRoot,
+        workspaceRoot: workspace,
+        declarations: [namedHost],
+        planner: portOnlyPlanner,
+      });
+      expect(started.handlers).toHaveLength(0);
+      expect(started.servers).toHaveLength(0);
+      const notices = started.notices.join(" ");
+      expect(notices).toContain("cannot enforce its declared network endpoints");
+      // The widening itself reaches the person reading the notice, not just
+      // the words "not enforced".
+      expect(notices).toContain("host_enforcement: port");
+      expect(notices).toContain("ANY host on port 443");
+      expect(notices).toContain("allowUnsandboxedTools");
+    },
+  );
+
+  test.skipIf(!PYTHON)(
+    "runs it under the explicit opt-in, naming the enforcement it did not get",
+    async () => {
+      const started = await startPluginTools({
+        plugin: "rune-example-tools",
+        pluginRoot,
+        workspaceRoot: workspace,
+        declarations: [namedHost],
+        planner: portOnlyPlanner,
+        allowUnsandboxed: ["rune-example-tools"],
+      });
+      try {
+        expect(started.handlers.length).toBeGreaterThan(0);
+        expect(started.notices.join(" ")).toContain("are NOT enforced as written by seatbelt");
+        expect(started.notices.join(" ")).toContain("host_enforcement: port");
+      } finally {
+        await Promise.all(started.servers.map((s) => s.stop()));
+      }
+    },
+    30_000,
+  );
+
+  test.skipIf(!PYTHON)(
+    "a loopback endpoint Seatbelt CAN express is not dragged into the refusal",
+    async () => {
+      const started = await startPluginTools({
+        plugin: "rune-example-tools",
+        pluginRoot,
+        workspaceRoot: workspace,
+        declarations: [{ ...namedHost, hosts: ["127.0.0.1:8787"] }],
+        planner: loopbackPlanner,
       });
       try {
         expect(started.handlers.length).toBeGreaterThan(0);

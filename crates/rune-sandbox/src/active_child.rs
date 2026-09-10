@@ -9,6 +9,16 @@
 //! interrupt tears down the real work, not just the wrapper.
 //!
 //! One tool per process invocation ⇒ a single atomic slot suffices.
+//!
+//! **Out of scope: a child that leaves the group.** A command that calls
+//! `setsid(2)` — `setsid`, `start_new_session=True`, a daemon that
+//! double-forks — is in a session of its own, and neither [`kill_active`] nor
+//! [`crate::parent_death`] nor the restart reaper can reach it. Measured on
+//! macOS and on the no-backend path: such a child survives the group kill. On
+//! Linux the bubblewrap backend puts the command in its own PID namespace, so
+//! a daemonised grandchild dies with the namespace. Documented in
+//! `docs/sandbox.md`; a tool that daemonises itself on macOS is stopped the
+//! way any daemon is.
 
 use std::sync::atomic::{AtomicI64, Ordering};
 

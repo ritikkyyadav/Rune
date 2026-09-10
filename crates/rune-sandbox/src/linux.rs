@@ -47,6 +47,53 @@ pub(crate) fn toolchain_read_roots() -> Vec<PathBuf> {
     .collect()
 }
 
+/// The path to actually bind for a declared toolchain root, or `None` when it
+/// must not be bound at all.
+///
+/// `dir.exists()` follows symlinks, and so does bubblewrap: `--ro-bind` binds
+/// what the link POINTS AT. So a root that is itself a link is a hole the
+/// fixed list above cannot see, because the list is a promise about resolved
+/// paths and was only ever compared against unresolved ones. V1 measured the
+/// consequence on the Linux image: with `~/.local/bin -> $HOME`,
+/// `cat ~/.local/bin/.ssh/id_rsa` handed a sandboxed command the key while the
+/// direct path stayed refused.
+///
+/// So: resolve first, then judge the resolved path — refusing `$HOME` itself,
+/// anything ABOVE `$HOME`, and any parent of a credential store.
+pub(crate) fn resolve_toolchain_root(dir: &Path) -> Option<PathBuf> {
+    resolve_toolchain_root_in(
+        dir,
+        &dirs::home_dir().unwrap_or_default(),
+        &crate::credential_deny_paths(),
+    )
+}
+
+/// The judgement itself, with the home directory and the credential list
+/// injected so a test can build the hazard rather than needing the machine to have it.
+pub(crate) fn resolve_toolchain_root_in(
+    dir: &Path,
+    home: &Path,
+    secrets: &[PathBuf],
+) -> Option<PathBuf> {
+    // Canonicalize, which also answers "does it exist": a root that is not
+    // there is not bound, exactly as before.
+    let real = std::fs::canonicalize(dir).ok()?;
+    let real_home = std::fs::canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
+    // `$HOME` itself, or any ancestor of it — `/`, `/home`, `/root/..`.
+    if real_home.starts_with(&real) {
+        return None;
+    }
+    for secret in secrets {
+        // Resolved through its longest existing ancestor, so a credential
+        // store that does not exist yet is still protected from a root that
+        // would come to contain it.
+        if crate::real_path(secret).starts_with(&real) {
+            return None;
+        }
+    }
+    Some(real)
+}
+
 /// Linux bubblewrap (bwrap) sandbox implementation.
 ///
 /// Constructs a minimal, unshared namespace with read-only system mounts and
@@ -100,11 +147,18 @@ impl LinuxSandbox {
         // directories, each read-only and each only when it exists. Every
         // entry is a program/toolchain root; no credential store, no dotfile,
         // no $HOME itself, and no parent of any of those.
+        // Bound from the RESOLVED path to the DECLARED one, so `~/.bun/bin`
+        // still exists inside (PATH names it) while what appears there is the
+        // directory we actually judged.
         for dir in toolchain_read_roots() {
-            if dir.exists() {
-                let s = dir.display().to_string();
-                args.extend_from_slice(&["--ro-bind".to_string(), s.clone(), s]);
-            }
+            let Some(real) = resolve_toolchain_root(&dir) else {
+                continue;
+            };
+            args.extend_from_slice(&[
+                "--ro-bind".to_string(),
+                real.display().to_string(),
+                dir.display().to_string(),
+            ]);
         }
 
         // Writable mounts.
@@ -316,10 +370,17 @@ mod tests {
         LinuxSandbox::new(config).bwrap_args("true", Path::new("/tmp/ws"))
     }
 
-    /// `--ro-bind SRC DST` appears as three consecutive arguments.
-    fn has_pair(args: &[String], flag: &str, path: &str) -> bool {
+    /// `--ro-bind SRC DST` appears as three consecutive arguments; this asks
+    /// only about DST, because a root reached through a symlink is bound from
+    /// its RESOLVED source onto the declared path.
+    fn has_bind_at(args: &[String], flag: &str, dest: &str) -> bool {
+        args.windows(3).any(|w| w[0] == flag && w[2] == dest)
+    }
+
+    /// Anything at all bound from, or onto, this path.
+    fn touches(args: &[String], path: &str) -> bool {
         args.windows(3)
-            .any(|w| w[0] == flag && w[1] == path && w[2] == path)
+            .any(|w| (w[0] == "--ro-bind" || w[0] == "--bind") && (w[1] == path || w[2] == path))
     }
 
     #[test]
@@ -354,40 +415,117 @@ mod tests {
 
         for root in toolchain_read_roots() {
             let s = root.display().to_string();
-            if root.exists() {
+            if resolve_toolchain_root(&root).is_some() {
                 assert!(
-                    has_pair(&args, "--ro-bind", &s),
+                    has_bind_at(&args, "--ro-bind", &s),
                     "toolchain root {s} was not bound read-only"
+                );
+            } else {
+                // Absent, or refused because it resolves somewhere it must not
+                // reach. Either way nothing is bound there.
+                assert!(
+                    !has_bind_at(&args, "--ro-bind", &s),
+                    "toolchain root {s} was bound after being refused"
                 );
             }
             // Never writable, whether or not it exists.
             assert!(
-                !has_pair(&args, "--bind", &s),
+                !has_bind_at(&args, "--bind", &s),
                 "toolchain root {s} must never be writable"
             );
         }
 
-        // The home directory itself is not a mount, in either direction.
-        assert!(!has_pair(&args, "--ro-bind", &home_s));
-        assert!(!has_pair(&args, "--bind", &home_s));
+        // The home directory itself is not a mount, in either direction — and
+        // not as a bind SOURCE either, which is what a symlinked root would
+        // have made it.
+        assert!(!touches(&args, &home_s), "$HOME is bound: {home_s}");
     }
 
     #[test]
-    fn no_toolchain_root_is_a_parent_of_a_credential_store() {
-        // The list is a fixed constant, so this is a property of the code,
-        // not of the machine it runs on: `~/.cargo/bin` may be exposed
+    fn no_bound_toolchain_root_is_a_parent_of_a_credential_store() {
+        // Compared on RESOLVED paths, and on what is actually BOUND rather
+        // than on what is declared: `secret.starts_with(&root)` over the two
+        // unresolved paths cannot see a root that is a symlink, which is
+        // exactly the hole V1 walked through. `~/.cargo/bin` is still exposed,
         // because `~/.cargo/credentials.toml` is not inside it.
-        let home = dirs::home_dir().unwrap_or_default();
+        let home = crate::real_path(&dirs::home_dir().unwrap_or_default());
         for root in toolchain_read_roots() {
-            assert_ne!(root, home, "the home directory is not a toolchain root");
+            let Some(real) = resolve_toolchain_root(&root) else {
+                continue; // refused, so it exposes nothing
+            };
+            assert_ne!(real, home, "the home directory is not a toolchain root");
             for secret in credential_deny_paths() {
                 assert!(
-                    !secret.starts_with(&root),
-                    "toolchain root {} exposes the credential store {}",
+                    !crate::real_path(&secret).starts_with(&real),
+                    "toolchain root {} resolves to {} and exposes the credential store {}",
                     root.display(),
+                    real.display(),
                     secret.display()
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_toolchain_root_that_is_a_symlink_to_the_home_is_refused() {
+        // The hazard V1 built on the Linux image: `~/.local/bin -> $HOME`.
+        // `exists()` says yes, the lexical guard says the root is `.local/bin`
+        // and the secret is `.ssh`, and bubblewrap binds the whole home.
+        let home = tempfile::tempdir().unwrap();
+        let home = home.path();
+        std::fs::create_dir_all(home.join(".local")).unwrap();
+        std::os::unix::fs::symlink(home, home.join(".local/bin")).unwrap();
+        std::fs::create_dir_all(home.join(".ssh")).unwrap();
+        let secrets = vec![home.join(".ssh"), home.join(".aws")];
+
+        assert_eq!(
+            resolve_toolchain_root_in(&home.join(".local/bin"), home, &secrets),
+            None,
+            "a root that resolves to $HOME must not be bound"
+        );
+    }
+
+    #[test]
+    fn a_toolchain_root_resolves_through_a_harmless_symlink() {
+        // The same mechanism must not break the ordinary case: a version
+        // manager that points ~/.local/bin at a real directory elsewhere.
+        let home = tempfile::tempdir().unwrap();
+        let home = home.path();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let real = std::fs::canonicalize(elsewhere.path()).unwrap();
+        std::fs::create_dir_all(home.join(".local")).unwrap();
+        std::os::unix::fs::symlink(&real, home.join(".local/bin")).unwrap();
+        let secrets = vec![home.join(".ssh")];
+
+        assert_eq!(
+            resolve_toolchain_root_in(&home.join(".local/bin"), home, &secrets),
+            Some(real),
+        );
+        // And a root that is not there at all is still simply not bound.
+        assert_eq!(
+            resolve_toolchain_root_in(&home.join(".nope"), home, &secrets),
+            None
+        );
+    }
+
+    #[test]
+    fn a_toolchain_root_that_resolves_above_a_credential_store_is_refused() {
+        // Not $HOME, but a parent of one of the stores — `~/.local/bin -> ~/.ssh/..`
+        // is the same escape with one more step.
+        let home = tempfile::tempdir().unwrap();
+        let home = home.path();
+        let stash = home.join("stash");
+        std::fs::create_dir_all(stash.join("gnupg")).unwrap();
+        std::fs::create_dir_all(home.join(".local")).unwrap();
+        std::os::unix::fs::symlink(&stash, home.join(".local/bin")).unwrap();
+
+        assert_eq!(
+            resolve_toolchain_root_in(
+                &home.join(".local/bin"),
+                home,
+                &[stash.join("gnupg"), home.join(".ssh")],
+            ),
+            None
+        );
     }
 }
