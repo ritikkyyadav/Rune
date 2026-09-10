@@ -1,0 +1,153 @@
+{
+  "kind": "local-verification",
+  "recordedAt": "2026-09-10",
+  "sourceCommit": "0946e42cc17fa3ef25da2937abbce5133fdaac4b",
+  "version": "Rune v0.4.1-dev+0946e42",
+  "workingChanges": {
+    "packages/orchestrator/src/agent-loop.ts": "895a8bda656928075fbdde0750e3ea17dd0ab3ddfb0be7ce87b06ee340d418b2",
+    "tests/unit/orchestrator/agent-loop-settled-plan.test.ts": "d5c82d346ae0e8a0dfa9dd76dedb4d27f90baf5c39fd9e982bc47a796409cde5",
+    "tests/integration/engine-command-evidence.test.ts": "a53ab3da8d5dfa37e223567b2580ad958e698ebe8b8f4e3f3896cae72e6b13c1"
+  },
+  "sourcePatchSha256": "f233be43f5c85574dab473beff8221ebc72a50e71d46737e0e61e96c4a06fcef",
+  "artifacts": {
+    "rune-compiled": {
+      "installedPath": "/Users/ritikyadav890/.rune/bin/rune-compiled",
+      "sha256": "c337e2e0beea270fbf9bfda202ed78eed5069f2e3eca7966f2637a24f2f28aa2"
+    },
+    "rune-tools": {
+      "installedPath": "/Users/ritikyadav890/.rune/bin/rune-tools",
+      "sha256": "4aedd8ed0b215ff04a308d884d2d6caa75684f43d4006ccac78414a349e3c287"
+    }
+  },
+  "checks": [
+    {
+      "name": "unit",
+      "command": "bun test tests/unit </dev/null",
+      "result": {
+        "passed": 4375,
+        "failed": 0,
+        "skipped": 1
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/unit-final.log",
+      "logSha256": "d339ebb612b531f164f42de7b950698fb6d6a132b122aa08aa3e8d66080b9e4a"
+    },
+    {
+      "name": "integration",
+      "command": "RUNE_TEST_PLAYWRIGHT=<installed module> bun test tests/integration </dev/null",
+      "result": {
+        "passed": 148,
+        "failed": 0,
+        "skipped": 5,
+        "realMcpTestsPassed": 7,
+        "realChromiumTestsPassed": 2
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/integration-final.log",
+      "logSha256": "b322be7c12e7351dba9d0b9b746d61b9699a18b411ea6d226ec391def9a31d3c"
+    },
+    {
+      "name": "typecheck",
+      "command": "bun run typecheck --force",
+      "result": {
+        "passedTasks": 14,
+        "cachedTasks": 0
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/typecheck-final.log",
+      "logSha256": "18aa0f5bd69b4a8afb8fe045a65723c52553e5afe81f1b4ad9b688d43760baa9"
+    },
+    {
+      "name": "lint",
+      "command": "bun run lint --force",
+      "result": {
+        "passedTasks": 7,
+        "cachedTasks": 0
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/lint-final.log",
+      "logSha256": "ecbc3d15956a35a4e22421379e7b9b1c7944bc18b64db13139f1d05cd472ec83"
+    },
+    {
+      "name": "edited-integration-test-types",
+      "command": "bunx tsc --noEmit --strict --skipLibCheck --target ESNext --module ESNext --moduleResolution bundler --types bun tests/integration/engine-command-evidence.test.ts tests/integration/engine-runtime-reliability.test.ts",
+      "result": {
+        "passed": true
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/test-types-final.log",
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "mock-eval",
+      "command": "bun run eval",
+      "result": {
+        "passed": 63,
+        "total": 63,
+        "governanceCompletionsPerTask": 0.26,
+        "baselineChanged": false
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/mock-final.log",
+      "logSha256": "4c2f1d97d00ba05649d5b4a75f74da2473ecfffd6092cf5a5aecccbd49e6c3a3"
+    },
+    {
+      "name": "guarded-install",
+      "command": "bash scripts/install.sh",
+      "result": {
+        "passed": true,
+        "overrideUsed": false
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/install-final.log",
+      "logSha256": "3f5f1b1652edf3616d17ad217477a4015458151573f13c17f905262fdb48be5e"
+    },
+    {
+      "name": "installed-cli",
+      "command": "Fresh minimal zsh: command -v rune; rune --version; rune doctor; rune tools-smoke",
+      "result": {
+        "buildCurrent": true,
+        "doctorFullyGreen": false,
+        "qualification": "Minimal PATH omits npx; doctor reports the configured MCP command missing. Native write/read/edit/bash smoke passed."
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/installed-final.log",
+      "logSha256": "53c3c0dbbea5136db2f54da7aefd5388057047ded7ef6ed5d3b9baf1e7de48ff"
+    },
+    {
+      "name": "installed-native-browser-and-evidence",
+      "command": "RUNE_TOOLS_BINARY=<installed native binary> RUNE_TEST_PLAYWRIGHT=<installed module> bun test tests/integration/browser-sandbox.test.ts tests/integration/engine-command-evidence.test.ts </dev/null",
+      "result": {
+        "passed": 11,
+        "failed": 0,
+        "skipped": 0
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/installed-evidence-final.log",
+      "logSha256": "5c1c5e320ea24b07624a28a4957169c63f8cb1dcfbf9a72c2d1f1688aad88965"
+    },
+    {
+      "name": "installed-settings",
+      "command": "python3 .codex/audit-20260910/delivery/settings-smoke.py",
+      "result": {
+        "terminalRows": 24,
+        "terminalColumns": 80,
+        "savedSettingRestored": true,
+        "cleanExits": 2,
+        "modelUsageEvents": 0
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/settings-final.log",
+      "logSha256": "eb4dd9856c00c0161e61adc2814922922aec0bfaef80c37494a9b1e052e57458"
+    },
+    {
+      "name": "settled-plan-before-fix",
+      "command": "bun test tests/unit/orchestrator/agent-loop-settled-plan.test.ts </dev/null",
+      "result": {
+        "expectedRegressionFailure": true
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/settled-before-fix.log",
+      "logSha256": "4c60b2366770992bfb66fbd7a4fd0cb012b77051ed132485380bf6a13323002b"
+    }
+  ],
+  "reusedNativeEvidence": {
+    "manifest": "verification-20260909-final.json",
+    "rustPassed": 94,
+    "nativeArtifactUnchanged": true
+  },
+  "limitations": [
+    "One unit skip needs a case-sensitive disk; five integration skips need Go/Java toolchains.",
+    "Other actors committed earlier work as f1b9366 and 897b192. This manifest distinguishes the latest working correction from those commits.",
+    "Linux execution and paid-model comparisons are reported separately. Tests do not establish overall capability or cost parity."
+  ]
+}

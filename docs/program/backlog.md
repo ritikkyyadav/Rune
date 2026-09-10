@@ -369,3 +369,53 @@ Found during the first dogfood run (2026-09-09, Rune fixing `todo_write` in its 
 - `packages/orchestrator/src/agent-loop.ts` — after the model's closing message the turn kept going for another eleven completions (a full `bun test` to a 120 s timeout, then the `search` retries) with no user or system event in between; whatever re-prompted it (evidence gate, open-steps gate or second wind) should say so in the transcript, and should not fire after a commit that was the brief's last step — dogfood run — Claude
 - `packages/orchestrator/src/agent-loop.ts:1715` — a completion that returned zero input and zero output tokens ended the review turn as `finished` with no message, no edit and no commit (session 01a086b4, ninth completion). The empty-response retry only fires while the run has produced nothing at all (`firstStepSilence`), so an empty `end_turn` after earlier tool calls is taken as a legitimate finish even though the model never wrote a word; treat "tool calls so far, no text ever, empty end_turn" as an empty completion too — dogfood run — Claude
 - `packages/tool-registry/src/tools/glob.ts:160` — `glob` with pattern `*` on a directory that holds only directories says "No files matched", which reads as an empty tree; say how many directories matched and were skipped — dogfood run — Claude
+
+Found during Phase 1 of the Claude Code handoff (2026-09-10, gating and installing the combined
+tree as `980bf1e` + `c053ca4`; receipts in `docs/evidence/verification-20260910b.json`):
+
+- `crates/rune-sandbox/src/lib.rs` (`credential_deny_paths`) — the macOS deny list is the ONLY thing
+  standing between a sandboxed command and a credential store, because Seatbelt allows `file-read*`
+  broadly and then denies that list. These are missing from it: `~/.cargo/credentials` and
+  `~/.cargo/credentials.toml`, `~/.git-credentials`, `~/.gem/credentials`, `~/.pypirc`,
+  `~/.m2/settings.xml`, `~/.gradle/gradle.properties`, `~/.terraform.d/credentials.tfrc.json`,
+  `~/.config/pnpm/rc`, and the global `npmrc` under a toolchain prefix. Each is a plaintext registry
+  or cloud token a sandboxed command can read today — Phase 1 — Claude
+- `crates/rune-sandbox/src/linux.rs` — Linux applies no credential masks at all. It gets the same
+  result BY CONSTRUCTION ("nothing from `$HOME` is bound"), an invariant that `c053ca4` narrowed for
+  the first time by binding 16 toolchain roots, and that is held today only by a unit test asserting
+  no root is a parent of a deny path. Mask `credential_deny_paths()` on Linux too, with `--tmpfs` or
+  `--ro-bind /dev/null`, so the invariant is enforced rather than inferred — Phase 1 — Claude
+- `packages/shared/src/sandbox-policy.ts` and `packages/tool-registry/src/sandbox-mode.ts` —
+  `SandboxPathLists` carries only `deny_read`, `allow_write` and `deny_write`, so `[sandbox.filesystem]`
+  has no `allowRead` key and a user cannot name a toolchain root of their own. The Rust half already
+  exists (`SandboxConfig.extra_read_paths`, bound by `bwrap_args`); only the TS side is missing —
+  Phase 1 — Claude
+- `crates/rune-sandbox/src/linux.rs` (`toolchain_read_roots`) — `/opt` and `/snap` are not bound.
+  GitHub-hosted runners put their toolchains in `/opt/hostedtoolcache` and snap-installed toolchains
+  live under `/snap`, so a hosted Linux runner still cannot see its own tools inside the sandbox.
+  They are system directories in the same class as `/usr` and `/etc`, but they widen the read
+  surface further than the reported problem needed — Phase 1 — Claude
+- `packages/orchestrator/src/verification-command.ts` (`checkRelatedness`) — the relatedness rule
+  stands down (`reason: "unscoped"`) for a step that touched no files, because there is nothing to
+  relate a command to. The residual: a check that names SOME path can still close a step that wrote
+  nothing. Correlating the command's output, not only its paths, would close it — Phase 1 — Claude
+- `packages/orchestrator/src/task-state.ts` — a `closedBy: "report"` step closes with no tool
+  evidence and no `unproven` mark, so a plan whose last step is report-shaped can still latch the
+  settled-plan waiver even though the run wrote files. Deliberate elsewhere in the codebase, but it
+  is a live path into the finish-gate waiver and wants a decision — Phase 1 — Claude
+- `packages/orchestrator/src/headless.ts` (`headlessExitCode`) — a failed run and a cancelled run
+  both exit 1; only `stopReason` in the envelope separates them. A harness that reads exit codes
+  alone cannot tell "the task failed" from "the user stopped it". Adding a code is a contract change
+  — Phase 1 — Claude
+- `packages/orchestrator/src/agent-loop.ts` (`providerLostEnd`) — the error branch returns without
+  emitting `turn_complete`, so a provider-lost run reaches headless through its non-recoverable
+  error rather than through `stopReason`. Consistent today; worth unifying if the terminal-event
+  contract is formalised — Phase 1 — Claude
+- `crates/rune-sandbox/src/linux.rs` — per-host egress is still unenforced on Linux. Bubblewrap
+  cannot filter by host, so a host- or port-restricted plugin is refused rather than contained; the
+  Linux image proves the refusal, not the filtering. Real per-host filtering needs a different
+  mechanism (a netns with a filtering proxy, or nftables in the namespace) — Phase 1 — Claude
+- `packages/orchestrator/src/bin/rune-cli.ts` — `-p` is `--provider`, and an unrecognised provider
+  name is silently ignored rather than refused: `rune -P "…" -p not-a-real-provider` ran the turn on
+  the configured route instead of failing. A typo in a provider name should not spend on a different
+  provider — Phase 1 — Claude

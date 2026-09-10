@@ -1,0 +1,536 @@
+{
+  "kind": "local-verification",
+  "recordedAt": "2026-09-10",
+  "phase": "Claude Code handoff, Phase 1 (validate the combined source and the actual installation)",
+  "sourceCommit": "c053ca493549cbb5fc108286fbbab8783db0088b",
+  "version": "Rune v0.4.1-dev+c053ca4",
+  "commits": [
+    {
+      "sha": "980bf1e11363f6ebd22de52fda7c64d5eda81a9d",
+      "subject": "harness: an execution receipt is not a verdict, and a settled plan stops covering later work",
+      "files": 14
+    },
+    {
+      "sha": "c053ca493549cbb5fc108286fbbab8783db0088b",
+      "subject": "sandbox: a Linux namespace that seals its own root, and plugins that run from their own tree",
+      "files": 8
+    }
+  ],
+  "workingTreeAfterCommits": {
+    "modified": ["docs/harness-status.md"],
+    "untracked": [
+      "docs/CLAUDE_CODE_HANDOFF.md",
+      "docs/evidence/cache-probe-20260910.json",
+      "docs/evidence/comparison-20260909-i.json",
+      "docs/evidence/comparison-20260910-j.json",
+      "docs/evidence/verification-20260910.json"
+    ],
+    "note": "No source-level change remained uncommitted. The docs above are committed separately as the evidence commit."
+  },
+  "sourcePatchSha256": "4448ad1f9d73bcf9b7d509c338c2cb4a05a82bab77e5385e105f2c5829b465e1",
+  "sourcePatch": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/patch-final-20260910T192146.diff",
+  "sourcePatchNote": "The full pre-commit working patch that every gate below was run against; its whole content is now in 980bf1e + c053ca4.",
+  "artifacts": {
+    "rune-tools-debug": {
+      "path": "/Users/ritikyadav890/Project/Alan/target/debug/rune-tools",
+      "sha256": "1df9d7e4804242914b102ec88beb454e9b2765becf34dd2b02ab22b464cdb4ab",
+      "built": "cargo build --locked -p rune-tools",
+      "note": "Every bun suite below was pointed at this artifact by exporting RUNE_TOOLS_BIN and RUNE_TOOLS_BINARY."
+    },
+    "installedBefore": {
+      "rune-compiled": {
+        "path": "/Users/ritikyadav890/.rune/bin/rune-compiled",
+        "sha256": "296e185328c1b20aeeb6007acbba3171a55526d1ad91a505ff3874ae6ef88f4a"
+      },
+      "rune-tools": {
+        "path": "/Users/ritikyadav890/.rune/bin/rune-tools",
+        "sha256": "f849020a257b10c26eb6f72ad97c7c49960be48170e5e1faf5259031996633c2"
+      },
+      "metadata": {
+        "path": "/Users/ritikyadav890/.rune/bin/rune-compiled.meta",
+        "sha256": "b8616e36d4c7bbeeb391c52e8204a5e321e8943f115be2fbcfc2951e87427260",
+        "RUNE_BUILD_VERSION": "0.4.1-dev+8c4c58f",
+        "RUNE_SOURCE_COMMIT": "8c4c58f885f4eb3058d1bd1f839b06a1a3011189",
+        "RUNE_SOURCE_DIRTY": "1"
+      }
+    },
+    "installedAfter": {
+      "rune-compiled": {
+        "path": "/Users/ritikyadav890/.rune/bin/rune-compiled",
+        "sha256": "78239eb482d93198b59bb8cff882605b731cd2504fe5574583bb7feddf246407"
+      },
+      "rune-tools": {
+        "path": "/Users/ritikyadav890/.rune/bin/rune-tools",
+        "sha256": "f849020a257b10c26eb6f72ad97c7c49960be48170e5e1faf5259031996633c2",
+        "note": "UNCHANGED by this install. The previous installation was already built from this same crates/ source (its metadata records DIRTY=1 at 8c4c58f), and the Linux-only cfg blocks in this patch do not alter the macOS release binary."
+      },
+      "metadata": {
+        "path": "/Users/ritikyadav890/.rune/bin/rune-compiled.meta",
+        "sha256": "9991deee25ff3969403d47c62ae9e2bf7a1d08974bf5ff3593375c9f70b7b74e",
+        "RUNE_BUILD_VERSION": "0.4.1-dev+c053ca4",
+        "RUNE_SOURCE_COMMIT": "c053ca493549cbb5fc108286fbbab8783db0088b",
+        "RUNE_SOURCE_DIRTY": "1",
+        "RUNE_INSTALL_FILE_GUARD": "macos-uchg"
+      }
+    }
+  },
+  "checks": [
+    {
+      "name": "unit",
+      "command": "RUNE_TOOLS_BIN=<debug> RUNE_TOOLS_BINARY=<debug> bun test tests/unit </dev/null",
+      "exit": 0,
+      "result": {
+        "pass": 4480,
+        "fail": 0,
+        "skip": 1,
+        "files": 355,
+        "expectCalls": 16207
+      },
+      "wallSeconds": 51.295,
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates/unit.log",
+      "logSha256": "2df22f1bacf74a555fe9edf5089f89e50b7f2af9e85e60de8c2a8299b467fa33",
+      "skips": [
+        {
+          "count": 1,
+          "reason": "needs a case-sensitive disk (historical)"
+        }
+      ]
+    },
+    {
+      "name": "integration",
+      "command": "RUNE_TOOLS_BIN=<debug> RUNE_TOOLS_BINARY=<debug> RUNE_TEST_PLAYWRIGHT=<module> bun test tests/integration </dev/null",
+      "exit": 0,
+      "result": {
+        "pass": 159,
+        "fail": 0,
+        "skip": 5,
+        "tests": 164,
+        "files": 33,
+        "expectCalls": 801
+      },
+      "wallSeconds": 57.257,
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates/integration.log",
+      "logSha256": "30594ee6b079f511bdbb8d8d4198a7d2dd88cb0cf4476f1c5b614020eed86596",
+      "skips": [
+        {
+          "count": 5,
+          "reason": "need Go/Java toolchains, absent on this machine (historical)"
+        }
+      ],
+      "note": "Both Chromium browser cases RAN and passed here because an already-installed Playwright module was found and pointed at; nothing was downloaded. Without RUNE_TEST_PLAYWRIGHT the same run is 157 pass / 7 skip."
+    },
+    {
+      "name": "typecheck",
+      "command": "bun run typecheck --force",
+      "exit": 0,
+      "result": {
+        "tasks": 14,
+        "successful": 14,
+        "cached": 0
+      },
+      "wallSeconds": 3.716,
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates/typecheck.log",
+      "logSha256": "458899274f5187f926e06b4c9049d57fe5ff803bfaef1775b570cea19525edde"
+    },
+    {
+      "name": "lint",
+      "command": "bun run lint --force",
+      "exit": 0,
+      "result": {
+        "tasks": 7,
+        "successful": 7,
+        "cached": 0
+      },
+      "wallSeconds": 2.447,
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates/lint.log",
+      "logSha256": "afddcad9ee5473a1c02a7efa3e44bf33ef5febf8c5a4e195c594bfbf0e6f184c"
+    },
+    {
+      "name": "format:check",
+      "command": "bun run format:check (prettier --check .)",
+      "exit": 0,
+      "result": {
+        "result": "All matched files use Prettier code style!"
+      },
+      "wallSeconds": 6.962,
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates/format-check.log",
+      "logSha256": "ddaf3f8cde978d375890d880daa98cb8b4c68af7b9bfdb4d129aaa12849e91fd",
+      "note": "First run failed on one file — tests/integration/engine-command-evidence.test.ts, edited by this session. prettier --write was scoped to the two files this session touched; no other file was reformatted."
+    },
+    {
+      "name": "cargo-fmt",
+      "command": "cargo fmt --all -- --check",
+      "exit": 0,
+      "result": {
+        "result": "clean"
+      },
+      "wallSeconds": 0.086,
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates/cargo-fmt.log",
+      "logSha256": "b8cfc409c487c453bee063abf471907c62d4e62770757ceb659f15733edae1bc"
+    },
+    {
+      "name": "cargo-test",
+      "command": "cargo test --locked --workspace",
+      "exit": 0,
+      "result": {
+        "passed": 97,
+        "failed": 0,
+        "ignored": 0,
+        "breakdown": "rune-index 15, rune-sandbox 24, rune-tools 58"
+      },
+      "wallSeconds": 3.817,
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates/cargo-test.log",
+      "logSha256": "36417f323777d8d4bdda0f673a8a3b6e6ffb5f1744fe639e2f00ab340cd9827e"
+    },
+    {
+      "name": "cargo-clippy",
+      "command": "CARGO_TARGET_DIR=<scratch> cargo clippy --locked --all-targets --all-features -- -D warnings",
+      "exit": 0,
+      "result": {
+        "warnings": 0,
+        "cratesChecked": "all 3 workspace crates + deps, 105 compile/check units"
+      },
+      "wallSeconds": 17.665,
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates/cargo-clippy.log",
+      "logSha256": "9e8fcc20b8a7cd9fdcc85eb3121c90fa417237a3a4af2e47d9ed4fd449bc927c",
+      "note": "Run in a clean CARGO_TARGET_DIR on purpose: the first run in the repo target/ reused cargo's fingerprint cache for rune-sandbox and rune-tools and checked only rune-index, so it was not proof."
+    },
+    {
+      "name": "eval",
+      "command": "bun run eval",
+      "exit": 0,
+      "result": {
+        "passed": 63,
+        "total": 63,
+        "rate": "100.0%",
+        "baseline": "unchanged"
+      },
+      "wallSeconds": 13.815,
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates/eval.log",
+      "logSha256": "048d684ab5de1b9f9bcdd206496ff8e26d9ff95017f5667ef193901e9f05f588",
+      "note": "The mock baseline (tests/eval/baseline-mock.json) was NOT re-anchored."
+    },
+    {
+      "name": "eval-auto-safety",
+      "command": "bun run eval:auto-safety --offline",
+      "exit": 0,
+      "result": {
+        "result": "completed"
+      },
+      "wallSeconds": 0.715,
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates/eval-auto-safety.log",
+      "logSha256": "2db3ac1bc222689e5dd85c65e3205bb63feabdf9e8a172d676ab69a0d89b2c1b",
+      "note": "38 corpus rows carry an INFERRED label awaiting human review — a pre-existing corpus state, not a failure of this run."
+    },
+    {
+      "name": "git-diff-check",
+      "command": "git diff --check",
+      "exit": 0,
+      "result": {
+        "whitespaceErrors": 0
+      },
+      "wallSeconds": null,
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates/git-diff-check.log",
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "tsc-tests-strict",
+      "command": "bunx tsc --noEmit -p <scratch tsconfig over 12 edited/new test files>",
+      "exit": 0,
+      "result": {
+        "errors": 0,
+        "filesCovered": 12
+      },
+      "wallSeconds": null,
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates/tsc-tests-strict.log",
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "note": "No repo tsconfig covers tests/**, so a strict scratch config was built over the union of edited and untracked test files. It found one real error (Bun.serve().port is number|undefined, assigned to number in plugin-tools-sandbox.test.ts) which was fixed, and one artifact of the scratch config's own lib setting (Headers.entries in azure-openai.ts) which disappears with lib:[ESNext] and which `typecheck --force` covers under the package's real config."
+    },
+    {
+      "name": "browser-installed",
+      "command": "RUNE_TEST_PLAYWRIGHT=<module> RUNE_TOOLS_BIN=~/.rune/bin/rune-tools bun test tests/integration/browser-sandbox.test.ts </dev/null",
+      "exit": 0,
+      "result": {
+        "pass": 2,
+        "fail": 0,
+        "expectCalls": 17
+      },
+      "wallSeconds": 1.599,
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates/browser-installed.log",
+      "logSha256": "bd52b301fcc91edbbff4027565a0b30a65921347b14294d06956f7f23249837d",
+      "note": "Real Chromium, foreground and background-plan profiles, against the INSTALLED native binary. Path denials and environment secrecy asserted in the same cases."
+    },
+    {
+      "name": "settings-suites",
+      "command": "bun test settings-command + config-writer + update-config-tool + ui-composer </dev/null",
+      "exit": 0,
+      "result": {
+        "pass": 72,
+        "fail": 0,
+        "expectCalls": 399
+      },
+      "wallSeconds": 0.153,
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates/settings-suite.log",
+      "logSha256": "c9ac1bf190c47c447d491af4ace9567d4d3bfbcc8e7a2fcc01a49a44d208a80d",
+      "note": "A focused re-run of suites already inside the 4,480 unit count; not independent evidence. This is SOURCE coverage of settings save/apply/persist — it is NOT the installed 80x24 save/restart smoke, which was not performed (see notProven)."
+    },
+    {
+      "name": "step1-focused",
+      "command": "bun test tests/integration/browser-sandbox.test.ts tests/integration/engine-command-evidence.test.ts </dev/null",
+      "exit": 0,
+      "result": {
+        "pass": 11,
+        "fail": 0,
+        "skip": 2
+      },
+      "wallSeconds": 1.885,
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates/step1-focused.log",
+      "logSha256": "d9280cee7fac8b286d73cd296fc12eea8ccfc90b6b169b6a5029a2fea2eef5b0",
+      "skips": [
+        {
+          "count": 2,
+          "reason": "browser cases: RUNE_TEST_PLAYWRIGHT was unset in this particular run"
+        }
+      ],
+      "note": "The Step 1 test-infra fix. Selection probes, run separately: RUNE_TOOLS_BINARY=/nonexistent now THROWS (0 pass / 1 fail / 1 error) where both suites previously skipped silently inside a green run; RUNE_TOOLS_BIN alone is now honoured (11 pass) where it was previously invisible to these two files."
+    },
+    {
+      "name": "install",
+      "command": "bash scripts/install.sh (unsandboxed, from the capitalized path)",
+      "exit": 0,
+      "result": {
+        "result": "installed atomically",
+        "guardOverride": "none",
+        "serveCheck": "the staged binary hosted a session, zero leaked hosts"
+      },
+      "wallSeconds": 6.823,
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates/install.log",
+      "logSha256": "46537434a41b1560be58b7c598b8381c0ad3cf2b38679723b0dbc88a82c2a1e4",
+      "note": "No RUNE_ALLOW_NON_FF_INSTALL / GEAR_ALLOW_NON_FF_INSTALL was set and no guard stopped the install: the installed root is this same checkout and 8c4c58f is an ancestor of c053ca4, so both the cross-worktree and non-fast-forward guards passed on their own terms."
+    },
+    {
+      "name": "render-live",
+      "command": "bun --preload ./scripts/fake-tty.ts scripts/render-live.ts --largest 10 --width 80 --width 120",
+      "exit": 0,
+      "result": {
+        "sessions": 10,
+        "widths": [80, 120],
+        "linesOverWidth80": 1,
+        "linesOverWidth120": 1
+      },
+      "wallSeconds": 1.049,
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates/render-live.log",
+      "logSha256": "7c3d26b79361530b4a074cbd5911ff4db7fbcb1777a18457196dcf9b0223fb32",
+      "note": "The repo's own replay method: stored session events through the real TurnRenderer, read-only against ~/.rune/rune.db, no provider opened. Verified present and inside the measure at both widths: clipped long tool rows, banded unified diffs with line numbers and +/- gutters, check rows, streak rollups, read-back ranges. The single over-width line at each width is entirely Bengali script; both the renderer and this checker approximate Indic cluster widths, so a visible overflow is NOT established. This renders from source c053ca4 — the same source the installed binary was compiled from — not from the installed binary itself."
+    }
+  ],
+  "linuxImages": [
+    {
+      "tag": "rune-containment-audit:20260910-complete",
+      "id": "sha256:778d90a8772b8df0863f688201389bab765b59c89f97166b9f7c0daac9c69a1e",
+      "builtBy": "earlier session",
+      "ranBy": "Lane B",
+      "exit": 0,
+      "result": {
+        "pass": 23,
+        "fail": 0,
+        "expectCalls": 119
+      },
+      "log": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/linux-tests-complete.log"
+    },
+    {
+      "tag": "rune-containment-audit:20260910-handoff",
+      "id": "sha256:5be0227a4257c4e5be2ded8fa65494c228b171e7fcd67230271e37059e398dab",
+      "builtBy": "Lane B, from the uncommitted working tree",
+      "ranBy": "Lane B",
+      "exit": 0,
+      "result": {
+        "summary": "ALL STEPS PASSED",
+        "crateTests": "16 passed, 0 failed",
+        "integration": {
+          "pass": 31,
+          "fail": 0,
+          "skip": 0,
+          "expectCalls": 152
+        }
+      },
+      "log": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/linux-tests-handoff.log"
+    },
+    {
+      "tag": "rune-containment-audit:20260910-final",
+      "id": "sha256:6cc55bd332f40bd0b60530e34195bb63b9f2bd3cc64a009143a4b5a89ffb8417",
+      "builtBy": "this session, from the COMMITTED tree (980bf1e + c053ca4)",
+      "ranBy": "this session",
+      "exit": 0,
+      "result": {
+        "summary": "ALL STEPS PASSED",
+        "bwrapProbe": "ok",
+        "clippy": "no warnings",
+        "crateTests": "16 passed, 0 failed",
+        "homeToolchainVisible": "ok",
+        "homeCredentialsUnreadable": "ok",
+        "integration": {
+          "pass": 32,
+          "fail": 0,
+          "skip": 0,
+          "expectCalls": 167,
+          "files": 3
+        }
+      },
+      "log": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/linux-tests-final.log",
+      "logSha256": "6c8070825792275f041bd79a50413bf2ddf77d685590e9f50986ae4c1fbf477b",
+      "sourceArchive": {
+        "path": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/linux/source-final.tar",
+        "sha256": "fe0d0da0a6ae1dc925d61b6da3b3ec49b86d9331488749d4de7d8ea3a606999a",
+        "entries": 887,
+        "excludes": "git ls-files over the committed tree only: no .codex/, no node_modules, no target/, no dotfiles, no credential material"
+      },
+      "dockerfile": {
+        "path": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/linux/Dockerfile.final",
+        "sha256": "b4666ff66d36c4c2c211019b5dbbd3ff482ec1bfcd5723bb01f1dd96fd2f95fe"
+      },
+      "runCommand": "docker run --rm --name rune-containment-final --privileged rune-containment-audit:20260910-final",
+      "privilegedQualification": "--privileged is a property of THIS test rig only: Docker Desktop's VM refuses nested unprivileged user namespaces, which bubblewrap needs. It is not in the install script, CI, or any Rune default, and it must not be copied anywhere."
+    }
+  ],
+  "installedSmokes": [
+    {
+      "name": "command -v rune",
+      "exit": 0,
+      "output": "/Users/ritikyadav890/.alan/bin/rune",
+      "note": "PATH still resolves the LEGACY ~/.alan/bin shim ahead of ~/.rune/bin. The shim is byte-identical to the new launcher and reports the new version, so the founder runs the right build — but the rename generation's compatibility path, not the new one, is what `rune` means on this machine today."
+    },
+    {
+      "name": "rune --version",
+      "exit": 0,
+      "output": "Rune v0.4.1-dev+c053ca4"
+    },
+    {
+      "name": "rune doctor",
+      "exit": 0,
+      "output": "build: current — gear/phase-0-stabilize@c053ca49+dirty, built 2026-09-10 19:25; rune-tools ok; sentinels clean; recorder no internal failures; healthy routes codex, ollama",
+      "diagnostics": [
+        "google: gpt-5.6-sol recorded retired (a codex model id filed against a misdirected route)",
+        "openrouter: minimax/minimax-m3:free and deepseek/deepseek-v4-flash:free recorded retired — free tiers withdrawn",
+        "1,170 provider.rate_limit incidents in 7 days",
+        "gear.db still exists alongside rune.db; its sessions are not visible to this build (nothing deleted)"
+      ],
+      "note": "These are diagnostics about the founder's provider accounts and an old database, not install failures. The historical missing-npx doctor line did NOT recur here because this fresh shell inherited the full PATH; that earlier report came from a deliberately restricted PATH and is not re-tested."
+    },
+    {
+      "name": "rune tools-smoke",
+      "exit": 0,
+      "output": "native tools round-trip: write / read / edit / bash"
+    },
+    {
+      "name": "browser checks, foreground and background, installed native binary",
+      "exit": 0,
+      "result": "2 pass / 0 fail",
+      "framesOrLogs": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates/browser-installed.log"
+    },
+    {
+      "name": "TUI at 80 and 120 columns",
+      "exit": 0,
+      "result": "10 stored sessions replayed through the real TurnRenderer at both widths",
+      "frames": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/installed/frames/"
+    },
+    {
+      "name": "piped mode (rune -P --json), installed binary",
+      "exit": 0,
+      "result": "stdout carried ONLY the 320-byte JSON envelope; every diagnostic went to stderr; the envelope reported ok:true, stopReason:\"end_turn\", exit 0",
+      "incident": "THIS INVOCATION MADE AN UNINTENDED LIVE MODEL CALL. It was written as a negative test (-p not-a-real-provider, expected to fail before any network), but the bogus provider was ignored and the run completed a real turn on the configured route codex/gpt-5.6-terra: 15,480 input tokens, 2 output tokens, 16.6 s. This violated the no-spend rule for this phase. It is recorded here rather than omitted. No other model call was made.",
+      "outputs": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/installed/print-badprovider.out"
+    }
+  ],
+  "notProven": [
+    {
+      "item": "Ordinary Linux runners",
+      "detail": "The containment image runs --privileged because Docker Desktop's VM refuses nested unprivileged user namespaces. Nothing here speaks to an unprivileged/rootless Linux host or a GitHub-hosted runner. The CI job in 0946e42 remains the only evidence for that environment and was not run here."
+    },
+    {
+      "item": "Architecture and user",
+      "detail": "linux/arm64 only, everything as root inside the container. x86_64 kernels and a non-root user's bwrap path are untested."
+    },
+    {
+      "item": "15 of 16 toolchain roots",
+      "detail": "Only /root/.local/bin is exercised at runtime. The rest are asserted structurally — bound read-only when present, never writable, never a parent of a credential store — not exercised."
+    },
+    {
+      "item": "Per-host Linux egress",
+      "detail": "Not enforced by anything here. Bubblewrap cannot filter by host; the code refuses such plugins and the image proves the refusal, not the filtering."
+    },
+    {
+      "item": "Installed 80x24 settings save/restart smoke",
+      "detail": "NOT performed this session. It needs an interactive pty session against the installed TUI, and after the unintended live call recorded above no further interactive run was driven. Settings save/apply/persist is covered by 72 unit tests on this source; that is source coverage, not an installed smoke."
+    },
+    {
+      "item": "Installed picker, resize, cancellation and in-TUI /help",
+      "detail": "NOT exercised on the installed binary. They need an interactive pty session. `rune --help` was captured but, redirected to a file, it is not a TTY and rendered at its default width at both COLUMNS settings, so the 80/120 help layout is unverified on the installed binary."
+    },
+    {
+      "item": "The headless exit-code contract on the INSTALLED binary",
+      "detail": "Verified by unit tests on this source only. The mock provider is registered in-process by the test harness (gw.registerProvider); no environment-driven offline provider exists that could drive the compiled binary, so a cancelled or turn-ceiling run could not be produced without spending. The completed-run half (ok:true, stopReason end_turn, exit 0) was observed on the installed binary, by accident, at the cost recorded above."
+    },
+    {
+      "item": "Live model evaluation",
+      "detail": "No pilot, comparison or benchmark was run. Nothing here changes the standing live results, which remain mixed."
+    },
+    {
+      "item": "Hosted CI",
+      "detail": "Not run. Local gates are not hosted CI, and this branch is outside the existing push filters."
+    },
+    {
+      "item": "Windows",
+      "detail": "Not exercised at all in this phase."
+    }
+  ],
+  "behaviorChanges": [
+    {
+      "change": "Headless exit codes for unfinished runs",
+      "impact": "A run that was cancelled, halted by the supervisor, or hit a turn or output-token ceiling now reports ok:false and exits non-zero, carrying a stopReason in the --json/--stream-json envelope. It previously exited 0 with whatever partial text it had, which a benchmark harness scores as a pass. Partial output is still preserved. This is the change most likely to surprise an existing script.",
+      "files": "packages/orchestrator/src/headless.ts",
+      "commit": "980bf1e"
+    },
+    {
+      "change": "A check only closes the step it speaks to",
+      "impact": "A passing command that does not correspond to the open step's touched files no longer closes that step: it still counts as a run, stays on the record and in the Decision Record, and the refusal says \"no passing check\", never \"nothing ran\". The rule STANDS DOWN for a step that touched no files, because there is nothing to relate to — that is the residual, and it is deliberate.",
+      "files": "packages/orchestrator/src/verification-command.ts, agent-loop.ts, task-state.ts, brief.ts",
+      "commit": "980bf1e"
+    },
+    {
+      "change": "Read-only toolchain binds on Linux, on by default",
+      "impact": "16 named home-relative toolchain directories are now readable inside the Linux sandbox. This is a real widening of the read surface, chosen over leaving cargo/bun broken inside the sandbox — which historically ends with users turning the sandbox off. $HOME itself is never bound and no credential store is inside any of them.",
+      "files": "crates/rune-sandbox/src/linux.rs",
+      "commit": "c053ca4"
+    },
+    {
+      "change": "An explicit RUNE_TOOLS_BIN/RUNE_TOOLS_BINARY wins over target/",
+      "impact": "Test binary selection is now explicit and a wrong path throws instead of skipping. THE TRAP: running these suites from inside a Rune session means the launcher's own RUNE_TOOLS_BIN=~/.rune/bin/rune-tools is exported, so they grade the INSTALLED binary rather than a freshly built one. Loud, but surprising.",
+      "files": "tests/helpers/native-binary.ts and four suites",
+      "commit": "c053ca4 (helper in 980bf1e)"
+    },
+    {
+      "change": "The network opt-in emits a user-visible notice",
+      "impact": "Starting a host- or port-restricted plugin under allowUnsandboxedTools on a backend that cannot filter endpoints now returns a notice the Engine drains into MCP notices, instead of a line in a log. startPluginTools().notices changes shape.",
+      "files": "packages/tool-registry/src/tools/plugin-tools.ts",
+      "commit": "c053ca4"
+    },
+    {
+      "change": "The inline-check classifier reads code, not text",
+      "impact": "Nine shapes that previously classified as executed checks — a printed assertion word, an assertion word in a variable or a -p literal, words inside comments, a verdict swallowed by a bare catch — are now execution receipts. They earn a citable receipt and no verdict. Every remaining limit of the classifier errs toward demotion, never toward a false check; it still cannot prove an assertion actually executed.",
+      "files": "packages/orchestrator/src/verification-command.ts",
+      "commit": "980bf1e"
+    }
+  ],
+  "environment": {
+    "host": "macOS 15 (Darwin 25.6.0), arm64",
+    "power": "battery, 48% at the start and 45% at the end, discharging; no sleep or wake event occurred during the gates (pmset -g log showed only prevent-sleep assertions)",
+    "sandbox": "The agent's Bash tool sandboxes commands by default. bun test tests/unit, bun test tests/integration, both evals, every docker command and scripts/install.sh were run with it OFF; every other gate was run sandboxed. Known artifacts of the sandbox on this machine: the full bun suites throw about 40 spurious EADDRINUSE failures, the mock evals fail, and Docker's unix socket is blocked.",
+    "playwright": "An already-installed module was found at node_modules/.bun/playwright@1.62.1/node_modules/playwright/index.mjs with Chromium builds in ~/Library/Caches/ms-playwright. Nothing was installed or downloaded."
+  },
+  "limitations": [
+    "This manifest records local engineering gates and one installed build. It is not a capability score, a competitive result, or a release.",
+    "A checked-in coherent source change, a tested installation, and a published release are three different things. This is the first two.",
+    "The license remains LicenseRef-Proprietary and is unchanged."
+  ]
+}

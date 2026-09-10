@@ -1,5 +1,22 @@
 # Program status
 
+**2026-09-10, later: the Phase 0/1 handoff work is committed, gated and installed.** The backend
+fixes this file last described as "in the Codex session's working tree" — the sealed Linux namespace
+root, the home-toolchain read binds, plugin containment, and the execution-receipt/relatedness/
+headless work — are now committed as `980bf1e` (harness) and `c053ca4` (sandbox) and installed as
+`v0.4.1-dev+c053ca4`. Gates on that source, each run once: unit **4,480 / 0 / 1 skip**, integration
+**159 / 0 / 5 skips** (both Chromium cases ran and passed against the installed native binary),
+typecheck 14/14 and lint 7/7 both uncached, `cargo test --workspace` **97 / 0**, clippy **0 warnings**
+uncached, mock evals **63 / 63** with the baseline unchanged, format and `git diff --check` clean, and
+a strict typecheck of every edited test file. The Linux image rebuilt from the committed tree
+(`rune-containment-audit:20260910-final`) reports **ALL STEPS PASSED** — 16/16 crate tests, 32/0/0
+integration, a home toolchain readable and `/root/.ssh` not. Receipts and the explicit not-proven
+list are in [the Phase 1 manifest](../evidence/verification-20260910b.json); what was NOT covered
+(the installed 80×24 settings save/restart, picker/resize/cancellation, and the headless exit-code
+contract on the installed binary) is named in
+[docs/harness-status.md](../harness-status.md). Ten new defects went to the backlog. Nothing was
+published and the live results are unchanged.
+
 **2026-09-10, night: the TUI, looked at.** Frames captured through a pseudo-terminal at 80×24 and
 120×36 for the start screen, `/help`, `/model`, `/config`, a resumed real run, a live free-route
 run and the piped `-P` rung, with OpenCode captured the same way. Rune's transcript grammar holds

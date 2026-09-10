@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "kind": "local-live-pilot",
+  "startedAt": "2026-09-09T18:10:06.705Z",
+  "limits": {
+    "perTaskListUsd": 1,
+    "timeoutMs": 240000,
+    "runs": 1
+  },
+  "model": "gpt-5.6-sol",
+  "providers": {
+    "rune": "codex",
+    "opencode": "openai"
+  },
+  "provenance": {
+    "runeSha": "99a22f88ae393b65d78b9e1dcbf723258224c284",
+    "dirtyPatchSha256": "76815d0bf567fce3202bdb0b81b8f0896f1a518022c93466a76a013231099862",
+    "taskDigest": "5fd97f19c54b1022761dedc21a6157f256718311a6fb33f4d94d0dc8a0cc674a",
+    "runeExecutableSha256": "961b8739d8b484d851597227ff95bf9f607f156fb2a1b48b8018d84daa436109",
+    "runeCommand": [
+      "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/delivery/rune-compiled"
+    ],
+    "opencodeCommand": [
+      "opencode"
+    ],
+    "versions": {
+      "rune": "Rune v0.4.1-dev+99a22f8",
+      "opencode": "1.18.23"
+    }
+  },
+  "limitations": [
+    "Small internally authored pilot; not SWE-bench or Terminal-Bench and not an overall capability score.",
+    "Same selected primary model and high reasoning; each harness retains its own tools, orchestration, prompts and helper routing.",
+    "Dollar figures use Rune's shared versioned pricing table, not subscription invoices. Unknown prices stay null.",
+    "Rune reserves dollars before requests; OpenCode is stopped after a reported step crosses the common ceiling. Any overshoot is recorded and cannot count as an on-budget success."
+  ],
+  "results": [
+    {
+      "sourceBefore": "961b8739d8b484d851597227ff95bf9f607f156fb2a1b48b8018d84daa436109",
+      "sourceChanged": false,
+      "task": "csv-state-machine",
+      "run": 1,
+      "arm": "rune",
+      "exitCode": 1,
+      "durationMs": 56734,
+      "listUsd": 0.03072175,
+      "models": [
+        "codex/gpt-5.6-sol"
+      ],
+      "entries": 3,
+      "estimated": true,
+      "scored": false,
+      "unscoredReason": "provider_quota",
+      "acceptancePassed": false,
+      "onBudget": true,
+      "success": false,
+      "evidence": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/comparison-i/csv-state-machine-1-rune",
+      "patchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completedAt": "2026-09-09T18:11:04.887Z"
+    }
+  ]
+}

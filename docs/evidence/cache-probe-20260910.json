@@ -1,0 +1,87 @@
+{
+  "kind": "local-live-cache-probe",
+  "recordedAt": "2026-09-10",
+  "sourceCommit": "0946e42cc17fa3ef25da2937abbce5133fdaac4b",
+  "model": "gpt-5.6-sol",
+  "provider": "codex",
+  "reasoning": "low",
+  "turnsPerVariant": 4,
+  "pauseSeconds": 8,
+  "exitCode": 0,
+  "rows": [
+    {
+      "variant": "control",
+      "turn": 1,
+      "promptTokens": 1699,
+      "cacheReadTokens": 0
+    },
+    {
+      "variant": "control",
+      "turn": 2,
+      "promptTokens": 2276,
+      "cacheReadTokens": 0
+    },
+    {
+      "variant": "control",
+      "turn": 3,
+      "promptTokens": 2851,
+      "cacheReadTokens": 0
+    },
+    {
+      "variant": "control",
+      "turn": 4,
+      "promptTokens": 3428,
+      "cacheReadTokens": 2688
+    },
+    {
+      "variant": "folded",
+      "turn": 1,
+      "promptTokens": 1699,
+      "cacheReadTokens": 0
+    },
+    {
+      "variant": "folded",
+      "turn": 2,
+      "promptTokens": 2322,
+      "cacheReadTokens": 1536
+    },
+    {
+      "variant": "folded",
+      "turn": 3,
+      "promptTokens": 2897,
+      "cacheReadTokens": 0
+    },
+    {
+      "variant": "folded",
+      "turn": 4,
+      "promptTokens": 3474,
+      "cacheReadTokens": 0
+    },
+    {
+      "variant": "user-tail",
+      "turn": 1,
+      "promptTokens": 1700,
+      "cacheReadTokens": 0
+    },
+    {
+      "variant": "user-tail",
+      "turn": 2,
+      "promptTokens": 2326,
+      "cacheReadTokens": 1536
+    },
+    {
+      "variant": "user-tail",
+      "turn": 3,
+      "promptTokens": 2901,
+      "cacheReadTokens": 2176
+    },
+    {
+      "variant": "user-tail",
+      "turn": 4,
+      "promptTokens": 3478,
+      "cacheReadTokens": 2176
+    }
+  ],
+  "logSha256": "faa5879367980452eee25a87bb7423d3f9f77ba7afcb121c7cba0cb448fa2ed3",
+  "qualification": "The folded shape did not show a consistent cache-extension advantage in this repetition. Cache-read totals were 2688 control, 1536 folded and 5888 user-tail. One run is not a causal performance estimate, and the earlier expectation of reliable cache growth or cost parity is not established."
+}
