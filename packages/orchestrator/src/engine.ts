@@ -521,8 +521,36 @@ export function replayEvents(
         break;
       }
 
+      case "compaction_failed": {
+        // A compaction that did not happen. Its own row type because a
+        // `compaction` row replaces the replayed transcript, and a failure
+        // replaced nothing.
+        frames.push({
+          seq,
+          event: {
+            type: "compaction",
+            beforeTokens: num(p.beforeTokens),
+            afterTokens: num(p.afterTokens),
+            limitTokens: num(p.limitTokens),
+            forced: p.forced === true ? true : undefined,
+            tier:
+              p.tier === "tool_results" || p.tier === "summarized"
+                ? (p.tier as "tool_results" | "summarized")
+                : undefined,
+            failed: true,
+            failureReason: str(p.failureReason) || "compaction failed",
+          },
+        });
+        break;
+      }
+
       case "compaction":
       case "auto_compaction": {
+        // The frame's `seq` is the dedupe key (G28). A client that was live
+        // when the compaction happened and then reconnects receives it twice —
+        // once from the stream, once from this row — with nothing to tell the
+        // two apart. `ReplayFrame.seq` already crosses the wire for backfill
+        // frames; this is the row it needed to be on.
         frames.push({
           seq,
           event: {
@@ -3885,6 +3913,17 @@ export class Engine {
         originalMessages: number;
         sourceTokens: number;
         summaryTokens: number;
+        /**
+         * The same `compaction` event an automatic compaction emits.
+         *
+         * `/compact` used to emit NOTHING live and persist `trigger:"manual"`,
+         * a value outside the event's own union, which replay then normalised
+         * to `undefined` — so the one compaction a person deliberately asked
+         * for was the one no surface could see and the audit could not name.
+         * Returned rather than yielded because this is a request/response
+         * command, not a turn; the caller hands it to its renderer.
+         */
+        event: AgentTurnEvent;
       }
   > {
     const session = this.sessions.getSession(sessionId);
@@ -3905,6 +3944,7 @@ export class Engine {
     if (!result) return { compacted: false, reason: "summarization failed" };
 
     const lastSeq = events.length > 0 ? events[events.length - 1].seq : 0;
+    const limitTokens = this.contextEngine.getContextUsage().limit;
     this.sessions.appendEvent(sessionId, {
       type: "compaction",
       payload: {
@@ -3913,6 +3953,13 @@ export class Engine {
         originalMessages: messages.length,
         sourceTokens: result.sourceTokens,
         summaryTokens: result.summaryTokens,
+        // The same three numbers an automatic compaction writes, so a replayed
+        // manual compaction is not a row of zeroes beside its neighbours.
+        beforeTokens: result.sourceTokens,
+        afterTokens: result.summaryTokens,
+        limitTokens,
+        summarizedCount: messages.length,
+        tier: "summarized",
         trigger: "manual",
         ...(instructions?.trim() ? { instructions: instructions.trim() } : {}),
       },
@@ -3924,6 +3971,15 @@ export class Engine {
       originalMessages: messages.length,
       sourceTokens: result.sourceTokens,
       summaryTokens: result.summaryTokens,
+      event: {
+        type: "compaction",
+        beforeTokens: result.sourceTokens,
+        afterTokens: result.summaryTokens,
+        limitTokens,
+        summarizedCount: messages.length,
+        tier: "summarized",
+        trigger: "manual",
+      },
     };
   }
 
@@ -5318,8 +5374,32 @@ export class Engine {
         // creates a new loop from the event log: metadata alone resurrected
         // every evicted result on the next message. Flush the original events
         // first so the checkpoint replaces exactly the history before it.
-        if (event.type === "compaction") {
-          if (event.failed !== true) this.liveCompactions++;
+        if (event.type === "compaction" && event.failed === true) {
+          // A compaction that did NOT happen leaves the working set alone, so
+          // it must not be written as a `compaction` or `auto_compaction` row
+          // — both of those REPLACE the replayed transcript. Its own row type
+          // keeps the failure durable (the audit needs it: it is what precedes
+          // a run dying of an over-limit prompt) while `eventsToMessages`
+          // ignores it entirely.
+          try {
+            this.sessions.appendEvent(sessionId, {
+              type: "compaction_failed",
+              payload: {
+                beforeTokens: event.beforeTokens,
+                afterTokens: event.afterTokens,
+                limitTokens: event.limitTokens,
+                forced: event.forced === true,
+                tier: event.tier ?? null,
+                trigger: event.trigger ?? null,
+                failureReason: event.failureReason ?? "",
+              },
+            });
+          } catch {
+            // Observability; never fail a turn over it.
+          }
+        }
+        if (event.type === "compaction" && event.failed !== true) {
+          this.liveCompactions++;
           persistPending();
           this.refreshJitDelivery(sessionId, runner.getMessages());
           this.sessions.appendEvent(sessionId, {
@@ -5422,24 +5502,18 @@ export class Engine {
           // (postToolUse hooks now run inside processToolResult — BEFORE the
           // result enters the transcript — so their findings reach the model.)
 
-          // Track written files for the run's git auto-commit scope.
-          if (
-            event.output.success &&
-            ["write_file", "edit_file", "multi_edit"].includes(event.output.toolName) &&
-            typeof event.args.path === "string" &&
-            event.args.path
-          ) {
-            writtenPaths.add(event.args.path);
-          }
-          // Worker-authored files are writes too — without this the git
-          // auto-commit scope silently excluded everything workers built.
-          if (
-            event.output.success &&
-            event.output.toolName === "worker" &&
-            Array.isArray(event.args.files)
-          ) {
-            for (const f of event.args.files) {
-              if (typeof f === "string" && f) writtenPaths.add(f);
+          // Track written files for the run's git auto-commit scope — through
+          // the same predicate the transcript, the footer and the headless
+          // envelope use. This site already counted worker files; it did not
+          // count `apply_patch`, so a patch-authored change fell outside the
+          // one commit the run was supposed to be revertible as.
+          if (event.output.success) {
+            for (const path of filesChangedFrom(
+              event.output.toolName,
+              event.args,
+              event.output.result,
+            )) {
+              writtenPaths.add(path);
             }
           }
 

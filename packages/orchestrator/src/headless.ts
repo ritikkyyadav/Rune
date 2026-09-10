@@ -11,6 +11,7 @@
 // CI step, git hook and shell pipeline needs first: one prompt in, an answer
 // and an exit code out, no cursor addressing, no prompts to answer.
 
+import { filesChangedFrom } from "./lifecycle";
 import type { Engine } from "./engine";
 import type {
   AgentTurnEvent,
@@ -179,14 +180,19 @@ export async function runHeadless(
         case "tool_call_end": {
           toolCalls++;
           if (!event.output?.success) toolErrors++;
-          const name = event.output?.toolName;
-          const path = event.args?.path;
-          if (
-            event.output?.success &&
-            (name === "edit_file" || name === "write_file" || name === "multi_edit") &&
-            typeof path === "string"
-          ) {
-            filesChanged.add(path);
+          // One predicate, shared with the transcript, the footer and the
+          // auto-commit scope. This counted `write_file|edit_file|multi_edit`
+          // and nothing else, so a run whose writes came from a worker or an
+          // `apply_patch` reported `filesChanged: []` while the engine's own
+          // commit contained every one of them.
+          if (event.output?.success) {
+            for (const path of filesChangedFrom(
+              event.output.toolName,
+              event.args,
+              event.output.result,
+            )) {
+              filesChanged.add(path);
+            }
           }
           break;
         }
@@ -314,11 +320,25 @@ export async function runHeadless(
  * owes the caller. `end_turn` is the only finished outcome; `provider_lost`
  * already raises its own non-recoverable error and keeps that wording.
  */
-const UNFINISHED_STOP: Record<string, string | undefined> = {
+export const UNFINISHED_STOP: Record<string, string | undefined> = {
   aborted: "The run was cancelled before it finished; the output above is partial.",
   halted: "The run was halted before it finished; the output above is its report.",
   max_turns: "The run hit its turn ceiling without finishing; the output above is partial.",
   max_tokens: "The response hit the output-token limit; the output above is partial.",
+  // The plan said N steps and the run ended with some of them open, after the
+  // gate had already refused the finish once. This reported `ok: true` and
+  // exit 0 — a benchmark harness shelling out to `rune -P` scored a run that
+  // abandoned half its plan as a completed task.
+  open_steps: "The run ended with planned steps still open; the task is not finished.",
+  // The provider stopped answering after the retry budget. It raises its own
+  // non-recoverable error, but a run whose plan was already closed ends here
+  // with no error at all, and silence read as success.
+  provider_lost:
+    "The provider stopped answering before the run finished; the output above is partial.",
+  // Nothing new happened for many turns and the loop stopped it. Both stall
+  // paths used to emit no terminal event whatsoever, so the envelope carried
+  // an `error` and no `stopReason` key — JSON.stringify drops undefined.
+  stalled: "The run stopped because nothing new was happening; the task is not finished.",
 };
 
 /** The exit code a result deserves. */

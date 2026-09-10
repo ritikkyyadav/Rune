@@ -756,6 +756,18 @@ export function parseInterjection(text: string): string | null {
 
 // ─── Agent Loop ───
 
+/**
+ * How much of a model's window the UNCOMPACTABLE prompt floor may occupy
+ * before an over-limit rejection is treated as unrecoverable.
+ *
+ * Not 1.0: at 90% the remaining tenth cannot hold a system prompt's worth of
+ * conversation plus one tool result, so compacting to fit would leave a run
+ * that cannot make progress anyway. Measured floor on this build is ~19.5k
+ * tokens (doctrine plus 29 tool schemas), so any window under ~22k is this
+ * case by construction.
+ */
+const FIXED_PROMPT_FLOOR_RATIO = 0.9;
+
 export class AgentLoop {
   private config: AgentLoopConfig;
   private gateway: LlmGateway;
@@ -1026,6 +1038,11 @@ export class AgentLoop {
       error: `Too many consecutive errors (${errors})`,
       recoverable: false,
     };
+    // The terminal event goes LAST, after the error it explains. A consumer
+    // that treats `turn_complete` as end-of-stream (research's investigator
+    // reader does) would otherwise stop before the error and read a lost
+    // provider as an investigator that simply found nothing.
+    yield { type: "turn_complete", stopReason: "provider_lost", totalTurns: turn };
   }
 
   /** Emit a handoff for a run ending with open todos — the honest "state of
@@ -1758,6 +1775,43 @@ export class AgentLoop {
               yield { type: "error", error: result.error, recoverable: false };
               return;
             }
+            // ── The prompt FLOOR does not fit (G15) ──
+            //
+            // System doctrine plus the tool schemas plus the aux blocks, with
+            // nothing the loop is allowed to compact in it. When that is
+            // already at the model's window, force-compacting the working set
+            // cannot help: the observed shape was three generic stream errors
+            // and then "Too many consecutive errors (3)", naming neither the
+            // window nor the thing that filled it, while the compaction
+            // machinery burned two summarizer calls trying. Preflighted here,
+            // BEFORE the retry ladder, and ended with a reason that says what
+            // to change.
+            if (isContextOverflowError(result.error) && this.config.contextEngine) {
+              const fixed = this.config.contextEngine.getFixedPromptTokens?.() ?? 0;
+              const limit = this.contextSnapshot()?.limit ?? 0;
+              if (fixed > 0 && limit > 0 && fixed >= limit * FIXED_PROMPT_FLOOR_RATIO) {
+                this.state = "error";
+                this.report(
+                  "context.budget_overflow",
+                  "error",
+                  "overflow.fixedPromptFloor",
+                  `the fixed prompt is ${fixed} tokens against a ${limit}-token window — nothing compactable is left`,
+                );
+                yield* this.handoffEvents("error");
+                yield {
+                  type: "error",
+                  error:
+                    `The prompt does not fit this model's context window before any conversation ` +
+                    `is added: the system prompt and tool schemas alone are ~${fixed} tokens ` +
+                    `against a ${limit}-token window. Compaction cannot help — nothing in that ` +
+                    `floor is compactable. Use a model with a larger window, or reduce the tool ` +
+                    `surface (fewer MCP servers, \`/config doctrine jit\`).`,
+                  recoverable: false,
+                };
+                yield { type: "turn_complete", stopReason: "max_tokens", totalTurns: turn };
+                return;
+              }
+            }
             // Context overflow: the prompt no longer fits the model's window
             // (e.g. several parallel 30k tool results landed in one turn).
             // Re-sending the identical prompt can only fail identically —
@@ -1793,13 +1847,17 @@ export class AgentLoop {
               if (r.failed) {
                 // The one recovery path for an over-limit prompt just failed —
                 // say so LOUDLY. Silence here was how long runs died of
-                // "too many consecutive errors" with no visible cause.
+                // "too many consecutive errors" with no visible cause. It is
+                // a typed event as well as a notice now, so every consumer
+                // sees the failure rather than only the surface that happens
+                // to render prose.
                 this.report(
                   "context.budget_overflow",
                   "error",
                   "overflow.compact",
                   `forced compaction failed: ${r.failureReason}`,
                 );
+                yield this.compactionEvent(r, true);
                 yield {
                   type: "notice",
                   message: `Compaction failed (${r.failureReason}) — the prompt still exceeds the model's window.`,
@@ -2549,6 +2607,12 @@ export class AgentLoop {
           );
           spine.logEvent("gate", `ended with ${c.open} of ${c.total} steps open`);
           yield* this.handoffEvents("open_steps");
+          // The verdict, not just the handoff. This fell through to
+          // `turn_complete { stopReason }` with the accumulated reason —
+          // normally `end_turn` — so `rune -P --json` reported `ok: true` and
+          // exit 0 for a run that abandoned half its plan. Every machine
+          // consumer scored that as a finished task.
+          stopReason = "open_steps";
         }
 
         // Compact only when context is near budget (avoids a summarization
@@ -2568,6 +2632,7 @@ export class AgentLoop {
               "finish.compact",
               `compaction failed: ${r.failureReason}`,
             );
+            yield this.compactionEvent(r);
             yield {
               type: "notice",
               message: `Context compaction failed (${r.failureReason}) — continuing uncompacted.`,
@@ -3848,6 +3913,12 @@ export class AgentLoop {
               "resume with a different approach.",
             recoverable: false,
           };
+          // Every terminal path owes exactly one `turn_complete`, last. These
+          // two stall paths emitted none at all, so the headless envelope
+          // carried an `error` and no `stopReason` key — JSON.stringify drops
+          // an undefined value — and a consumer could not tell a stall from a
+          // crash.
+          yield { type: "turn_complete", stopReason: "stalled", totalTurns: turn };
           return;
         }
         {
@@ -4076,6 +4147,7 @@ export class AgentLoop {
               "different approach.",
             recoverable: false,
           };
+          yield { type: "turn_complete", stopReason: "stalled", totalTurns: turn };
           return;
         }
         if (staleTurns >= staleLimit && staleNudges < 1) {
@@ -4187,7 +4259,9 @@ export class AgentLoop {
       afterTokens?: number;
       summarizedCount?: number;
       tier?: "tool_results" | "summarized";
-      trigger?: "auto" | "requested" | "overflow";
+      trigger?: "auto" | "requested" | "overflow" | "manual";
+      failed?: boolean;
+      failureReason?: string;
     },
     forced = false,
   ): AgentTurnEvent {
@@ -4201,6 +4275,11 @@ export class AgentLoop {
       forced: forced || undefined,
       tier: r.tier,
       trigger: r.trigger,
+      // A compaction that did NOT happen is still news — arguably the more
+      // important news, since it is the one that precedes a run dying of an
+      // over-limit prompt.
+      failed: r.failed === true ? true : undefined,
+      failureReason: r.failed === true ? r.failureReason : undefined,
     };
   }
 

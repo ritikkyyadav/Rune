@@ -146,7 +146,12 @@ export function eventsToMessages(
         // Drop everything accumulated so far and replace it with the summary;
         // later events (future turns) then append after it normally. The
         // underlying event log is untouched — only the replayed view shrinks.
-        const p = event.payload as unknown as CompactionPayload;
+        const p = event.payload as unknown as CompactionPayload & { failed?: boolean };
+        // A compaction that FAILED replaced nothing. Guarded here as well as
+        // at the writer, because this branch wipes the whole replayed
+        // transcript and a row that arrives from a future build claiming a
+        // failure must not be able to erase a session's history.
+        if (p.failed === true) break;
         pendingToolCalls.clear();
         messages.length = 0;
         messages.push({

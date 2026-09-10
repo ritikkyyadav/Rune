@@ -1130,6 +1130,19 @@ ${sections}${focus}`
    * Return current context window usage statistics.
    * Updated after each buildPrompt() call.
    */
+  /**
+   * The prompt floor: system doctrine + tool schemas + the aux blocks.
+   *
+   * Nothing the loop can compact is in it. When it is already at or over the
+   * model's window, no amount of summarizing will make the request fit — which
+   * is why an overlarge fixed prompt used to arrive as three generic stream
+   * errors and then "Too many consecutive errors", naming neither the window
+   * nor the thing that filled it.
+   */
+  getFixedPromptTokens(): number {
+    return Math.max(0, Math.round(this.lastFixedPromptTokens));
+  }
+
   getContextUsage(): { used: number; limit: number; percent: number } {
     return {
       used: this.lastTokenUsage?.used ?? 0,

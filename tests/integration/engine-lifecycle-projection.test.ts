@@ -34,6 +34,12 @@ import {
 } from "../../packages/shared/src/state";
 import type { SessionManager } from "../../packages/shared/src/session";
 import type { AgentTurnEvent, TaskLifecycle } from "../../packages/protocol/src/index";
+import {
+  runHeadless,
+  headlessEnvelope,
+  headlessExitCode,
+  UNFINISHED_STOP,
+} from "../../packages/orchestrator/src/headless";
 import { UsageProvider } from "../helpers/usage-provider";
 
 const cleanup: Array<() => void> = [];
@@ -408,5 +414,166 @@ describe("one definition of what a run changed", () => {
     ]);
     expect(filesChangedFrom("read_file", { path: "src/a.ts" })).toEqual([]);
     expect(filesChangedFrom(undefined, undefined)).toEqual([]);
+  });
+});
+
+describe("the terminal result reaches a machine consumer", () => {
+  test("open steps are ok:false, and the envelope carries the lifecycle", async () => {
+    const dir = tempWorkspace("rune-open-steps-");
+    const engine = makeEngine(dir);
+    script(engine, [
+      [
+        tool("todo_write", {
+          items: [
+            { content: "Write the module", kind: "edit", status: "in_progress" },
+            { content: "Write its tests", kind: "verify", status: "pending" },
+          ],
+        }),
+      ],
+      [tool("write_file", { path: "mod.ts", content: "export const a = 1;\n" })],
+      [{ type: "text", text: "That is the module." }],
+      [{ type: "text", text: "Still the module." }],
+    ]);
+    const session = engine.createSession();
+    const result = await runHeadless(engine, session, "Write a module and its tests.");
+
+    // Gap 1.8c: this returned ok:true and exit 0 for a run that abandoned
+    // half its plan, after the gate had already refused the finish once.
+    expect(result.stopReason).toBe("open_steps");
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("planned steps still open");
+    expect(headlessExitCode(result)).toBe(1);
+
+    // The projection travels with it: the plan, the budget and the ending.
+    expect(result.lifecycle).toBeDefined();
+    expect(result.lifecycle!.status).toBe("open_steps");
+    expect(result.lifecycle!.evidence.todos).toHaveLength(2);
+    expect(result.filesChanged).toContain("mod.ts");
+
+    const envelope = JSON.parse(headlessEnvelope(result, { sessionId: session })) as {
+      ok: boolean;
+      stopReason: string;
+      lifecycle?: { status: string; budget: { turnsUsed: number } };
+    };
+    expect(envelope.ok).toBe(false);
+    expect(envelope.stopReason).toBe("open_steps");
+    expect(envelope.lifecycle?.status).toBe("open_steps");
+    expect(envelope.lifecycle?.budget.turnsUsed).toBeGreaterThan(0);
+  });
+
+  test("every unfinished verdict has a line, and end_turn stays the only finish", () => {
+    // Gap 1.8c/1.8d/G18: four of seven reasons reported `ok: true`.
+    for (const reason of [
+      "aborted",
+      "halted",
+      "max_turns",
+      "max_tokens",
+      "open_steps",
+      "provider_lost",
+      "stalled",
+    ]) {
+      const result = {
+        text: "",
+        ok: true,
+        stopReason: reason,
+        toolCalls: 0,
+        toolErrors: 0,
+        filesChanged: [],
+        permissionsDenied: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        durationMs: 0,
+      };
+      const envelope = JSON.parse(headlessEnvelope(result)) as { stopReason?: string };
+      expect(envelope.stopReason).toBe(reason);
+    }
+    expect(UNFINISHED_STOP.end_turn).toBeUndefined();
+    for (const reason of [
+      "aborted",
+      "halted",
+      "max_turns",
+      "max_tokens",
+      "open_steps",
+      "provider_lost",
+      "stalled",
+    ]) {
+      expect(typeof UNFINISHED_STOP[reason]).toBe("string");
+    }
+  });
+
+  test("a compaction that FAILED is an event, not only a notice", async () => {
+    const dir = tempWorkspace("rune-compaction-fail-");
+    const engine = makeEngine(dir);
+    // The summarizer is the one model round trip inside compaction; a context
+    // engine whose compaction always fails is the deterministic version of
+    // the fake server 500-ing every `stream:false` request.
+    const internals = engine as unknown as {
+      contextEngine: {
+        shouldCompact: () => boolean;
+        compactWorkingSet: () => Promise<unknown>;
+        getContextUsage: () => { used: number; limit: number; percent: number };
+      };
+    };
+    internals.contextEngine.shouldCompact = () => true;
+    internals.contextEngine.compactWorkingSet = async () => ({
+      compacted: false,
+      failed: true,
+      failureReason: "every summarizer candidate refused",
+      messages: [],
+    });
+    script(engine, [[{ type: "text", text: "Answered." }]]);
+    const session = engine.createSession();
+    const events = await drain(engine, session, "Say something short.");
+
+    const failure = events.find((e) => e.type === "compaction" && e.failed === true);
+    expect(failure).toBeDefined();
+    expect(failure).toMatchObject({ failureReason: "every summarizer candidate refused" });
+
+    // …and it is durable, so the audit can name the cause of a run that then
+    // died of an over-limit prompt.
+    const rows = (engine as unknown as Internals).sessions.getEvents(session, 1);
+    const replayed = replayEvents(rows).frames.map((f) => f.event);
+    expect(replayed.some((e) => e.type === "compaction" && e.failed === true)).toBe(true);
+  });
+
+  test("a manual /compact emits the event it always persisted a name for", async () => {
+    const dir = tempWorkspace("rune-manual-compact-");
+    const engine = makeEngine(dir);
+    const internals = engine as unknown as {
+      contextEngine: { summarizeConversation: () => Promise<unknown> };
+    };
+    internals.contextEngine.summarizeConversation = async () => ({
+      summary: "They asked twice; both were answered.",
+      sourceTokens: 900,
+      summaryTokens: 90,
+    });
+    script(engine, [[{ type: "text", text: "One." }], [{ type: "text", text: "Two." }]]);
+    const session = engine.createSession();
+    await drain(engine, session, "First message.");
+    await drain(engine, session, "Second message.");
+
+    const result = await engine.compactSession(session);
+    expect(result.compacted).toBe(true);
+    if (!result.compacted) return;
+    expect(result.event).toMatchObject({
+      type: "compaction",
+      trigger: "manual",
+      beforeTokens: 900,
+      afterTokens: 90,
+    });
+
+    // Replay used to normalise "manual" to undefined, because the value was
+    // outside the event's own union — the one compaction a person deliberately
+    // asked for was the one the audit could not name.
+    const rows = (engine as unknown as Internals).sessions.getEvents(session, 1);
+    const replayed = replayEvents(rows).frames.filter((f) => f.event.type === "compaction");
+    const manual = replayed
+      .map((f) => f.event)
+      .find((e) => e.type === "compaction" && e.trigger === "manual");
+    expect(manual).toBeDefined();
+    // G28: the frame carries the row's seq, so a client that saw it live can
+    // dedupe instead of rendering the same compaction twice on reconnect.
+    expect(replayed.every((f) => f.seq > 0)).toBe(true);
   });
 });

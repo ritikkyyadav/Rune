@@ -39,6 +39,7 @@ import { Pulse, PULSE_WEIGHT, pulseGlyph, quietLabel } from "./pulse";
 import { renderMarkdown } from "./markdown";
 import { renderUnifiedDiff } from "../diff-render";
 import { stepReceipt, type TodoItem as SpineTodo } from "../../task-state";
+import { filesChangedFrom } from "../../lifecycle";
 
 export { isVerificationCommand };
 
@@ -394,20 +395,20 @@ function partialArgs(raw: string): Record<string, unknown> {
   return result;
 }
 
-/** Turn metadata the caller may still pass. The flow header carries the turn
- *  and checkpoint state now, so the message itself stays undecorated. */
-export interface UserBlockMeta {
-  turn?: number;
-  checkpoint?: string;
-}
-
 /**
  * What you asked, at the left margin. No bar, no fill, no receipt -- and, since
  * the echo was repainted, no competing with the answer either: the block sits
  * at the muted slot under a single coloured marker. F.asked() carries the
  * reasoning; the turn number is already in the header.
+ *
+ * It took a `meta` argument — the turn number and the latest checkpoint label —
+ * and discarded it, which is how `checkpoint_saved` came to be an event three
+ * surfaces routed and none of them drew. The layout above is deliberate and is
+ * not the place for a receipt, so the argument is gone rather than rendered:
+ * an unused parameter that two call sites compute a database read for is worse
+ * than either drawing it or not carrying it.
  */
-export function userBlock(raw: string, _meta: UserBlockMeta = {}): string {
+export function userBlock(raw: string): string {
   return F.asked(raw);
 }
 
@@ -633,7 +634,6 @@ export class TurnRenderer {
   private lastThinkingAt = 0;
   private contextPercent: number | null = null;
   private turnCount = 0;
-  private checkpoint: { runId: string; version: number } | null = null;
   /** The run's lifecycle as of its last boundary. See the `lifecycle` case. */
   private lifecycle: TaskLifecycle | null = null;
 
@@ -1442,6 +1442,11 @@ export class TurnRenderer {
       }
       return;
     }
+    // The shared predicate decides WHETHER this call changed the workspace;
+    // the counting below is this surface's own (it draws diffs, the others do
+    // not). Before Phase 2 four surfaces each had their own answer to the
+    // first question and they disagreed — see filesChangedFrom.
+    if (filesChangedFrom(name, event.args, String(event.output.result ?? "")).length === 0) return;
     if (name !== "edit_file" && name !== "write_file" && name !== "multi_edit") return;
     const path = String(event.args?.path ?? tryJson(String(event.output.result))?.path ?? "");
     if (!path) return;
@@ -2099,12 +2104,10 @@ export class TurnRenderer {
       }
 
       case "checkpoint_saved": {
-        // Feeds the task metadata + end-of-turn summary strip; never printed
-        // inline (a checkpoint per write would be noise).
-        this.checkpoint = {
-          runId: String(event.runId ?? ""),
-          version: Number(event.version ?? 0),
-        };
+        // A durability receipt: a resume pointer was written. It fed a
+        // `checkpoint` field the renderer never read and a `_meta` argument
+        // `userBlock` discarded — three surfaces routing an event none of them
+        // drew. The turn count is the part that is genuinely live.
         this.turnCount = Math.max(this.turnCount, Number(event.turnCount ?? 0));
         this.updateLive();
         return;
@@ -2180,7 +2183,11 @@ export class TurnRenderer {
         this.currentTool = null;
         this.activity = null;
         this.errored = true;
-        this.hardError = true;
+        // `recoverable` was read by headless and ignored here, so a 429 the
+        // gateway retried and recovered from set `hardError` and painted the
+        // close of a SUCCESSFUL run as a failure. The engine retries and falls
+        // back on its own; only a terminal error is this turn's verdict.
+        if (!event.recoverable) this.hardError = true;
         this.failures++;
         const block = formatEvent(event);
         if (block) {
@@ -2201,7 +2208,10 @@ export class TurnRenderer {
         if (
           event.stopReason === "max_turns" ||
           event.stopReason === "max_tokens" ||
-          event.stopReason === "halted"
+          event.stopReason === "halted" ||
+          event.stopReason === "provider_lost" ||
+          event.stopReason === "open_steps" ||
+          event.stopReason === "stalled"
         ) {
           this.stoppedEarly = event.stopReason;
         }
@@ -2246,8 +2256,18 @@ export class TurnRenderer {
     this.commitErrorOnce(block);
   }
 
-  /** Why the run ended before finishing — a ceiling, or a safety halt. */
-  private stoppedEarly: "max_turns" | "max_tokens" | "halted" | null = null;
+  /**
+   * Why the run ended before finishing.
+   *
+   * It latched three of the loop's seven terminal reasons. `provider_lost`,
+   * `open_steps` and `stalled` were dropped on the floor, so a run whose
+   * provider went silent, one that abandoned half its plan, and one that
+   * finished cleanly all drew the same closing rows — and the TUI used its own
+   * `aborting` flag rather than the `aborted` the loop had already told it.
+   */
+  private stoppedEarly:
+    "max_turns" | "max_tokens" | "halted" | "provider_lost" | "open_steps" | "stalled" | null =
+    null;
 
   /** Last live repaint driven by streaming prose (throttled to ~80ms). */
   private lastProseLiveAt = 0;
@@ -2273,12 +2293,22 @@ export class TurnRenderer {
           ? "ran out of turns -- the task is not finished"
           : this.stoppedEarly === "halted"
             ? "safety halted the run -- the task is not finished"
-            : "hit the output limit -- the response is incomplete";
+            : this.stoppedEarly === "provider_lost"
+              ? "the provider stopped answering -- the task is not finished"
+              : this.stoppedEarly === "open_steps"
+                ? "ended with planned steps still open -- the task is not finished"
+                : this.stoppedEarly === "stalled"
+                  ? "stopped -- nothing new was happening"
+                  : "hit the output limit -- the response is incomplete";
       // A halt is not resumable by nagging: the broker stopped this run because
       // it may no longer be the user's. Saying "send a follow-up to continue"
       // there would be advice to walk straight back into it.
       const nextStep =
-        this.stoppedEarly === "halted" ? "check what it read" : "send a follow-up to continue";
+        this.stoppedEarly === "halted"
+          ? "check what it read"
+          : this.stoppedEarly === "stalled"
+            ? "resume with a different approach"
+            : "send a follow-up to continue";
       return F.flowRow(
         `${F.MARK}${warn("!")} ${text(label)}`,
         faint(F.receiptOf([...this.workReceipt(), nextStep])),

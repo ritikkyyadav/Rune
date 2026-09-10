@@ -2250,21 +2250,8 @@ class Tui {
 
   /** The latest durable checkpoint this window has seen, keyed by session so a
    *  resumed session never inherits another session's receipt. */
-  private lastCheckpoint: { sessionId: string; label: string } | null = null;
 
   /** The v2 task-bar receipt: the turn about to run and the latest checkpoint. */
-  private taskBarMeta(): { turn?: number; checkpoint?: string } {
-    let turn: number | undefined;
-    try {
-      turn = this.ctx.engine.listUserTurns(this.ctx.sessionId).length + 1;
-    } catch {
-      turn = undefined;
-    }
-    const checkpoint =
-      this.lastCheckpoint?.sessionId === this.ctx.sessionId ? this.lastCheckpoint.label : undefined;
-    return { turn, checkpoint };
-  }
-
   /** Echo, record, and execute one line of input -- a slash command or a model turn. Shared by
    *  submit() and the type-ahead queue drained when a turn completes, so both run identically. */
   private async runInput(raw: string, scheduledLoop?: LoopTask): Promise<void> {
@@ -2279,9 +2266,9 @@ class Tui {
       this.print(
         `  ${warn(glyph("retry"))} ${bold(text("Loop"))} ${info(scheduledLoop.id)} ${faint(`| iteration ${scheduledLoop.runCount + 1} | ${scheduledLoop.cadence}`)}`,
       );
-      this.print(userBlock(raw, this.taskBarMeta()));
+      this.print(userBlock(raw));
     } else if (raw.startsWith("/")) this.print(`  ${info(glyph("selection"))} ${text(raw)}`);
-    else this.print(userBlock(raw, this.taskBarMeta()));
+    else this.print(userBlock(raw));
 
     if (!scheduledLoop && raw.startsWith("/")) {
       const handled = await this.handleSlash(raw);
@@ -5403,10 +5390,6 @@ class Tui {
             break;
           }
 
-          case "checkpoint_saved":
-            this.lastCheckpoint = { sessionId: this.ctx.sessionId, label: `v${ev.version}` };
-            break;
-
           // A quota stop ends the run but names its retry window — captured
           // here so the finally block can schedule the auto-resume.
           case "error":
@@ -5419,6 +5402,10 @@ class Tui {
           // answer buffer, the tool counters, the footer's file set, the
           // checkpoint label and the quota stop. A member that needs none of
           // those is named here rather than defaulted.
+          // A durability receipt, not a row: it says a resume pointer was
+          // written. `rune doctor` reports the table and the resume path reads
+          // it; the shell tracked it in a field nothing ever drew.
+          case "checkpoint_saved":
           case "thinking_delta":
           case "tool_call_start":
           case "tool_call_args_delta":

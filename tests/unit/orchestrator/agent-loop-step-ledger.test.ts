@@ -305,7 +305,11 @@ describe("the open-steps gate", () => {
     expect(handoff?.reason).toBe("open_steps");
     expect(ts.snapshot().handoff?.reason).toBe("open_steps");
     const done = events.find((e) => e.type === "turn_complete") as any;
-    expect(done.stopReason).toBe("end_turn");
+    // Phase 2 G21: this asserted `end_turn`, which is what made a run that
+    // abandoned its whole plan report `ok: true` and exit 0 to every machine
+    // consumer. The handoff said `open_steps` and the terminal event said the
+    // run finished — the two halves of the same ending disagreeing.
+    expect(done.stopReason).toBe("open_steps");
     expect(ts.renderMissionFile()).toContain("gate: ended with 2 of 2 steps open");
   });
 
