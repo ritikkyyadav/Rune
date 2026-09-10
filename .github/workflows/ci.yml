@@ -143,9 +143,26 @@ jobs:
           python3 --version || echo "python3: MISSING"
           javac -version || echo "javac: MISSING"
           cargo --version || echo "cargo: MISSING"
+      - name: Linux containment backend (bubblewrap)
+        # The native sandbox on Linux is bubblewrap. The runner image has none,
+        # so every containment test skipped here silently and a green Linux job
+        # never proved a single denial. Ubuntu 24.04 also restricts unprivileged
+        # user namespaces by default, which bwrap needs. The preflight fails the
+        # job if bwrap cannot run at all, so a skip can never pass as a proof.
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          bwrap --ro-bind / / --dev /dev --proc /proc --unshare-all -- /bin/true
+          echo "bwrap ok"
       - name: TypeScript integration tests (real engine + real rune-tools)
         env:
           RUNE_TOOLS_BIN: ${{ github.workspace }}/target/release/rune-tools
+          # The containment and command-evidence suites read RUNE_TOOLS_BINARY
+          # (background-sandbox, engine-command-evidence, browser-sandbox); with
+          # only RUNE_TOOLS_BIN set they skipped on every runner. Same binary.
+          RUNE_TOOLS_BINARY: ${{ github.workspace }}/target/release/rune-tools
           # ubuntu ships Go, Python and Java; Rust comes from the toolchain step
           # above. macOS runners have no Go, so the requirement is linux-only.
           RUNE_VERIFIER_REQUIRE_TOOLCHAINS: ${{ matrix.os == 'ubuntu-latest' && 'go,python,rust,java' || '' }}

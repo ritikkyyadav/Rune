@@ -8,14 +8,14 @@ OpenCode's cost across workloads, or improves itself reliably over long tasks.
 
 ## What is actually delivered
 
-Installed locally: **Rune v0.4.1-dev+99a22f8**, CLI SHA-256
-`a2be4b866aea31395611891d95ee716d789fb435d93f6ab5e0f493ba7a1b08a8`, native tools unchanged at
-`4aedd8ed0b215ff04a308d884d2d6caa75684f43d4006ccac78414a349e3c287`, built 2026-09-10 00:52 IST from
-`99a22f8` plus the whole working tree (the command-evidence, empty-completion, classifier and
-ephemeral-tail changes below). The `ae1847c` delivery in the
-[delivery manifest](evidence/verification-20260909-final.json) is the binary Pilots G and H ran;
-the `961b8739…` build of 2026-09-09 23:38 IST ran Pilot I. All of these working changes are
-**uncommitted**. A published 0.4.1 release should not be assumed to contain them.
+Installed locally: **Rune v0.4.1-dev+897b192**, CLI SHA-256
+`68b8308fa3133c619315de527238d1aff68765ba50b4470bffffd661bd76dd53`, native tools unchanged at
+`4aedd8ed0b215ff04a308d884d2d6caa75684f43d4006ccac78414a349e3c287`, built 2026-09-10 08:07 IST from
+commit `897b192`, which carries everything below: the Codex session's audit follow-through, the
+cache fold, and the step-count changes. Earlier builds: `a2be4b86…` (the fold only, 00:52 IST),
+`961b8739…` (ran Pilot I), and the `ae1847c` delivery in the
+[delivery manifest](evidence/verification-20260909-final.json) that Pilots G and H ran. The
+commit is local and **not pushed**. A published 0.4.1 release does not contain any of it.
 
 | Problem                          | Delivered behavior                                                                                                                                  | What remains                                                                                            |
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
@@ -138,10 +138,18 @@ loop was frozen for 925 s; four unit tests that failed in that window failed on 
 `caffeinate` cannot override a closed lid on battery: plug the Mac in or open the lid, then run
 `bun test tests/unit/` and `bash scripts/install.sh`.
 
+**Linux containment (item 8 of the plan):** the Linux CI job never exercised a denial. The
+containment and command-evidence suites read `RUNE_TOOLS_BINARY`, CI exported `RUNE_TOOLS_BIN`,
+and the runner image has no bubblewrap, so every one of them skipped silently under a green job.
+The workflow now installs bubblewrap on ubuntu, relaxes the 24.04 user-namespace restriction,
+fails the job if `bwrap` cannot run, and exports both variable names. This is committed, not
+pushed, and not yet run: the first Linux run is the proof, red or green, and a red run there is
+a real finding about the bubblewrap backend rather than a CI problem to paper over.
+
 ## Next work, in order
 
-1. Wake the machine, confirm the full suite, reinstall, commit the working tree in three
-   chunks (the Codex session's audit follow-through, the cache fold, the step-count leaks).
+1. Wake the machine (plug it in or open the lid), push `gear/phase-0-stabilize`, and read the
+   Linux integration job: it is the first run of the containment suites on Linux.
 2. Re-run the paused cache probe and Pilot H's CSV task on the new build against OpenCode when
    the Codex quota returns. The expectation, not a claim: about ten completions, a cache that
    extends every turn, and cost at or below OpenCode's on this task.
