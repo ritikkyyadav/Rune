@@ -43,9 +43,15 @@ export {
   forgetToolChild,
   recordToolChild,
   reapToolChildren,
+  toolChildIdentity,
   type ReapedChild,
   type ToolChildRecord,
 } from "./tools/child-ledger";
+export {
+  probeProcess,
+  processIdentitySupported,
+  type ProcessProbe,
+} from "./tools/process-identity";
 export { registerBuiltinTools, stopLanguageServers } from "./tools/builtin";
 // Web search: the engine roster's runtime half. `/login` and `rune login` use
 // the probe to verify a pasted key with one real search.

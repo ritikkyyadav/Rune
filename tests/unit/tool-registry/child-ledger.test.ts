@@ -22,6 +22,7 @@ import {
   reapToolChildren,
   recordToolChild,
 } from "../../../packages/tool-registry/src/tools/child-ledger";
+import type { ProcessProbe } from "../../../packages/tool-registry/src/tools/process-identity";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -42,6 +43,24 @@ function workspace(): string {
 
 /** A pid that is certainly not running: the kernel's own maximum, plus one. */
 const DEAD_PID = 4_194_305;
+
+/**
+ * A stand-in kernel, so the decisions can be tested without spawning anything.
+ * `probeProcess` reads /proc or libproc for real; these tests are about what
+ * the reaper DOES with the answer, and a real process would prove less.
+ */
+function fakeKernel(table: Record<number, { start: string; command?: string; zombie?: boolean }>) {
+  return (pid: number): ProcessProbe => {
+    const row = table[pid];
+    if (!row) return { state: "gone" };
+    return {
+      state: "identity",
+      start: row.start,
+      command: row.command ?? "sleep",
+      zombie: row.zombie ?? false,
+    };
+  };
+}
 
 test("a noted child is written, and forgotten when it exits", () => {
   const root = workspace();
@@ -95,6 +114,7 @@ test("a dead owner's live child is killed, group first", () => {
     ownerPid: DEAD_PID,
     at: new Date().toISOString(),
     tool: "bash",
+    start: "test:5555@1",
   });
   const signals: Array<number | string> = [];
   const realKill = process.kill.bind(process);
@@ -109,6 +129,7 @@ test("a dead owner's live child is killed, group first", () => {
     const report = reapToolChildren(root, {
       self: process.pid,
       pidAlive: (pid) => pid !== DEAD_PID,
+      probe: fakeKernel({ 5555: { start: "test:5555@1" } }),
     });
     expect(report).toHaveLength(1);
     expect(report[0]).toMatchObject({ pid: 5555, outcome: "killed", tool: "bash" });
@@ -130,7 +151,11 @@ test("a child whose owner AND self are both gone is reported, not signalled", ()
     ownerPid: DEAD_PID,
     at: new Date().toISOString(),
   });
-  const report = reapToolChildren(root, { self: process.pid, pidAlive: () => false });
+  const report = reapToolChildren(root, {
+    self: process.pid,
+    pidAlive: () => false,
+    probe: fakeKernel({}),
+  });
   expect(report).toHaveLength(1);
   expect(report[0]).toMatchObject({ outcome: "gone" });
 });
@@ -138,7 +163,13 @@ test("a child whose owner AND self are both gone is reported, not signalled", ()
 test("an entry older than the pid-reuse window is forgotten, never killed", () => {
   const root = workspace();
   const old = new Date(Date.now() - CHILD_RECORD_TTL_MS - 60_000).toISOString();
-  recordToolChild(root, { pid: 7777, pgid: 7777, ownerPid: DEAD_PID, at: old });
+  recordToolChild(root, {
+    pid: 7777,
+    pgid: 7777,
+    ownerPid: DEAD_PID,
+    at: old,
+    start: "test:7777@1",
+  });
   const signals: number[] = [];
   const realKill = process.kill.bind(process);
   (process as { kill: typeof process.kill }).kill = ((pid: number, signal?: string | number) => {
@@ -148,7 +179,11 @@ test("an entry older than the pid-reuse window is forgotten, never killed", () =
   }) as typeof process.kill;
   let report;
   try {
-    report = reapToolChildren(root, { self: process.pid, pidAlive: (p) => p !== DEAD_PID });
+    report = reapToolChildren(root, {
+      self: process.pid,
+      pidAlive: (p) => p !== DEAD_PID,
+      probe: fakeKernel({ 7777: { start: "test:7777@1" } }),
+    });
   } finally {
     (process as { kill: typeof process.kill }).kill = realKill;
   }
@@ -164,7 +199,11 @@ test("a torn line is dropped rather than taking the ledger down", () => {
   const path = childLedgerPath(root);
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `{"pid":1,"ownerPid":\n{"pid":2,"pgid":2,"ownerPid":${DEAD_PID},"at":"x"}\n`);
-  const report = reapToolChildren(root, { self: process.pid, pidAlive: () => false });
+  const report = reapToolChildren(root, {
+    self: process.pid,
+    pidAlive: () => false,
+    probe: fakeKernel({}),
+  });
   expect(report.map((r) => r.pid)).toEqual([2]);
 });
 

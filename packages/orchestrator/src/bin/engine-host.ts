@@ -378,7 +378,7 @@ function buildEngine(): Engine {
     provider: provider as ProviderName,
     workspaceRoot,
     dbPath: config.engine.dbPath,
-    toolsBinaryPath: process.env.RUNE_TOOLS_BIN || process.env.RUNE_TOOLS_BIN || "rune-tools",
+    toolsBinaryPath: process.env.RUNE_TOOLS_BIN || process.env.RUNE_TOOLS_BINARY || "rune-tools",
     yoloMode: permissionFlags.yoloMode,
     trustWorkspace: permissionFlags.trustWorkspace,
     permissionMode: permissionFlags.permissionMode,
