@@ -578,7 +578,10 @@ describe("G24 — a conflicted worker merge is a typed field, not only prose", (
       // ... and now a consumer can count it without reading prose.
       expect(out.structured?.integration).toBe("retained");
       expect(out.structured?.conflicts).toEqual(["widget.ts"]);
-      expect(out.structured?.branch).toContain("rune/worker-w0198cccc-");
+      // The branch is named for the worker, whose id is keyed to a digest of
+      // the WHOLE session id rather than its first 8 characters (two sessions a
+      // second apart shared those, and therefore shared a counter).
+      expect(out.structured?.branch).toMatch(/^rune\/worker-w[0-9a-f]{12}-\d+$/);
       // The §4 `children[]` shape.
       expect(out.structured?.child).toMatchObject({
         status: "end_turn",

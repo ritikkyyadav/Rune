@@ -295,6 +295,129 @@ test("G10 — boundary checkpoints are bounded: identical content is not written
   manager.close();
 });
 
+test("G10 — two boundaries the compaction truncates alike are still saved apart", async () => {
+  // The dedup hashed `compactCheckpointMessages(messages)`, which cuts every
+  // tool result to its first 1,500 characters and replaced every image with one
+  // constant string. Two boundaries differing only past that cut hashed the
+  // same, so the second was never written: a crash between them lost that
+  // tool's result from the checkpoint and the child re-ran the call on resume —
+  // for a `bash`, a duplicated side effect.
+  const { manager, dir } = sessionsAt("rune-g10d-");
+  const parent = manager.createSession(dir, "m", "anthropic").id;
+  const shared = "X".repeat(1_600);
+  const result = (tail: string): Message =>
+    ({
+      role: "user",
+      content: [
+        {
+          type: "tool_result",
+          toolUseId: `t${tail}`,
+          toolResultContent: `${shared}${tail.repeat(200)}`,
+          isError: false,
+        },
+      ],
+    }) as unknown as Message;
+  const messages: Message[] = [{ role: "user", content: [{ type: "text", text: "go" }] }];
+
+  await withDelegatedSessions(
+    stubHandler(() => {
+      delegatedHistory({ provider: "anthropic", model: "m" });
+      bindDelegatedLoop({ getMessages: () => messages });
+      messages.push(say("ran the first command"), result("A"));
+      checkpointDelegated();
+      messages.push(say("ran the second command"), result("B"));
+      checkpointDelegated();
+    }),
+    "task",
+    new DelegatedSessions(manager),
+  ).execute({
+    toolName: "task",
+    callId: "c1",
+    sessionId: parent,
+    workspaceRoot: dir,
+    args: { prompt: "go" },
+  } as unknown as ToolCallInput);
+
+  const boundaries = checkpointsOf(manager, parent).filter((r) => r.atBoundary === true);
+  expect(boundaries).toHaveLength(2);
+  // And the surviving record can still tell the two results apart: the
+  // truncation note carries a digest of exactly the bytes it dropped.
+  const notes = boundaries.map((r) => JSON.stringify(r.messages));
+  expect(notes[0]).not.toBe(notes[1]);
+  manager.close();
+});
+
+test("G10 — an image is not a hole in the checkpoint: its placeholder names the bytes it replaced", () => {
+  const shot = (data: string): Message[] =>
+    [
+      { role: "user", content: [{ type: "text", text: "look" }] },
+      {
+        role: "assistant",
+        content: [{ type: "tool_use", toolUseId: "t1", toolName: "screenshot", toolInput: {} }],
+      },
+      { role: "user", content: [{ type: "image", data, mediaType: "image/png" }] },
+    ] as unknown as Message[];
+  const first = JSON.stringify(compactCheckpointMessages(shot("FIRST-SHOT")));
+  const second = JSON.stringify(compactCheckpointMessages(shot("SECOND-SHOT")));
+  expect(first).toContain("image omitted from the resume checkpoint");
+  expect(first).not.toContain("FIRST-SHOT"); // the bytes still do not go in
+  expect(second).not.toBe(first);
+});
+
+test("G10 — when the byte budget stops mid-run checkpointing, the record says so", async () => {
+  const { manager, dir } = sessionsAt("rune-g10e-");
+  const parent = manager.createSession(dir, "m", "anthropic").id;
+  // An assistant turn is the one thing compaction never edits — providers
+  // reject altered thinking blocks — so each of these boundaries costs a real
+  // ~300 KB row, and the run crosses its 2 MiB budget partway through.
+  const bulk = (n: number) => say(`step ${n} `.repeat(40_000));
+  const messages: Message[] = [{ role: "user", content: [{ type: "text", text: "go" }] }, bulk(0)];
+  const ROUNDS = 12;
+
+  await withDelegatedSessions(
+    stubHandler(() => {
+      delegatedHistory({ provider: "anthropic", model: "m" });
+      bindDelegatedLoop({ getMessages: () => messages });
+      for (let i = 1; i <= ROUNDS; i++) {
+        messages[1] = bulk(i); // new content every time: never a dedup skip
+        checkpointDelegated();
+      }
+    }),
+    "task",
+    new DelegatedSessions(manager),
+  ).execute({
+    toolName: "task",
+    callId: "c1",
+    sessionId: parent,
+    workspaceRoot: dir,
+    args: { prompt: "go" },
+  } as unknown as ToolCallInput);
+
+  // Bounded, as designed: the boundary saves stop.
+  const rows = checkpointsOf(manager, parent);
+  const boundaries = rows.filter((r) => r.atBoundary === true);
+  expect(boundaries.length).toBeGreaterThan(0);
+  expect(boundaries.length).toBeLessThan(ROUNDS);
+  // And observable, which is the fix: past the cap a crash resumes from a
+  // checkpoint that is no longer near the crash, and the log now says when
+  // that became true instead of simply having no more rows.
+  const notices = manager
+    .getEvents(parent, 1)
+    .filter((e) => e.event.type === "delegation_notice")
+    .map((e) => e.event.payload as Record<string, unknown>);
+  expect(notices).toHaveLength(1); // once per run, not once per boundary
+  expect(notices[0]!.reason).toBe("boundary_budget");
+  expect(String(notices[0]!.message)).toContain("resumes from the last checkpoint at");
+  expect(String(notices[0]!.lastCheckpointAt)).toBe(String(boundaries.at(-1)!.at));
+  // The final save carries the same fact, for a reader holding only the checkpoint.
+  const final = rows.at(-1)!;
+  expect(final.atBoundary).toBeUndefined();
+  expect(final.boundaryBudgetExhausted).toMatchObject({
+    lastCheckpointAt: String(boundaries.at(-1)!.at),
+  });
+  manager.close();
+});
+
 test("G10 — a boundary save that throws does not take the child down with it", async () => {
   const { manager, dir } = sessionsAt("rune-g10c-");
   const parent = manager.createSession(dir, "m", "anthropic").id;
@@ -444,8 +567,9 @@ test("G12 — a second PROCESS is refused while the holder lives, and told how l
   }
   expect(refusal).toContain("already running");
   expect(refusal).toContain(String(process.pid));
-  // The two things §6.2 requires the message to carry.
-  expect(refusal).toMatch(/at most 30 minutes/);
+  // What §6.2 requires the message to carry: who holds it, how much of the
+  // hold is LEFT (not how long a hold may last), and how it clears.
+  expect(refusal).toMatch(/expires in \d+ minutes/);
   expect(refusal).toContain("clears as soon as process");
 
   release();
@@ -479,6 +603,63 @@ test("G12 — an expired lease is not honoured even when its owner still looks a
   await new Promise((r) => setTimeout(r, 25));
   const later = new DelegatedSessions(manager, { pidAlive: () => true });
   expect(() => later.claim(parent, "task_z")()).not.toThrow();
+  manager.close();
+});
+
+test("G12 — a recycled pid does not inherit the lease its predecessor held", () => {
+  const { manager, dir } = sessionsAt("rune-g12d-");
+  const parent = manager.createSession(dir, "m", "anthropic").id;
+  // The holder records the start time of the process that took the lease.
+  const holder = new DelegatedSessions(manager, { pidStart: () => "start-A" });
+  holder.claim(parent, "task_r"); // never released: the process was killed
+
+  // Where the OS will not say when a pid started, the lease is honoured:
+  // refusing a live holder is recoverable, stealing its task is not.
+  const blind = new DelegatedSessions(manager, { pidAlive: () => true, pidStart: () => null });
+  expect(() => blind.claim(parent, "task_r")).toThrow("already running");
+
+  // The pid is alive again — as something else entirely. Measured before this
+  // fix: the lease was honoured for the full 30 minutes, and the process
+  // holding a delegated task hostage was a `sleep 30`.
+  const reused = new DelegatedSessions(manager, {
+    pidAlive: () => true,
+    pidStart: () => "start-B",
+  });
+  expect(() => reused.claim(parent, "task_r")()).not.toThrow();
+  manager.close();
+});
+
+test("G12 — a lease taken on another machine is never cleared by a local pid probe", () => {
+  const { manager, dir } = sessionsAt("rune-g12e-");
+  const parent = manager.createSession(dir, "m", "anthropic").id;
+  const elsewhere = new DelegatedSessions(manager, { hostId: "build-box" });
+  elsewhere.claim(parent, "task_h"); // still running over there
+
+  // `process.kill(pid, 0)` is evidence about a LOCAL process. Judging a remote
+  // holder by it is the dangerous direction of this failure: two machines then
+  // resume one task_id and write checkpoints over each other.
+  const here = new DelegatedSessions(manager, { hostId: "laptop", pidAlive: () => false });
+  let refusal = "";
+  try {
+    here.claim(parent, "task_h");
+  } catch (err) {
+    refusal = String(err);
+  }
+  expect(refusal).toContain("already running");
+  expect(refusal).toContain("build-box");
+  expect(refusal).toMatch(/expires in \d+ minutes/);
+  expect(refusal).toContain("cannot be judged from here");
+
+  // Only the TTL clears it — the one bound that does not depend on being able
+  // to see the holder.
+  const brief = new DelegatedSessions(manager, { hostId: "build-box", leaseTtlMs: 5 });
+  brief.claim(parent, "task_h2");
+  expect(() => here.claim(parent, "task_h2")).toThrow("already running");
+  const start = Date.now();
+  while (Date.now() - start < 20) {
+    /* the TTL is 5 ms; this is the wait */
+  }
+  expect(() => here.claim(parent, "task_h2")()).not.toThrow();
   manager.close();
 });
 

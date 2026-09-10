@@ -53,6 +53,8 @@ import {
 } from "../helpers/mock-model-server";
 import * as S from "../helpers/scenario";
 import { rmTemp } from "../helpers/tmp";
+import { DelegatedSessions } from "../../packages/orchestrator/src/delegated-sessions";
+import { SessionManager } from "../../packages/shared/src/session";
 
 // ─── Fixed vocabulary ───
 
@@ -243,8 +245,11 @@ function must<T>(value: T | null | undefined, what: string): T {
 // ─── Ledger fingerprint ───
 
 let ledgerBefore: S.LedgerFingerprint | null = null;
+/** When this suite started, so a row written before it cannot be attributed to it. */
+let startedAt = "";
 
 beforeAll(() => {
+  startedAt = new Date().toISOString();
   ledgerBefore = S.ledgerFingerprint();
   toolsBin = S.requireNativeBinary();
   root = mkdtempSync(join(tmpdir(), "rune-lifecycle-"));
@@ -437,6 +442,40 @@ describe("a dependent multi-step change, killed inside a tool and resumed", () =
     // process has to be told.
     expect(todos[3]!.status).not.toBe("completed");
     expect(String(state.goal ?? "")).toContain("version() endpoint");
+  });
+
+  test("the dispatched child left a lease and a checkpoint the resumed process can read", () => {
+    // The row this asserts on is the one `08d99f8` promised and did not
+    // deliver: `Engine`'s constructor registered the delegation tools 281 lines
+    // BEFORE it built the `DelegatedSessions` they close over, so every real
+    // dispatch fell back to a store with no `SessionManager` — checkpoints in a
+    // per-process Map, leases never written at all. The unit tests all passed
+    // because each of them constructs `new DelegatedSessions(manager)` by hand,
+    // which is the one thing the engine did not do. This assertion is on a real
+    // run's database, so it can only pass if the seam is actually wired.
+    const rows = must(rowsAfterKill, "the session log as the kill left it");
+    const leases = rows.filter((r) => r.type === "delegation_lease");
+    const checkpoints = rows.filter((r) => r.type === "delegation_checkpoint");
+    expect(leases.length).toBeGreaterThanOrEqual(1);
+    expect(checkpoints.length).toBeGreaterThanOrEqual(1);
+
+    const taskId = String((checkpoints.at(-1)!.payload as { id?: unknown }).id ?? "");
+    expect(taskId).toMatch(/^task_/);
+    expect(String((leases.at(-1)!.payload as { id?: unknown }).id ?? "")).toMatch(/^task_/);
+
+    // "The resumed process knows the task_id": a DIFFERENT process, reading the
+    // same database through the product's own loader, resolves it to the
+    // child's transcript rather than to "Unknown task_id in this parent
+    // session."
+    const manager = new SessionManager(rig.home.dbPath);
+    try {
+      const loaded = new DelegatedSessions(manager).load(must(sessionId, "the session id"), taskId);
+      expect(loaded?.id).toBe(taskId);
+      expect(loaded?.parentId).toBe(sessionId);
+      expect(Array.isArray(loaded?.messages)).toBe(true);
+    } finally {
+      manager.close();
+    }
   });
 
   test("steering survives: the recovered spine carries the whole steering message", () => {
@@ -1117,39 +1156,116 @@ describe("a run that ends with planned steps still open", () => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// The proof that none of this spent anything.
+// The proof that none of this COULD have spent anything.
+//
+// It used to be an arithmetic one: fingerprint the `cost` rows of the founder's
+// own `~/.rune/rune.db` before and after, and assert the count did not move.
+// That assertion is gone, because it was never a measurement of this process.
+// The database is written and WAL-checkpointed by whatever else the founder is
+// running — an `engine-host` alive for days, in the verification that caught
+// this — so the count moved during two of three runs that spent nothing, and
+// stood still during a third for reasons it had not earned.
+//
+// What is asserted instead is impossibility, in three layers: the scratch home
+// has no route but the loopback mock, the child is launched holding no
+// credential, and a real child asked from INSIDE a run reports the same of its
+// own environment. The founder's ledger is still read, and still printed — as
+// a diagnostic, plus the one thing about it this suite can honestly claim:
+// nothing in it names this suite's model or its sessions.
 // ══════════════════════════════════════════════════════════════════════════
 
-describe("the founder's own ledger", () => {
-  test("no cost row was written to ~/.rune/rune.db by this suite", () => {
-    if (ledgerBefore === null) {
-      // Stated, never silent: on a machine with no ~/.rune/rune.db there is
-      // nothing to compare, and the suite's other guarantee — a child with no
-      // credentials — still holds.
-      console.log("~/.rune/rune.db is absent on this machine — no ledger to compare against");
-      expect(S.ledgerFingerprint()).toBeNull();
-      return;
+describe("this suite could not have spent anything", () => {
+  test("the scratch home's only configured route is the loopback mock", () => {
+    for (const rig of rigs) {
+      const secrets = JSON.parse(
+        readFileSync(join(rig.home.path, "secrets.json"), "utf8"),
+      ) as Record<string, { baseUrl?: string }>;
+      expect(Object.keys(secrets)).toEqual(["custom"]);
+      // Not "contains 127.0.0.1" — the whole endpoint, so a second route
+      // alongside it could not pass.
+      expect(secrets.custom?.baseUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+/);
+      expect(secrets.custom?.baseUrl).toBe(rig.server.baseUrl);
+      const model = JSON.parse(readFileSync(join(rig.home.path, "model.json"), "utf8")) as {
+        provider?: string;
+      };
+      expect(model.provider).toBe("custom");
     }
-    const after = must(S.ledgerFingerprint(), "the ledger after the suite");
-    expect(after.rows).toBe(ledgerBefore.rows);
-    expect(after.newest ?? null).toEqual(ledgerBefore.newest ?? null);
   });
 
   test("every child was spawned with no provider credential in its environment", () => {
-    // The assertion the ledger cannot make: not "nothing was billed" but
-    // "nothing COULD have been". `spawnRun` calls this on every launch; this
-    // repeats it on the shape a launch actually used.
+    // `spawnRun` calls this on every launch; this repeats it on the shape a
+    // launch actually used.
     const rig = rigs[0]!;
     const env = S.curatedEnv(rig.home, rig.fixture, toolsBin);
     S.assertNoLiveCredentials(env);
     for (const name of S.CREDENTIAL_VARS) expect(env[name]).toBeUndefined();
     expect(env.RUNE_HOME).toBe(rig.home.path);
     expect(env.HOME).toBe(rig.home.osHome);
-    const secrets = JSON.parse(readFileSync(join(rig.home.path, "secrets.json"), "utf8")) as Record<
-      string,
-      unknown
-    >;
-    expect(Object.keys(secrets)).toEqual(["custom"]);
-    expect(JSON.stringify(secrets)).toContain("127.0.0.1");
+  });
+
+  test("a real child, asked from inside a run, reports no provider key of its own", async () => {
+    // Built rather than argued: the environment is read by a process the
+    // engine spawned, through a tool call the model asked for, in a run this
+    // suite drove end to end.
+    const rig = makeRig("env-probe", {
+      lead: [
+        tool("bash", { command: "node env-probe.mjs" }),
+        { kind: "text", text: "The environment is on disk." },
+      ],
+      summarizer: [{ kind: "text", text: "SUMMARY: probed the environment." }],
+      utility: [{ kind: "text", text: "ok" }],
+    });
+    const probe = S.installEnvProbe(rig.fixture);
+    const run = start(rig, `Run ${probe.command} and then stop.`);
+    await run.wait(120_000);
+
+    const seen = JSON.parse(readFileSync(probe.resultPath, "utf8")) as {
+      names: string[];
+      home: string;
+      runeHome: string;
+    };
+    expect(seen.names.length).toBeGreaterThan(0);
+    for (const name of S.CREDENTIAL_VARS) expect(seen.names).not.toContain(name);
+    expect(seen.names.filter((n) => /_API_KEY$|_TOKEN$|_SECRET$/.test(n))).toEqual([]);
+    // And it was reading the scratch home, not the founder's.
+    expect(seen.runeHome).toBe(rig.home.path);
+    expect(seen.home).toBe(rig.home.osHome);
+    expect(seen.home).not.toBe(process.env.HOME);
+  }, 180_000);
+
+  test("the founder's own ledger names nothing this suite ran", () => {
+    if (ledgerBefore === null) {
+      // Stated, never silent: on a machine with no ~/.rune/rune.db there is
+      // nothing to read, and the three assertions above still hold.
+      console.log("~/.rune/rune.db is absent on this machine — nothing to read");
+      expect(S.ledgerFingerprint()).toBeNull();
+      return;
+    }
+    const after = must(S.ledgerFingerprint(), "the ledger after the suite");
+    // The diagnostic. A difference here is other processes on this machine,
+    // which is why it is printed and not asserted on.
+    console.log(
+      `~/.rune/rune.db cost rows ${ledgerBefore.rows} → ${after.rows}; ` +
+        `newest ${ledgerBefore.newest ?? "none"} → ${after.newest ?? "none"}`,
+    );
+    // The claim that IS this suite's to make, by identity: no row written since
+    // it started names its model or its provider, and no row anywhere belongs
+    // to a session it created.
+    const sessionIds = rigs.flatMap((rig) =>
+      existsSync(rig.home.dbPath) ? S.listSessions(rig.home.dbPath).map((s) => s.id) : [],
+    );
+    expect(sessionIds.length).toBeGreaterThan(0);
+    const mine = must(
+      S.ledgerRowsAttributable({
+        since: startedAt,
+        // This suite's own model ids, which nothing else on the machine uses.
+        // Not `"provider":"custom"`: a founder who configures a custom route
+        // for their own work would fail this suite for using their machine.
+        needles: ["fake-model", "llama3-fake-tiny"],
+        sessionIds,
+      }),
+      "the attributable-row probe",
+    );
+    expect(mine).toEqual({ naming: 0, sessions: 0 });
   });
 });

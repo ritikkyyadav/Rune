@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { randomUUIDv7 } from "bun";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -378,23 +379,86 @@ test("a worktree reports what its provisioning cost", () => {
  * every later worker in that repository, until somebody deleted the branch by
  * hand. The branch is the one thing that must never be deleted.
  */
+/** The counter namespace an id belongs to: everything before its `-<n>`. */
+const namespaceOf = (id: string) => id.replace(/-\d+$/, "");
+
 describe("G13 — durable worker identity", () => {
   test("ids are keyed to the session and advance within it", () => {
     const repo = makeRepo();
-    expect(allocateWorkerId(repo, "0198f3ab-1111-7000-8000-aaaaaaaaaaaa")).toBe("w0198f3ab-1");
-    expect(allocateWorkerId(repo, "0198f3ab-1111-7000-8000-aaaaaaaaaaaa")).toBe("w0198f3ab-2");
+    const a = allocateWorkerId(repo, "0198f3ab-1111-7000-8000-aaaaaaaaaaaa");
+    expect(a).toMatch(/^w[0-9a-f]{12}-1$/);
+    expect(allocateWorkerId(repo, "0198f3ab-1111-7000-8000-aaaaaaaaaaaa")).toBe(
+      `${namespaceOf(a)}-2`,
+    );
     // A different session never collides with the first, even at counter 1.
-    expect(allocateWorkerId(repo, "0198ffff-2222-7000-8000-bbbbbbbbbbbb")).toBe("w0198ffff-1");
+    const b = allocateWorkerId(repo, "0198ffff-2222-7000-8000-bbbbbbbbbbbb");
+    expect(namespaceOf(b)).not.toBe(namespaceOf(a));
+    expect(b).toBe(`${namespaceOf(b)}-1`);
   });
+
+  test("two sessions started in the same millisecond get a counter each", () => {
+    // The defect this pins: the key was the first 8 characters of the session
+    // id, and a UUIDv7's first 8 hex characters are its millisecond stamp
+    // shifted right by 16 — one bucket per 65,536 ms. Every session started in
+    // the same ~65 seconds shared a counter, and two live sessions in one
+    // repository then minted the same id.
+    const repo = makeRepo();
+    const first = randomUUIDv7();
+    const second = randomUUIDv7();
+    expect(first.slice(0, 8)).toBe(second.slice(0, 8)); // the bucket they shared
+    const a1 = allocateWorkerId(repo, first);
+    const a2 = allocateWorkerId(repo, first);
+    const b1 = allocateWorkerId(repo, second);
+    expect(namespaceOf(b1)).not.toBe(namespaceOf(a1));
+    // A namespace of its own, so the second session starts at 1 rather than
+    // continuing — and cannot be handed a number the first one already has.
+    expect(b1).toBe(`${namespaceOf(b1)}-1`);
+    expect([a1, a2]).not.toContain(b1);
+  });
+
+  test("two processes allocating at once never mint the same id", async () => {
+    const repo = makeRepo();
+    const session = randomUUIDv7();
+    const barrier = Date.now() + 1_000;
+    const script =
+      `const {allocateWorkerId} = await import(${JSON.stringify(
+        join(import.meta.dir, "../../../packages/orchestrator/src/worker-worktree.ts"),
+      )});` +
+      `while (Date.now() < ${barrier}) {}` +
+      `const out = [];` +
+      `for (let i = 0; i < 40; i++) out.push(allocateWorkerId(${JSON.stringify(repo)}, ${JSON.stringify(session)}));` +
+      `console.log(JSON.stringify(out));`;
+    // Truly concurrent, spinning to one wall-clock barrier: the read-modify-write
+    // of the id ledger was a plain readFileSync/writeFileSync pair, so two
+    // parallel sessions in one repository — how the founder works — interleaved
+    // and both minted `w<key>-<n>`. The loser's createWorkerWorktree then threw
+    // WorkerIsolationError and the worker degraded to a shell-less shared-tree
+    // run: the exact Gap 1.1b failure durable ids were written to eliminate.
+    const spawn = () =>
+      Bun.spawn([process.execPath, "-e", script], { stdout: "pipe", stderr: "pipe" });
+    const [a, b] = [spawn(), spawn()];
+    const [outA, outB] = await Promise.all([
+      new Response(a.stdout).text(),
+      new Response(b.stdout).text(),
+    ]);
+    await Promise.all([a.exited, b.exited]);
+    const idsA = JSON.parse(outA.trim() || "[]") as string[];
+    const idsB = JSON.parse(outB.trim() || "[]") as string[];
+    expect(idsA).toHaveLength(40);
+    expect(idsB).toHaveLength(40);
+    expect(idsA.filter((id) => idsB.includes(id))).toEqual([]);
+    expect(new Set([...idsA, ...idsB]).size).toBe(80);
+  }, 60_000);
 
   test("a restarted process resumes the counter instead of returning to w1", () => {
     const repo = makeRepo();
     const session = "0198aaaa-3333-7000-8000-cccccccccccc";
-    expect(allocateWorkerId(repo, session)).toBe("w0198aaaa-1");
-    expect(allocateWorkerId(repo, session)).toBe("w0198aaaa-2");
+    const first = allocateWorkerId(repo, session);
+    expect(first).toMatch(/-1$/);
+    expect(allocateWorkerId(repo, session)).toBe(`${namespaceOf(first)}-2`);
 
     // A genuinely fresh process — the module-level counter starts at zero in it,
-    // so anything but w0198aaaa-3 means the ledger was not read.
+    // so anything but `-3` means the ledger was not read.
     const child = spawnSync(
       process.execPath,
       [
@@ -407,7 +471,7 @@ describe("G13 — durable worker identity", () => {
       { encoding: "utf8" },
     );
     expect(child.status).toBe(0);
-    expect((child.stdout ?? "").trim()).toBe("w0198aaaa-3");
+    expect((child.stdout ?? "").trim()).toBe(`${namespaceOf(first)}-3`);
   });
 
   test("after a restart the new id does not collide with the retained branch", () => {
@@ -504,6 +568,47 @@ describe("G13 — the startup reaper", () => {
     expect(existsSync(wt.path)).toBe(false);
     // Nothing was invented on the branch, and nothing was deleted from it.
     expect(git(repo, ["rev-parse", wt.branch])).toBe(before);
+  });
+
+  test("a dead worker's ignored output goes onto its branch rather than into the bin", () => {
+    // `git status --porcelain` does not list ignored files and `add -A` does
+    // not stage them, so a checkout whose only content was ignored — a `.env`
+    // the worker wrote, a generated fixture — was reported `reaped,
+    // committed:false` and destroyed, a shape a caller cannot tell apart from
+    // "there was nothing to keep".
+    const repo = makeRepo();
+    writeFileSync(join(repo, ".gitignore"), "worker-output.txt\n");
+    git(repo, ["add", "-A"]);
+    git(repo, ["commit", "-q", "-m", "ignore the worker's output"]);
+    const wt = createWorkerWorktree(repo, "wignored-1", { sessionId: "s", pid: 999_999 })!;
+    writeFileSync(join(wt.path, "worker-output.txt"), "IRREPLACEABLE\n");
+
+    const report = reapWorkerWorktrees(repo, { pidAlive: () => false });
+    expect(report).toHaveLength(1);
+    expect(report[0]).toMatchObject({ outcome: "reaped", committed: true });
+    expect(existsSync(wt.path)).toBe(false);
+    // The one copy of that file now exists on the branch that outlives the
+    // checkout, and the report says a commit was made.
+    expect(git(repo, ["show", `${wt.branch}:worker-output.txt`])).toContain("IRREPLACEABLE");
+  });
+
+  test("ignored output too large to keep leaves the checkout in place, with a reason", () => {
+    const repo = makeRepo();
+    writeFileSync(join(repo, ".gitignore"), "blobs/\n");
+    git(repo, ["add", "-A"]);
+    git(repo, ["commit", "-q", "-m", "ignore the blobs"]);
+    const wt = createWorkerWorktree(repo, "wbulky-1", { sessionId: "s", pid: 999_999 })!;
+    mkdirSync(join(wt.path, "blobs"), { recursive: true });
+    // Over the 16 MiB the reaper is willing to put on a branch it can never delete.
+    writeFileSync(join(wt.path, "blobs", "big.bin"), Buffer.alloc(17 * 1024 * 1024));
+
+    const report = reapWorkerWorktrees(repo, { pidAlive: () => false });
+    expect(report).toHaveLength(1);
+    expect(report[0]!.outcome).toBe("kept");
+    expect(report[0]!.reason).toContain("ignored output");
+    // Kept, not destroyed: the hard rule is that work is never lost to tidy up.
+    expect(existsSync(join(wt.path, "blobs", "big.bin"))).toBe(true);
+    removeWorkerWorktree(repo, wt, false);
   });
 
   test("a workspace that is not a git repository is not an error", () => {

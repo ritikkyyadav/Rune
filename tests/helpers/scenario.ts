@@ -142,6 +142,35 @@ console.log(ok ? "check: version endpoint wired" : "check: version endpoint miss
 process.exit(ok ? 0 : 1);
 `;
 
+/**
+ * The environment probe: what a child can see of its own environment, written
+ * from inside a real tool call.
+ *
+ * NAMES only, never values — the assertion is that a credential variable is
+ * not there at all, and a test artifact is the last place to write one if it
+ * were. This is the half of the zero-spend claim a ledger cannot make: not
+ * "nothing was billed" but "nothing COULD have been", measured in the process
+ * that would have done the billing rather than argued about from its config.
+ */
+const ENV_PROBE_MJS = `import { writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const names = Object.keys(process.env).sort();
+writeFileSync(
+  join(here, "env-probe.json"),
+  JSON.stringify({ names, home: process.env.HOME ?? "", runeHome: process.env.RUNE_HOME ?? "" }),
+);
+console.log(\`env-probe: \${names.length} variables, no values recorded\`);
+`;
+
+/** Install the probe in a fixture, and return the command that runs it. */
+export function installEnvProbe(fixture: Fixture): { command: string; resultPath: string } {
+  writeFileSync(join(fixture.root, "env-probe.mjs"), ENV_PROBE_MJS);
+  return { command: "node env-probe.mjs", resultPath: join(fixture.root, "env-probe.json") };
+}
+
 /** Sleeps, with its marker in argv so the process table can be searched for it. */
 const LONG_MJS = `const marker = process.argv[2] ?? "no-marker";
 const seconds = Number(process.argv[3] ?? "20");
@@ -911,6 +940,49 @@ export interface LedgerFingerprint {
   path: string;
   rows: number;
   newest: string | null;
+}
+
+/**
+ * Cost rows in the REAL ledger that this suite could be responsible for.
+ *
+ * Identity, not arithmetic. The count of `cost` rows in `~/.rune/rune.db` is
+ * not a measurement of this process: that database is written and
+ * WAL-checkpointed by whatever else the founder is running — an `engine-host`
+ * alive for days, in the case that made two of three verification runs fail
+ * while spending nothing. So the question asked here is the one this suite can
+ * actually answer: does any row NAME this suite's model or provider since it
+ * started, and does any row belong to a session this suite created?
+ */
+export function ledgerRowsAttributable(opts: {
+  since: string;
+  needles: string[];
+  sessionIds: string[];
+  path?: string;
+}): { naming: number; sessions: number } | null {
+  const path = opts.path ?? join(process.env.HOME ?? "", ".rune", "rune.db");
+  if (!path || !existsSync(path)) return null;
+  const db = new Database(path, { readonly: true });
+  try {
+    let naming = 0;
+    for (const needle of opts.needles) {
+      const row = db
+        .query(
+          "SELECT COUNT(*) AS n FROM events WHERE type = 'cost' AND created_at > ? AND payload_json LIKE ?",
+        )
+        .get(opts.since, `%${needle}%`) as { n: number };
+      naming += row.n;
+    }
+    let sessions = 0;
+    for (const id of opts.sessionIds) {
+      const row = db.query("SELECT COUNT(*) AS n FROM events WHERE session_id = ?").get(id) as {
+        n: number;
+      };
+      sessions += row.n;
+    }
+    return { naming, sessions };
+  } finally {
+    db.close();
+  }
 }
 
 /**
