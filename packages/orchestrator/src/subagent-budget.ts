@@ -67,6 +67,44 @@ export interface BudgetState {
   startedAt: number;
 }
 
+/**
+ * What a delegated child has already spent, carried on its resume checkpoint.
+ *
+ * Without it a `task_id` resume created `{spentUsd: 0, startedAt: Date.now()}`
+ * from scratch, so a child re-dispatched five times got five full cost caps and
+ * five fresh deadline clocks — the budget bounded one call, never the task.
+ */
+export interface SpentBudget {
+  spentUsd: number;
+  elapsedMs: number;
+  turnsUsed: number;
+}
+
+export function isSpentBudget(value: unknown): value is SpentBudget {
+  if (!value || typeof value !== "object") return false;
+  const b = value as Record<string, unknown>;
+  return ["spentUsd", "elapsedMs", "turnsUsed"].every(
+    (k) => typeof b[k] === "number" && Number.isFinite(b[k] as number),
+  );
+}
+
+/**
+ * Seed a child's budget from what earlier runs of the same `task_id` spent.
+ *
+ * The elapsed clock is carried by BACKDATING `startedAt`, so `checkBudget`'s
+ * existing `Date.now() - startedAt` keeps working unchanged and the deadline
+ * measures the task rather than the call. A resumed child never gets a fresh
+ * ceiling.
+ */
+export function resumeBudgetState(prior?: SpentBudget, now = Date.now()): BudgetState {
+  const spent = Number(prior?.spentUsd);
+  const elapsed = Number(prior?.elapsedMs);
+  return {
+    spentUsd: Number.isFinite(spent) && spent > 0 ? spent : 0,
+    startedAt: now - (Number.isFinite(elapsed) && elapsed > 0 ? elapsed : 0),
+  };
+}
+
 export type BudgetBreach =
   | { kind: "cost"; spentUsd: number; capUsd: number }
   | { kind: "time"; elapsedMs: number; deadlineMs: number };

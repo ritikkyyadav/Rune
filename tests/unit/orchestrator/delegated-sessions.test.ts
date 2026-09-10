@@ -10,9 +10,17 @@ import { LlmGateway } from "../../../packages/llm-gateway/src/gateway";
 import { UsageProvider } from "../../helpers/usage-provider";
 import {
   CHECKPOINT_MAX_BYTES,
+  bindDelegatedBudget,
+  bindDelegatedLoop,
+  checkpointDelegated,
   compactCheckpointMessages,
+  delegatedBudgetSeed,
+  delegatedHistory,
+  withDelegatedSessions,
 } from "../../../packages/orchestrator/src/delegated-sessions";
+import { checkBudget, resumeBudgetState } from "../../../packages/orchestrator/src/subagent-budget";
 import type { Message } from "../../../packages/llm-gateway/src/types";
+import type { ToolCallInput, ToolHandler } from "../../../packages/tool-registry/src/types";
 const dirs: string[] = [];
 afterEach(() => {
   for (const p of dirs.splice(0)) {
@@ -160,4 +168,317 @@ test("a resume checkpoint is bounded: results trimmed, exchanges dropped whole, 
   expect((messages[2]!.content[0] as { toolResultContent: string }).toolResultContent).toHaveLength(
     40_000,
   );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// G10 — the child checkpoint is written at every tool boundary, not only on
+// resolve. A crash four minutes into a worker used to lose the whole child
+// transcript, and the task_id the parent already held resolved to nothing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function stubHandler(body: (input: ToolCallInput) => Promise<void> | void): ToolHandler {
+  return {
+    schema: {
+      name: "task",
+      version: "0.1.0",
+      description: "stub",
+      inputSchema: { type: "object", properties: {} },
+      permissionLevel: "auto",
+      category: "read",
+    },
+    validate: () => ({ valid: true }),
+    execute: async (input) => {
+      await body(input);
+      return {
+        callId: input.callId,
+        toolName: input.toolName,
+        success: true,
+        result: "done",
+        durationMs: 1,
+      };
+    },
+  };
+}
+
+function sessionsAt(prefix: string): { manager: SessionManager; path: string; dir: string } {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  dirs.push(dir);
+  const path = join(dir, "sessions.db");
+  return { manager: new SessionManager(path), path, dir };
+}
+
+const say = (text: string): Message => ({ role: "assistant", content: [{ type: "text", text }] });
+
+/** Every resume checkpoint written for `parent`, oldest first. */
+function checkpointsOf(manager: SessionManager, parent: string) {
+  return manager
+    .getEvents(parent, 1)
+    .filter((e) => e.event.type === "delegation_checkpoint")
+    .map((e) => e.event.payload as unknown as Record<string, unknown>);
+}
+
+test("G10 — the resume checkpoint exists BEFORE the child returns, at each tool boundary", async () => {
+  const { manager, dir } = sessionsAt("rune-g10-");
+  const parent = manager.createSession(dir, "m", "anthropic").id;
+  const messages: Message[] = [{ role: "user", content: [{ type: "text", text: "go" }] }];
+  // What a process restarting after a crash at that instant would find on disk.
+  const durableMidRun: number[] = [];
+
+  await withDelegatedSessions(
+    stubHandler(() => {
+      delegatedHistory({ provider: "anthropic", model: "m" });
+      bindDelegatedLoop({ getMessages: () => messages });
+      for (const step of ["read src/a.ts", "read src/b.ts"]) {
+        messages.push(say(step));
+        checkpointDelegated();
+        const latest = checkpointsOf(manager, parent).at(-1);
+        durableMidRun.push((latest?.messages as Message[] | undefined)?.length ?? 0);
+      }
+    }),
+    "task",
+    new DelegatedSessions(manager),
+  ).execute({
+    toolName: "task",
+    callId: "c1",
+    sessionId: parent,
+    workspaceRoot: dir,
+    args: { prompt: "go" },
+  } as unknown as ToolCallInput);
+
+  // The transcript was durable at both boundaries, and grew with the run —
+  // before this the answer at both points was "nothing is saved yet".
+  expect(durableMidRun).toEqual([2, 3]);
+  manager.close();
+});
+
+test("G10 — boundary checkpoints are bounded: identical content is not written twice", async () => {
+  const { manager, dir } = sessionsAt("rune-g10b-");
+  const parent = manager.createSession(dir, "m", "anthropic").id;
+  const messages: Message[] = [{ role: "user", content: [{ type: "text", text: "go" }] }];
+
+  await withDelegatedSessions(
+    stubHandler(() => {
+      delegatedHistory({ provider: "anthropic", model: "m" });
+      bindDelegatedLoop({ getMessages: () => messages });
+      messages.push(say("one"));
+      checkpointDelegated();
+      // Four more boundaries with nothing new to say: a run that reads the same
+      // file again must not pay a checkpoint row for it.
+      for (let i = 0; i < 4; i++) checkpointDelegated();
+      messages.push(say("two"));
+      checkpointDelegated();
+    }),
+    "task",
+    new DelegatedSessions(manager),
+  ).execute({
+    toolName: "task",
+    callId: "c1",
+    sessionId: parent,
+    workspaceRoot: dir,
+    args: { prompt: "go" },
+  } as unknown as ToolCallInput);
+
+  const rows = checkpointsOf(manager, parent);
+  // Two distinct boundaries plus the final save — not six.
+  expect(rows).toHaveLength(3);
+  expect(rows.filter((r) => r.atBoundary === true)).toHaveLength(2);
+  expect(rows.at(-1)!.atBoundary).toBeUndefined();
+  // The parent link is explicit now rather than inferred from where the row sat.
+  expect(rows.at(-1)!.parentId).toBe(parent);
+  manager.close();
+});
+
+test("G10 — a boundary save that throws does not take the child down with it", async () => {
+  const { manager, dir } = sessionsAt("rune-g10c-");
+  const parent = manager.createSession(dir, "m", "anthropic").id;
+  let saves = 0;
+  const brittle = new DelegatedSessions({
+    appendEvent: (_sid: string, event: { type: string }) => {
+      if (event.type !== "delegation_checkpoint") return 0;
+      saves++;
+      throw new Error("disk went away");
+    },
+    getLatestKeyedEvent: () => null,
+  } as unknown as SessionManager);
+  const messages: Message[] = [{ role: "user", content: [{ type: "text", text: "go" }] }];
+
+  const out = await withDelegatedSessions(
+    stubHandler(() => {
+      delegatedHistory({ provider: "anthropic", model: "m" });
+      bindDelegatedLoop({ getMessages: () => messages });
+      messages.push(say("one"));
+      checkpointDelegated();
+      messages.push(say("two"));
+      checkpointDelegated();
+    }),
+    "task",
+    brittle,
+  ).execute({
+    toolName: "task",
+    callId: "c1",
+    sessionId: parent,
+    workspaceRoot: dir,
+    args: { prompt: "go" },
+  } as unknown as ToolCallInput);
+
+  // The first boundary failed and the second was not even attempted; the child
+  // still finished, and the FINAL save is the one allowed to report the fault.
+  expect(saves).toBe(2); // one boundary, then the final save
+  expect(out.success).toBe(false);
+  expect(out.error).toContain("resume checkpoint could not be saved");
+  manager.close();
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// G11 — a resumed child inherits what it already spent.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("G11 — the checkpoint carries spend, and a resume seeds from it instead of restarting the clock", async () => {
+  const { manager, dir } = sessionsAt("rune-g11-");
+  const parent = manager.createSession(dir, "m", "anthropic").id;
+  const store = new DelegatedSessions(manager);
+  const messages: Message[] = [{ role: "user", content: [{ type: "text", text: "go" }] }];
+  let spent = 0;
+  let turns = 0;
+  let seeded: unknown;
+
+  const tool = withDelegatedSessions(
+    stubHandler(() => {
+      delegatedHistory({ provider: "anthropic", model: "m" });
+      bindDelegatedLoop({ getMessages: () => messages });
+      // Captured once, exactly as worker.ts and subagent.ts do: the reader runs
+      // after the child's async context is gone, so it must close over the seed
+      // rather than look it up again.
+      const prior = delegatedBudgetSeed();
+      seeded = prior;
+      const state = resumeBudgetState(prior);
+      bindDelegatedBudget(() => ({
+        spentUsd: state.spentUsd + spent,
+        elapsedMs: Date.now() - state.startedAt,
+        turnsUsed: (prior?.turnsUsed ?? 0) + turns,
+      }));
+      spent = 0.25;
+      turns = 3;
+    }),
+    "task",
+    store,
+  );
+  const base = {
+    toolName: "task",
+    callId: "c1",
+    sessionId: parent,
+    workspaceRoot: dir,
+    args: { prompt: "go" },
+  } as unknown as ToolCallInput;
+
+  const first = await tool.execute(base);
+  const taskId = first.structured!.task_id as string;
+  const after = checkpointsOf(manager, parent).at(-1)!;
+  expect(after.budget).toMatchObject({ spentUsd: 0.25, turnsUsed: 3 });
+
+  // The follow-up sees what the first run spent, and adds to it.
+  const second = await tool.execute({
+    ...base,
+    callId: "c2",
+    args: { prompt: "more", task_id: taskId },
+  } as unknown as ToolCallInput);
+  expect(second.success).toBe(true);
+  expect(seeded).toMatchObject({ spentUsd: 0.25, turnsUsed: 3 });
+  const resumed = checkpointsOf(manager, parent).at(-1)!;
+  expect((resumed.budget as { spentUsd: number }).spentUsd).toBeCloseTo(0.5, 5);
+  expect(resumed.budget).toMatchObject({ turnsUsed: 6 });
+  manager.close();
+});
+
+test("G11 — a resumed child never gets a fresh ceiling: the elapsed clock carries", () => {
+  // Real clock: checkBudget below reads Date.now() itself.
+  const now = Date.now();
+  const fresh = resumeBudgetState(undefined, now);
+  expect(fresh).toEqual({ spentUsd: 0, startedAt: now });
+  // Seeding backdates startedAt, so checkBudget's existing arithmetic measures
+  // the TASK rather than this one call of it.
+  const resumed = resumeBudgetState({ spentUsd: 1.5, elapsedMs: 90_000, turnsUsed: 4 }, now);
+  expect(resumed).toEqual({ spentUsd: 1.5, startedAt: now - 90_000 });
+  // Already over both ceilings on the first between-turn check.
+  expect(checkBudget({ costCapUsd: 1.0, deadlineMs: null }, resumed)).toMatchObject({
+    kind: "cost",
+    spentUsd: 1.5,
+  });
+  expect(checkBudget({ costCapUsd: null, deadlineMs: 60_000 }, resumed)).toMatchObject({
+    kind: "time",
+  });
+  // A fresh child with the same caps is admitted — the difference is the seed.
+  expect(checkBudget({ costCapUsd: 1.0, deadlineMs: 60_000 }, fresh)).toBeNull();
+  // Nonsense on the record never becomes a negative or NaN clock.
+  expect(resumeBudgetState({ spentUsd: Number.NaN, elapsedMs: -5, turnsUsed: 0 }, now)).toEqual({
+    spentUsd: 0,
+    startedAt: now,
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// G12 — the resume lease is persisted, pid-owned, TTL'd and reaped.
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("G12 — a second PROCESS is refused while the holder lives, and told how long and how to clear it", () => {
+  const { manager, dir } = sessionsAt("rune-g12-");
+  const parent = manager.createSession(dir, "m", "anthropic").id;
+  // Two DelegatedSessions over one database stand in for two processes: the
+  // in-memory Set never crossed that line, which is exactly the hole.
+  const holder = new DelegatedSessions(manager);
+  const other = new DelegatedSessions(manager, { pidAlive: () => true });
+  const release = holder.claim(parent, "task_x");
+
+  let refusal = "";
+  try {
+    other.claim(parent, "task_x");
+  } catch (err) {
+    refusal = String(err);
+  }
+  expect(refusal).toContain("already running");
+  expect(refusal).toContain(String(process.pid));
+  // The two things §6.2 requires the message to carry.
+  expect(refusal).toMatch(/at most 30 minutes/);
+  expect(refusal).toContain("clears as soon as process");
+
+  release();
+  // Released: the same "other process" now takes it without waiting for the TTL.
+  expect(() => other.claim(parent, "task_x")()).not.toThrow();
+  manager.close();
+});
+
+test("G12 — a lease whose owner died is reaped on sight, not waited out", () => {
+  const { manager, dir } = sessionsAt("rune-g12b-");
+  const parent = manager.createSession(dir, "m", "anthropic").id;
+  const crashed = new DelegatedSessions(manager);
+  crashed.claim(parent, "task_y"); // never released: the process was killed
+
+  // A holder that still looks alive is honoured, unreleased lease and all.
+  const stubborn = new DelegatedSessions(manager, { pidAlive: () => true });
+  expect(() => stubborn.claim(parent, "task_y")).toThrow("already running");
+
+  // Liveness first, TTL second — TeamBus.sweep's order, and the reason a crash
+  // does not strand a task_id for half an hour.
+  const recovered = new DelegatedSessions(manager, { pidAlive: () => false });
+  expect(() => recovered.claim(parent, "task_y")()).not.toThrow();
+  manager.close();
+});
+
+test("G12 — an expired lease is not honoured even when its owner still looks alive", async () => {
+  const { manager, dir } = sessionsAt("rune-g12c-");
+  const parent = manager.createSession(dir, "m", "anthropic").id;
+  const brief = new DelegatedSessions(manager, { leaseTtlMs: 5 });
+  brief.claim(parent, "task_z"); // never released
+  await new Promise((r) => setTimeout(r, 25));
+  const later = new DelegatedSessions(manager, { pidAlive: () => true });
+  expect(() => later.claim(parent, "task_z")()).not.toThrow();
+  manager.close();
+});
+
+test("G12 — with no store the lease stays the in-process guard it always was", () => {
+  const store = new DelegatedSessions();
+  const release = store.claim("parent", "child");
+  expect(() => store.claim("parent", "child")).toThrow("already running");
+  release();
+  expect(() => store.claim("parent", "child")()).not.toThrow();
 });

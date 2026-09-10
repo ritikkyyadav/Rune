@@ -3,6 +3,9 @@ import {
   withDelegatedSessions,
   delegatedHistory,
   bindDelegatedLoop,
+  bindDelegatedBudget,
+  delegatedBudgetSeed,
+  checkpointDelegated,
   delegatedFallback,
 } from "./delegated-sessions";
 import type { LlmGateway, ProviderName, ReasoningEffort } from "@rune/llm-gateway";
@@ -19,7 +22,9 @@ import type { PermissionCheck, ToolResultProcessor } from "./agent-loop";
 import { ContextEngine } from "./context-engine";
 import {
   SUBAGENT_RESULT_SCHEMA,
+  buildChildSummary,
   buildSubagentResult,
+  describeCall,
   renderTaskResult,
   repairToSchema,
 } from "./subagent-result";
@@ -27,6 +32,7 @@ import {
   checkBudget,
   describeBreach,
   resolveSubagentBudget,
+  resumeBudgetState,
   type BudgetBreach,
 } from "./subagent-budget";
 import { CostTracker } from "@rune/llm-gateway";
@@ -128,22 +134,6 @@ function budgetContract(maxTurns: number): string {
 
 /** How many tool calls the fallback report lists before eliding. */
 const MAX_TRAIL_ENTRIES = 24;
-
-/**
- * The most identifying argument of a tool call, for the progress line and the
- * fallback trail: the path read, the pattern searched, the symbol looked up.
- */
-function describeCall(args: Record<string, unknown> | undefined): string {
-  if (!args) return "";
-  for (const key of ["path", "pattern", "query", "name", "glob"]) {
-    const value = args[key];
-    if (typeof value === "string" && value.trim()) {
-      const v = value.length > 80 ? `${value.slice(0, 79)}…` : value;
-      return ` ${v}`;
-    }
-  }
-  return "";
-}
 
 // `partialReport` lived here. It is now `renderTaskResult` in subagent-result.ts,
 // driven off the result object instead of reconstructed from loop variables —
@@ -376,7 +366,16 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
             deadlineMs: input.args.deadlineMs ?? deps.budgetDefaults?.deadlineMs,
           });
           const costTracker = new CostTracker();
-          const budgetState = { spentUsd: 0, startedAt: Date.now() };
+          // Seeded from the resume checkpoint rather than from zero: the cap
+          // bounds the TASK across every follow-up, not one call of it.
+          const priorSpend = delegatedBudgetSeed();
+          const budgetState = resumeBudgetState(priorSpend);
+          let turnsUsed = priorSpend?.turnsUsed ?? 0;
+          bindDelegatedBudget(() => ({
+            spentUsd: budgetState.spentUsd,
+            elapsedMs: Date.now() - budgetState.startedAt,
+            turnsUsed,
+          }));
           let breach: BudgetBreach | null = null;
           // What the scout actually did, kept so an empty summary still returns
           // the ground it covered instead of nothing. Bounded: this rides back
@@ -442,9 +441,14 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
                 if (trail.length < MAX_TRAIL_ENTRIES && !trail.includes(label)) {
                   trail.push(label);
                 }
+                // Save the resume checkpoint at the boundary, not only when the
+                // scout returns: a crash mid-investigation used to lose the whole
+                // child transcript. See checkpointDelegated for what bounds it.
+                checkpointDelegated();
                 break;
               }
               case "usage":
+                turnsUsed++;
                 // List price, from the provider's own numbers. An unpriced model
                 // contributes 0, which means its budget is effectively the
                 // deadline — correct, since a price nobody knows cannot be capped.
@@ -550,7 +554,10 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
                 dispatched: { provider: live.provider, model: live.model },
                 fallbackReason,
               }),
-              structured: partial as unknown as Record<string, unknown>,
+              structured: {
+                ...(partial as unknown as Record<string, unknown>),
+                child: buildChildSummary({ stopReason }),
+              },
               durationMs: Math.round(performance.now() - start),
             };
           }
@@ -617,7 +624,10 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
               dispatched: { provider: live.provider, model: live.model },
               fallbackReason,
             }),
-            structured: result as unknown as Record<string, unknown>,
+            structured: {
+              ...(result as unknown as Record<string, unknown>),
+              child: buildChildSummary({ stopReason }),
+            },
             durationMs: Math.round(performance.now() - start),
           };
         } catch (err) {
