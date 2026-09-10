@@ -48,7 +48,8 @@ const LIST_DIR_SCHEMA: ToolSchema = {
   name: "list_dir",
   version: "0.1.0",
   description:
-    "List directory contents. Returns file names, sizes, and types. Supports recursive listing and glob filtering.",
+    "List directory contents. Returns file names, sizes, and types. Supports recursive listing and glob filtering. " +
+    "A recursive listing names node_modules, .git, dist, build, target and similar without walking into them; list one by path to see inside.",
   inputSchema: {
     type: "object",
     properties: {

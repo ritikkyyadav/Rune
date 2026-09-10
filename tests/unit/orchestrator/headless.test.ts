@@ -114,6 +114,18 @@ describe("runHeadless", () => {
     await runHeadless(
       fakeEngine([
         { type: "tool_call_start", toolName: "grep" },
+        {
+          type: "tool_call_end",
+          callId: "c1",
+          args: { pattern: "needle", path: "src" },
+          output: {
+            callId: "c1",
+            toolName: "grep",
+            success: true,
+            result: JSON.stringify({ matches: [], count: 0 }),
+            durationMs: 3,
+          },
+        },
         { type: "notice", message: "switched provider" },
         { type: "text_delta", text: "answer" },
       ]),
@@ -121,7 +133,10 @@ describe("runHeadless", () => {
       "hi",
       { onProgress: (l) => lines.push(l) },
     );
-    expect(lines).toEqual(["→ grep", "switched provider"]);
+    // An ordinary tool's start is no longer a "→ grep" line: the CLI prints
+    // the finished row from the end event (this runner is engine-side and
+    // draws nothing), so the runner's own progress is the notice alone.
+    expect(lines).toEqual(["switched provider"]);
   });
 });
 

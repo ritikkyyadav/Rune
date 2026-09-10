@@ -139,7 +139,13 @@ export async function runHeadless(
           text = "";
           break;
         case "tool_call_start":
-          opts.onProgress?.(`→ ${event.toolName}`);
+          // A delegation runs for minutes; its start is news. An ordinary
+          // tool's start was a bare "→ read_file" that said nothing the
+          // finished row does not say better; the CLI prints that row from
+          // the end event (this module is engine-side and draws nothing).
+          if (event.toolName === "task" || event.toolName === "worker") {
+            opts.onProgress?.(`→ ${event.toolName}`);
+          }
           break;
         case "tool_call_end": {
           toolCalls++;

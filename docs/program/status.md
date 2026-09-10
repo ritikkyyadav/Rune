@@ -1,5 +1,36 @@
 # Program status
 
+**2026-09-10, night: the TUI, looked at.** Frames captured through a pseudo-terminal at 80×24 and
+120×36 for the start screen, `/help`, `/model`, `/config`, a resumed real run, a live free-route
+run and the piped `-P` rung, with OpenCode captured the same way. Rune's transcript grammar holds
+up: rail, verbs, accent paths, numbered diffs, checks with their exit summary, the agent mark. The
+defects were specific and are fixed: tool rows named files by an abbreviated absolute path
+(`.../rune-live-gFFS/ws/greet.ts`), now workspace-relative; the native edit tool glued a hunk's
+first line onto its header so every diff gutter started one row early, and a trailing newline grew
+a phantom row; the harness's own checks printed `✓ $ npm test (ok)` in a third grammar, now
+`│ ✓ check  bun run typecheck · bun test`; the live rung said `thinking 6s · down 395 tokens ·
+thought for 5.1s`; `/help` dumped 26 rows and scrolled `/model` and `/login` off a 24-row window,
+now grouped and two-column on wide windows; the start screen was a memory tip over sixteen blank
+rows, now two rows of what to try and which keys matter; and `-P` printed `→ read_file` and nothing
+else, now the committed rows without colour. The white diff bands are the founder's 2026-09-05
+design and are left alone, with the guide's objection recorded in the backlog beside four smaller
+items. Captures and the capture driver live in the session scratchpad; the method is a Python
+pseudo-terminal plus the `pyte` emulator, which sees absolute addressing and the alternate screen.
+
+**2026-09-10, later that night: the second look.** The piped rows had been drawn from inside the
+headless runner, which is engine-side; the purity test caught it, and the rows now come from the
+CLI's event hook with the runner printing nothing. Looked at again on the installed build: a recursive
+`list_dir` walked into `.git/` and reported 53 entries for a four-file repo, all of them fed to the
+model, so the native tool now names `node_modules`, `.git`, `dist`, `build`, `target` and the rest
+without walking them (7 entries, the directory itself still listed, its contents one call away);
+`/help` on a 24-row window still scrolled, so a window too short for the full list gets one row per
+group; the third start-screen example was cut mid-word at 80 columns, so it appears from 100; the
+launch picker, on Enter at "Start a new session", stayed painted on the fixed frame until the next
+keystroke and skipped the start rows entirely; and its session rows at 80 columns ended in
+`gpt-oss…`, so a hint now yields by whole segments and goes entirely below twelve cells. Verified
+frame by frame at 80×24, 100×30 and 120×36, plus a `-P` run whose stderr carries the transcript's
+rows. 4392 unit tests, 0 failing, unsandboxed.
+
 **2026-09-10, evening: the first complete free-route series on the new build.** Three tasks by
 two runs, each task invoked separately so a provider error could not end the series; all twelve
 arms scored. Rune completed **5 of 6**, OpenCode **4 of 6**; on every pair both completed Rune

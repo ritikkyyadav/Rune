@@ -291,6 +291,46 @@ Found 2026-09-03 by P10.6 (integration proofs):
   the rail narrows below some width — found in P10.9
 - (withdrawn) A P11.2 note claimed the mock suite scores 23/62 on `gear/phase-0-stabilize` and that `bun run eval` "cannot gate anything". Not reproducible: `git archive 02eee64` into a clean directory with its own `bun install` scores 62/62 with and without `RUNE_TOOLS_BINARY`, and every merge gate since has printed 62/62. A mock-suite score far below the baseline is an environment fault first (missing tools binary, stale or shared worktree state); run the export experiment before recording a regression — found while merging #24
 
+Found by looking at the TUI itself (2026-09-10, frames captured through a pseudo-terminal at
+80×24 and 120×36 with `--tui`, `--resume` and a live free-route run, plus `-P`; OpenCode 1.18.23
+captured the same way for comparison). Fixed the same day: workspace-relative paths in tool rows,
+the hunk header the native edit tool glued its first line onto, the phantom trailing diff row, the
+check rows' third grammar, "down N tokens" beside "thought for", the "continue where you left off
+down" hint, `/help` scrolling its own top half off a 24-row window, the empty start screen, and the
+piped rung printing "→ tool" with nothing else. Later the same night: the piped rows moved out of
+the engine-side runner into the CLI (the purity test caught them), `list_dir` walking `.git/` and
+`node_modules/` (53 entries for a four-file repo, now 7), `/help` still scrolling on a 24-row window
+(one row per group when the full list does not fit), the launch picker staying painted after Enter
+on "Start a new session" and skipping the start rows, and picker hints clipped to `gpt-oss…` at 80
+columns. Left, deliberately:
+
+- `packages/orchestrator/src/bin/ui/theme.ts` — an added diff row paints as a solid white band with
+  black ink on the dark theme ("the opposite ground", the 2026-09-05 design). The terminal-UI guide
+  argues for a ~7% tint of the terminal's own ground, no background when the terminal did not answer
+  OSC 11. This is the founder's art direction; measure it with people before changing it — UI pass — Claude
+- `packages/orchestrator/src/bin/ui/model-picker.ts`, `login-picker.ts`, `question.ts` — pickers join
+  their parts with `|` while the footer, receipts and rows use `·`; the grammar law says one
+  separator. Twelve sites — UI pass — Claude
+- `packages/orchestrator/src/bin/ui/tui.ts` (`/config`) — settings show raw values: `budget 0` means no
+  cap, `gear 1` is 1st gear, and "1-9 quick select" is offered for seventeen rows — UI pass — Claude
+- `packages/orchestrator/src/bin/rune-cli.ts` — asked for a provider it has no key for, Rune quietly
+  starts on a default free model, and today that default (`openrouter/minimax/minimax-m3:free`) is
+  retired, so the first request 404s. Say which model was substituted and why, and never substitute a
+  model the health table already knows is gone — UI pass — Claude
+- `packages/orchestrator/src/bin/ui/banner.ts` — the header shows the absolute workspace path and no
+  branch; OpenCode shows `path:branch`. Shorten with `~` and add the branch — UI pass — Claude
+- `packages/orchestrator/src/bin/rune-cli.ts` — `-p` is `--provider` and `-P` is `--print`. Claude
+  Code's `-p` is print, so `rune -p "do this"` from habit sets the provider to the prompt, falls into
+  the interactive session and says "Goodbye." on a closed stdin. Either swap the letters or refuse a
+  provider name with spaces in it — UI pass — Claude
+- `packages/orchestrator/src/bin/ui/tui.ts` (`sessionRowView`) — the launch picker's row says model,
+  events and tokens but not when the session was last touched, which is the one thing a person
+  choosing what to resume wants; the age is already computed for the group label — UI pass — Claude
+- `packages/orchestrator/src/verification-command.ts` — the harness's own check on a Bun project
+  with a `package.json` `test` script runs `npm test`, and the row says so; `bun test` when
+  `bun.lock`/`bun.lockb` is present or the script itself invokes bun would read as the project's own
+  voice — UI pass — Claude
+
 Found by the first Linux containment run in CI (2026-09-10, run 34451241298 on
 `lane/linux-containment`, 140 pass / 7 fail — the job had skipped every one of these suites
 before because CI exported `RUNE_TOOLS_BIN` while they read `RUNE_TOOLS_BINARY`, and the runner had

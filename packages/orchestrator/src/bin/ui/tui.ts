@@ -32,6 +32,7 @@
 // Selected over the readline path with `--tui` / RUNE_TUI=1; `--classic` opts
 // out to the plain printer. `--fullscreen` names the default and is a no-op.
 
+import { setActivityWorkspaceRoot } from "./activity";
 import type {
   Engine,
   PermissionHandler,
@@ -158,7 +159,7 @@ import {
 import type { AutoModeDeferral } from "../../auto-mode";
 import type { Brief } from "../../brief";
 import { TurnRenderer, userBlock, renderReplay, HEX } from "./turn";
-import { truncate, clampVisible, setTermWidthOverride } from "./render";
+import { truncate, clampVisible, setTermWidthOverride, visLen } from "./render";
 import { renderResearchPlan, renderClarifyingQuestions, formatResearchEvent } from "./research";
 import { isClarification } from "../../research-types";
 import type { ResearchOptions, ResearchPlan, ResearchReport } from "../../research-types";
@@ -698,6 +699,9 @@ class Tui {
     });
     stdin.resume();
 
+    // Tool rows name files against this root: `src/app.ts`, not the
+    // abbreviated absolute path the tool answered with.
+    setActivityWorkspaceRoot(this.ctx.workspaceRoot);
     this.enterSurface();
     process.stdout.on("resize", this.onResize);
     // Replay prior conversation when launched straight into a session (--resume /
@@ -714,22 +718,7 @@ class Tui {
     // System Memory: a one-time discoverability hint + a background "dream" when the
     // chosen cadence is due. Skipped while the launch picker owns the screen. The
     // dream no-ops fast unless an interval cadence is set and elapsed.
-    if (!this.ctx.launchPick) {
-      const mem = engine.getSystemMemory();
-      if (mem.enabled && !mem.content.trim() && mem.scheduleLabel === "manual") {
-        this.print(`  ${faint("tip: Rune can learn your style over time --")} ${info("/memory")}`);
-      }
-      void engine
-        .maybeReflectSystemMemory()
-        .then((r) => {
-          if (r.updated) {
-            this.print(
-              `  ${ok(glyph("verified"))} ${muted(`system memory refreshed (~${r.tokensAfter ?? 0} tokens) | /memory to view`)}`,
-            );
-          }
-        })
-        .catch(() => {});
-    }
+    if (!this.ctx.launchPick) this.openFreshSession();
 
     return new Promise<void>((resolve) => {
       const onData = (chunk: string) => this.onData(chunk);
@@ -1588,6 +1577,50 @@ class Tui {
    * frame (bannerLines), so committing a copy here would leave a stale one
    * scrolling underneath the live one.
    */
+  /**
+   * The opening of a fresh session: the logo (inline surface), what to type
+   * and which keys matter -- once, only when nothing has been said -- the
+   * memory tip, and the background dream. Runs at launch, or once the launch
+   * picker settles on "new". That path used to print nothing at all and, on
+   * the fixed frame, left the picker painted until the next keystroke.
+   */
+  private openFreshSession(): void {
+    this.printMastheadOnce();
+    const { engine } = this.ctx;
+    // The empty start screen said nothing but a memory tip. A person's first
+    // question is what to type and which keys matter; answer both in the
+    // transcript's own grammar.
+    if (engine.getTranscript(this.ctx.sessionId).length === 0) {
+      this.print(
+        [
+          `  ${muted("try")}  ${[
+            '"fix the failing test"',
+            '"explain how this repo is wired"',
+            ...(cols() >= 100 ? ['"add a --dry-run flag"'] : []),
+          ]
+            .map((example) => faint(example))
+            .join(` ${faint(glyph("observed"))} `)}`,
+          `  ${muted("keys")} ${faint("?")} ${faint("shortcuts")} ${faint(glyph("observed"))} ${faint("/")} ${faint("commands")} ${faint(glyph("observed"))} ${faint("shift+tab")} ${faint("shifts gear")}`,
+        ].join("\n"),
+      );
+    }
+    const mem = engine.getSystemMemory();
+    if (mem.enabled && !mem.content.trim() && mem.scheduleLabel === "manual") {
+      this.print(`  ${faint("tip: Rune can learn your style over time --")} ${info("/memory")}`);
+    }
+    void engine
+      .maybeReflectSystemMemory()
+      .then((r) => {
+        if (r.updated) {
+          this.print(
+            `  ${ok(glyph("verified"))} ${muted(`system memory refreshed (~${r.tokensAfter ?? 0} tokens) | /memory to view`)}`,
+          );
+        }
+      })
+      .catch(() => {});
+    this.scheduleDraw();
+  }
+
   private printMastheadOnce(): void {
     if (this.mastheadPrinted) return;
     this.mastheadPrinted = true;
@@ -2327,13 +2360,68 @@ class Tui {
         return true;
       }
       case "help": {
+        // Grouped by what the person is doing, most-reached-for group first.
+        // A flat list of 26 rows scrolled its own top half off a 24-row
+        // window, so /help opened on /loop and /team and never showed /model
+        // or /login (2026-09-10). Wide windows get two columns.
         const commands = this.slashCatalog();
+        const groups: Array<[string, string[]]> = [
+          ["work", ["/diff", "/undo", "/rewind", "/compress", "/clear", "/cost", "/status"]],
+          ["setup", ["/model", "/login", "/config", "/theme"]],
+          ["autonomy", ["/gear", "/sandbox", "/browser", "/interactive", "/loop", "/loops"]],
+          ["knowledge", ["/memory", "/notebook", "/skills", "/mcp", "/team"]],
+          ["session", ["/sessions", "/bug", "/help", "/quit"]],
+        ];
+        const placed = new Set(groups.flatMap(([, names]) => names));
+        const custom = commands.filter((item) => !placed.has(item.name)).map((i) => i.name);
+        if (custom.length > 0) groups.push(["custom", custom]);
+        const byName = new Map(commands.map((item) => [item.name, item]));
         const nameWidth = Math.max(...commands.map((item) => item.name.length)) + 2;
-        const rows =
-          cols() < 64
-            ? commands.flatMap((item) => [`    ${info(item.name)}`, `      ${muted(item.desc)}`])
-            : commands.map((item) => `    ${info(item.name.padEnd(nameWidth))}${muted(item.desc)}`);
-        this.print([`  ${bold(text("Commands"))}`, ...rows].join("\n"));
+        const width = cols();
+        const rows: string[] = [`  ${bold(text("Commands"))}`];
+        // A window too short for the full list gets one row per group, names
+        // only: every command visible at once, descriptions in the palette as
+        // you type. The full list on a 24-row window scrolled /model and
+        // /login off the top before anyone read them.
+        const fullRows = groups.reduce((n, [, names]) => n + 1 + names.length, 1);
+        const usable = rowsCount() - 8;
+        if (width < 110 && fullRows > usable) {
+          for (const [label, names] of groups) {
+            const present = names.filter((name) => byName.has(name));
+            if (present.length === 0) continue;
+            rows.push(`  ${faint(label.padEnd(10))}${present.map((name) => info(name)).join(" ")}`);
+          }
+          this.print(rows.join("\n"));
+          return true;
+        }
+        for (const [label, names] of groups) {
+          const items = names.map((name) => byName.get(name)).filter((i): i is SlashItem => !!i);
+          if (items.length === 0) continue;
+          rows.push(`  ${faint(label)}`);
+          if (width < 64) {
+            for (const item of items)
+              rows.push(`    ${info(item.name)}`, `      ${muted(item.desc)}`);
+            continue;
+          }
+          // Two columns when the window can hold two descriptions side by side.
+          const colWidth = Math.floor((width - 4) / 2);
+          const cell = (item: SlashItem): string =>
+            `${info(item.name.padEnd(nameWidth))}${muted(truncate(item.desc, colWidth - nameWidth - 2))}`;
+          if (width >= 110) {
+            for (let i = 0; i < items.length; i += 2) {
+              const left = items[i]!;
+              const right = items[i + 1];
+              const leftCell = cell(left);
+              const pad = " ".repeat(Math.max(1, colWidth - visLen(leftCell)));
+              rows.push(`    ${leftCell}${right ? pad + cell(right) : ""}`);
+            }
+          } else {
+            for (const item of items) {
+              rows.push(`    ${info(item.name.padEnd(nameWidth))}${muted(item.desc)}`);
+            }
+          }
+        }
+        this.print(rows.join("\n"));
         return true;
       }
       case "sessions":
@@ -3560,7 +3648,11 @@ class Tui {
     const p = this.picker;
     this.picker = null;
     this.mode = "input";
-    p?.resolve(result, alt); // the resolver (or a following print/redraw) repaints
+    p?.resolve(result, alt);
+    // The resolver usually prints, which repaints; when it does not (the
+    // launch picker settling on "new" in the fixed frame) the popover stayed
+    // on screen until the next keystroke. One scheduled draw either way.
+    this.scheduleDraw();
   }
 
   // -- ask mode (transient single-line text prompt; used by /research) --
@@ -4137,7 +4229,7 @@ class Tui {
         `  ${warn(glyph("observed"))} ${muted("couldn't detect this session's provider --")} ${info("/model")} ${muted("if replies look off")}`,
       );
     }
-    this.print(`  ${faint("continue where you left off down")}`);
+    this.print(`  ${faint("continue where you left off")}`);
   }
 
   /** Render replayed history lines into the transcript (shared by resume + startup seeding).
@@ -4162,7 +4254,7 @@ class Tui {
       `  ${faint("--")} ${muted("resumed")} ${text(title)} ${faint(this.shortId(this.ctx.sessionId))} ${faint("--")}`,
     );
     this.printTranscriptLines(lines);
-    this.print(`  ${faint("continue where you left off down")}`);
+    this.print(`  ${faint("continue where you left off")}`);
   }
 
   /**
@@ -4178,7 +4270,7 @@ class Tui {
       .filter((s) => s.id !== fresh && isMeaningfulSession(s))
       .slice(0, 12);
     if (recent.length === 0) {
-      this.printMastheadOnce(); // nothing to resume -- open the fresh session with the logo
+      this.openFreshSession(); // nothing to resume -- open the fresh session
       return;
     }
 
@@ -4191,18 +4283,18 @@ class Tui {
     ];
     const i = await this.pick("Resume a session", items, 0);
     if (i == null || i === 0) {
-      this.printMastheadOnce(); // Esc or "new" -> open the fresh session with the logo
+      this.openFreshSession(); // Esc or "new" -> open the fresh session
       return;
     }
 
     const s = recent[i - 1];
     if (!s) {
-      this.printMastheadOnce();
+      this.openFreshSession();
       return;
     }
     const res = this.ctx.engine.resumeSession(s.id);
     if (!res) {
-      this.printMastheadOnce();
+      this.openFreshSession();
       this.print(`  ${danger(glyph("failure"))} ${muted("could not open that session")}`);
       return;
     }

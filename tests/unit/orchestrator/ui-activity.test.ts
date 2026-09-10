@@ -649,3 +649,24 @@ describe("apply_patch renders a row and a diff per file", () => {
     expect(out).not.toContain('{"');
   });
 });
+
+describe("tool-row paths read against the workspace", () => {
+  it("a file inside the workspace is shown relative to it; outside, under the home as ~", async () => {
+    const { listingPath, setActivityWorkspaceRoot } =
+      await import("../../../packages/orchestrator/src/bin/ui/activity");
+    const { homedir } = await import("node:os");
+    setActivityWorkspaceRoot("/private/tmp/claude-501/rune-live-gFFS/ws");
+    try {
+      expect(listingPath("/private/tmp/claude-501/rune-live-gFFS/ws/greet.ts")).toBe("greet.ts");
+      expect(listingPath("/private/tmp/claude-501/rune-live-gFFS/ws/src/a/b.ts")).toBe(
+        "src/a/b.ts",
+      );
+      expect(listingPath("/private/tmp/claude-501/rune-live-gFFS/ws")).toBe(".");
+      expect(listingPath(`${homedir()}/notes/todo.md`)).toBe("~/notes/todo.md");
+      expect(listingPath("/opt/very/deep/path/to/some/file.txt")).toBe(".../path/to/some/file.txt");
+      expect(listingPath("src/local.ts")).toBe("src/local.ts");
+    } finally {
+      setActivityWorkspaceRoot(null);
+    }
+  });
+});
