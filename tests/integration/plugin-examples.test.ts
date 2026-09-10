@@ -192,11 +192,24 @@ describe("rune plugin add ./examples/plugins/…", () => {
           .filter((s) => s.name.startsWith("plugin_"))
           .map((s) => s.name)
           .sort();
+        // The shipped example declares `example.com:443` for its `net` tool.
+        // Since 9876957 neither backend claims to enforce a NAMED host —
+        // Seatbelt filters by port alone (`host_enforcement: "port"`) and
+        // bubblewrap's network isolation is all-or-nothing — so `http_get` is
+        // refused on every sandboxed platform unless the operator names the
+        // plugin in `[extensions] allowUnsandboxedTools`. This used to expect
+        // it on both, and was the only gate that ran the example AS SHIPPED.
+        // The two file tools are untouched: `workspace-write` has no endpoint
+        // to widen.
         expect(names).toEqual([
-          "plugin_rune-example-tools_http_get",
           "plugin_rune-example-tools_read_text",
           "plugin_rune-example-tools_write_text",
         ]);
+        // A refused tool is not a silent drop. The reason reaches the same
+        // channel the TUI reads, and it names the flag that would allow it.
+        const notices = engine.drainMcpNotices().join("\n");
+        expect(notices).toContain('tool "net" was not started');
+        expect(notices).toContain("allowUnsandboxedTools");
 
         const wrote = await registryOf(engine).execute({
           toolName: "plugin_rune-example-tools_write_text",
