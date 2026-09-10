@@ -203,6 +203,32 @@ export class ToolRegistry {
     return this.tools.get(name);
   }
 
+  /** Recovery guidance uses this registry, including deferred tools. Never
+   * silently dispatch an unknown name or suggest an unregistered capability. */
+  unknownToolMessage(name: string): string {
+    const needle = name.toLowerCase().replace(/[- ]/g, "_");
+    const aliases: Record<string, string[]> = {
+      search: ["grep", "search_code", "glob"],
+      find: ["glob", "grep", "search_code"],
+      read: ["read_file", "read_many"],
+      write: ["write_file", "edit_file", "apply_patch"],
+      shell: ["bash"],
+    };
+    const related =
+      aliases[needle] ??
+      [...this.tools.keys()].filter(
+        (candidate) =>
+          candidate.toLowerCase().includes(needle) || needle.includes(candidate.toLowerCase()),
+      );
+    const available = related.filter((candidate) => this.tools.has(candidate)).slice(0, 3);
+    return (
+      `Unknown tool: ${name}. ` +
+      (available.length
+        ? `Related registered tools: ${available.join(", ")}. Use their documented arguments.`
+        : "Use a registered name from your tool catalog; repeating this name cannot run it.")
+    );
+  }
+
   list(): ToolSchema[] {
     return [...this.tools.values()].map((h) => h.schema);
   }
@@ -267,7 +293,7 @@ export class ToolRegistry {
         toolName: input.toolName,
         success: false,
         result: "",
-        error: `Tool not found: ${input.toolName}`,
+        error: this.unknownToolMessage(input.toolName),
         durationMs: 0,
       };
     }

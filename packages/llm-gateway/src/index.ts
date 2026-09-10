@@ -63,6 +63,7 @@ export { OpenAIProvider } from "./providers/openai";
 export {
   cacheBreakpointPolicyFor,
   declaredCachePolicies,
+  foldsEphemeralTail,
   isAnthropicUpstream,
   promptCacheKey,
 } from "./providers/cache-policy";

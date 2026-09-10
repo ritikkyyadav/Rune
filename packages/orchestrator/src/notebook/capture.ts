@@ -9,13 +9,32 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { NotebookStore } from "./store";
+import { bashCheckVerdict, isVerificationCommand } from "../brief";
 
 /** What the engine observed about one tool call during a run. */
 export interface ToolObservation {
   toolName: string;
   args: Record<string, unknown>;
+  /** Command outcome for bash; tool outcome for other tools. */
   success: boolean;
   error?: string;
+}
+
+/** Normalize once at both observation entry points: the live engine and replay.
+ * Retaining only the verdict avoids copying full command output into lessons. */
+export function toolObservation(
+  toolName: string,
+  args: Record<string, unknown>,
+  output: { success: boolean; result?: string; error?: string },
+): ToolObservation {
+  const check = toolName === "bash" ? bashCheckVerdict(output) : undefined;
+  const success = check?.passed ?? output.success;
+  return {
+    toolName,
+    args,
+    success,
+    ...(!success ? { error: (check?.summary ?? output.error ?? "failed").slice(0, 400) } : {}),
+  };
 }
 
 export interface CaptureContext {
@@ -68,6 +87,7 @@ function bashCommand(o: ToolObservation): string | null {
  * Exported so the retro can tell which passing checks the facts already cover.
  */
 export function categorizeProjectCommand(cmd: string): string | null {
+  if (!isVerificationCommand(cmd)) return null;
   if (!/^(bun|bunx|npm|npx|pnpm|yarn|cargo|go|make|python|pytest|mvn|gradle|turbo)\b/.test(cmd)) {
     return null;
   }

@@ -16,7 +16,7 @@ import type { SessionEvent } from "@rune/shared";
 import type { CallRole } from "@rune/llm-gateway";
 import { isGovernanceRole } from "@rune/llm-gateway";
 import { isVerificationCommand } from "./brief";
-import { categorizeProjectCommand } from "./notebook/capture";
+import { categorizeProjectCommand, toolObservation } from "./notebook/capture";
 import type { ToolObservation } from "./notebook/capture";
 import type { NotebookStore } from "./notebook/store";
 import { TaskStateStore } from "./task-state";
@@ -284,12 +284,13 @@ export function observationsFromRows(rows: EventRow[]): ToolObservation[] {
       if (!use) continue;
       const failed = p.isError === true;
       const content = typeof p.content === "string" ? p.content : "";
-      out.push({
-        toolName: use.toolName,
-        args: use.args,
-        success: !failed,
-        ...(failed ? { error: content.slice(0, 400) } : {}),
-      });
+      out.push(
+        toolObservation(use.toolName, use.args, {
+          success: !failed,
+          result: content,
+          ...(failed ? { error: content.slice(0, 400) } : {}),
+        }),
+      );
     }
   }
   return out;

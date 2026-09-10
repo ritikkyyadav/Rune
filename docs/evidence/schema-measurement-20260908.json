@@ -1,0 +1,10 @@
+{
+  "kind": "offline-schema-measurement",
+  "model": "gpt-5.6-sol",
+  "configuration": "Engine defaults, MCP/skills/hooks/security/checkpoints off, no inference",
+  "beforeBytes": 41875,
+  "afterBytes": 30022,
+  "savedBytes": 11853,
+  "savedPercent": 28.305671641791044,
+  "deferred": ["interactive_dashboard", "n8n_trigger", "update_config"]
+}

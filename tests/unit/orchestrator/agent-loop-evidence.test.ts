@@ -79,7 +79,7 @@ describe("execution-evidence gate", () => {
 
     // The nudge notice fired
     expect(
-      events.some((e) => e.type === "notice" && e.message.includes("No execution evidence")),
+      events.some((e) => e.type === "notice" && e.message.includes("Execution-evidence gate")),
     ).toBe(true);
     // The nudge message reached the model on turn 3
     const nudged = requests[2].messages.find((m: any) =>
@@ -114,7 +114,7 @@ describe("execution-evidence gate", () => {
     const loop = new AgentLoop({ model: "m", provider: "anthropic" }, gateway, makeRegistry());
     const events = await collect(loop.run("task", "s1", "/tmp"));
     expect(
-      events.some((e) => e.type === "notice" && e.message.includes("No execution evidence")),
+      events.some((e) => e.type === "notice" && e.message.includes("Execution-evidence gate")),
     ).toBe(false);
     expect(gateway.inferStream).toHaveBeenCalledTimes(2);
   });
@@ -129,7 +129,7 @@ describe("execution-evidence gate", () => {
     const loop = new AgentLoop({ model: "m", provider: "anthropic" }, gateway, makeRegistry());
     const events = await collect(loop.run("question", "s1", "/tmp"));
     expect(
-      events.some((e) => e.type === "notice" && e.message.includes("No execution evidence")),
+      events.some((e) => e.type === "notice" && e.message.includes("Execution-evidence gate")),
     ).toBe(false);
     expect(gateway.inferStream).toHaveBeenCalledTimes(1);
   });
@@ -153,7 +153,7 @@ describe("execution-evidence gate", () => {
     const loop = new AgentLoop({ model: "m", provider: "anthropic" }, gateway, makeRegistry());
     const events = await collect(loop.run("task", "s1", "/tmp"));
     const nudges = events.filter(
-      (e) => e.type === "notice" && e.message.includes("No execution evidence"),
+      (e) => e.type === "notice" && e.message.includes("Execution-evidence gate"),
     );
     expect(nudges.length).toBe(1);
     const done = events.find((e) => e.type === "turn_complete") as any;
@@ -188,7 +188,7 @@ describe("execution-evidence gate", () => {
     const events = await collect(loop.run("task", "s1", "/tmp"));
     expect(verifier.verify).toHaveBeenCalled();
     expect(
-      events.some((e) => e.type === "notice" && e.message.includes("No execution evidence")),
+      events.some((e) => e.type === "notice" && e.message.includes("Execution-evidence gate")),
     ).toBe(false);
     expect(gateway.inferStream).toHaveBeenCalledTimes(2);
   });

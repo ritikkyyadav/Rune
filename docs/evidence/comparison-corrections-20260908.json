@@ -1,0 +1,16 @@
+{
+  "recordedAt": "2026-09-08",
+  "originalReport": "comparison-20260907-c.json",
+  "originalReportSha256": "4800452f9385b4b8325e0ddafe9d9361eb6a57c1eb75922ebe61b24e05766cc1",
+  "corrections": [
+    "Both arms stopped on terminal provider quota errors. Rune had eight usage entries before interruption; OpenCode had none. Treat this attempt as infrastructure-interrupted, not a head-to-head capability result. The original scored field on the Rune row did not account for mid-run quota failure.",
+    "The original frontend grader required textbox; a native input type=search correctly has searchbox role. The corrected grader checks the exact accessible label Search projects and preserves every behavioral assertion.",
+    "The unchanged Rune artifact passes the corrected browser acceptance checks. The model run remains incomplete. This does not establish visual quality: human screenshot inspection found persistent loading placeholders above the project cards."
+  ],
+  "regrade": {
+    "passed": true,
+    "detail": "acceptance passed\n"
+  },
+  "regradeEvidence": "/tmp/rune-head-to-head-20260907-c/regrade-20260908-rune",
+  "rawLogsPublished": false
+}

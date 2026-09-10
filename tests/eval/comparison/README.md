@@ -43,6 +43,20 @@ bunx tsc --noEmit --target ESNext --module ESNext --moduleResolution Bundler \
   --esModuleInterop tests/eval/comparison/*.ts
 ```
 
+On macOS, verify that the native shell sandbox can launch Chromium before spending inference
+on frontend work. Use an already installed Playwright runtime; this test downloads nothing:
+
+```sh
+cargo build -p rune-tools
+RUNE_TEST_PLAYWRIGHT=/path/to/node_modules/playwright/index.mjs \
+  bun test tests/integration/browser-sandbox.test.ts
+```
+
+The test checks local serving, interaction and screenshots through foreground and background
+launch profiles, while denied reads, outside writes and environment secrets remain blocked.
+Set `RUNE_TOOLS_BINARY` to test a specific installed native binary. Without the runtime opt-in
+or on another OS these two checks are skipped, not reported as browser verification.
+
 ## SWE-bench predictions
 
 Export the official dataset as JSONL, retaining `instance_id`, `repo`, `base_commit` and `problem_statement`. Provision one clean disposable checkout per pinned instance under `REPOS/INSTANCE_ID`, with its original Git remote and exact base commit. The adapter refuses missing IDs, dirty checkouts and wrong repository origins before inference. It does not provision Python dependencies or benchmark containers.

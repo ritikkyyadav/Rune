@@ -15,6 +15,7 @@ import type {
 } from "@rune/llm-gateway";
 import {
   measureComposition,
+  foldsEphemeralTail,
   LlmGateway,
   BudgetExceededError,
   BudgetPricingError,
@@ -45,7 +46,7 @@ import type { Verifier, VerifyResult } from "./verifier";
 import type { HandoffReason, TaskStateStore, TodoItem } from "./task-state";
 import { evidenceWeight, TASK_STATE_BLOCK_BUDGET_AFTER_COMPACTION } from "./task-state";
 import type { ArtifactKind } from "@rune/protocol";
-import { isVerificationCommand, summarizeCheck } from "./brief";
+import { bashCheckVerdict, isVerificationCommand } from "./brief";
 
 // ─── Agent Turn Events (yielded to caller) ───
 //
@@ -235,6 +236,17 @@ export interface AgentLoopConfig {
   turnBudgetNotice?: boolean;
   /** Screens tool outputs before they enter the transcript/model context. */
   toolResultProcessor?: ToolResultProcessor;
+  /**
+   * Called the moment a tool finishes executing — before the next serial
+   * call in the same batch runs, and before the batch's events reach the
+   * engine. The check log is written here so that a citation in the same
+   * response as its check finds the check already on record.
+   */
+  onToolExecuted?: (call: {
+    toolName: string;
+    args: Record<string, unknown>;
+    output: ToolCallOutput;
+  }) => void;
   /** Bounded all-providers-throttled waits per run. Default 2. */
   maxRateWaits?: number;
   /** Forced compactions after provider over-limit rejections. Default 2. */
@@ -562,55 +574,48 @@ export function artifactsFromResult(
   return [];
 }
 
+/** Compatibility export; all evidence consumers share the same exit verdict. */
+export { bashCheckVerdict } from "./brief";
+
 /**
- * What a `bash` result says about a verification-shaped command.
+ * Attach the ephemeral tail blocks to the LAST stable message instead of
+ * appending them as user messages — the wire shape for hosts where a trailing
+ * user message ends the prompt cache (see `foldsEphemeralTail`).
  *
- * The tool's `success` flag means "the command ran", not "the command passed":
- * a failing test suite is a successful call carrying `exit_code: 1`. Everything
- * that judges a check has to read the code, and the summary is taken from
- * STDOUT, which is where a test runner writes its verdict — stderr is usually
- * empty on an ordinary test failure.
+ * The request keeps ending on what it ended on: the tool output the model is
+ * about to read gains the blocks after its own text; a user prompt gains them
+ * as one more text block. Nothing stored is touched — the message and its
+ * content array are copied — so next turn's transcript still carries the
+ * bare output and the prefix stays byte-stable up to that one message.
  */
-export function bashCheckVerdict(output: { success: boolean; result?: string; error?: string }): {
-  passed: boolean;
-  summary: string;
-  exitCode?: number;
-} {
-  if (!output.success) {
-    return {
-      passed: false,
-      summary: lastNonEmptyLine(output.error ?? output.result ?? "").slice(0, 160) || "failed",
-    };
+export function withTailFolded(messages: Message[], blocks: string[]): Message[] {
+  const tail = blocks.join("\n\n");
+  const last = messages[messages.length - 1];
+  if (!last) return [{ role: "user", content: [{ type: "text", text: tail }] }];
+  if (last.role === "tool") {
+    let idx = -1;
+    for (let i = last.content.length - 1; i >= 0; i--) {
+      if (last.content[i]!.type === "tool_result") {
+        idx = i;
+        break;
+      }
+    }
+    if (idx >= 0) {
+      const result = last.content[idx] as Extract<ContentBlock, { type: "tool_result" }>;
+      const content = [...last.content];
+      content[idx] = { ...result, toolResultContent: `${result.toolResultContent}\n\n${tail}` };
+      return [...messages.slice(0, -1), { ...last, content }];
+    }
   }
-  let exitCode: number | undefined;
-  let timedOut = false;
-  let stdout = "";
-  let stderr = "";
-  try {
-    const parsed = JSON.parse(output.result ?? "") as Record<string, unknown>;
-    if (typeof parsed.exit_code === "number") exitCode = parsed.exit_code;
-    timedOut = parsed.timed_out === true;
-    if (typeof parsed.stdout === "string") stdout = parsed.stdout;
-    if (typeof parsed.stderr === "string") stderr = parsed.stderr;
-  } catch {
-    // Not the shell's JSON shape (a stubbed tool, an embedder's own runner).
-    // Fall back to the flag, which is what this did before it read the code.
-    return { passed: true, summary: "ok" };
+  if (last.role === "user") {
+    return [
+      ...messages.slice(0, -1),
+      { ...last, content: [...last.content, { type: "text", text: tail }] },
+    ];
   }
-  const passed = !timedOut && (exitCode == null || exitCode === 0);
-  if (passed) return { passed: true, summary: "ok", ...(exitCode != null ? { exitCode } : {}) };
-  // BOTH streams, through the shared ladder. Runners disagree about where the
-  // verdict goes -- `bun test` writes the failure to stderr and leaves stdout
-  // holding nothing but its own version banner, which is exactly the line a
-  // stdout-only reading would quote back as the reason a theory was ruled out.
-  const summary =
-    summarizeCheck([stdout, stderr].filter(Boolean).join("\n")) ??
-    (timedOut ? "timed out" : "failed");
-  return {
-    passed: false,
-    summary: summary.slice(0, 160),
-    ...(exitCode != null ? { exitCode } : {}),
-  };
+  // Nothing after an assistant turn to ride on (a report turn, a halted run):
+  // the only place left is a fresh user message, the shape every host takes.
+  return [...messages, { role: "user", content: [{ type: "text", text: tail }] }];
 }
 
 /** The last non-empty line of a report — the line a failure is usually named on. */
@@ -810,12 +815,26 @@ export class AgentLoop {
   // the post-compaction array and silently persisted NOTHING after any
   // auto-compaction) and crashes (which never reach a final sweep at all).
   private pendingPersist: Message[] = [];
+  /**
+   * Where a synthetic message came from — a finish gate, a loop nudge, the
+   * second wind. The engine persists a tagged user message as a harness
+   * event, so a detached run's database shows what re-prompted the model
+   * (dogfood 2026-09-09: eleven completions after the closing message, and
+   * no event between them). Untagged synthetic messages stay unpersisted.
+   */
+  private readonly messageOrigins = new WeakMap<Message, string>();
 
   /** Append to the transcript AND queue for persistence. Every message the
    *  run creates goes through here; the prior-history seed does not. */
-  private appendMessage(m: Message): void {
+  private appendMessage(m: Message, origin?: string): void {
     this.messages.push(m);
     this.pendingPersist.push(m);
+    if (origin) this.messageOrigins.set(m, origin);
+  }
+
+  /** The harness origin of a message this run appended, if it was tagged. */
+  originOf(m: Message): string | undefined {
+    return this.messageOrigins.get(m);
   }
 
   /**
@@ -1147,7 +1166,11 @@ export class AgentLoop {
     // tool calls (Gemini MALFORMED_FUNCTION_CALL, over-eager stops) must never
     // end the run as a silent no-op — retry bounded, then fail loudly.
     let emptyCompletions = 0;
-    let anyUsableOutputThisRun = false;
+    let anyTextThisRun = false;
+    // Whether the model has said anything since its last tool results. An
+    // empty end_turn while this is false is a run that stopped mid-sentence:
+    // "running the tests now", results, and then nothing.
+    let textSinceLastTools = false;
     // ── Halt handling ──
     // The broker halted the run (suspected injection, or a reviewer refusal
     // streak). Set the moment a permission check reports it; consumed once, to
@@ -1251,10 +1274,13 @@ export class AgentLoop {
         yield { type: "replanning", reason: drainedNotes.replanReason, trigger: "struggle" };
       }
       if (pendingWindNote) {
-        this.appendMessage({
-          role: "user",
-          content: [{ type: "text", text: `[Harness note] ${pendingWindNote}` }],
-        });
+        this.appendMessage(
+          {
+            role: "user",
+            content: [{ type: "text", text: `[Harness note] ${pendingWindNote}` }],
+          },
+          "wind",
+        );
         yield {
           type: "notice",
           message: `Turn ceiling reached with the plan open and moving — extended the budget by ${baseMaxTurns} turns (wind ${windsUsed} of ${this.config.maxSecondWinds ?? 0}).`,
@@ -1388,29 +1414,22 @@ export class AgentLoop {
       }
 
       // ── Task-state tail injection ──
-      // The spine rides as an EPHEMERAL final user message: rebuilt fresh for
-      // every request, never stored in `this.messages` — so it survives
-      // compaction by construction, costs nothing on trivial tasks (renders
-      // null), and mutates only the prompt SUFFIX (cache-safe, unlike the
-      // old aux-prepend). Providers accept a user message after tool results;
-      // Anthropic merges the resulting consecutive user-role turns.
+      // The spine rides as an EPHEMERAL tail: rebuilt fresh for every request,
+      // never stored in `this.messages` — so it survives compaction by
+      // construction, costs nothing on trivial tasks (renders null), and
+      // mutates only the prompt SUFFIX (cache-safe, unlike the old aux-prepend).
       // Everything up to here recurs verbatim next turn, so this is the end of
       // the cacheable prefix. Capture it BEFORE the ephemeral task/team blocks:
       // a breakpoint on either live tail would key a cache entry to content
       // rebuilt every request and prevent the next turn from reading it back.
       const stableMessageCount = requestMessages.length;
+      const stableMessages = requestMessages;
 
       const taskBlock =
         this.config.taskState?.renderBlock(
           justCompacted ? TASK_STATE_BLOCK_BUDGET_AFTER_COMPACTION : undefined,
         ) ?? null;
       justCompacted = false;
-      if (taskBlock) {
-        requestMessages = [
-          ...requestMessages,
-          { role: "user", content: [{ type: "text", text: taskBlock }] },
-        ];
-      }
 
       // ── Team tail injection ──
       // Same ephemeral contract as the spine: rebuilt per request, never
@@ -1422,17 +1441,12 @@ export class AgentLoop {
       } catch {
         // team snapshot must never break a request
       }
-      if (teamBlock) {
-        requestMessages = [
-          ...requestMessages,
-          { role: "user", content: [{ type: "text", text: teamBlock }] },
-        ];
-      }
 
       // ── Turn-budget tail injection ──
       // Same ephemeral contract again: the clock a sub-agent was told to watch
       // but was never shown. Escalates in the last two turns, because "write
       // up now" is only actionable while a turn remains to write it in.
+      let budgetBlock: string | null = null;
       if (this.config.turnBudgetNotice) {
         const left = this.config.maxTurns - turn;
         // Role-NEUTRAL wording on purpose: this same block is injected into
@@ -1440,7 +1454,7 @@ export class AgentLoop {
         // summarize" would be telling a worker mid-build to do the wrong verb.
         // Each one's system prompt names its own deliverable; this names the
         // deadline and the rule that decides whether anything is returned.
-        const budgetBlock =
+        budgetBlock =
           left <= 2
             ? `[Budget: turn ${turn} of ${this.config.maxTurns} — ${left} turn${
                 left === 1 ? "" : "s"
@@ -1449,20 +1463,41 @@ export class AgentLoop {
               `tool call and this run returns nothing. A partial report naming what you did ` +
               `and what you did not reach is worth far more than silence.]`
             : `[Budget: turn ${turn} of ${this.config.maxTurns} — ${left} turns left.]`;
-        requestMessages = [
-          ...requestMessages,
-          { role: "user", content: [{ type: "text", text: budgetBlock }] },
-        ];
+      }
+
+      // ── Wire shape of the tail ──
+      // Most hosts take the blocks as trailing user messages (Anthropic merges
+      // the consecutive user turns; Chat Completions hosts cache the prefix
+      // before them). The Codex Responses backend does not: a request that
+      // ends on a user message is a new turn to it, and the cache entry it
+      // writes then matches nothing the next request sends — measured on
+      // gpt-5.6-sol, see `foldsEphemeralTail`. There the same text rides
+      // inside the last stable message instead, and the request still ends
+      // on the tool output the model is about to read.
+      const ephemeralBlocks = [taskBlock, teamBlock, budgetBlock].filter(
+        (block): block is string => typeof block === "string" && block.length > 0,
+      );
+      if (ephemeralBlocks.length > 0) {
+        requestMessages = foldsEphemeralTail(this.config.provider)
+          ? withTailFolded(stableMessages, ephemeralBlocks)
+          : [
+              ...stableMessages,
+              ...ephemeralBlocks.map((text): Message => ({
+                role: "user",
+                content: [{ type: "text", text }],
+              })),
+            ];
       }
 
       // ── What this request is made of, in bytes ──
-      // Measured HERE because this is the only place that knows which trailing
-      // messages are the ephemeral blocks: on the wire the plan ledger is an
-      // ordinary user message, indistinguishable from the work. `stableMessageCount`
-      // already draws that line for the cache breakpoint; the same line answers
-      // "what is the 34k". The doctrine share is what makes the JIT setting's
-      // effect visible — `/config doctrine full` moves ~2k of bytes back into
-      // this row on every single request.
+      // Measured HERE because this is the only place that knows which text is
+      // the ephemeral tail: on the wire the plan ledger is an ordinary user
+      // message — or, on a folding host, the end of a tool output —
+      // indistinguishable from the work. The stable messages are measured
+      // BEFORE the tail is attached, so the conversation row reads the same
+      // whichever wire shape the host gets. The doctrine share is what makes
+      // the JIT setting's effect visible — `/config doctrine full` moves ~2k
+      // of bytes back into this row on every single request.
       //
       // Total by construction, and it must stay that way: this is TELEMETRY,
       // and a meter is never allowed to be the reason a request does not go
@@ -1476,16 +1511,13 @@ export class AgentLoop {
         // of doctrine and tool schemas — a confident, false number, which is
         // the failure the whole cost surface is built to avoid. An absent
         // composition already reads as "not measured" everywhere downstream.
-        if (!Array.isArray(requestMessages)) throw new Error("messages is not an array");
-        const ephemeralText = requestMessages
-          .slice(stableMessageCount)
-          .flatMap((m) => m.content.map((b) => (b.type === "text" ? b.text : "")));
+        if (!Array.isArray(stableMessages)) throw new Error("messages is not an array");
         composition = measureComposition({
           system: requestSystemPrompt,
           tools,
-          messages: requestMessages.slice(0, stableMessageCount),
+          messages: stableMessages,
           planLedger: taskBlock,
-          taskState: ephemeralText.slice(taskBlock ? 1 : 0),
+          taskState: [teamBlock, budgetBlock],
         });
       } catch {
         composition = undefined;
@@ -1751,20 +1783,26 @@ export class AgentLoop {
       //   1. stopReason "tool_use" with ZERO delivered tool calls — the
       //      provider claimed a call it never encoded (MALFORMED_FUNCTION_CALL
       //      class defects).
-      //   2. The run tries to end having produced NOTHING at all so far — a
-      //      model never legitimately answers a user with literal nothing.
+      //   2. The run tries to end without ever answering. Earlier tool calls
+      //      are work, but cannot substitute for the answer (dogfood 2026-09-09).
       // Ending the turn here would render nothing and explain nothing — the
       // single worst experience Rune can produce. Retry (the transcript is
       // untouched: the empty message is NOT pushed), then fail loudly.
-      const producedUsableOutput =
-        pendingToolCalls.length > 0 ||
-        contentBlocks.some((b) => b.type === "text" && b.text.trim().length > 0);
-      if (producedUsableOutput) anyUsableOutputThisRun = true;
+      const producedText = contentBlocks.some((b) => b.type === "text" && b.text.trim().length > 0);
+      const producedUsableOutput = pendingToolCalls.length > 0 || producedText;
       const claimedToolUseButNone = stopReason === "tool_use" && pendingToolCalls.length === 0;
-      const firstStepSilence =
-        !anyUsableOutputThisRun && stopReason === "end_turn" && !producedUsableOutput;
-      if (!signal?.aborted && (claimedToolUseButNone || firstStepSilence)) {
-        const maxEmpty = this.config.maxEmptyCompletionRetries ?? 3;
+      // Silence is an empty end_turn either with no answer EVER this run, or
+      // after tool calls whose results the model never spoke to. The second
+      // shape gets one nudge and is then accepted: the work happened and the
+      // earlier narration stands, and failing a finished run over a missing
+      // last line would be the worse outcome.
+      const silentEndTurn =
+        stopReason === "end_turn" &&
+        !producedUsableOutput &&
+        (!anyTextThisRun || (!textSinceLastTools && toolCallsThisRun > 0));
+      const narratedEarlier = silentEndTurn && anyTextThisRun;
+      if (!signal?.aborted && !haltReportPending && (claimedToolUseButNone || silentEndTurn)) {
+        const maxEmpty = narratedEarlier ? 2 : (this.config.maxEmptyCompletionRetries ?? 3);
         emptyCompletions++;
         this.report(
           "provider.empty_completion",
@@ -1774,6 +1812,20 @@ export class AgentLoop {
             `(stopReason ${stopReason}, attempt ${emptyCompletions})`,
         );
         if (emptyCompletions < maxEmpty) {
+          if (silentEndTurn && toolCallsThisRun > 0 && emptyCompletions === 1) {
+            this.appendMessage(
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: "[Harness note] Your tool results are recorded, but you have not provided an answer. Give a concise account of the result and anything unfinished. Do not repeat completed work.",
+                  },
+                ],
+              },
+              "nudge:empty-completion",
+            );
+          }
           yield {
             type: "notice",
             message: `The model returned an empty response — retrying (${emptyCompletions}/${maxEmpty - 1})…`,
@@ -1781,17 +1833,41 @@ export class AgentLoop {
           this.state = "observing";
           continue;
         }
-        this.state = "done";
+        if (!narratedEarlier) {
+          this.state = "done";
+          yield* this.handoffEvents("provider_lost");
+          yield {
+            type: "error",
+            error:
+              `The model returned an empty response ${maxEmpty} times in a row ` +
+              `(${this.config.provider}/${this.config.model}). ` +
+              (toolCallsThisRun > 0
+                ? "No answer was produced; recorded tool results are retained. "
+                : "Nothing was produced. ") +
+              "Try again, rephrase, or switch models with /model.",
+            recoverable: false,
+          };
+          yield { type: "turn_complete", stopReason: "provider_lost", totalTurns: turn };
+          return;
+        }
+        // Accept the finish on the earlier narration, and say so once.
+        this.report(
+          "provider.empty_completion",
+          "warn",
+          "run#emptyCompletion",
+          "no closing account after the last tool results — finishing on the earlier narration",
+        );
         yield {
-          type: "error",
-          error:
-            `The model returned an empty response ${maxEmpty} times in a row ` +
-            `(${this.config.provider}/${this.config.model}). Nothing was produced. ` +
-            "Try again, rephrase, or switch models with /model.",
-          recoverable: false,
+          type: "notice",
+          message:
+            "The model ended without a closing message after its last tool results; finishing on what it said earlier.",
         };
-        return;
       }
+      if (producedText) {
+        anyTextThisRun = true;
+        textSinceLastTools = true;
+      }
+      if (producedUsableOutput) emptyCompletions = 0;
 
       // Record assistant message. Never push an EMPTY assistant message: some
       // providers reject transcripts containing empty content on the next call,
@@ -2031,30 +2107,33 @@ export class AgentLoop {
             `finish refused: ${unreadScopes.length} of ${delegatedScopes.length} delegated scopes never read`,
           );
           const whole = unreadScopes.length === delegatedScopes.length;
-          this.appendMessage({
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text:
-                  (whole
-                    ? "Stop — every line of this work was written by sub-agents and you have not " +
-                      "opened one of their files. "
-                    : `Stop — sub-agents wrote ${delegatedScopes.length} scopes and you have not ` +
-                      `looked at ${unreadScopes.length} of them. `) +
-                  "Their reports are one model's account of code you have not read; they are " +
-                  "not evidence, and the manifest under each one tells you only how big the " +
-                  "files are, not whether they are right.\n" +
-                  `Unread: ${unreadScopes
-                    .map((s) => relative(workspaceRoot, s) || s)
-                    .slice(0, 8)
-                    .join(", ")}\n` +
-                  "Read the seams first — the shared types, the entry points, and anything " +
-                  "two workers had to agree on — then run the project's checks yourself. " +
-                  "Report only what you verified, and say plainly what you did not.",
-              },
-            ],
-          });
+          this.appendMessage(
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text:
+                    (whole
+                      ? "Stop — every line of this work was written by sub-agents and you have not " +
+                        "opened one of their files. "
+                      : `Stop — sub-agents wrote ${delegatedScopes.length} scopes and you have not ` +
+                        `looked at ${unreadScopes.length} of them. `) +
+                    "Their reports are one model's account of code you have not read; they are " +
+                    "not evidence, and the manifest under each one tells you only how big the " +
+                    "files are, not whether they are right.\n" +
+                    `Unread: ${unreadScopes
+                      .map((s) => relative(workspaceRoot, s) || s)
+                      .slice(0, 8)
+                      .join(", ")}\n` +
+                    "Read the seams first — the shared types, the entry points, and anything " +
+                    "two workers had to agree on — then run the project's checks yourself. " +
+                    "Report only what you verified, and say plainly what you did not.",
+                },
+              ],
+            },
+            "gate:delegation-evidence",
+          );
           yield {
             type: "notice",
             message: "Delegated work was never read — asking the agent to check it.",
@@ -2071,7 +2150,27 @@ export class AgentLoop {
         // demand verification + an honest report. Deterministic and
         // model-independent — weak models get pushed just as hard as strong
         // ones.
+        // ── A settled plan stands the evidence gates down ──
+        // Every planned step is completed and none is unproven: each carries
+        // the passing check the ledger attributed to it, and a write after a
+        // step's check already marks that step unproven. The plan IS the
+        // evidence system; the two gates below are the fallback for runs that
+        // never wrote one. Firing them anyway re-prompted a finished dogfood
+        // run for eleven completions after its closing message (2026-09-09).
+        const planCounts = this.config.taskState?.todoCounts();
+        const planSettled =
+          !!planCounts &&
+          planCounts.total > 0 &&
+          planCounts.open === 0 &&
+          planCounts.unproven === 0;
+        if (planSettled && anyWritesThisRun && !executedSinceWrite && !projectChecksPassed) {
+          this.config.taskState?.logEvent(
+            "gate",
+            `plan complete with evidence on all ${planCounts.total} steps — evidence gates stood down`,
+          );
+        }
         if (
+          !planSettled &&
           anyWritesThisRun &&
           !executedSinceWrite &&
           !projectChecksPassed &&
@@ -2086,27 +2185,31 @@ export class AgentLoop {
             "evidenceGate",
             "files were written but nothing was executed — refused the finish once",
           );
-          this.appendMessage({
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text:
-                  "Stop — you created or modified files but never executed anything to prove " +
-                  "they work. Before finishing:\n" +
-                  "1. Run the code or its tests with bash and read the REAL output.\n" +
-                  "2. Fix anything that fails and re-run until it actually works.\n" +
-                  "3. Then finish with a short report: what you verified (with actual " +
-                  "output), exactly how the user runs/uses what you built, and anything " +
-                  "left unverified — stated plainly as untested.\n" +
-                  "If execution genuinely isn't possible in this environment, say so " +
-                  "explicitly and clearly mark the work as untested.",
-              },
-            ],
-          });
+          this.appendMessage(
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text:
+                    "Stop — you created or modified files but never executed anything to prove " +
+                    "they work. Before finishing:\n" +
+                    "1. Run the code or its tests with bash and read the REAL output.\n" +
+                    "2. Fix anything that fails and re-run until it actually works.\n" +
+                    "3. Then finish with a short report: what you verified (with actual " +
+                    "output), exactly how the user runs/uses what you built, and anything " +
+                    "left unverified — stated plainly as untested.\n" +
+                    "If execution genuinely isn't possible in this environment, say so " +
+                    "explicitly and clearly mark the work as untested.",
+                },
+              ],
+            },
+            "gate:execution-evidence",
+          );
           yield {
             type: "notice",
-            message: "No execution evidence — asking the agent to verify its work.",
+            message:
+              "Execution-evidence gate: nothing ran after the last write — asking the agent to verify before finishing.",
           };
           this.state = "observing";
           continue;
@@ -2122,6 +2225,7 @@ export class AgentLoop {
         const ledger = this.config.ledgerStatus?.() ?? null;
         if (
           ledger !== null &&
+          !planSettled &&
           ledger.total > 0 &&
           ledger.verified === 0 &&
           anyWritesThisRun &&
@@ -2137,27 +2241,31 @@ export class AgentLoop {
             "fixVerifiedGate",
             "fix-shaped task finishing with zero verified criteria — refused once",
           );
-          this.appendMessage({
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text:
-                  "Stop — this task is a FIX and none of your done_when criteria reached " +
-                  "`verified`: no cited check has been shown to fail on the parent commit " +
-                  "and pass now. Before finishing: write or identify a check that reproduces " +
-                  "the original defect (a real test file is best — it stays in the repo and " +
-                  "guards the fix forever), run it, then cite it with record_evidence against " +
-                  "the matching criterion — the runtime replays it on the pre-change tree " +
-                  "itself and sets the rung. If no such check can exist here (no reproduction " +
-                  "path, missing environment), finish anyway but say that plainly and leave " +
-                  "the criterion honestly short of verified.",
-              },
-            ],
-          });
+          this.appendMessage(
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text:
+                    "Stop — this task is a FIX and none of your done_when criteria reached " +
+                    "`verified`: no cited check has been shown to fail on the parent commit " +
+                    "and pass now. Before finishing: write or identify a check that reproduces " +
+                    "the original defect (a real test file is best — it stays in the repo and " +
+                    "guards the fix forever), run it, then cite it with record_evidence against " +
+                    "the matching criterion — the runtime replays it on the pre-change tree " +
+                    "itself and sets the rung. If no such check can exist here (no reproduction " +
+                    "path, missing environment), finish anyway but say that plainly and leave " +
+                    "the criterion honestly short of verified.",
+                },
+              ],
+            },
+            "gate:fix-verified",
+          );
           yield {
             type: "notice",
-            message: "Fix finishing without a verified check — asking for one.",
+            message:
+              "Fix-verified gate: finishing without a verified check — asking for one that fails on the parent commit.",
           };
           this.state = "observing";
           continue;
@@ -2184,24 +2292,27 @@ export class AgentLoop {
             "productSightGate",
             "visual files written but the agent never looked at the result — refused once",
           );
-          this.appendMessage({
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text:
-                  "Stop — you built or changed something a person will LOOK at, and you " +
-                  "never looked at it with a complete review of the latest changes. Green checks cannot see a broken screen. Before " +
-                  "finishing: open what you built and read it back — with the browser tool " +
-                  "(navigate, then snapshot) if available; otherwise serve or render the " +
-                  "page and inspect what it ACTUALLY shows (a screenshot you then read with " +
-                  "read_file, or the served response's real rendered structure). Then fix " +
-                  "the worst thing you can see, once, and finish. If nothing in this " +
-                  "environment can show it, say so and mark the UI explicitly as unreviewed. " +
-                  `Remaining checks: ${visualReview.snapshot().missing.join("; ")}.`,
-              },
-            ],
-          });
+          this.appendMessage(
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text:
+                    "Stop — you built or changed something a person will LOOK at, and you " +
+                    "never looked at it with a complete review of the latest changes. Green checks cannot see a broken screen. Before " +
+                    "finishing: open what you built and read it back — with the browser tool " +
+                    "(navigate, then snapshot) if available; otherwise serve or render the " +
+                    "page and inspect what it ACTUALLY shows (a screenshot you then read with " +
+                    "read_file, or the served response's real rendered structure). Then fix " +
+                    "the worst thing you can see, once, and finish. If nothing in this " +
+                    "environment can show it, say so and mark the UI explicitly as unreviewed. " +
+                    `Remaining checks: ${visualReview.snapshot().missing.join("; ")}.`,
+                },
+              ],
+            },
+            "gate:product-sight",
+          );
           yield {
             type: "notice",
             message: "UI was written but never viewed — asking the agent to look at it.",
@@ -2252,23 +2363,26 @@ export class AgentLoop {
               .slice(0, 8)
               .map((t) => `- ${t.content}`)
               .join("\n");
-            this.appendMessage({
-              role: "user",
-              content: [
-                {
-                  type: "text",
-                  text:
-                    `Stop — you are finishing with ${c.open} of ${c.total} planned steps still open:\n` +
-                    `${open}\n` +
-                    "Either do them now, or rewrite the plan with todo_write so it says what you " +
-                    "are deliberately cutting (one line on why), then finish. A plan left " +
-                    "half-open is not a finished task, and the user will see it as one.",
-                },
-              ],
-            });
+            this.appendMessage(
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text:
+                      `Stop — you are finishing with ${c.open} of ${c.total} planned steps still open:\n` +
+                      `${open}\n` +
+                      "Either do them now, or rewrite the plan with todo_write so it says what you " +
+                      "are deliberately cutting (one line on why), then finish. A plan left " +
+                      "half-open is not a finished task, and the user will see it as one.",
+                  },
+                ],
+              },
+              "gate:open-steps",
+            );
             yield {
               type: "notice",
-              message: `${c.open} planned step${c.open === 1 ? "" : "s"} still open — asking the agent to finish or cut them.`,
+              message: `Open-steps gate: ${c.open} planned step${c.open === 1 ? "" : "s"} still open — asking the agent to finish or cut them.`,
             };
             this.state = "observing";
             continue;
@@ -2664,7 +2778,7 @@ export class AgentLoop {
         });
       }
 
-      // ── Phase B: execute — parallel-safe reads concurrently (bounded), rest serial ──
+      // ── Phase B: execute — in call order; runs of parallel-safe reads concurrently (bounded) ──
       // Execution runs as one background task while this generator pumps the
       // progress queue: yields happen the moment a note arrives, not after
       // everything completes.
@@ -2679,6 +2793,18 @@ export class AgentLoop {
         const delegated = isDelegation(p.tc.toolName);
         if (delegated) pushProgress({ callId: p.tc.callId, note: "", state: "started" });
         p.output = await this.registry.execute(p.input);
+        // Bookkeeping that must see this result BEFORE the next serial call
+        // in the batch runs — the check log, so a citation in the same
+        // response as its check finds it. Never allowed to break the batch.
+        try {
+          this.config.onToolExecuted?.({
+            toolName: p.tc.toolName,
+            args: p.parsedArgs,
+            output: p.output,
+          });
+        } catch {
+          // observability must never break a tool batch
+        }
         if (delegated) {
           pushProgress({
             callId: p.tc.callId,
@@ -2689,12 +2815,29 @@ export class AgentLoop {
         }
       };
       const execution = (async () => {
-        const parallel = planned.filter((p) => p.allowed && p.parallelSafe && !p.output);
-        await mapWithConcurrency(parallel, this.config.maxParallelTools ?? 8, runCall);
+        // Order is a contract the model can rely on: "run the check, then
+        // cite it" in one response means the citation runs AFTER the check.
+        // Parallel-safe calls run concurrently within a run of them; a serial
+        // call is a barrier — nothing after it starts before it finishes.
+        // (Before, every parallel-safe call ran first: a `record_evidence`
+        // after a `bash` in the same response found nothing on record.)
+        let segment: PlannedCall[] = [];
+        const flush = async (): Promise<void> => {
+          if (segment.length === 0) return;
+          const batch = segment;
+          segment = [];
+          await mapWithConcurrency(batch, this.config.maxParallelTools ?? 8, runCall);
+        };
         for (const p of planned) {
-          if (!p.allowed || p.output) continue; // denied, or already run in parallel
+          if (!p.allowed || p.output) continue; // denied
+          if (p.parallelSafe) {
+            segment.push(p);
+            continue;
+          }
+          await flush();
           await runCall(p);
         }
+        await flush();
       })().finally(() => {
         executionDone.flag = true;
         progressSignal?.();
@@ -3449,6 +3592,7 @@ export class AgentLoop {
 
       // Add tool results as user message
       this.appendMessage({ role: "tool", content: toolResults });
+      textSinceLastTools = false;
 
       // ── The answers, for the loop guards ──
       // The batch detector reads this entry's result signature on the next
@@ -3459,21 +3603,69 @@ export class AgentLoop {
           .map((p) => (p.output?.success ? p.output.result : `ERR:${p.output?.error ?? ""}`))
           .join("\0"),
       );
+      const batchSigs = new Set<string>();
       for (const p of planned) {
-        if (!p.allowed || !p.output?.success) continue;
-        const text = p.output.result ?? "";
+        // Denied calls carry their refusal as the output. A repeated FAILURE
+        // is the strongest loop signal there is: five identical "Unknown
+        // tool" refusals in a row went unseen while this read allowed,
+        // successful results only (dogfood 2026-09-09).
+        if (!p.output) continue;
+        // A deterministic refusal names the arguments and the failure count
+        // it refused on, so no two are byte-identical; what recurs is the
+        // refusal itself, keyed on the tool it keeps refusing.
+        const text = p.output.success
+          ? (p.output.result ?? "")
+          : p.deterministicallyRefused
+            ? `REFUSED WITHOUT RUNNING: ${p.tc.toolName} (a deterministic refusal, however worded)`
+            : `ERR:${p.output.error ?? ""}`;
         if (text.length < 40) continue;
-        recentResultSigs.push({ sig: resultSignature(text), writes: writeCount });
+        const sig = resultSignature(text);
+        recentResultSigs.push({ sig, writes: writeCount });
+        batchSigs.add(sig);
       }
       if (recentResultSigs.length > 12) {
         recentResultSigs.splice(0, recentResultSigs.length - 12);
       }
-      const latestAnswer = recentResultSigs[recentResultSigs.length - 1];
-      if (latestAnswer && resultLoopNudges < 1) {
-        const same = recentResultSigs.filter(
-          (r) => r.sig === latestAnswer.sig && r.writes === latestAnswer.writes,
+      // Any answer this batch brought back, not only the last one: the
+      // recurring refusal rode ahead of a fresh read in every dogfood batch,
+      // so "the latest answer" was always the novel one.
+      let same = 0;
+      for (const sig of batchSigs) {
+        const count = recentResultSigs.filter(
+          (r) => r.sig === sig && r.writes === writeCount,
         ).length;
-        if (same >= 4) {
+        if (count > same) same = count;
+      }
+      if (same >= 4) {
+        if (resultLoopNudges >= 1) {
+          // Nudged already, and the same answer is back four more times with
+          // nothing written since: the run is looping, not working. End it
+          // resumably — the handoff keeps the plan, and the next message can
+          // start from a different approach.
+          recentResultSigs.length = 0;
+          this.state = "error";
+          this.report(
+            "loop.stalled",
+            "error",
+            "resultLoop",
+            `stopped: the same result came back ${same}× again after the change-approach nudge`,
+          );
+          this.config.taskState?.logEvent(
+            "handoff",
+            `looping: the same result came back ${same}× after the change-approach nudge`,
+          );
+          yield* this.handoffEvents("stalled");
+          yield {
+            type: "error",
+            error:
+              `Stopped: the same tool result came back ${same} more times after the agent was ` +
+              "told to change approach, with nothing written in between. Send a message to " +
+              "resume with a different approach.",
+            recoverable: false,
+          };
+          return;
+        }
+        {
           resultLoopNudges++;
           recentResultSigs.length = 0;
           latchEffort("the same result keeps coming back");
@@ -3483,18 +3675,21 @@ export class AgentLoop {
             "resultLoop",
             `the same substantive result came back ${same}× across varying calls with nothing written — nudged once`,
           );
-          this.appendMessage({
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text:
-                  `[Harness note] The last ${same} tool results were identical to each other even ` +
-                  "though the calls differed — the situation is not changing. Do not poll it again: " +
-                  "act on what the result already says, change approach, or finish and report.",
-              },
-            ],
-          });
+          this.appendMessage(
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text:
+                    `[Harness note] The last ${same} tool results were identical to each other even ` +
+                    "though the calls differed — the situation is not changing. Do not poll it again: " +
+                    "act on what the result already says, change approach, or finish and report.",
+                },
+              ],
+            },
+            "nudge:result-loop",
+          );
           yield {
             type: "notice",
             message: "The same result keeps coming back — nudged the agent to change approach.",
@@ -3707,19 +3902,22 @@ export class AgentLoop {
             "progressBreaker",
             `${staleTurns} consecutive turns produced no new result — nudged once`,
           );
-          this.appendMessage({
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text:
-                  `[Harness note] Your last ${staleTurns} turns produced nothing new: every tool ` +
-                  "result had already been seen this run and no file was written. Re-read the " +
-                  "goal and the plan, then take a genuinely different action — or, if the task " +
-                  "is done or blocked, stop and say so plainly.",
-              },
-            ],
-          });
+          this.appendMessage(
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text:
+                    `[Harness note] Your last ${staleTurns} turns produced nothing new: every tool ` +
+                    "result had already been seen this run and no file was written. Re-read the " +
+                    "goal and the plan, then take a genuinely different action — or, if the task " +
+                    "is done or blocked, stop and say so plainly.",
+                },
+              ],
+            },
+            "nudge:stale",
+          );
           yield {
             type: "notice",
             message: `${staleTurns} turns with nothing new — asking the agent to change course.`,

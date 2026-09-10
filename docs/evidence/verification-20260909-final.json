@@ -1,0 +1,173 @@
+{
+  "kind": "local-verification",
+  "recordedAt": "2026-09-09",
+  "sourceCommit": "ae1847c40df341b12fadf23be27c1605be484793",
+  "version": "Rune v0.4.1-dev+ae1847c",
+  "workingChanges": {
+    "crates/rune-sandbox/src/macos.rs": "f201e8d01d6a3ee8869ee6dd7d40358b025201c4bfe2666b53250a69739dd669",
+    "packages/orchestrator/src/verification-command.ts": "34a075015f5bdc68569971c13c85daf474b72e9f8b294d30970500419f689907",
+    "packages/orchestrator/src/brief.ts": "848985eff0884cc9b1dec42e359f51c6cc4a89f4999ac64b860d858183b4e9da",
+    "packages/orchestrator/src/agent-loop.ts": "fb4dd5223b414ca8e21851d38e0ec4b8c64e39584d6bb35e53ed0e2d6ac23925",
+    "packages/orchestrator/src/engine.ts": "3eb1b721923cf9cf72b8a3bc1d635763dcda094673535f0dab92cc02eefcb116",
+    "packages/orchestrator/src/notebook/capture.ts": "51e127a33d5e30ad95550b8bdebf583e01887cfefc2dbda82af03be16f43795d",
+    "packages/orchestrator/src/retro.ts": "42c887dcb5011cd2b6639deeb60db68b21fa6302aa68d25116f95999fc07a042"
+  },
+  "artifacts": {
+    "rune-compiled": {
+      "installedPath": "/Users/ritikyadav890/.rune/bin/rune-compiled",
+      "sha256": "1321e88060a9c60d3f943393b819fe83ea566fd0544866eb775c046a6b8ed791"
+    },
+    "rune-tools": {
+      "installedPath": "/Users/ritikyadav890/.rune/bin/rune-tools",
+      "sha256": "4aedd8ed0b215ff04a308d884d2d6caa75684f43d4006ccac78414a349e3c287"
+    }
+  },
+  "checks": [
+    {
+      "name": "unit",
+      "command": "bun test tests/unit </dev/null",
+      "result": {
+        "passed": 4309,
+        "failed": 0,
+        "skipped": 1
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/unit-final.log",
+      "logSha256": "3b21ec5b76bc7ba41622df28930bdfd05c33967cfca9dbedbb51911ea3fb76f0"
+    },
+    {
+      "name": "integration",
+      "command": "RUNE_TEST_PLAYWRIGHT=<installed module> bun test tests/integration </dev/null",
+      "result": {
+        "passed": 141,
+        "failed": 0,
+        "skipped": 5
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/integration-final.log",
+      "logSha256": "8776b4a218903187bb8c4b604974d369438e3c331ee69df500c8a6fb21a9395b"
+    },
+    {
+      "name": "rust",
+      "command": "cargo test --workspace",
+      "result": {
+        "passed": 94,
+        "failed": 0
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/rust-final.log",
+      "logSha256": "d3d4f6c2b3e7ab00e87144f3760c585ff8d2061b2b2a2bbfa381c37bd5c45592"
+    },
+    {
+      "name": "typecheck",
+      "command": "bun run typecheck --force",
+      "result": {
+        "passedTasks": 14,
+        "cachedTasks": 0
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/typecheck-final.log",
+      "logSha256": "12d989225eacb5d52e6de635b7ca052da5f15fad76f8b81d367eb7025fe2bb09"
+    },
+    {
+      "name": "lint",
+      "command": "bun run lint --force",
+      "result": {
+        "passedTasks": 7,
+        "cachedTasks": 0
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/lint-final.log",
+      "logSha256": "8380cc776c1b414721faa2cc71800c6be6c48e2800744ff62ac7e43d7d9d3fc2"
+    },
+    {
+      "name": "format",
+      "command": "bun run format:check",
+      "result": {
+        "passed": true
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/format-final.log",
+      "logSha256": "1d66faad74f5e8709353f7288592866bd3a9095da1174a916e7aa632949971e2"
+    },
+    {
+      "name": "rust-format",
+      "command": "cargo fmt --all --check",
+      "result": {
+        "passed": true
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/rust-format-final.log",
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "new-tests-typecheck",
+      "command": "bunx tsc --noEmit --strict --skipLibCheck --target ESNext --module ESNext --moduleResolution bundler --types bun tests/integration/engine-command-evidence.test.ts tests/unit/orchestrator/verification-command.test.ts",
+      "result": {
+        "passed": true
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/command-evidence-typecheck.log",
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "mock-eval",
+      "command": "bun run eval",
+      "result": {
+        "passed": 63,
+        "total": 63,
+        "governanceCompletionsPerTask": 0.26,
+        "baselineChanged": false
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/mock-final.log",
+      "logSha256": "654956cac8bddd8952873f68cb32da474329d7ead7a9a8b20d58de41c4f8d720"
+    },
+    {
+      "name": "guarded-install",
+      "command": "bash scripts/install.sh",
+      "result": {
+        "passed": true,
+        "overrideUsed": false
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/install-final.log",
+      "logSha256": "20b985f4018279e44ff58e1e28b5b43e0da18219ba1b39affc3ee0479ea975c4"
+    },
+    {
+      "name": "installed-cli",
+      "command": "Fresh minimal zsh: resolved path, version, doctor, tools-smoke",
+      "result": {
+        "buildCurrent": true,
+        "nativeRoundTripsPassed": true,
+        "doctorFullyGreen": false,
+        "qualification": "Minimal PATH deliberately omits npx; MCP configuration warning remains."
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/installed-final.log",
+      "logSha256": "0df3cb3d69d6dd54ec6e4b9900ec9cf3cd105495d625cfa13fd93be6bff7a156"
+    },
+    {
+      "name": "installed-browser",
+      "command": "RUNE_TOOLS_BINARY=<installed native> RUNE_TEST_PLAYWRIGHT=<installed module> bun test tests/integration/browser-sandbox.test.ts",
+      "result": {
+        "passed": 2,
+        "failed": 0
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/browser-installed-final.log",
+      "logSha256": "3d2b8e159e2f2b0215e6a78bf562c6e8446f676280da464584c1d724d63bc2ce"
+    }
+  ],
+  "terminalSettings": {
+    "terminal": {
+      "rows": 24,
+      "columns": 80
+    },
+    "checks": [
+      "visible title and selected row",
+      "budget and concurrency displayed",
+      "evidence gate changed",
+      "new process restored change",
+      "two clean exits"
+    ],
+    "modelUsageEvents": 0
+  },
+  "terminalReceiptSha256": "1aae9cb1dd5a52882b615a4582559756415e8f6c1d9cf79a2de745bdc79e7c06",
+  "liveVerification": "verification-live-20260909.json",
+  "qualifications": [
+    "Verification on macOS only. The unit skip needs a case-sensitive disk; the five integration skips need Go/Java toolchains.",
+    "Browser tests require an explicitly supplied existing Playwright runtime. They are not counted as passes when skipped.",
+    "The live verification reuses the existing Pilot G artifact; it is not a new task or a paired benchmark.",
+    "The working changes remain uncommitted. Artifact hashes and changed-source hashes identify this installed build.",
+    "These gates establish specific engineering behavior, not an overall capability ranking, invoice parity or controlled learning lift."
+  ]
+}

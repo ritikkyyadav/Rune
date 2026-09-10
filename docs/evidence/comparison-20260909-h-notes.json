@@ -1,0 +1,16 @@
+{
+  "kind": "comparison-qualification",
+  "recordedAt": "2026-09-09",
+  "report": "comparison-20260909-h.json",
+  "reportSha256": "c59c7bb47efb5bce46ddb31c15728af9383ab39b8435b91a46578594a10d11cf",
+  "actualRuneVersion": "Rune v0.4.1-dev+ae1847c",
+  "actualRuneExecutableSha256": "1321e88060a9c60d3f943393b819fe83ea566fd0544866eb775c046a6b8ed791",
+  "nativeToolsSha256": "4aedd8ed0b215ff04a308d884d2d6caa75684f43d4006ccac78414a349e3c287",
+  "qualifications": [
+    "The report runeSha field identifies the checkout at launch (99a22f8), not the frozen executable. The supplied executable was the ae1847c delivery, including its recorded working fixes.",
+    "Both patches passed independent acceptance. Rune timed out at 240.031 seconds, so it is not a completed success. OpenCode finished in 209.183 seconds.",
+    "Estimated list costs were Rune $0.15845425 and OpenCode $0.11180375, not subscription invoices. This one fixture and one attempt per arm cannot establish an overall ranking.",
+    "Rune rejected two citations to executed compound checks containing quoted command substitutions because its classifier omitted those commands from the check log. The frozen binary predates the correction and new empty-completion handling.",
+    "Preserve this failed completion when evaluating the subsequent build; do not reclassify it as success because the artifact passed."
+  ]
+}

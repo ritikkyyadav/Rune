@@ -190,6 +190,65 @@ test("an unaffordable request is refused before it reaches the provider", async 
   expect(engine.getListCost()).toBe(0);
 });
 
+test("tool calls followed only by empty completions cannot produce a successful headless run", async () => {
+  const { engine, provider, runtime } = setup();
+  provider.onRequest = (_request, index) =>
+    index === 1
+      ? [
+          {
+            type: "tool_use",
+            toolCallId: "plan",
+            toolName: "todo_write",
+            toolInput: { items: [{ title: "Inspect the fixture", status: "doing", kind: "read" }] },
+          },
+        ]
+      : [];
+  const session = engine.createSession();
+  const result = await runHeadless(engine, session, "Inspect the fixture and explain it.");
+  expect(result.ok).toBe(false);
+  expect(headlessExitCode(result)).not.toBe(0);
+  expect(provider.requests).toHaveLength(4); // one tool call, three bounded empty attempts
+  const rows = runtime.sessions.getEvents(session, 1);
+  const snapshots = rows.filter((r) => r.event.type === "task_state");
+  const last = snapshots.at(-1)!.event.payload.state as {
+    todos: Array<{ content: string; kind: string; status: string }>;
+    handoff: { reason: string };
+  };
+  expect(last.todos[0]).toMatchObject({
+    content: "Inspect the fixture",
+    kind: "inspect",
+    status: "in_progress",
+  });
+  expect(last.handoff.reason).toBe("provider_lost");
+  const retro = rows.find((r) => r.event.type === "retro")!.event.payload.retro as {
+    outcome: string;
+  };
+  expect(retro.outcome).toBe("provider_lost");
+});
+
+test("unknown-tool guidance names real alternatives and repeated refusals stay bounded", async () => {
+  const { engine, provider } = setup();
+  provider.onRequest = (_request, index) => [
+    {
+      type: "tool_use",
+      toolCallId: `search-${index}`,
+      toolName: "search",
+      toolInput: { query: `attempt ${index}` },
+    },
+  ];
+  const events = await drain(engine, engine.createSession(), "Find the parser.");
+  const refusals = events.filter((event) => event.type === "tool_call_end");
+  expect(refusals).toHaveLength(3);
+  expect(provider.requests).toHaveLength(3);
+  for (const event of refusals) {
+    expect(event.output.success).toBe(false);
+    expect(event.output.error).toContain("Unknown tool: search");
+    expect(event.output.error).toContain("grep");
+    expect(event.output.error).toContain("glob");
+  }
+  expect(events.some((event) => event.type === "error" && !event.recoverable)).toBe(true);
+});
+
 test("an unpriced capped model fails once before inference, and an explicit cap removal permits it", async () => {
   const { engine, provider } = setup("custom-unpriced-model");
   const session = engine.createSession();

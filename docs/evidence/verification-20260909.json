@@ -1,0 +1,149 @@
+{
+  "kind": "local-verification",
+  "recordedAt": "2026-09-09",
+  "sourceCommit": "4f3e3a1664d7e9998d1cc90ad30690a8a1264a74",
+  "workingChange": "Narrow macOS Chromium startup allowances in crates/rune-sandbox/src/macos.rs",
+  "version": "Rune v0.4.0-dev+4f3e3a1",
+  "artifacts": {
+    "rune-compiled": {
+      "source": "/Users/ritikyadav890/.rune/bin/rune-compiled",
+      "copy": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/bundle/rune-compiled",
+      "sha256": "a0014668e3bf6591db8830de9141a6813f7aadb4d002c43aef03573c8f8dfe28"
+    },
+    "rune-tools": {
+      "source": "/Users/ritikyadav890/.rune/bin/rune-tools",
+      "copy": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/bundle/rune-tools",
+      "sha256": "7d9171836f3e70dc96e32e19acd63fca279ffca2f4946f583f16c842b44d26f6"
+    }
+  },
+  "checks": [
+    {
+      "name": "unit",
+      "command": "bun test tests/unit </dev/null",
+      "result": {
+        "passed": 4252,
+        "skipped": 1,
+        "failed": 0
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/unit.log",
+      "logSha256": "fd027b9c8404197683a438252566d9581ce206ea3eb8d329014f6e1dc31341c1"
+    },
+    {
+      "name": "integration",
+      "command": "RUNE_TEST_PLAYWRIGHT=<installed module> bun test tests/integration </dev/null",
+      "result": {
+        "passed": 137,
+        "skipped": 5,
+        "failed": 0
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/integration.log",
+      "logSha256": "dc2cd583c1931bdf856f055702fc770b5c2b0f75d0092e47e0e2ebeecfccde99"
+    },
+    {
+      "name": "rust",
+      "command": "cargo test --workspace",
+      "result": {
+        "passed": 94,
+        "failed": 0
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/rust.log",
+      "logSha256": "6ebb7a6cef3ab02e5502a9741ae844c0fab8a7699aad1900f95dec9e31b0994c"
+    },
+    {
+      "name": "typecheck",
+      "command": "bun run typecheck --force",
+      "result": {
+        "passedTasks": 14,
+        "cachedTasks": 0
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/typecheck.log",
+      "logSha256": "3517fc13b5cea693d66b1df2f8b54ef2dcfe18862fd19198cbc6eb59b5874f6c"
+    },
+    {
+      "name": "lint",
+      "command": "bun run lint --force",
+      "result": {
+        "passedTasks": 7,
+        "cachedTasks": 0
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/lint.log",
+      "logSha256": "d3bcba96c863bfe21c646083fe0d9c735cc491afaac324b6b0b7a86ff58ad931"
+    },
+    {
+      "name": "mock-eval",
+      "command": "bun run eval",
+      "result": {
+        "passed": 63,
+        "total": 63,
+        "governanceCompletionsPerTask": 0.26,
+        "baselineChanged": false
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/mock.log",
+      "logSha256": "2fb7ac9c88bc9f9c5aa9fdd7e90e3cf1e194e4bf6a4bb9dec914d6fe6ece0b83"
+    },
+    {
+      "name": "browser-before",
+      "command": "Opt-in browser regression against previous installed native binary",
+      "result": {
+        "passed": 0,
+        "failed": 2,
+        "reason": "Chromium SIGSEGV"
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/browser-before.log",
+      "logSha256": "6ac3731e90049dda0a477f20d409f452beaa5c1a34278a53283a5de91616fd26"
+    },
+    {
+      "name": "browser-after",
+      "command": "Opt-in browser regression against rebuilt debug native binary",
+      "result": {
+        "passed": 2,
+        "failed": 0
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/browser-after.log",
+      "logSha256": "ef0d46f42591b1ec25ca81d2af25d6340ff5d2b367bf3f1e753fe2db4788ea42"
+    },
+    {
+      "name": "browser-installed",
+      "command": "Opt-in browser regression against installed native binary",
+      "result": {
+        "passed": 2,
+        "failed": 0
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/browser-installed.log",
+      "logSha256": "bcf27bcb860db04870e32d1deca69ddf5e2a4ec3a90bd6d3368905b39b06c507"
+    },
+    {
+      "name": "guarded-install",
+      "command": "bash scripts/install.sh",
+      "result": {
+        "passed": true,
+        "overrideUsed": false
+      },
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/install.log",
+      "logSha256": "cc25b7e9cda946dab3aee573432ddedb4a5d5f400d3841659f6b0dc2a45bc332"
+    }
+  ],
+  "terminalSettings": {
+    "terminal": {
+      "rows": 24,
+      "columns": 80
+    },
+    "checks": [
+      "visible title and selected row",
+      "budget and concurrency displayed",
+      "evidence gate changed",
+      "new process restored change",
+      "two clean exits"
+    ],
+    "modelUsageEvents": 0
+  },
+  "terminalReceiptSha256": "2448295e6056909384bc43ce4eb18819424eba2d21453128cfb9e4364ef63458",
+  "qualifications": [
+    "One unit skip needs a case-sensitive filesystem.",
+    "Five integration skips need Go/Java toolchains.",
+    "Chromium regressions were explicitly enabled; default runs without Playwright skip them.",
+    "Native verification is on macOS, not Linux or Windows.",
+    "The inference comparison uses frozen copies of the installed CLI and tools and explicitly sets RUNE_TOOLS_BIN to the frozen native artifact.",
+    "These local gates do not establish competitive parity or an overall capability score."
+  ]
+}

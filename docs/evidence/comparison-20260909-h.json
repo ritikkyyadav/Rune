@@ -1,0 +1,84 @@
+{
+  "schema": 1,
+  "kind": "local-live-pilot",
+  "startedAt": "2026-09-09T17:48:56.055Z",
+  "limits": {
+    "perTaskListUsd": 1,
+    "timeoutMs": 240000,
+    "runs": 1
+  },
+  "model": "gpt-5.6-sol",
+  "providers": {
+    "rune": "codex",
+    "opencode": "openai"
+  },
+  "provenance": {
+    "runeSha": "99a22f88ae393b65d78b9e1dcbf723258224c284",
+    "dirtyPatchSha256": "d4b56f579d634712a337e8c910db761649f484b906e1f02d4ac6929a2824aebe",
+    "taskDigest": "5fd97f19c54b1022761dedc21a6157f256718311a6fb33f4d94d0dc8a0cc674a",
+    "runeExecutableSha256": "1321e88060a9c60d3f943393b819fe83ea566fd0544866eb775c046a6b8ed791",
+    "runeCommand": [
+      "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/bundle-final/rune-compiled"
+    ],
+    "opencodeCommand": [
+      "opencode"
+    ],
+    "versions": {
+      "rune": "Rune v0.4.1-dev+ae1847c",
+      "opencode": "1.18.23"
+    }
+  },
+  "limitations": [
+    "Small internally authored pilot; not SWE-bench or Terminal-Bench and not an overall capability score.",
+    "Same selected primary model and high reasoning; each harness retains its own tools, orchestration, prompts and helper routing.",
+    "Dollar figures use Rune's shared versioned pricing table, not subscription invoices. Unknown prices stay null.",
+    "Rune reserves dollars before requests; OpenCode is stopped after a reported step crosses the common ceiling. Any overshoot is recorded and cannot count as an on-budget success."
+  ],
+  "results": [
+    {
+      "sourceBefore": "1321e88060a9c60d3f943393b819fe83ea566fd0544866eb775c046a6b8ed791",
+      "sourceChanged": false,
+      "task": "csv-state-machine",
+      "run": 1,
+      "arm": "rune",
+      "exitCode": 143,
+      "durationMs": 240031,
+      "stopped": "timeout",
+      "listUsd": 0.15845425,
+      "models": [
+        "codex/gpt-5.6-sol"
+      ],
+      "entries": 16,
+      "estimated": true,
+      "scored": true,
+      "acceptancePassed": true,
+      "onBudget": false,
+      "success": false,
+      "evidence": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/comparison-h/csv-state-machine-1-rune",
+      "patchSha256": "b1393532e52f86b0f4e4a671a52ccd8cf22ff05121260a8a03bef031ccc0482e",
+      "completedAt": "2026-09-09T17:52:58.047Z"
+    },
+    {
+      "sourceBefore": "1321e88060a9c60d3f943393b819fe83ea566fd0544866eb775c046a6b8ed791",
+      "sourceChanged": false,
+      "task": "csv-state-machine",
+      "run": 1,
+      "arm": "opencode",
+      "exitCode": 0,
+      "durationMs": 209183,
+      "listUsd": 0.11180375,
+      "models": [
+        "gpt-5.6-sol"
+      ],
+      "entries": 9,
+      "estimated": true,
+      "scored": true,
+      "acceptancePassed": true,
+      "onBudget": true,
+      "success": true,
+      "evidence": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/comparison-h/csv-state-machine-1-opencode",
+      "patchSha256": "32a52c29e77dcdfc1c3368ee45e9009f5b22d2ff29d058babfc73fe4c98d6f04",
+      "completedAt": "2026-09-09T17:56:27.393Z"
+    }
+  ]
+}

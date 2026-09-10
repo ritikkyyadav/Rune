@@ -83,6 +83,19 @@ describe("createGlobHandler", () => {
     expect(out.result).toMatch(/No files matched/);
   });
 
+  test("a root containing only directories is not reported as an empty tree", async () => {
+    await mkdir(join(ws, "src"));
+    await mkdir(join(ws, "tests"));
+    await mkdir(join(ws, "node_modules"));
+    await writeFile(join(ws, "src", "parser.ts"), "export {};\n");
+    const shallow = await handler.execute(inputFor(ws, { pattern: "*" }));
+    expect(shallow.result).toContain("2 matching directories were skipped");
+    expect(shallow.result).toContain("**/*");
+    const recursive = await handler.execute(inputFor(ws, { pattern: "**/*" }));
+    expect(recursive.result).toContain("src/parser.ts");
+    expect(recursive.result).not.toContain("node_modules");
+  });
+
   test("respects the result limit", async () => {
     for (let i = 0; i < 5; i++) await writeFile(join(ws, `f${i}.txt`), "");
     const out = await handler.execute(inputFor(ws, { pattern: "*.txt", limit: 2 }));

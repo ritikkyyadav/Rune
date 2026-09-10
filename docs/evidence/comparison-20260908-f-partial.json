@@ -1,0 +1,29 @@
+{
+  "kind": "observed-partial-pilot-record",
+  "recordedAt": "2026-09-09",
+  "qualification": "Reconstructed from tool output observed before the interruption. The temporary run directory was unavailable at resumption. This is not a byte-for-byte copy of the original aggregate. The OpenCode result was not observed and is unknown.",
+  "startedAt": "2026-09-08T16:33:34.419Z",
+  "model": "gpt-5.6-sol",
+  "runeSourceCommit": "9715b6b126aabf46d1194d786f74fc492d7536e5",
+  "runeExecutableSha256": "dcd380f39be23d77e666dc8e8f5e1b1ab34d1b2abf61ab7cf87f8d8051501478",
+  "runeToolsSha256Observed": "1362fd5eaecba42a7412e002b07f793ccc8e274239f9f4ebf791a46b7365c666",
+  "runeResult": {
+    "task": "responsive-project-board",
+    "exitCode": 143,
+    "durationMs": 600009,
+    "stopped": "timeout",
+    "listUsd": 0.45384174999999993,
+    "entries": 20,
+    "roles": { "primary": 15, "supervisor": 1, "classifier": 4 },
+    "models": ["codex/gpt-5.6-sol", "codex/gpt-5.6-terra"],
+    "estimated": true,
+    "sourceChanged": false,
+    "acceptancePassed": true,
+    "success": false,
+    "patchSha256": "d837e4def48037c7d1821020f46eddb82a7616c49f05189d5efaf1233c3c2906",
+    "completedAt": "2026-09-08T16:43:37.850Z"
+  },
+  "opencodeResult": null,
+  "observedFailure": "Chromium crashed under the native macOS shell sandbox. Auto refused an unsandboxed retry; the task reached its timeout even though external functional acceptance passed.",
+  "rawLogsPublished": false
+}

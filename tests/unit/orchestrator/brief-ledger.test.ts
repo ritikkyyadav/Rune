@@ -296,9 +296,25 @@ describe("what a cited command is worth", () => {
     );
     expect(v.ok).toBe(true);
     if (v.ok) {
-      expect(v.rung).toBe("reproduced");
+      expect(v.rung).toBe("observed");
+      expect(v.evidence.detail).not.toContain("passed 2 times");
       expect(v.evidence.parentCommitFailed).toBeUndefined();
     }
+  });
+
+  test("a failed run interrupts earlier successful reproductions", () => {
+    const log = logWith([
+      ["bun test", true],
+      ["bun test", true],
+      ["bun test", false],
+      ["bun test", true],
+    ]);
+    const recovered = rungForCommand(log, "bun test");
+    expect(recovered.ok && recovered.rung).toBe("observed");
+    log.record({ command: "bun test", passed: true, at: 5 });
+    const repeated = rungForCommand(log, "bun test");
+    expect(repeated.ok && repeated.rung).toBe("reproduced");
+    expect(repeated.ok && repeated.evidence.detail).toContain("passed 2 times");
   });
 
   test("a recorded parent-commit FAILURE is what earns `verified`", () => {
@@ -381,6 +397,7 @@ describe("record_evidence — a citation is never a validation error", () => {
     expect(byStep.success).toBe(true);
     expect(byStep.result).toContain('step 1 "make the suite green"');
     expect(byStep.result).toContain("observed");
+    expect(byStep.result).toContain("44/44");
     expect(byStep.result).not.toMatch(/Validation failed|Call read_back first/);
 
     const byClaim = await tool.execute({
@@ -485,6 +502,8 @@ describe("record_evidence — the model picks the criterion, never the rung", ()
     } as any);
     // Red→green in-session, but the parent was green: the change is not why.
     expect(out.result).not.toContain("verified:");
+    expect(out.result).toContain("also passed on 0f1e2d3c");
+    expect(out.result).toContain("does not request another run");
     expect(ledger.met).toBe(0);
   });
 
@@ -532,7 +551,7 @@ describe("record_evidence — the model picks the criterion, never the rung", ()
       toolName: "record_evidence",
       args: { criterion: 0, command: "bun test" },
     } as any);
-    expect(out.result).toContain("reproduced");
+    expect(out.result).toContain("observed");
     expect(ledger.met).toBe(0);
   });
 

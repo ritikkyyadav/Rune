@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "kind": "local-live-pilot",
+  "startedAt": "2026-09-08T07:52:30.394Z",
+  "limits": {
+    "perTaskListUsd": 4,
+    "timeoutMs": 600000,
+    "runs": 1
+  },
+  "model": "gpt-5.6-sol",
+  "providers": {
+    "rune": "codex",
+    "opencode": "openai"
+  },
+  "provenance": {
+    "runeSha": "5b795e48c47cb881ac1b05939e444a01f24b17e3",
+    "dirtyPatchSha256": "6f4a13ea396aa48b7967e9faebbd180f19a05538e208f91ff7b8771d87dccf96",
+    "taskDigest": "b35fcda695016494702982c722140ed76dd80c6425af629dfe3e5d69a76c51ce",
+    "runeExecutableSha256": "e12a7770ed5ab4f6de5e14056a3165d0ff8b29468006d63fd1c0452155e85d00",
+    "runeCommand": [
+      "/Users/ritikyadav890/.rune/bin/rune-compiled"
+    ],
+    "opencodeCommand": [
+      "opencode"
+    ],
+    "versions": {
+      "rune": "Rune v0.4.0",
+      "opencode": "1.18.23"
+    }
+  },
+  "limitations": [
+    "Small internally authored pilot; not SWE-bench or Terminal-Bench and not an overall capability score.",
+    "Same selected primary model and high reasoning; each harness retains its own tools, orchestration, prompts and helper routing.",
+    "Dollar figures use Rune's shared versioned pricing table, not subscription invoices. Unknown prices stay null.",
+    "Rune reserves dollars before requests; OpenCode is stopped after a reported step crosses the common ceiling. Any overshoot is recorded and cannot count as an on-budget success."
+  ],
+  "results": [
+    {
+      "sourceBefore": "e12a7770ed5ab4f6de5e14056a3165d0ff8b29468006d63fd1c0452155e85d00",
+      "sourceChanged": false,
+      "task": "responsive-project-board",
+      "run": 1,
+      "arm": "rune",
+      "exitCode": 1,
+      "durationMs": 343749,
+      "listUsd": 0.1209045,
+      "models": [
+        "codex/gpt-5.6-sol"
+      ],
+      "entries": 5,
+      "estimated": true,
+      "scored": false,
+      "unscoredReason": "provider_quota",
+      "acceptancePassed": true,
+      "onBudget": true,
+      "success": false,
+      "evidence": "/tmp/rune-head-to-head-20260908-e/responsive-project-board-1-rune",
+      "patchSha256": "86578adce2f1e77accf40b598db8a6ffae5f9e5e8b1f2f47d44d53ab156cf208",
+      "completedAt": "2026-09-08T07:58:17.778Z"
+    }
+  ]
+}
