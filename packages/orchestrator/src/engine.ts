@@ -160,7 +160,7 @@ import {
   messageToToolResultPayloads,
   resumeFromCheckpoint,
 } from "./session-replay";
-import { ContextEngine } from "./context-engine";
+import { ContextEngine, harnessOriginOf } from "./context-engine";
 import type { ContextBudget } from "./context-engine";
 import { getContextLimit, registerContextLimit, UNKNOWN_MODEL_CONTEXT_LIMIT } from "./tokenizer";
 import { createToolExecutionGuard } from "./security";
@@ -5291,7 +5291,11 @@ export class Engine {
       run: (msg: string, sid: string, ws: string, sig?: AbortSignal) => loop.run(msg, sid, ws, sig),
       getMessages: () => loop.getMessages(),
       takePendingPersist: () => loop.takePendingPersist(),
-      originOf: (m: Message) => loop.originOf(m),
+      // The loop tags what it appends; the context engine tags the two user
+      // messages IT authors (the compaction summary, the `[Session context]`
+      // block — V-L0 #15). Either way a synthetic message that reaches
+      // persistence is filed as harness output and never as the user's words.
+      originOf: (m: Message) => loop.originOf(m) ?? harnessOriginOf(m),
       usefulEditOf: (callId: string) => loop.usefulEditOf(callId),
     };
     // Expose the live loop so interject() can steer this run mid-flight.
@@ -7278,6 +7282,7 @@ export class Engine {
   /** The verbatim text a JIT section delivers. "" when the section is unknown. */
   private jitSectionText(section: JitDoctrineSection): string {
     if (section === "dashboards") return INTERACTIVE_DESIGN_CHARTER;
+    if (section === "modes") return extractDoctrineSection("# Built-in modes on request");
     return extractDoctrineSection(
       section === "delegation" ? "# Delegation" : "# Building interfaces",
     );
@@ -7292,7 +7297,7 @@ export class Engine {
       )
       .join("\n");
     const present = new Set<string>();
-    for (const section of ["delegation", "interfaces", "dashboards"] as const) {
+    for (const section of ["delegation", "interfaces", "dashboards", "modes"] as const) {
       const guidance = this.jitSectionText(section);
       if (guidance && body.includes(guidance)) present.add(section);
     }
@@ -7303,6 +7308,10 @@ export class Engine {
   private takeJitDoctrine(sessionId: string, section: JitDoctrineSection): string | null {
     if (this.doctrineDelivery() !== "jit") return null;
     if (section === "delegation" && !this.doctrineContext().canDelegate) return null;
+    // The modes section is JIT only while the prefix is NOT carrying it. With a
+    // mode tool loaded it ships in both phases (P3B C2, corrected), and
+    // injecting it again would pay for the same 741 bytes twice.
+    if (section === "modes" && this.doctrineContext().hasModeTools !== false) return null;
     const sent = this.jitDelivered.get(sessionId) ?? new Set<string>();
     if (sent.has(section)) return null;
     const text = this.jitSectionText(section);

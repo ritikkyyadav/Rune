@@ -8,7 +8,12 @@
  */
 
 import { describe, expect, mock, test } from "bun:test";
-import { ContextEngine } from "../../../packages/orchestrator/src/context-engine";
+import {
+  COMPACTION_SUMMARY_ORIGIN,
+  ContextEngine,
+  harnessOriginOf,
+  SESSION_CONTEXT_ORIGIN,
+} from "../../../packages/orchestrator/src/context-engine";
 import type { Message } from "../../../packages/llm-gateway/src/types";
 
 /** A summarizer that answers only when its request is aborted. */
@@ -117,18 +122,28 @@ describe("compaction budget", () => {
   });
 });
 
-// ─── C1 — a compaction that is a MERGE costs less than one that is a READ ───
+// ─── C1 — a MERGE is a merge of STATE, never of fidelity ───
 //
 // `docs/program/phase-3-auto-efficiency.md` §2.4: a compaction completion is
-// the single most expensive call in the system, 62,179 fresh tokens each. The
-// second and every later compaction of a run already merge into the previous
-// summary rather than re-summarising it (`priorSummaryText`), but they were
-// still rendering the new segment at FIRST-READ fidelity — 2,400 characters per
-// tool result, which on the Lane C rig was 89% of the request.
+// the single most expensive call in the system, 62,179 fresh tokens each. C1
+// went after that by rendering every compaction that carries a prior state at
+// 900 characters per tool result instead of 2,400, on the reasoning that the
+// accumulated state was already carrying the run's history.
 //
-// These tests pin the two halves of that: the merge request is materially
-// smaller, and it is smaller WITHOUT dropping anything — every message in the
-// segment is still rendered, and the accumulated state still travels.
+// V-C proved the reasoning wrong about WHICH messages those are.
+// `transcriptMessages` is `toSummarize.slice(1)` — the previous compaction's
+// verbatim tail plus everything since — material the prior state has never
+// seen. The merge is that segment's one and only read: a criterion in the
+// middle of a 2,400-char result was being dropped for good, in exactly the long
+// runs where resume fidelity matters most.
+//
+// So these cases pin the corrected contract:
+//  - every segment is read at FULL fidelity, prior state or not;
+//  - the tighter budget applies per RESULT and only where it is lossless — a
+//    body this engine already showed a summarizer whole, in a compaction whose
+//    summary was adopted;
+//  - a diff is never clipped below the full budget, however often it is seen;
+//  - nothing is dropped, and the accumulated state still travels.
 
 /** A summarizer that answers, and keeps every request it was sent. */
 function recordingGateway(summary: string) {
@@ -248,19 +263,19 @@ describe("C1 — an incremental compaction is a merge, and costs like one", () =
     );
   });
 
-  test("the merge request carries every message of the segment, at a tighter fidelity", async () => {
+  test("the merge reads its new segment at the SAME fidelity the first read got", async () => {
     const { rig, second } = await twoCompactions();
     const body = `note 1 ${"z".repeat(9_000)}`.length;
     const read = clippedCounts(rig.seen[0]!);
     const merge = clippedCounts(rig.seen[1]!);
     expect(read.length).toBeGreaterThan(0);
     expect(merge.length).toBeGreaterThan(0);
-    // A first read keeps 2,400 characters of each body; a merge keeps 900. The
-    // SHAPE is the same on both — head+tail with the clip marker — so a
-    // command's first lines and a failure's last lines survive either way.
+    // 2,400 characters of every body, on both requests. The segment the merge
+    // is handed is NEW — the prior state cannot carry what it never saw — so
+    // this is its one and only read and it gets the full budget.
     for (const cut of read) expect(body - cut).toBeGreaterThan(2_300);
-    for (const cut of merge) expect(body - cut).toBeLessThan(1_000);
-    // Nothing was dropped to get there: every read the segment contained is
+    for (const cut of merge) expect(body - cut).toBeGreaterThan(2_300);
+    // Nothing was dropped either: every read the segment contained is
     // still named, with its path, and the count of bodies matches the count of
     // calls. `summarizedCount` is the segment length the engine folded.
     const calls = [...rig.seen[1]!.matchAll(/\[tool: read_file\(/g)].length;
@@ -270,15 +285,148 @@ describe("C1 — an incremental compaction is a merge, and costs like one", () =
     expect(second.summarizedCount).toBeGreaterThanOrEqual(calls);
   });
 
-  test("the merge request is materially smaller than the read it follows", async () => {
-    const { rig } = await twoCompactions();
-    const enc = new TextEncoder();
-    const read = enc.encode(rig.seen[0]!).length;
-    const merge = enc.encode(rig.seen[1]!).length;
-    // The second compaction folds MORE messages than the first (the first
-    // one's verbatim tail plus everything since), so this is a conservative
-    // comparison: more work, fewer bytes.
-    expect(merge).toBeLessThan(read * 0.7);
+  /**
+   * The one place the merge budget is lossless, and the proof that it is not
+   * applied anywhere else.
+   *
+   * `compactWorkingSet`'s input is the CALLER'S (it is a documented public
+   * contract), so a result can be handed to it again after an adopted
+   * compaction already showed the summarizer that exact body in full. Only
+   * then may it be re-rendered head+tail at 900: the state being updated is
+   * that summarizer's own answer about it.
+   */
+  test("only a body the summarizer already read whole is re-rendered at the merge budget", async () => {
+    const rig = recordingGateway(MERGED_STATE);
+    const eng = engine(rig.gateway);
+    // 2,000 characters: rendered whole by the first read (the budget is 2,400),
+    // and long enough that a 900-char clip is visible in the marker.
+    const spec = `SPEC ${"s".repeat(1_995)}`;
+    const seen: Message[] = [
+      { role: "user", content: [{ type: "text", text: "check the spec" }] },
+      {
+        role: "assistant",
+        content: [
+          { type: "tool_use", toolCallId: "spec", toolName: "read_file", toolInput: { path: "S" } },
+        ] as any,
+      },
+      {
+        role: "tool",
+        content: [{ type: "tool_result", toolCallId: "spec", toolResultContent: spec }] as any,
+      },
+    ];
+    const first = await eng.compactWorkingSet([...seen, ...reads(1, 8)], 3, { budgetMs: 30_000 });
+    expect(first.compacted).toBe(true);
+    expect(rig.seen[0]).toContain(spec); // read whole, and the summary was adopted
+
+    // Hand the SAME result back, beside one the summarizer has never seen.
+    const fresh = `FRESH ${"f".repeat(1_994)}`;
+    const unseen: Message[] = [
+      { role: "user", content: [{ type: "text", text: "and the notes" }] },
+      {
+        role: "assistant",
+        content: [
+          { type: "tool_use", toolCallId: "new", toolName: "read_file", toolInput: { path: "N" } },
+        ] as any,
+      },
+      {
+        role: "tool",
+        content: [{ type: "tool_result", toolCallId: "new", toolResultContent: fresh }] as any,
+      },
+    ];
+    const second = await eng.compactWorkingSet(
+      [...first.messages, ...seen, ...unseen, ...reads(9, 8)],
+      3,
+      { budgetMs: 30_000 },
+    );
+    expect(second.compacted).toBe(true);
+    expect(rig.seen[1]).toContain("PRIOR STATE:");
+    // The re-read is clipped — head+tail, its middle already digested.
+    expect(rig.seen[1]).not.toContain(spec);
+    expect(rig.seen[1]).toContain(`[${spec.length - 900} chars clipped]`);
+    // The one the summarizer has never seen is whole, prior state or not.
+    expect(rig.seen[1]).toContain(fresh);
+  });
+
+  test("a diff is never clipped below the full budget, however often it is seen", async () => {
+    const rig = recordingGateway(MERGED_STATE);
+    const eng = engine(rig.gateway);
+    const diff = [
+      "*** Begin Patch",
+      "--- a/src/api.ts",
+      "+++ b/src/api.ts",
+      "@@ -1,4 +1,4 @@",
+      `-export const VERSION = "0.9.0";${" ".repeat(900)}`,
+      `+export const VERSION = "1.0.0";${" ".repeat(900)}`,
+      "*** End Patch",
+    ].join("\n");
+    const patch: Message[] = [
+      { role: "user", content: [{ type: "text", text: "bump it" }] },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool_use",
+            toolCallId: "p1",
+            toolName: "apply_patch",
+            toolInput: { path: "src/api.ts" },
+          },
+        ] as any,
+      },
+      {
+        role: "tool",
+        content: [{ type: "tool_result", toolCallId: "p1", toolResultContent: diff }] as any,
+      },
+    ];
+    const first = await eng.compactWorkingSet([...patch, ...reads(1, 8)], 3, { budgetMs: 30_000 });
+    expect(first.compacted).toBe(true);
+    expect(rig.seen[0]).toContain(diff);
+    // Handed back after an adopted compaction — the one case the merge budget
+    // would otherwise apply. The change a patch carries lives in the middle of
+    // its own body, so the exemption is absolute.
+    const second = await eng.compactWorkingSet([...first.messages, ...patch, ...reads(9, 8)], 3, {
+      budgetMs: 30_000,
+    });
+    expect(second.compacted).toBe(true);
+    expect(rig.seen[1]).toContain("PRIOR STATE:");
+    expect(rig.seen[1]).toContain(diff);
+  });
+
+  test("a summary that was NOT adopted teaches the engine nothing", async () => {
+    // A summarizer whose answer is BIGGER than the head it would replace, which
+    // is the `noop` branch: the compaction is abandoned and the transcript
+    // stays. The bodies were shown to a summarizer, but nothing kept what it
+    // said about them, so they are still the only record of themselves.
+    const rig = recordingGateway(`${MERGED_STATE}\n${"prose. ".repeat(600)}`);
+    const eng = engine(rig.gateway);
+    const spec = `SPEC ${"s".repeat(1_995)}`;
+    const short: Message[] = [
+      { role: "user", content: [{ type: "text", text: "check the spec" }] },
+      {
+        role: "assistant",
+        content: [
+          { type: "tool_use", toolCallId: "spec", toolName: "read_file", toolInput: { path: "S" } },
+        ] as any,
+      },
+      {
+        role: "tool",
+        content: [{ type: "tool_result", toolCallId: "spec", toolResultContent: spec }] as any,
+      },
+      { role: "user", content: [{ type: "text", text: "and?" }] },
+      { role: "assistant", content: [{ type: "text", text: "working" }] },
+      { role: "user", content: [{ type: "text", text: "carry on" }] },
+      { role: "assistant", content: [{ type: "text", text: "on it" }] },
+    ];
+    const noop = await eng.compactWorkingSet(short, 2, { budgetMs: 30_000 });
+    expect(noop.compacted).toBe(false);
+    expect(noop.noop).toBe(true);
+    expect(rig.seen[0]).toContain(spec);
+
+    const second = await eng.compactWorkingSet([...short, ...reads(1, 8)], 3, {
+      budgetMs: 30_000,
+    });
+    expect(second.compacted).toBe(true);
+    // Read whole again: a discarded summary is not a record of anything.
+    expect(rig.seen[1]).toContain(spec);
   });
 
   test("a resumed run still has the spec: goals, constraints and the next step survive the merge", async () => {
@@ -295,5 +443,54 @@ describe("C1 — an incremental compaction is a merge, and costs like one", () =
     }
     expect(state).toContain("acceptance check must pass");
     expect(state).toContain("Run node check.mjs.");
+  });
+});
+
+// ─── V-L0 #15 — the two user messages the engine AUTHORS say so ───
+//
+// `role: "user"` is a wire convention here, not a claim about who spoke. Two
+// messages in this file are written by the harness: the summary that replaces a
+// folded segment, and the `[Session context]` block `buildPrompt` prepends to a
+// request. Neither goes through `AgentLoop.appendMessage`, so neither could
+// carry the origin the persisted `user_msg.harness` mechanism reads — and an
+// untagged synthetic message that reaches persistence is filed as the USER'S
+// OWN WORDS. That is an audit lie (a detached run cannot say what re-prompted
+// the model) and a trust one: `engine.ts` hands persisted user text to the
+// permission check as trusted input, and the summary is the summarizer's prose
+// about tool output, which is exactly what a prompt injection would target.
+
+describe("V-L0 #15 — a harness-authored user message carries its origin", () => {
+  test("the compaction summary is stamped where it is created", async () => {
+    const rig = recordingGateway(MERGED_STATE);
+    const eng = engine(rig.gateway);
+    const r = await eng.compactWorkingSet(reads(1, 8), 3, { budgetMs: 30_000 });
+    expect(r.compacted).toBe(true);
+    const summary = r.messages[0]!;
+    expect((summary.content[0] as any).text).toStartWith("[Earlier conversation summary]");
+    expect(summary.role).toBe("user");
+    expect(harnessOriginOf(summary)).toBe(COMPACTION_SUMMARY_ORIGIN);
+  });
+
+  test("the `[Session context]` block is stamped too", () => {
+    const eng = engine(recordingGateway(MERGED_STATE).gateway);
+    const built = eng.buildPrompt(
+      "S",
+      [],
+      [{ role: "user", content: [{ type: "text", text: "where is the retry?" }] }],
+      [{ content: "the retry ladder lives in gateway.ts", relevance: 1 }] as any,
+    );
+    const aux = built.messages[0]!;
+    expect((aux.content[0] as any).text).toStartWith("[Session context]");
+    expect(harnessOriginOf(aux)).toBe(SESSION_CONTEXT_ORIGIN);
+  });
+
+  test("the user's own messages are not stamped — the inverse half of the law", async () => {
+    const rig = recordingGateway(MERGED_STATE);
+    const eng = engine(rig.gateway);
+    const mine: Message[] = reads(1, 8);
+    const r = await eng.compactWorkingSet(mine, 3, { budgetMs: 30_000 });
+    expect(r.compacted).toBe(true);
+    for (const m of r.messages.slice(1)) expect(harnessOriginOf(m)).toBeUndefined();
+    for (const m of mine) expect(harnessOriginOf(m)).toBeUndefined();
   });
 });

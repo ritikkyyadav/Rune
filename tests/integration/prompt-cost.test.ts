@@ -67,10 +67,16 @@ import { rmTemp } from "../helpers/tmp";
  * C1 baseline — the FIRST compaction's summarizer request at HEAD, in bytes.
  *
  * The first compaction has no prior state to merge into: it reads the whole
- * head. That is the number the director's ≥30% is measured against, and it is
- * deliberately the number that does NOT change — an incremental second
- * compaction cannot make the first one cheaper. Measured 16,023 at `730fd97`
- * and 16,023 after; the second compaction moved 21,629 → 9,629.
+ * head. Measured 16,023 at `730fd97`, 16,023 after C1, and 16,023 now — the
+ * number that does not move, whatever happens to the merge.
+ *
+ * The SECOND compaction's history is the honest record of C1: 21,629 at
+ * `730fd97` → 9,629 after C1 (39.9% under the first, which is what the lane
+ * claimed) → 21,629 again now. C1 bought those 12,000 bytes by rendering the
+ * merge's segment at 900 characters a tool result, and V-C showed that segment
+ * is the previous compaction's verbatim tail plus everything since — material
+ * the prior state has never seen, on its one and only read. There is no
+ * lossless byte win there, so the saving is withdrawn.
  *
  * Both compactions fold the same fixture with the same script, so this is
  * reproducible anywhere `bun` and the native binary are: it depends on the
@@ -78,8 +84,18 @@ import { rmTemp } from "../helpers/tmp";
  */
 const C1_FIRST_COMPACTION_BYTES_AT_HEAD = 16_023;
 
-/** C1 — the second summarizer request must come in at least 30% under that. */
+/**
+ * A floor, not a ceiling: the first compaction is the baseline and a collapse
+ * in it would make any comparison against it true for the wrong reason.
+ */
 const C1_INCREMENTAL_CEILING = Math.floor(C1_FIRST_COMPACTION_BYTES_AT_HEAD * 0.7);
+
+/**
+ * What `clipText` keeps from the head of a clipped tool result at the SUMMARY
+ * budget: 70% of 2,400. The merge budget would leave 630, so this one number
+ * separates a request that read its segment from one that skimmed it.
+ */
+const SUMMARY_RESULT_HEAD_CHARS = 1_680;
 
 /**
  * C2 baseline — the phase switch's saving, in bytes of `system`.
@@ -294,12 +310,12 @@ test("C2 — the phase switch is the only prefix change, and it only ever drops"
   // Every later completion pays the working prompt, byte-identical — that is
   // what makes the switch one cache write per run rather than one per turn.
   for (const req of lead.slice(1)) expect(bytes(req.system)).toBe(working);
-  // The sections C2 decided are opening-only are gone from turn 2; the ones it
-  // decided turn 2+ reads are still there. `hasModeTools` is false in this home
-  // (all three mode tools are catalog lines), so the section C2 moved never
-  // shipped here at all — which is why this asserts the property and
-  // `doctrine-phase.test.ts` asserts the bytes.
-  for (const section of ["# The read-back", "# Ambiguity", "# Built-in modes on request"]) {
+  // The opening rituals are gone from turn 2; the sections turn 2+ reads are
+  // still there. "# Built-in modes on request" is NOT in either list: it routes
+  // the user's words, a user's words can arrive on any turn (`interject`), and
+  // it is capability-gated instead — absent from both phases here, where all
+  // three mode tools are catalog lines. `doctrine-phase.test.ts` pins that.
+  for (const section of ["# The read-back", "# Ambiguity"]) {
     expect(lead[1]!.system, `${section} is an opening ritual`).not.toContain(section);
   }
   for (const section of ["# Tool usage policy", "# Honesty", "# Finishing a task", "# Git"]) {
@@ -307,16 +323,31 @@ test("C2 — the phase switch is the only prefix change, and it only ever drops"
   }
 });
 
-test("C1 — the second compaction is incremental: at least 30% under the first-compaction baseline", () => {
+test("C1 — the merge carries the accumulated state and still reads its segment whole", () => {
   const first = summarizerBytes(summarizers[0]!);
   const second = summarizerBytes(summarizers[1]!);
-  // The first compaction has no prior state; it is the baseline and is not
-  // expected to move. Guard it anyway: a first compaction that collapsed would
-  // make the ratio below true for the wrong reason.
-  expect(first).toBeGreaterThan(C1_INCREMENTAL_CEILING);
-  expect(second).toBeLessThanOrEqual(C1_INCREMENTAL_CEILING);
-  // The incremental request carries the accumulated state it is updating.
+  // It IS a merge: the state travels, not the old summary's prose re-compressed.
   expect(summarizers[1]!.text).toContain("PRIOR STATE:");
+  // And it is read at first-read fidelity. `clipText` keeps 70% of its budget
+  // from the head, so every clipped body here shows exactly 1,680 characters
+  // before the marker on BOTH requests — the merge budget would show 630.
+  // This is the assertion C1's byte win traded away: the segment a merge is
+  // handed is new material, and this is its only read.
+  for (const [nth, req] of [summarizers[0]!, summarizers[1]!].entries()) {
+    const heads = [...req.text.matchAll(/\[result: ([\s\S]*?)\n…\[\d+ chars clipped\]/g)].map(
+      (m) => m[1]!.length,
+    );
+    expect(heads.length, `request ${nth + 1} carried clipped results`).toBeGreaterThan(0);
+    for (const head of heads) expect(head).toBe(SUMMARY_RESULT_HEAD_CHARS);
+  }
+  // The first compaction is the baseline and does not move.
+  expect(first).toBeGreaterThan(C1_INCREMENTAL_CEILING);
+  // The second is BIGGER, and honestly so: it folds the first one's verbatim
+  // tail plus everything since — 15 messages against 7 — at the same fidelity.
+  // C1 claimed 9,629 here by clipping that segment to 900 characters a body;
+  // V-C showed the segment is material the prior state has never seen, so the
+  // saving is withdrawn and the number is back to what it was at `730fd97`.
+  expect(second).toBeGreaterThan(first);
 });
 
 test("§3.3 — the cacheable prefix is stable up to the fold point on a non-folding host", () => {

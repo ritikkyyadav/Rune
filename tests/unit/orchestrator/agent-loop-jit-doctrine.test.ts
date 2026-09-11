@@ -10,7 +10,12 @@ import { describe, test, expect, mock } from "bun:test";
 import { AgentLoop } from "../../../packages/orchestrator/src/agent-loop";
 import type { AgentTurnEvent } from "../../../packages/orchestrator/src/agent-loop";
 import { TaskStateStore } from "../../../packages/orchestrator/src/task-state";
-import { AGENT_DOCTRINE, extractDoctrineSection } from "../../../packages/orchestrator/src/prompts";
+import {
+  AGENT_DOCTRINE,
+  doctrineForRequest,
+  extractDoctrineSection,
+  type JitDoctrineSection,
+} from "../../../packages/orchestrator/src/prompts";
 
 function ev(type: string, extra: Record<string, unknown> = {}) {
   return { type, ...extra };
@@ -80,24 +85,28 @@ function makeRegistry() {
   } as any;
 }
 
+const JIT_HEADINGS: Record<string, string> = {
+  delegation: "# Delegation",
+  interfaces: "# Building interfaces",
+  modes: "# Built-in modes on request",
+};
+
 /** Engine-like once-per-session JIT source. */
 function onceJit() {
   const sent = new Set<string>();
   const calls: string[] = [];
   return {
     calls,
-    fn: (section: "delegation" | "interfaces") => {
+    fn: (section: JitDoctrineSection) => {
       calls.push(section);
       if (sent.has(section)) return null;
       sent.add(section);
-      return extractDoctrineSection(
-        section === "delegation" ? "# Delegation" : "# Building interfaces",
-      );
+      return extractDoctrineSection(JIT_HEADINGS[section] ?? "");
     },
   };
 }
 
-function makeLoop(gateway: any, jit: (s: "delegation" | "interfaces") => string | null) {
+function makeLoop(gateway: any, jit: (s: JitDoctrineSection) => string | null) {
   return new AgentLoop(
     {
       model: "m",
@@ -134,15 +143,15 @@ describe("extractDoctrineSection", () => {
   });
 
   /**
-   * P3B C2 moved "# Built-in modes on request" out of the working-phase prompt.
-   * It is not delivered through `jitDoctrine` — the section reads the USER'S
-   * MESSAGE, so the opening turn, where that message is read, is a better
-   * moment than any tool result, and `renderDoctrine`'s phase gate puts it
-   * exactly there. What this case holds is the primitive: the section is
-   * extractable verbatim, so a later JIT trigger (a mode tool being promoted
-   * out of the catalog mid-run) has something to inject.
+   * P3B C2 moved "# Built-in modes on request" out of the working-phase prompt
+   * and delivered it nowhere; V-C showed a mid-run mode ask then reached a
+   * prompt with no routing at all. The phase gate is reverted, and the section
+   * is a JIT section for the case the revert cannot reach: with all three mode
+   * tools deferred to catalog lines it ships in NEITHER phase, and
+   * `doctrineForRequest` is the only thing that can put it in front of a
+   * request that asks for a mode.
    */
-  test("the moved built-in-modes section is extractable verbatim", () => {
+  test("the built-in-modes section is extractable verbatim", () => {
     const sec = extractDoctrineSection("# Built-in modes on request");
     expect(sec.startsWith("# Built-in modes on request")).toBe(true);
     expect(sec).toContain("interactive_dashboard");
@@ -166,6 +175,22 @@ describe("jit injection in the loop", () => {
     expect(firstRequest).toContain("# Building interfaces");
     expect(firstRequest).toContain("ART DIRECTION");
     expect(firstRequest).toContain("screenshots");
+  });
+
+  test("a request that asks for a built-in mode carries its routing before the first inference", async () => {
+    const jit = onceJit();
+    const gw = makeGateway([{ text: "done" }]);
+    let firstRequest = "";
+    const stream = gw.inferStream;
+    gw.inferStream = async function* (request: unknown) {
+      firstRequest ||= JSON.stringify(request);
+      yield* stream(request);
+    };
+    await collect(makeLoop(gw, jit.fn).run("compact the conversation", "modes", "/tmp"));
+    expect(doctrineForRequest("compact the conversation")).toContain("modes");
+    expect(jit.calls).toContain("modes");
+    expect(firstRequest).toContain("# Built-in modes on request");
+    expect(firstRequest).toContain("compact_context");
   });
 
   test("ordinary backend requests do not pay for interface guidance", async () => {

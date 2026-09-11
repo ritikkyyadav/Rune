@@ -21,7 +21,7 @@ import { getRuneHome } from "@rune/shared";
 import { getSandboxPolicy, isOsIsolationAvailable, isSandboxEnabled } from "@rune/tool-registry";
 
 /** A doctrine section delivered at its moment of relevance rather than in the prefix. */
-export type JitDoctrineSection = "interfaces" | "delegation" | "dashboards";
+export type JitDoctrineSection = "interfaces" | "delegation" | "dashboards" | "modes";
 
 /** Select situational guidance before planning, without a classification call. */
 export function doctrineForRequest(request: string): JitDoctrineSection[] {
@@ -43,6 +43,19 @@ export function doctrineForRequest(request: string): JitDoctrineSection[] {
     )
   )
     sections.push("dashboards");
+  // The three plain-language asks "# Built-in modes on request" routes. The
+  // section ships in the prefix while any mode tool is loaded; when all three
+  // are catalog lines it ships in neither phase, and this is the only way a
+  // request that asks for one ever sees the routing (V-C 2b/2c). The engine
+  // holds it back when the prefix is already carrying it.
+  if (
+    /\bresearch(?:es|ed|ing)?\b/i.test(request) ||
+    /\b(?:compact|compress|summari[sz]e)\s+(?:the\s+|this\s+|our\s+|my\s+)?(?:conversation|context|chat|session|history|transcript)\b/i.test(
+      request,
+    ) ||
+    /\b(?:dashboard|interactive\s+view)\b/i.test(request)
+  )
+    sections.push("modes");
   return sections;
 }
 
@@ -319,18 +332,22 @@ const GATED_SECTIONS: Array<{ heading: string; keep: (c: DoctrineContext) => boo
   { heading: "# Delegation", keep: (c) => c.canDelegate },
   { heading: "# Greenfield builds", keep: (c) => c.greenfield && c.phase !== "working" },
   { heading: "# Building interfaces", keep: (c) => c.buildsInterfaces },
-  // Opening-only as well as capability-gated (P3B C2). The section routes three
-  // plain-language asks — "research X", "compact the conversation", "show me a
-  // dashboard" — from the USER'S MESSAGE to three tools. That reading happens
-  // on the opening turn and nowhere else: from turn 2 the model is executing a
-  // route it already chose, and the tools it would route to are advertised in
-  // the request's own tool list whenever this section ships at all (that is
-  // exactly what `hasModeTools` tests). Measured at 740 bytes on every
-  // completion of a run where any mode tool is loaded.
-  {
-    heading: "# Built-in modes on request",
-    keep: (c) => c.hasModeTools !== false && c.phase !== "working",
-  },
+  // Capability-gated only (P3B C2, corrected after V-C).
+  //
+  // C2 made this opening-only as well, on the grounds that the section reads
+  // the USER'S MESSAGE and "that reading happens on the opening turn and
+  // nowhere else". A user's message is not confined to the opening turn:
+  // `AgentLoop.interject()` folds mid-run steering into the SAME run at the
+  // next turn boundary, and `turn` only resets per `run()` — so "compact the
+  // conversation", typed while the agent is working, lands on a turn > 1
+  // request served the WORKING prompt, with the routing gone. 741 bytes is not
+  // worth that hole, so the phase gate is reverted: when the section ships at
+  // all, it ships on every completion of the run.
+  //
+  // The complement is `doctrineForRequest`: when every mode tool is a catalog
+  // line, `hasModeTools` drops the section from BOTH phases and the routing
+  // arrives just-in-time on a request that asks for a mode.
+  { heading: "# Built-in modes on request", keep: (c) => c.hasModeTools !== false },
   // ── Opening rituals: they govern the decision before the first tool call ──
   { heading: "# The read-back", keep: (c) => c.phase !== "working" },
   { heading: "# Ambiguity", keep: (c) => c.phase !== "working" },

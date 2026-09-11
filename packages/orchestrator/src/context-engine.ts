@@ -203,6 +203,24 @@ export class ContextEngine {
   // Why the most recent generateSummary() failed (null when it succeeded).
   private lastSummaryFailure: string | null = null;
   /**
+   * Tool results a summarizer has already been shown IN FULL, in a compaction
+   * whose summary was ADOPTED — so the state a later merge updates is that
+   * summarizer's own answer about them (P3B C1). Keyed by call id and body
+   * length; only these may be re-rendered at the merge budget.
+   *
+   * Adopted is the load-bearing word. A summary that was generated and then
+   * discarded (`noop`, or a failed compaction) leaves nothing carrying those
+   * bodies, so its reads are never committed here.
+   */
+  private readonly summarizerHasRead = new Set<string>();
+  /**
+   * Keys the in-flight generateSummary() actually PUT ON THE WIRE in full,
+   * held until the caller adopts the summary. Neither the transcript budget's
+   * omissions nor the char-level backstop are in here: a body that was cut to
+   * fit was not read.
+   */
+  private pendingSummarizerReads: string[] = [];
+  /**
    * `[routing] helper` — the cheapest healthy route for Rune's own calls,
    * supplied as a THUNK because it is resolved against live provider health
    * and must not be frozen at construction. Tried before every other
@@ -355,15 +373,12 @@ export class ContextEngine {
     // ── Assemble: aux context (if any) as one message ahead of the history ──
     const finalMessages: Message[] = [];
     if (keptAux.length > 0) {
-      finalMessages.push({
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text: `[Session context]\n${keptAux.map((i) => i.content).join("\n\n")}`,
-          },
-        ],
-      });
+      finalMessages.push(
+        harnessUserMessage(
+          `[Session context]\n${keptAux.map((i) => i.content).join("\n\n")}`,
+          SESSION_CONTEXT_ORIGIN,
+        ),
+      );
     }
     finalMessages.push(...messages);
 
@@ -771,15 +786,12 @@ export class ContextEngine {
     }
 
     // ── 4. Build the summary message (role "user" — safe across providers) ──
-    const summaryMessage: Message = {
-      role: "user",
-      content: [
-        {
-          type: "text",
-          text: `[Earlier conversation summary]\n${summaryText}`,
-        },
-      ],
-    };
+    // Harness-authored, and stamped as such: it is the summarizer's words, not
+    // the user's, and anything that persists it must be able to tell (V-L0 #15).
+    const summaryMessage = harnessUserMessage(
+      `[Earlier conversation summary]\n${summaryText}`,
+      COMPACTION_SUMMARY_ORIGIN,
+    );
 
     // Keep only the LATEST summary in session memory. The merged summary
     // already contains everything still relevant from its predecessors, and
@@ -815,6 +827,11 @@ export class ContextEngine {
       };
     }
 
+    // The summary is ADOPTED from here on, so the state now carries a digest of
+    // every body the summarizer was shown whole. Only now may a later merge
+    // re-render one of them at the tighter budget.
+    this.commitSummarizerReads();
+
     return {
       messages: remember(compactedSet),
       compacted: true,
@@ -824,6 +841,24 @@ export class ContextEngine {
       afterTokens,
       summarizedCount: transcriptMessages.length,
     };
+  }
+
+  /**
+   * Promote the in-flight request's full reads to durable ones. Called on the
+   * one path where the summary becomes the state — never after a `noop`, a
+   * failure or a rescue, where the bodies are still the only record of
+   * themselves.
+   */
+  private commitSummarizerReads(): void {
+    for (const key of this.pendingSummarizerReads.splice(0)) {
+      this.summarizerHasRead.add(key);
+    }
+    // Oldest-first eviction: `Set` iterates in insertion order.
+    while (this.summarizerHasRead.size > SUMMARIZER_READ_MEMORY) {
+      const oldest = this.summarizerHasRead.values().next();
+      if (oldest.done) break;
+      this.summarizerHasRead.delete(oldest.value);
+    }
   }
 
   /**
@@ -886,14 +921,21 @@ export class ContextEngine {
     // it a transcript where all three were amputated mid-string is why
     // compacted sessions used to forget what they were doing.
     //
-    // An INCREMENTAL compaction — one that carries a prior state to merge into
-    // — renders the same messages at merge fidelity instead
-    // (`INCREMENTAL_TOOL_RESULT_CHARS`): the same head+tail shape on a tighter
-    // budget, because the accumulated state is already carrying the run's
-    // history and this request is an update to it, not the one read the older
-    // transcript will ever get.
-    const resultChars = priorState ? INCREMENTAL_TOOL_RESULT_CHARS : SUMMARY_TOOL_RESULT_CHARS;
-    const rendered = messages.map((m) => `${m.role}: ${summaryMessageText(m, resultChars)}`);
+    // A MERGE — a compaction carrying a prior state — reads the same fidelity,
+    // because the segment it is handed is NEW material: the previous
+    // compaction's verbatim tail plus everything since, none of which the prior
+    // state has seen. The one tighter budget is per result and lossless: a body
+    // this engine has already shown a summarizer IN FULL, in a compaction whose
+    // summary was adopted, may be re-rendered head+tail
+    // (`INCREMENTAL_TOOL_RESULT_CHARS`) because the state being updated is that
+    // summarizer's own answer. Diffs are exempt even then.
+    const toolNames = toolNamesByCallId(messages);
+    const alreadyRead = (key: string): boolean =>
+      Boolean(priorState) && this.summarizerHasRead.has(key);
+    const rendered = messages.map(
+      (m) =>
+        `${m.role}: ${summaryMessageText(m, SUMMARY_TOOL_RESULT_CHARS, { alreadyRead, toolNames })}`,
+    );
 
     const focus = opts?.instructions?.trim()
       ? `\n\nPay special attention to (per the user's request): ${opts.instructions.trim()}`
@@ -928,6 +970,7 @@ ${sections}${focus}`
     // the summarizer's provider is momentarily unavailable we walk the rest
     // ourselves rather than failing the whole compaction.
     this.lastSummaryFailure = null;
+    this.pendingSummarizerReads = [];
     let lastError = "no summarizer candidates registered";
 
     const attempt = async (provider: ProviderName, model: string): Promise<string | null> => {
@@ -957,12 +1000,19 @@ ${sections}${focus}`
           break;
         }
       }
-      const transcript = clipText(
+      const joined =
         (omitted > 0
           ? `[${omitted} older messages omitted to fit the summarizer's window]\n\n`
-          : "") + kept.join("\n\n"),
+          : "") + kept.join("\n\n");
+      const transcript = clipText(
+        joined,
         budgetTokens * 4, // char-level backstop: one enormous single message
       );
+      // Which bodies this request would show the summarizer WHOLE. Omitted
+      // messages are excluded by the slice; a request the backstop had to clip
+      // shows nothing whole, because the cut can land anywhere in it.
+      this.pendingSummarizerReads =
+        transcript.length === joined.length ? fullyReadKeys(messages.slice(omitted)) : [];
       const userText = priorState
         ? `${instructionText}\n\nPRIOR STATE:\n${priorState}\n\nNew conversation segment:\n${transcript}`
         : `${instructionText}\n\nConversation:\n${transcript}`;
@@ -1470,30 +1520,67 @@ function messageTokenText(msg: Message): string {
 const SUMMARY_TOOL_ARGS_CHARS = 700;
 const SUMMARY_TOOL_RESULT_CHARS = 2_400;
 /**
- * …and what it may keep when it is UPDATING a state rather than writing one
- * (P3B C1).
+ * …and what it may keep of a result the summarizer has ALREADY READ IN FULL
+ * (P3B C1, corrected after V-C).
  *
- * The first compaction of a run has nothing but the transcript: every fact the
- * rest of the session will ever have about the folded messages has to come out
- * of that one read, so it gets the full 2,400. Every compaction after it is a
- * MERGE — it is handed the accumulated state and asked to update it — and the
- * expensive part of that request is not the state (bounded by the summarizer's
- * 2,000-token reply ceiling) but the tool-result bodies: measured on the Lane C
- * rig, 8 results at 2,400 chars were 19,200 of a 21,629-byte request, 89% of it.
+ * C1 shipped this as a per-REQUEST fidelity: every compaction carrying a prior
+ * state rendered its whole segment at 900 characters, on the reasoning that the
+ * accumulated state was already carrying the run's history. That reasoning is
+ * wrong about which messages are in the segment. `transcriptMessages` is
+ * `toSummarize.slice(1)` — the previous compaction's verbatim tail plus
+ * everything that happened since — material the prior state has never seen.
+ * The merge is that segment's one and only read, and a 2,400-char result (a
+ * test failure, a diagnostics block, a short diff) was losing up to 62.5% of
+ * its middle for good.
  *
- * Clipping them to 900 keeps the same HEAD+TAIL shape — ~630 characters from
- * the start and ~270 from the end — so the path, the command, the first lines
- * of a file and the last lines of a failure all still reach the summarizer;
- * what goes is the middle of bodies the state is being asked to summarise, not
- * to quote. Nothing is DROPPED: every message in the segment is still rendered,
- * with its role, its tool name and its arguments. That is the difference
- * between this and shrinking the transcript budget, which would silently omit
- * whole messages from the only read they will ever get.
+ * So the budget is now per RESULT, not per request, and it applies only where
+ * it is lossless: a result whose ENTIRE body was already shown to a summarizer
+ * in a compaction whose summary was adopted — the state being merged into is
+ * that summarizer's answer — may be re-rendered head+tail at 900. Anything the
+ * summarizer has not read gets the full 2,400, prior state or not, and a
+ * diff-bearing result is never clipped below the full budget at all: the change
+ * a patch carries lives in the middle of its own body.
  *
- * Measured effect on the rig: the incremental request falls 21,629 → 9,629
- * bytes, 39.9% below the first (non-incremental) compaction's 16,023.
+ * Honest byte effect: nothing in the compaction flow is ever rendered twice (a
+ * folded segment is replaced by its summary, and both replay paths reset the
+ * transcript), so the 21,629 → 9,629 saving C1 claimed is withdrawn — the
+ * second compaction on the rig is back to 21,629 bytes. What remains is a
+ * guard on `compactWorkingSet`'s public contract, whose input is the caller's.
  */
 const INCREMENTAL_TOOL_RESULT_CHARS = 900;
+
+/**
+ * How many "the summarizer has read this" keys one engine remembers. A key is
+ * ~40 bytes and only an adopted compaction writes one, so this is generous;
+ * the cap exists so a very long session cannot grow the set without bound.
+ */
+const SUMMARIZER_READ_MEMORY = 2_000;
+
+/**
+ * The edit tools, whose result carries the change itself. The middle of a patch
+ * IS the edit, so these are exempt from the merge budget however often they are
+ * re-rendered. Backed up by a shape test on the body, because a plugin tool can
+ * emit a diff under any name at all.
+ */
+const DIFF_TOOLS = new Set(["apply_patch", "edit_file", "multi_edit", "patch"]);
+
+/** Does this body carry a unified diff / patch envelope? */
+function looksLikeDiff(body: string): boolean {
+  return (
+    body.includes("*** Begin Patch") ||
+    /^@@ -\d/m.test(body) ||
+    (/^--- /m.test(body) && /^\+\+\+ /m.test(body))
+  );
+}
+
+/**
+ * The identity of a tool result for the read memory: the call that produced it
+ * plus the length of what it produced. The call id alone would let an edited or
+ * re-run result inherit its predecessor's "already read" verdict.
+ */
+function resultReadKey(callId: string, body: string): string {
+  return `${callId}:${body.length}`;
+}
 
 /** Head+tail clip: keeps ~70% of the budget from the start, ~30% from the end. */
 function clipText(s: string, maxChars: number): string {
@@ -1510,25 +1597,101 @@ function clipText(s: string, maxChars: number): string {
  * Thinking is excluded by POLICY (the model's private reasoning is not part
  * of the durable record), not by accident.
  *
- * `resultChars` is the one lever an INCREMENTAL compaction pulls — see
- * `INCREMENTAL_TOOL_RESULT_CHARS`. Tool ARGUMENTS keep their full allowance on
- * both paths: they are where the paths and commands live, they are small, and
- * they are what makes the merged state's "files touched, commands run" section
- * true.
+ * `alreadyRead` is the one lever a MERGE pulls, and it is per result rather
+ * than per request — see `INCREMENTAL_TOOL_RESULT_CHARS`. Tool ARGUMENTS keep
+ * their full allowance whatever the result's fidelity: they are where the paths
+ * and commands live, they are small, and they are what makes the merged state's
+ * "files touched, commands run" section true.
  */
-function summaryMessageText(msg: Message, resultChars = SUMMARY_TOOL_RESULT_CHARS): string {
+function summaryMessageText(
+  msg: Message,
+  resultChars = SUMMARY_TOOL_RESULT_CHARS,
+  ctx?: {
+    /** Has the summarizer already been shown this result's whole body? */
+    alreadyRead?: (key: string) => boolean;
+    /** callId → tool name, from the assistant turns of the same segment. */
+    toolNames?: Map<string, string>;
+  },
+): string {
   return msg.content
     .map((block) => {
       if (block.type === "text") return block.text;
       if (block.type === "tool_use")
         return `[tool: ${block.toolName}(${clipText(JSON.stringify(block.toolInput), SUMMARY_TOOL_ARGS_CHARS)})]`;
-      if (block.type === "tool_result")
-        return `[result: ${clipText(block.toolResultContent, resultChars)}]`;
+      if (block.type === "tool_result") {
+        const body = block.toolResultContent;
+        const name = ctx?.toolNames?.get(block.toolCallId);
+        const isDiff = (name !== undefined && DIFF_TOOLS.has(name)) || looksLikeDiff(body);
+        const reRead =
+          !isDiff && ctx?.alreadyRead?.(resultReadKey(block.toolCallId, body)) === true;
+        return `[result: ${clipText(body, reRead ? INCREMENTAL_TOOL_RESULT_CHARS : resultChars)}]`;
+      }
       if (block.type === "image") return "[image attachment]";
       return "";
     })
     .filter((s) => s.length > 0)
     .join("\n");
+}
+
+/**
+ * The read keys of every tool result in `messages` short enough that
+ * `summaryMessageText` rendered it WHOLE (`clipText` returns early at or under
+ * its budget). A clipped body was not read, so it never earns a key.
+ */
+function fullyReadKeys(messages: Message[]): string[] {
+  const out: string[] = [];
+  for (const m of messages)
+    for (const block of m.content)
+      if (
+        block.type === "tool_result" &&
+        block.toolResultContent.length <= SUMMARY_TOOL_RESULT_CHARS
+      )
+        out.push(resultReadKey(block.toolCallId, block.toolResultContent));
+  return out;
+}
+
+/** callId → the tool that produced it, read off the assistant turns in `messages`. */
+function toolNamesByCallId(messages: Message[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const m of messages)
+    for (const block of m.content)
+      if (block.type === "tool_use") out.set(block.toolCallId, block.toolName);
+  return out;
+}
+
+// ─── Harness-authored user messages (V-L0 #15) ───
+//
+// Two `role: "user"` messages are written by this file rather than by the user:
+// the compaction summary that replaces a folded segment, and the `[Session
+// context]` block `buildPrompt` prepends to a request. Neither goes through
+// `AgentLoop.appendMessage`, so neither could carry the origin the persisted
+// `user_msg.harness` mechanism reads — and an untagged synthetic message that
+// ever reaches persistence is filed as the USER'S OWN WORDS, which is both an
+// audit lie (a detached run cannot say what re-prompted the model) and a trust
+// one (`engine.ts` feeds persisted user text to the permission check as
+// trusted input). The origin is stamped where the message is created, and
+// `harnessOriginOf` is what the persistence seam reads.
+
+/** Origin of the summary message a compaction installs. */
+export const COMPACTION_SUMMARY_ORIGIN = "compaction:summary";
+/** Origin of the auxiliary `[Session context]` block prepended to a request. */
+export const SESSION_CONTEXT_ORIGIN = "context:session";
+
+const harnessOrigins = new WeakMap<Message, string>();
+
+/** Build a harness-authored user message with its origin already stamped. */
+function harnessUserMessage(text: string, origin: string): Message {
+  const message: Message = { role: "user", content: [{ type: "text", text }] };
+  harnessOrigins.set(message, origin);
+  return message;
+}
+
+/**
+ * Why a `role: "user"` message this engine authored exists, in the same
+ * vocabulary `AgentLoop.originOf` uses. Undefined for the user's own words.
+ */
+export function harnessOriginOf(message: Message): string | undefined {
+  return harnessOrigins.get(message);
 }
 
 /**

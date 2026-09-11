@@ -238,3 +238,111 @@ test("I6 — the write row says it changed something and the read rows say nothi
   // A non-write carries no verdict rather than a false one.
   expect(verdicts.some((v) => v === undefined)).toBe(true);
 });
+
+// ─── V-L0 #15 — a compaction run's harness-authored messages ───
+//
+// Two `role: "user"` messages are authored by `context-engine.ts` rather than
+// by the user: the summary that replaces a folded segment, and the `[Session
+// context]` block. Neither goes through `AgentLoop.appendMessage`, so neither
+// could carry the origin `user_msg.harness` reads — and an untagged synthetic
+// message that reaches persistence is filed as the USER'S OWN WORDS. The
+// engine's `originOf` seam now falls back to the context engine's stamp, so
+// the equality §6 names ("every persisted user_msg is the user's, or marked")
+// holds on a run that compacts as well as on one that does not.
+//
+// The stamp itself is unit-pinned in
+// `tests/unit/orchestrator/context-compaction-budget.test.ts`. This is the
+// persisted half, on a real child: the script forces a compaction with a
+// provider-side over-limit rejection, exactly as `prompt-cost.test.ts` does.
+
+/** The fixture's own notes, read until the head is worth folding. */
+const COMPACT_SCRIPT: MockAction[] = [
+  ...[1, 2, 3, 4].map((n) => tool("read_file", { path: `docs/note-${n}.md` })),
+  // The loop force-compacts and retries the turn: one summarizer call, one
+  // `[Earlier conversation summary]` installed at the head of the working set.
+  { kind: "context_length", limit: 100_000 },
+  // …and then one ordinary harness re-prompt, so this run has a marked
+  // `user_msg` row to compare the summary against rather than an empty set.
+  { kind: "empty" },
+  tool("bash", { command: "node check.mjs" }),
+  { kind: "text", text: "Read the notes and ran node check.mjs. Done." },
+];
+
+const COMPACT_SUMMARIZER: MockAction[] = [
+  {
+    kind: "text",
+    text:
+      "## Goals & requirements\nRead the notes under docs/ and run the acceptance check.\n" +
+      "## Key facts & codebase knowledge\nsrc/api.ts and src/client.ts are separate modules.\n" +
+      "## Actions taken & outcomes (files touched, commands run)\nRead docs/note-1.md onward.\n" +
+      "## Decisions & open questions\nNone open.\n" +
+      "## Current state & next step\nRun node check.mjs.",
+  },
+];
+
+let compacting: { home: S.ScratchHome; server: ReturnType<typeof startMockModelServer> } | null =
+  null;
+
+test("a run that compacts files no harness-authored message as the user's own words", async () => {
+  const workdir = join(dir, "compaction");
+  mkdirSync(workdir, { recursive: true });
+  const fixture = S.makeFixture(workdir);
+  const server = startMockModelServer({
+    script: { lead: COMPACT_SCRIPT, summarizer: COMPACT_SUMMARIZER },
+    model: "fake-model",
+  });
+  const home = S.makeScratchHome(workdir, {
+    baseUrl: server.baseUrl,
+    model: "fake-model",
+    maxTurns: 16,
+  });
+  compacting = { home, server };
+  const child = S.spawnRun({
+    home,
+    fixture,
+    toolsBin,
+    prompt: "Read the notes under docs/, then run node check.mjs.",
+  });
+  server.attach(child.proc);
+  await child.wait(180_000);
+
+  const events = S.readEvents(home.dbPath);
+  // The run really did compact, with a summarizer, not a deterministic rescue.
+  const compactions = events.filter((r) => r.type === "auto_compaction");
+  expect(compactions.length).toBeGreaterThan(0);
+  expect(compactions[0]!.payload.summaryFailure ?? null).toBeNull();
+  expect(compactions[0]!.payload.tier).toBe("summarized");
+
+  // The summary is durable — it rides the checkpoint that replaces the
+  // replayed transcript, which is what a resume reads.
+  const workingSet = JSON.stringify(compactions[0]!.payload.workingSet ?? []);
+  expect(workingSet).toContain("[Earlier conversation summary]");
+
+  // …and it is NOT a user turn. `listUserTurns` backs /rewind and the persisted
+  // user text is fed to the permission check as TRUSTED input; the summary is
+  // the summarizer's prose about tool output, which is precisely what a prompt
+  // injection would aim at. Every persisted `user_msg` is either the user's one
+  // message or a marked harness re-prompt.
+  const userMsgs = events.filter((r) => r.type === "user_msg");
+  expect(userMsgs.length).toBeGreaterThan(0);
+  const unmarked = userMsgs.filter((r) => typeof r.payload.harness !== "string");
+  expect(unmarked.map((r) => String(r.payload.content))).toEqual([
+    "Read the notes under docs/, then run node check.mjs.",
+  ]);
+  for (const row of userMsgs) {
+    const content = String(row.payload.content);
+    expect(content.startsWith("[Earlier conversation summary]")).toBe(false);
+    expect(content.startsWith("[Session context]")).toBe(false);
+  }
+
+  // The equality §6 names, on a compaction run: what the report counts as
+  // origin-marked is exactly the set of harness rows in the database.
+  const report = overheadReport(home.dbPath);
+  const marked = userMsgs.length - unmarked.length;
+  expect(marked).toBeGreaterThan(0);
+  expect(report.harnessFollowups.userMsgWithOriginMarker).toBe(marked);
+}, 240_000);
+
+afterAll(() => {
+  compacting?.server.stop();
+});

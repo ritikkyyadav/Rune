@@ -29,16 +29,14 @@ const ALL_ON: DoctrineContext = { ...FULL_DOCTRINE_CONTEXT };
 /**
  * The rituals of the opening: they describe a decision, not an execution.
  *
- * "# Built-in modes on request" joined them in P3B C2. It routes three
- * plain-language asks in the USER'S MESSAGE — "research X", "compact the
- * conversation", "show me a dashboard" — to three tools; that reading is done
- * on the opening turn, and from turn 2 the model is executing the route it
- * already chose, with the tool itself advertised in the request's tool list
- * (which is what `hasModeTools` tests). The section is 739 bytes of text and
- * takes 741 off the rendered prompt with its separators, on every run that
- * loaded one of the three tools.
+ * "# Built-in modes on request" joined them in P3B C2 and left again when V-C
+ * showed the premise was wrong: `interject()` folds a mid-run user message into
+ * the SAME run, so "compact the conversation" can land on a turn > 1 request,
+ * which is served the working prompt. A section that routes the USER'S WORDS
+ * cannot be gated on a turn number. It is capability-gated only — see "the
+ * built-in modes section follows its three tools" below.
  */
-const OPENING_ONLY = ["# The read-back", "# Ambiguity", "# Built-in modes on request"];
+const OPENING_ONLY = ["# The read-back", "# Ambiguity"];
 /**
  * Looked like an opening ritual and is not. Dropping "# Plan and track" after
  * the first completion was measured on 2026-09-08 (sessions 01a08036 vs
@@ -137,6 +135,27 @@ describe("doctrine phases", () => {
     );
   });
 
+  /**
+   * V-C's finding, as a law. C2 gated this section on the phase as well, so a
+   * run that loaded a mode tool carried the routing on turn 1 and lost it from
+   * turn 2 — while the message that asks for a mode can arrive at ANY turn
+   * (`AgentLoop.interject` folds mid-run steering into the same run, and `turn`
+   * only resets per `run()`). The tools it routes to are in the request's tool
+   * list on every one of those turns; the words that say when to reach for them
+   * must be too.
+   */
+  test("the modes routing is on every phase its tools are, not just the opening", () => {
+    for (const phase of ["opening", "working"] as const) {
+      expect(
+        renderDoctrine({ ...ALL_ON, hasModeTools: true, phase }),
+        `a mode can be asked for on a ${phase} turn`,
+      ).toContain("# Built-in modes on request");
+      expect(renderDoctrine({ ...ALL_ON, hasModeTools: false, phase })).not.toContain(
+        "# Built-in modes on request",
+      );
+    }
+  });
+
   // ─── C2 — the per-section measurement, pinned ───
   //
   // `docs/program/phase-3-auto-efficiency.md` §6 Lane C asks for the doctrine's
@@ -148,25 +167,28 @@ describe("doctrine phases", () => {
   //
   // A number that moves is not a failure; it is a doctrine edit asking to be
   // re-measured, and to be justified in the report the same way this one was.
-  test("the working-phase doctrine costs what C2 measured, to the byte", () => {
+  test("the working-phase doctrine costs what the phase split measured, to the byte", () => {
     const JIT: DoctrineContext = { ...ALL_ON, canDelegate: false, buildsInterfaces: false };
     const utf8 = (s: string) => new TextEncoder().encode(s).length;
     const opening = utf8(renderDoctrine({ ...JIT, phase: "opening" }));
     const working = utf8(renderDoctrine({ ...JIT, phase: "working" }));
-    // Pinned at 730fd97 before C2: opening 24,135, working 19,099.
-    // After C2: the modes section leaves the working half only.
+    // Pinned at 730fd97: opening 24,135, working 19,099. C2 took the working
+    // half to 18,358 by moving the modes section out of it; V-C showed that
+    // opened a correctness hole for a mid-run mode ask, so the 741 bytes are
+    // back and the working half is 19,099 again. The saving C2 claimed is
+    // withdrawn — `docs/program/phase-3-auto-efficiency.md` §6 asks for bytes,
+    // and these are the honest ones.
     expect(opening).toBe(24_135);
-    expect(working).toBe(18_358);
+    expect(working).toBe(19_099);
     // The switch only ever drops — a working prompt that grew would cost a
     // second full cache write per run instead of a smaller prefix.
     expect(working).toBeLessThan(opening);
   });
 
-  test("C2 moved exactly one section, and left every section turn 2+ reads", () => {
+  test("the working phase keeps every section turn 2+ reads", () => {
     const JIT: DoctrineContext = { ...ALL_ON, canDelegate: false, buildsInterfaces: false };
     const working = renderDoctrine({ ...JIT, phase: "working" });
-    expect(working).not.toContain("# Built-in modes on request");
-    // Everything else the working phase had at 730fd97 is still there. This is
+    // Everything the working phase had at 730fd97 is still there. This is
     // the guard the design asks for: "keeping everything that turn 2+ relies
     // on" is not a claim, it is this list.
     for (const section of [
@@ -181,6 +203,7 @@ describe("doctrine phases", () => {
       "# Finishing a task",
       "# Honesty",
       "# Tool usage policy",
+      "# Built-in modes on request",
       "# Coding conventions",
       "# Git",
       "# Proactiveness",
@@ -246,5 +269,37 @@ describe("doctrineForRequest routes the charter", () => {
   test("ordinary front-end work does not pay for it", () => {
     expect(doctrineForRequest("fix the css on the login screen")).not.toContain("dashboards");
     expect(doctrineForRequest("rename the retry helper")).toEqual([]);
+  });
+});
+
+/**
+ * The complement to the phase revert (V-C 2c): with all three mode tools
+ * deferred to catalog lines, `hasModeTools` is false and the section ships in
+ * NEITHER phase — so a request that asks for a mode has only one way left to
+ * see the routing, and at `4c04e03` there was none. `JitDoctrineSection` did
+ * not contain it and `doctrineForRequest("compact the conversation")` was `[]`.
+ */
+describe("doctrineForRequest routes the built-in modes", () => {
+  test("the three asks the section exists to route ask for it", () => {
+    for (const request of [
+      "research the auth flow and give me a cited report",
+      "do a deep dive on the retry ladder and research the alternatives",
+      "compact the conversation",
+      "compress our chat, it is getting long",
+      "show this as a dashboard",
+    ]) {
+      expect(doctrineForRequest(request), request).toContain("modes");
+    }
+  });
+
+  test("ordinary work never pays for the routing", () => {
+    for (const request of [
+      "rename the retry helper",
+      "fix the css on the login screen",
+      "compact the index file",
+      "summarize this function for me",
+    ]) {
+      expect(doctrineForRequest(request), request).not.toContain("modes");
+    }
   });
 });
