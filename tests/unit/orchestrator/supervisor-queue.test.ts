@@ -4,7 +4,11 @@ import {
   resolveAutoModeConfig,
   type ClassifierCall,
 } from "../../../packages/orchestrator/src/auto-mode";
-import { ReviewSlots, SupervisorQueue } from "../../../packages/orchestrator/src/supervisor-queue";
+import {
+  ReviewSlots,
+  SupervisorQueue,
+  type SupervisedItem,
+} from "../../../packages/orchestrator/src/supervisor-queue";
 import type { LlmGateway } from "@rune/llm-gateway";
 import {
   resetSandboxCapabilityForTest,
@@ -69,8 +73,8 @@ test("a burst shares one review, keeps all call IDs, and never caches a later ap
 });
 
 test("all payloads are retained, authorization epochs split batches, and overflow refuses admission", async () => {
-  const batches: Array<Array<{ key: string; epoch: number; chars: number }>> = [];
-  const queue = new SupervisorQueue(async (batch) => {
+  const batches: Array<SupervisedItem[]> = [];
+  const queue = new SupervisorQueue<SupervisedItem>(async (batch) => {
     batches.push(batch);
   }, 12);
   for (let i = 0; i < 12; i++)
@@ -81,6 +85,52 @@ test("all payloads are retained, authorization epochs split batches, and overflo
     Array.from({ length: 12 }, (_, i) => `payload-${i}`),
   );
   expect(batches.every((batch) => new Set(batch.map((x) => x.epoch)).size === 1)).toBe(true);
+  // B3 — every admitted item carries when it entered and when it left, so a
+  // wait is a number rather than an impression.
+  for (const item of batches.flat()) {
+    expect(typeof item.enqueuedAt).toBe("number");
+    expect(typeof item.dequeuedAt).toBe("number");
+    expect(item.dequeuedAt!).toBeGreaterThanOrEqual(item.enqueuedAt!);
+  }
+});
+
+test("B3 — the queue reports how long the oldest observation has waited", async () => {
+  // A hand-wound clock: the wait is the thing under test, so it must not be
+  // whatever the machine happened to do between two ticks.
+  let clock = 1_000;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const seen: Array<Array<SupervisedItem>> = [];
+  const queue = new SupervisorQueue<SupervisedItem>(
+    async (batch) => {
+      seen.push(batch);
+      await gate;
+    },
+    64,
+    () => clock,
+  );
+
+  // Nothing waiting, nothing to report.
+  expect(queue.oldestWaitMs()).toBe(0);
+  expect(queue.lastWaitMs).toBe(0);
+
+  queue.enqueue({ key: "first", epoch: 0, chars: 10 });
+  clock += 4_200;
+  queue.enqueue({ key: "second", epoch: 0, chars: 10 });
+  // The OLDEST is what a refusal is explained with, not the newest.
+  expect(queue.oldestWaitMs()).toBe(4_200);
+  expect(queue.size).toBe(2);
+
+  clock += 800;
+  release();
+  await queue.drain();
+  // Both left at 5,000: the first waited 5,000 ms, the second 800 ms, and the
+  // last one out is what `lastWaitMs` reports.
+  expect(seen.flat().map((i) => i.dequeuedAt! - i.enqueuedAt!)).toEqual([5_000, 800]);
+  expect(queue.lastWaitMs).toBe(800);
+  expect(queue.oldestWaitMs()).toBe(0);
 });
 
 test("background requests share two slots across runs and release on failure", async () => {

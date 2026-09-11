@@ -320,6 +320,17 @@ function isReadOnlyGit(args: string[]): boolean {
 
 // ── Ordinary development work ──
 
+/**
+ * The build-and-check tools of a JavaScript workspace, named once so the bare
+ * invocation (`tsc --noEmit`) and the package-runner one (`npx tsc --noEmit`)
+ * cannot drift apart.
+ */
+const DEV_TOOLS =
+  "tsc|eslint|prettier|biome|oxlint|stylelint|vitest|jest|mocha|ava|tap|karma|cypress|" +
+  "playwright|turbo|nx|lerna|rollup|vite|webpack|esbuild|parcel|next|nuxt|astro|remix|" +
+  "storybook|tailwindcss|postcss|sass|shellcheck|hadolint|yamllint|markdownlint|" +
+  "commitlint|husky|lint-staged";
+
 const ORDINARY_PATTERNS: RegExp[] = [
   /^(?:npm|pnpm|yarn|bun)\s+(?:install|i|ci|add|remove|rm|uninstall|update|upgrade|test|t|run|run-script|build|lint|typecheck|check|format|fmt|dev|start|stop|restart|watch|clean|generate|gen|coverage|bench|preview|serve|storybook|prepare|migrate|seed|audit|dedupe|prune|outdated|ls|list|why|init|pack|version|link|rebuild|cache|pm|docs|doctor)\b/,
   // `yarn <script>`, `pnpm <script>`, `bun <script>` run a package.json
@@ -329,13 +340,16 @@ const ORDINARY_PATTERNS: RegExp[] = [
   /^(?:pip3?|uv|poetry|pipenv|conda|pipx)\s+(?:install|uninstall|sync|run|lock|add|remove|update|list|show|freeze|check|build|venv|pip)\b/,
   /^(?:pytest|py\.test|tox|nox|coverage|ruff|black|isort|flake8|mypy|pyright|pylint|bandit)\b/,
   /^python3?(?:\s+-m\s+(?:pytest|unittest|venv|pip|build|http\.server|json\.tool|mypy|black|ruff|compileall|py_compile)\b|\s+-[cu]\s|\s+\S+\.py\b)/,
-  /^(?:node|bun|deno|tsx|ts-node)\s+(?:-e\s|--eval\s|-p\s|run\s|\S+\.(?:m?[jt]sx?|cjs)\b)/,
+  // Leading flags are allowed before the script: `node --check web/src/app.js`
+  // is a syntax check, and requiring the file to be the FIRST argument sent it
+  // to the supervisor as unrecognized work.
+  /^(?:node|bun|deno|tsx|ts-node)\s+(?:-[\w-]+(?:=\S+)?\s+)*(?:-e\s|--eval\s|-p\s|run\s|\S+\.(?:m?[jt]sx?|cjs)\b)/,
   /^cargo\s+(?:build|b|test|t|check|c|clippy|fmt|run|r|bench|doc|clean|update|fetch|add|remove|rm|tree|metadata|install\s+--path|generate-lockfile|nextest)\b/,
   /^(?:rustc|rustfmt|rustup\s+(?:show|default|update|target|component|toolchain))\b/,
   /^go\s+(?:build|test|vet|run|mod|fmt|generate|get|install|list|env|version|tool|clean|work)\b/,
   /^(?:gofmt|goimports|golangci-lint|staticcheck)\b/,
   /^(?:make|cmake|ninja|meson|bazel|buck2?|gradle|gradlew|\.\/gradlew|mvn|mvnw|\.\/mvnw|ant|sbt|lein|mix|rebar3|xcodebuild|xcrun|swift|dotnet|msbuild|bundle|rake|rails|composer|php|artisan|flutter|dart|expo|eas|fastlane|pod)\b/,
-  /^(?:tsc|eslint|prettier|biome|oxlint|stylelint|vitest|jest|mocha|ava|tap|karma|cypress|playwright|turbo|nx|lerna|rollup|vite|webpack|esbuild|parcel|next|nuxt|astro|remix|storybook|tailwindcss|postcss|sass|shellcheck|hadolint|yamllint|markdownlint|commitlint|husky|lint-staged)\b/,
+  new RegExp(String.raw`^(?:${DEV_TOOLS})\b`),
   /^git\s+(?:add|commit|checkout|switch|restore|merge|rebase(?!\s+-i\b|\s+--interactive\b)|cherry-pick|stash|branch|tag|reset(?!\s+--hard\b)|fetch|pull|init|mv|rm|clean|worktree|submodule|apply|am|revert|bisect|notes|format-patch|diff|log|status|show|remote|config)\b/,
   /^docker\s+(?:build|buildx|compose|ps|images|logs|run|exec|create|stop|start|restart|kill|rm|rmi|pull|inspect|version|info|cp|tag|load|save|network|volume\s+(?:ls|create|inspect)|stats|top)\b/,
   /^(?:docker-compose|podman|colima|kind|minikube|helm\s+(?:template|lint|dependency|list|status|show|version))\b/,
@@ -345,6 +359,30 @@ const ORDINARY_PATTERNS: RegExp[] = [
   /^(?:sleep|wait|timeout|time|env|printenv|export|set|unset|alias|source|\.)\b/,
   /^(?:sqlite3|psql|mysql|redis-cli|mongosh)\b/,
   /^(?:\.\/|\.\.\/|scripts\/|bin\/)\S+/,
+  // A package runner in front of a tool this list already names. `pnpm dlx`
+  // and friends are excluded above because they fetch and execute code from
+  // outside the project — but `npx playwright test` and `bun x tsc --version`
+  // are the same build step the bare binary would be, and the supervisor was
+  // screening both. Only the named tools qualify; `npx some-package` does not.
+  new RegExp(
+    String.raw`^(?:npx|bunx|pnpm\s+dlx|yarn\s+dlx|bun\s+x|npm\s+exec\s+--)\s+` +
+      String.raw`(?:(?:-y|--yes|--no|--no-install|--package\s+\S+|-p\s+\S+)\s+)*(?:${DEV_TOOLS})\b`,
+  ),
+  // Reading a forge through its CLI: `gh pr view`, `gh run list`. A
+  // destructive verb anywhere in the command already rates the whole thing
+  // high (isRemoteMutation), and `gh release create` / `gh gist create` are
+  // publications, so neither ever reaches this line.
+  /^(?:gh|glab)\s+(?:pr|mr|issue|run|repo|project|release|workflow|label|milestone|cache|codespace|extension)\s+(?:view|list|status|checks|diff|watch|download)\b/,
+  /^(?:gh|glab)\s+(?:status|search|version)\b/,
+  // Enumerating cloud resources: `aws s3 ls`, `aws ec2 describe-instances`,
+  // `gcloud compute instances list`. `get` is deliberately NOT a verb here —
+  // `get-secret-value`, `get-parameter`, `get-session-token` are all reads of
+  // a credential, and `isSecretBearing` below refuses the rest of that family.
+  /^(?:aws|gcloud|az|doctl)\s+[\w-]+(?:\s+[\w-]+)?\s+(?:describe|describe-[\w-]+|list|list-[\w-]+|show|ls)\b/,
+  // A long-running local process that IS the dev loop: an ASGI/WSGI server, a
+  // watcher, a task runner. Binding past loopback is a mechanical breaker of
+  // its own (`beyond-loopback-bind`), so the address is already answered for.
+  /^(?:uvicorn|gunicorn|hypercorn|daphne|waitress-serve|flask|celery|nodemon|pm2|concurrently|http-server|live-server|serve|air|watchexec|entr|just|mise|direnv|honcho|foreman|overmind)\b/,
 ];
 
 /**
@@ -362,9 +400,18 @@ export function isOrdinaryDevCommand(
     if (isReadOnlySegment(segment, safeCommands)) return true;
     if (SUBSTITUTION_RE.test(segment) && /\$\((?:curl|wget)\b/.test(segment)) return false;
     const stripped = stripLeadingAssignments(segment.trim());
+    // A command that names a secret store is never ordinary, whatever else it
+    // looks like. `az keyvault secret show` reads as an enumeration and is a
+    // credential read; the pattern list below cannot tell them apart, so the
+    // noun does.
+    if (SECRET_SUBJECT_RE.test(stripped)) return false;
     return ORDINARY_PATTERNS.some((re) => re.test(stripped));
   });
 }
+
+/** Nouns that mean the command is about a credential rather than a resource. */
+const SECRET_SUBJECT_RE =
+  /\b(?:secret|secrets|password|passwd|credential|credentials|token|keyvault|keychain|keyring|kms)\b|\bsecretsmanager\b/i;
 
 /** Whitespace tokenizer that keeps quoted arguments whole. */
 function tokenize(segment: string): string[] {

@@ -29,6 +29,16 @@ export interface SupervisedItem {
   /** Authorization / workspace-mutation epoch: batches never cross it. */
   epoch: number;
   chars: number;
+  /**
+   * Stamped by the queue on admission and again when the item leaves for a
+   * batch — never set by the caller. Until these existed, how long an
+   * observation sat behind a slow reviewer was the one reviewer number nothing
+   * recorded: the audit row showed a `supervisor_skipped` with a count of
+   * waiting observations and no way to say whether they had been waiting a
+   * hundred milliseconds or a minute.
+   */
+  enqueuedAt?: number;
+  dequeuedAt?: number;
 }
 
 /**
@@ -45,9 +55,12 @@ export class SupervisorQueue<T extends SupervisedItem> {
   private readonly pending: T[] = [];
   private running: Promise<void> | undefined;
 
+  private lastWait = 0;
+
   constructor(
     private readonly review: (batch: T[]) => Promise<void>,
     private readonly maxPending = 64,
+    private readonly now: () => number = () => performance.now(),
   ) {}
 
   enqueue(item: T): boolean {
@@ -55,9 +68,26 @@ export class SupervisorQueue<T extends SupervisedItem> {
       const repeat = this.pending.some((waiting) => waiting.key === item.key);
       if (!repeat || this.pending.length >= this.maxPending * 4) return false;
     }
+    item.enqueuedAt = this.now();
     this.pending.push(item);
     if (!this.running) this.start();
     return true;
+  }
+
+  /**
+   * How long the oldest observation still waiting has been in the queue, in
+   * ms. This is the number a refusal is explained WITH — `size` says how many
+   * are ahead, this says what that has cost so far.
+   */
+  oldestWaitMs(): number {
+    const head = this.pending[0];
+    if (head?.enqueuedAt === undefined) return 0;
+    return Math.max(0, Math.round(this.now() - head.enqueuedAt));
+  }
+
+  /** The queue wait of the last observation to leave for a batch, in ms. */
+  get lastWaitMs(): number {
+    return this.lastWait;
   }
 
   /** Observations waiting for a batch — the number a refusal is explained with. */
@@ -90,7 +120,11 @@ export class SupervisorQueue<T extends SupervisedItem> {
             chars + additional > 24_000)
         )
           break;
-        batch.push(this.pending.shift()!);
+        const leaving = this.pending.shift()!;
+        leaving.dequeuedAt = this.now();
+        if (leaving.enqueuedAt !== undefined)
+          this.lastWait = Math.max(0, Math.round(leaving.dequeuedAt - leaving.enqueuedAt));
+        batch.push(leaving);
         keys.add(next.key);
         chars += additional;
       }

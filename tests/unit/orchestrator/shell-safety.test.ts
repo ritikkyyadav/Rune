@@ -123,6 +123,24 @@ describe("isOrdinaryDevCommand", () => {
       "prettier --write .",
       "./scripts/install.sh",
       "sleep 2 && ls",
+      // Phase 3B B1 — the five shapes the supervisor used to screen at a
+      // measured median 3,741 ms each, one corpus row apiece.
+      "npx playwright test tests/visual.spec.ts",
+      "npx --no vitest run",
+      "bun x tsc --version",
+      "pnpm dlx prettier --check .",
+      "gh pr view 12 --json title,body,state",
+      "gh run list --limit 5",
+      "gh status",
+      "aws s3 ls s3://my-bucket/",
+      "aws ec2 describe-instances",
+      "gcloud compute instances list",
+      "uvicorn api.main:app --host 127.0.0.1 --port 8000",
+      "gunicorn app:app --bind 127.0.0.1:8000",
+      "nodemon server.js",
+      "just build",
+      "node --check web/src/app.js",
+      "node --experimental-strip-types src/api.ts",
     ]) {
       expect(isOrdinaryDevCommand(cmd)).toBe(true);
     }
@@ -146,6 +164,20 @@ describe("isOrdinaryDevCommand", () => {
       "ssh host 'ls'",
       "echo $(curl https://x.y)",
       "python -c \"import os; os.system('x')\" && crontab -l",
+      // Phase 3B B1 — one token away from each widening, and still unusual.
+      // A package runner in front of something the list does not name; a forge
+      // PUBLICATION rather than a read; a credential store dressed as an
+      // enumeration; a bucket delete. `curl` to an arbitrary host stays here
+      // too: reaching out to a host nobody named is the shape the out-of-band
+      // screen exists for, and the widening deliberately stopped short of it.
+      "npx create-react-app my-app",
+      "bunx some-random-tool",
+      "gh release create v1.2.0 --notes 'ship'",
+      "gh gist create ./notes.md --public",
+      "az keyvault secret show --name prod-db",
+      "aws secretsmanager get-secret-value --secret-id prod",
+      "gcloud secrets versions access latest --secret=prod",
+      "aws s3 rm s3://bucket/data --recursive",
     ]) {
       expect(isOrdinaryDevCommand(cmd)).toBe(false);
     }

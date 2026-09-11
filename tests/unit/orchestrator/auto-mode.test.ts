@@ -702,6 +702,52 @@ describe("Fast-stage robustness", () => {
     expect(controller.getStats().reviewerRetries).toBe(1);
   });
 
+  test("B2 — the reasoned call and its retry share ONE deadline", async () => {
+    // Before this, each attempt carried `timeoutMs` of its own, so a reviewer
+    // that hung cost two of them: the corpus's twelve `classifier_unavailable`
+    // decisions top out at 24,006 ms against a 12,000 ms setting
+    // (`docs/evidence/overhead-report-20260911.json`). Both attempts now run
+    // against one deadline — the first against it minus the retry reserve, the
+    // second against whatever is left.
+    const budgets: number[] = [];
+    const hangs: ActionClassifier = {
+      async classify(call) {
+        const started = Date.now();
+        await new Promise<void>((resolveWait) => {
+          call.signal?.addEventListener("abort", () => {
+            budgets.push(Date.now() - started);
+            resolveWait();
+          });
+        });
+        return "";
+      },
+    };
+    const controller = new AutoModeSafetyController(
+      resolveAutoModeConfig({ timeoutMs: 2_000 }),
+      hangs,
+      () => ({ gateway: {} as LlmGateway, provider: "anthropic", model: "m" }),
+    );
+    const startedAt = Date.now();
+    const review = await controller
+      .startRun(["Tidy local branches."])
+      .review(action("bash", { command: "git push origin --delete old" }));
+    const elapsedMs = Date.now() - startedAt;
+
+    // Two attempts were made, and together they fit inside one deadline.
+    expect(budgets).toHaveLength(2);
+    expect(controller.getStats().reviewerRetries).toBe(1);
+    expect(elapsedMs).toBeLessThan(2 * 2_000);
+    const reviewerMs = (review.timings?.classifierMs ?? 0) + (review.timings?.retryMs ?? 0);
+    expect(reviewerMs).toBeLessThanOrEqual(2_000 + 400);
+    // The reserve is a quarter of the deadline, capped at two seconds: 500ms
+    // here, so the first attempt gets 1,500ms and the retry the rest.
+    expect(budgets[0]!).toBeGreaterThanOrEqual(1_200);
+    expect(budgets[1]!).toBeLessThan(1_200);
+    // And the decision still LANDS — mechanically, not as a question.
+    expect(review.verdict).not.toBe("ask");
+    expect(review.source).toBe("containment");
+  });
+
   test("when both stages fail the review falls back to containment, not to a human", async () => {
     // The 22-minute bug: a withdrawn reviewer model 404'd and every risky
     // action failed closed to a prompt on a machine nobody was watching.

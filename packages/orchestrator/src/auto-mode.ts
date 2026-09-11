@@ -205,6 +205,21 @@ const DEFAULT_HARD_DENY = [
 
 const DEFAULT_TIMEOUT_MS = 12_000;
 const DEFAULT_MAX_AUTOMATIC_DENIALS = 2;
+/**
+ * How much of the reviewer's single deadline is held back for the retry.
+ *
+ * A quarter of the configured timeout, capped at two seconds, because the
+ * corpus says what a retry actually costs: `retryMsModelBacked` is a median of
+ * 0 ms and a p90 of 801 ms across 137 model-backed decisions
+ * (`docs/evidence/overhead-report-20260911.json`). A retry is a second attempt
+ * after a FAST failure — a 429, a dropped connection, a reply that would not
+ * parse — and two seconds covers the ninetieth percentile of those with room
+ * to spare. The one retry it will not fund is the one that follows a first
+ * attempt which hung for the whole deadline, and that is the case this reserve
+ * exists to stop paying for: it produced the corpus's worst reviewer wait,
+ * 24,006 ms, for the answer "human confirmation is required".
+ */
+const REVIEWER_RETRY_RESERVE_MS = 2_000;
 const MAX_TRANSCRIPT_ACTIONS = 48;
 const MAX_ACTION_CHARS = 14_000;
 const MAX_USER_MESSAGE_CHARS = 12_000;
@@ -439,6 +454,13 @@ export interface AutoModeTimings {
   classifierMs: number;
   /** The retry against the fallback identity, when the first call failed. */
   retryMs: number;
+  /**
+   * How long the oldest observation had been waiting in the supervisor's queue
+   * when this decision was taken. Present on `supervisor_skipped` rows, where
+   * it is the whole explanation: a skip behind a queue that is 40 ms deep and
+   * a skip behind one that is 40 seconds deep are different events.
+   */
+  queueWaitMs?: number;
 }
 
 export interface AutoModeReview {
@@ -881,7 +903,7 @@ export class AutoModeSafetyController {
   async classifierCall(
     stage: "fast" | "reasoned",
     prompt: string,
-    opts: { useFallback?: boolean; supervisorBatch?: boolean } = {},
+    opts: { useFallback?: boolean; supervisorBatch?: boolean; budgetMs?: number } = {},
   ): Promise<{
     text: string;
     reviewer: { provider: string; model: string };
@@ -898,6 +920,13 @@ export class AutoModeSafetyController {
     // the primary resolver only runs when this call is not using the fallback.
     if (!reviewer) reviewer = this.resolveReviewer();
     this.stats.classifierCalls++;
+    // `budgetMs` is what is LEFT of a shared deadline, never more than the
+    // configured per-call timeout. A caller that passes nothing gets the
+    // configured timeout, which is what every out-of-band path wants.
+    const budgetMs = Math.max(
+      1,
+      Math.min(this.config.timeoutMs, Math.round(opts.budgetMs ?? this.config.timeoutMs)),
+    );
     const abort = new AbortController();
     try {
       const text = await withTimeout(
@@ -913,8 +942,8 @@ export class AutoModeSafetyController {
           role: opts.supervisorBatch ? "supervisor" : "classifier",
           signal: abort.signal,
         }),
-        this.config.timeoutMs,
-        `Auto-mode ${stage} classifier timed out after ${this.config.timeoutMs}ms`,
+        budgetMs,
+        `Auto-mode ${stage} classifier timed out after ${budgetMs}ms`,
         () => abort.abort(),
       );
       if (!text.trim()) throw new Error("classifier returned an empty response");
@@ -1492,7 +1521,12 @@ export class AutoModeRun {
               stage: 0,
               durationMs: 0,
               callId: action.callId,
-              timings: { mechanicalMs: 0, classifierMs: 0, retryMs: 0 },
+              timings: {
+                mechanicalMs: 0,
+                classifierMs: 0,
+                retryMs: 0,
+                queueWaitMs: unsupervised.queueWaitMs ?? 0,
+              },
             },
             action,
           );
@@ -1571,20 +1605,44 @@ export class AutoModeRun {
       const fallbackAvailable = this.controller.hasFallbackReviewer();
       let reasoned: { text: string; reviewer: { provider: string; model: string } };
       let parsed: ReturnType<typeof parseReasonedDecision>;
+      // ── One deadline for the call AND its retry ──
+      //
+      // The two attempts used to carry one `timeoutMs` each, so the worst case
+      // was two: the corpus has twelve `classifier_unavailable` decisions and
+      // the slowest took 24,006 ms — two 12-second timeouts stacked, ending in
+      // "human confirmation is required". Nobody waits 24 seconds for the
+      // answer "I could not read it".
+      //
+      // The bound is now on the PAIR: the first attempt runs against the
+      // deadline minus a small reserve, the retry runs against whatever is
+      // left of the same deadline, and the two together can never exceed
+      // `timeoutMs`. A reviewer that fails FAST still gets nearly the whole
+      // budget for its second attempt, which is the case the retry was written
+      // for. A reviewer that HANGS gets the reserve and no more — it has
+      // already said it cannot answer, and the decision lands inside one
+      // bound instead of two.
+      const retryReserveMs = Math.min(Math.floor(rules.timeoutMs / 4), REVIEWER_RETRY_RESERVE_MS);
+      const deadlineAt = performance.now() + rules.timeoutMs;
       const firstCallAt = performance.now();
       try {
-        reasoned = await this.controller.classifierCall("reasoned", prompt);
+        reasoned = await this.controller.classifierCall("reasoned", prompt, {
+          budgetMs: rules.timeoutMs - retryReserveMs,
+        });
         parsed = parseReasonedDecision(reasoned.text);
         this.currentClassifierMs = elapsed(firstCallAt);
       } catch {
         // The failed attempt is still reviewer latency the user waited through,
         // so it is charged to classifierMs whether or not the retry succeeds.
         this.currentClassifierMs = elapsed(firstCallAt);
+        // Whatever is left of the one deadline. A first attempt that failed
+        // fast leaves nearly all of it; one that hung leaves the reserve.
+        const remainingMs = deadlineAt - performance.now();
         this.controller.noteReviewerRetry();
         const retryAt = performance.now();
         try {
           reasoned = await this.controller.classifierCall("reasoned", prompt, {
             useFallback: fallbackAvailable,
+            budgetMs: Math.max(1, remainingMs),
           });
           parsed = parseReasonedDecision(reasoned.text);
         } finally {
@@ -1867,7 +1925,7 @@ export class AutoModeRun {
   private superviseInBackground(
     action: AutoModeAction,
     risk: AutoModeRisk,
-  ): { reason: string; record: boolean } | null {
+  ): { reason: string; record: boolean; queueWaitMs?: number } | null {
     const config = this.controller.getConfig();
     if (config.supervisor === "off") {
       return { reason: "the background supervisor is off", record: false };
@@ -1889,7 +1947,11 @@ export class AutoModeRun {
       return { reason: "recognized ordinary development work", record: false };
     }
     if (this.pendingSupervisorHalt) {
-      return { reason: "a supervisor halt is already pending", record: true };
+      return {
+        reason: "a supervisor halt is already pending",
+        record: true,
+        queueWaitMs: this.supervisor.oldestWaitMs(),
+      };
     }
     let prompt: string;
     try {
@@ -1898,7 +1960,11 @@ export class AutoModeRun {
       return { reason: "the reviewer prompt could not be built", record: true };
     }
     if (prompt.length > MAX_CLASSIFIER_PROMPT_CHARS - 26_000)
-      return { reason: "the bounded transcript is at the reviewer's input limit", record: true };
+      return {
+        reason: "the bounded transcript is at the reviewer's input limit",
+        record: true,
+        queueWaitMs: this.supervisor.oldestWaitMs(),
+      };
     const key = `${action.workspaceRoot}:${action.toolName}:${serializeAction(action)}`;
     const queued = this.supervisor.enqueue({
       action,
@@ -1908,12 +1974,17 @@ export class AutoModeRun {
       epoch: this.supervisorEpoch,
       chars: key.length,
     });
-    return queued
-      ? null
-      : {
-          reason: `${this.supervisor.size} observations are already waiting on the reviewer`,
-          record: true,
-        };
+    if (queued) return null;
+    // The count alone never said whether the reviewer was slow or stopped. The
+    // wait does, and it is the same number the audit row now carries.
+    const waited = this.supervisor.oldestWaitMs();
+    return {
+      reason:
+        `${this.supervisor.size} observations are already waiting on the reviewer` +
+        `, the oldest for ${(waited / 1000).toFixed(1)}s`,
+      record: true,
+      queueWaitMs: waited,
+    };
   }
 
   private async reviewSupervisedBatch(batch: SupervisorAction[]): Promise<void> {
@@ -2467,6 +2538,32 @@ const SECRET_PATH_RE =
 const PIPE_TO_INTERPRETER_RE =
   /\|\s*(?:sudo\s+)?(?:ba|z|k|da)?sh\b|\|\s*(?:sudo\s+)?(?:python3?|perl|ruby|node|bun|deno)\b|\beval\s|\bbase64\s+(?:-d|-D|--decode)\b/i;
 
+/**
+ * A network call that carries workspace content OUTWARD, rather than one that
+ * only reads.
+ *
+ * The words are the same ones this test has always looked for; what changed is
+ * that it now looks for the WORDS. Without the boundaries it matched any
+ * substring anywhere in the serialized arguments — including the URL and the
+ * search query, which are the only fields `web_fetch` and `web_search` have.
+ * Measured on the corpus (`docs/evidence/overhead-report-20260911.json`,
+ * `reviewerLatency.byDecisionSource`): of 131 `classifier_reasoned` reviews at
+ * a median 7.64 s, 32 were `web_fetch` and 24 were `web_search`. Neither tool
+ * has a body field at all — `web_fetch` takes `{url, maxBytes}` and
+ * `web_search` takes `{query, maxResults, recencyDays}` — so every one of
+ * those 56 reviews was this pattern firing inside a word: a search for "NCBI
+ * datasets" on `data`, a Notion search for "postmortem" on `post`, a docs URL
+ * containing `/datasets/`. The reviewer answered "low risk, allow" on 118 of
+ * the 131.
+ *
+ * Everything the test was written to catch still matches, because an actual
+ * outbound body arrives under a key that IS the word: `{body: …}`,
+ * `{data: …}`, `{payload: {…}}`, `"contents of src/secrets.ts"`, and the
+ * cloud instance-metadata path `/latest/meta-data/` (a hyphen is a word
+ * boundary). Corpus rows pin all five.
+ */
+const OUTBOUND_PAYLOAD_RE = /\b(?:bod(?:y|ies)|data|payloads?|contents?|uploads?|post)\b/i;
+
 export function assessActionRisk(
   action: AutoModeAction,
   tier = classifyAutoModeTier(action),
@@ -2511,8 +2608,7 @@ export function assessActionRisk(
   }
   if (action.toolName === "task") return "medium";
   if (action.schema.category === "network") {
-    const serialized = JSON.stringify(action.args);
-    return /(?:body|data|payload|content|upload|post)/i.test(serialized) ? "high" : "medium";
+    return OUTBOUND_PAYLOAD_RE.test(JSON.stringify(action.args)) ? "high" : "medium";
   }
   if (action.schema.category === "write") return tier === "workspace" ? "low" : "high";
   if (action.schema.category === "execute") return "medium";
