@@ -9,7 +9,12 @@ test("concurrent inference reserves the same session balance before any provider
   const sample = tracker.reserveRequest(request, 10);
   const estimate = tracker.getReservedUsd();
   sample();
-  const gateway = new LlmGateway({ providers: {}, defaultProvider: "anthropic", maxRetries: 0 });
+  const gateway = new LlmGateway({
+    providers: {},
+    defaultProvider: "anthropic",
+    maxRetries: 0,
+    retryBaseMs: 0,
+  });
   const provider = new UsageProvider();
   let finish!: () => void;
   provider.pending = new Promise<void>((r) => {
@@ -29,7 +34,12 @@ test("concurrent inference reserves the same session balance before any provider
 
 test("stream cancellation and provider failure release reservations", async () => {
   const tracker = new CostTracker();
-  const gateway = new LlmGateway({ providers: {}, defaultProvider: "anthropic", maxRetries: 0 });
+  const gateway = new LlmGateway({
+    providers: {},
+    defaultProvider: "anthropic",
+    maxRetries: 0,
+    retryBaseMs: 0,
+  });
   const provider = new UsageProvider();
   gateway.registerProvider(provider);
   gateway.setRequestGuard((req) => tracker.reserveRequest(req, 10));

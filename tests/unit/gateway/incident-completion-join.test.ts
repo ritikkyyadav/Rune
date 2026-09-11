@@ -68,7 +68,7 @@ function rig(provider: LlmProvider, retryBaseMs = 0) {
     maxRetries: 2,
     retryBaseMs,
     onIncident: (i) => incidents.push(i),
-  } as never);
+  });
   gateway.registerProvider(provider);
   gateway.onUsage((e) => entries.push(e));
   return { gateway, incidents, entries };
