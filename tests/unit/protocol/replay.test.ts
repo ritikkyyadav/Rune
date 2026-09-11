@@ -146,4 +146,22 @@ describe("replayEvents", () => {
   test("an empty log replays as nothing, not as an error", () => {
     expect(replayEvents([])).toEqual({ frames: [], userTurns: [], lastSeq: 0 });
   });
+
+  test("a harness re-prompt is not one of the user's turns", () => {
+    // The same marker `eventsToTranscript` reads. A reconnecting client must
+    // not be told the person typed the gate that re-prompted the model —
+    // `userTurns` is what /rewind offers and what a client renders as theirs.
+    const { userTurns } = replayEvents([
+      row(1, "user_msg", { content: "build the landing page" }),
+      row(2, "user_msg", {
+        content: "[Harness note] # Building interfaces",
+        harness: "nudge:harness-notes",
+      }),
+      row(3, "user_msg", { content: "also add a dark footer" }),
+    ]);
+    expect(userTurns).toEqual([
+      { seq: 1, text: "build the landing page" },
+      { seq: 3, text: "also add a dark footer" },
+    ]);
+  });
 });

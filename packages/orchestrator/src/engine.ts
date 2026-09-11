@@ -462,6 +462,22 @@ export const NOT_REPLAYED_EVENTS: ReadonlyMap<string, string> = new Map([
  * rather than being handed a stream it could mis-assemble into a half-typed
  * sentence that never existed.
  */
+/**
+ * Was this `user_msg` row written by the HARNESS rather than typed by the user?
+ *
+ * P3B I2 put an origin on every synthetic re-prompt, and the persistence seam
+ * files those as `user_msg` rows carrying `harness: "<kind>:<name>"` so a
+ * detached run's database can show why the run went on. The row is a record of
+ * the harness talking to the model — it is not a user turn, and the three
+ * readers that mean "what the user said" must not count it: `/rewind`'s turn
+ * list, replay, and the permission check's trusted-intent corpus (a harness
+ * note carries connector notes and teammate mail, which nobody typed).
+ */
+export function isHarnessAuthoredTurn(payload: Record<string, unknown> | undefined): boolean {
+  const marker = payload?.harness;
+  return typeof marker === "string" && marker.length > 0;
+}
+
 export function replayEvents(
   events: Array<{ seq: number; event: { type: string; payload: Record<string, unknown> } }>,
 ): {
@@ -482,6 +498,7 @@ export function replayEvents(
     const p = event.payload ?? {};
     switch (event.type) {
       case "user_msg": {
+        if (isHarnessAuthoredTurn(p)) break;
         const content = str(p.content);
         if (content.trim()) userTurns.push({ seq, text: content });
         break;
@@ -692,6 +709,7 @@ export function eventsToTranscript(
     const p = event.payload as Record<string, unknown>;
     switch (event.type) {
       case "user_msg": {
+        if (isHarnessAuthoredTurn(p)) break;
         const content = typeof p.content === "string" ? p.content : "";
         if (content.trim()) lines.push({ role: "user", text: content });
         break;
@@ -3829,7 +3847,7 @@ export class Engine {
   listUserTurns(sessionId: string): { seq: number; text: string }[] {
     return this.sessions
       .getEvents(sessionId, 1)
-      .filter((e) => e.event.type === "user_msg")
+      .filter((e) => e.event.type === "user_msg" && !isHarnessAuthoredTurn(e.event.payload))
       .map((e) => ({
         seq: e.seq,
         text: typeof e.event.payload.content === "string" ? e.event.payload.content : "",
@@ -5172,6 +5190,12 @@ export class Engine {
     const untrustedPrompts: string[] = [];
     for (const { event } of priorEvents) {
       if (event.type !== "user_msg") continue;
+      // A harness re-prompt is not the user's intent. It was already in the
+      // request the model answered; replaying it here as trusted input would
+      // widen what Auto reads as "the user asked for this" by whatever the
+      // harness last said — including a connector's notes and teammate mail,
+      // which ride into a `nudge:harness-notes` row.
+      if (isHarnessAuthoredTurn(event.payload)) continue;
       const content = typeof event.payload.content === "string" ? event.payload.content : "";
       if (!content) continue;
       const source = event.payload.loopPromptSource;

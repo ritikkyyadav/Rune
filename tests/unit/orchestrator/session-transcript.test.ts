@@ -80,4 +80,42 @@ describe("eventsToTranscript", () => {
     ]);
     expect(lines).toEqual([{ role: "note", text: "context compacted earlier in this session" }]);
   });
+
+  test("a harness re-prompt is not a user line — the marker is read, not just written", () => {
+    // P3B I2 tags every synthetic re-prompt and the engine persists it as a
+    // `user_msg` row carrying `harness`. Before the marker was read, a JIT
+    // doctrine note replayed as if the founder had typed 2 KB of house style
+    // into the middle of their own conversation.
+    const lines = eventsToTranscript([
+      ev(1, "user_msg", { content: "build the landing page" }),
+      ev(2, "assistant_msg", { content: "half done" }),
+      ev(3, "user_msg", {
+        content: "[Harness note] # Building interfaces\n…",
+        harness: "nudge:harness-notes",
+      }),
+      ev(4, "user_msg", {
+        content: "[Harness] there are open steps",
+        harness: "gate:open-steps",
+      }),
+      ev(5, "user_msg", { content: "also add a dark footer" }),
+      ev(6, "assistant_msg", { content: "done for real" }),
+    ]);
+    expect(lines).toEqual([
+      { role: "user", text: "build the landing page" },
+      { role: "assistant", text: "half done" },
+      { role: "user", text: "also add a dark footer" },
+      { role: "assistant", text: "done for real" },
+    ]);
+  });
+
+  test("an empty marker is not a marker — only a named origin hides a row", () => {
+    const lines = eventsToTranscript([
+      ev(1, "user_msg", { content: "ship it", harness: "" }),
+      ev(2, "user_msg", { content: "and test it", harness: 7 }),
+    ]);
+    expect(lines).toEqual([
+      { role: "user", text: "ship it" },
+      { role: "user", text: "and test it" },
+    ]);
+  });
 });
