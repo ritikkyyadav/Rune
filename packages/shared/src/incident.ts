@@ -62,6 +62,13 @@ export const INCIDENT_CLASSES = [
   "loop.result_loop",
   "loop.infinite_loop",
   "loop.barren_nudge",
+  /**
+   * A completion whose only calls were `record_evidence`, every one of them
+   * citing a check that ran in the completion immediately before. The schema
+   * promises a citation batched with its check costs no extra turn; this is
+   * the loop making good on that promise after the fact (Phase 3B, A2).
+   */
+  "loop.citation_carried_forward",
   "loop.barren_turns",
   "loop.auto_halt",
   "loop.auto_halt_reported",

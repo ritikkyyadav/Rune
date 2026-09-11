@@ -40,6 +40,13 @@ export const REFUNDABLE_INCIDENTS: ReadonlySet<IncidentClass> = new Set<Incident
   "loop.same_shape_refused",
   // Two whole turns of refusals, then the corrective note.
   "loop.barren_nudge",
+  // A lone citation for a check that ran in the previous completion. Not a
+  // discarded completion — it settled a criterion — but one the harness's own
+  // schema said would be free, and the model met that contract's substance:
+  // the check ran, then it was cited, with nothing in between. The loop keeps
+  // the promise after the fact rather than charging the model for the gap
+  // between "same response" and "next response".
+  "loop.citation_carried_forward",
 ]);
 
 /** Share of the base ceiling that may be refunded in one run. */

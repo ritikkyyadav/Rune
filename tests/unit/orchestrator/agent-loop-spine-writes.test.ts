@@ -171,18 +171,27 @@ describe("a settled plan cannot waive evidence for a LATER write", () => {
     expect(stopMessages(loop)).toHaveLength(0);
   });
 
-  test("a plan whose only step is REPORT-shaped still waives the gate — pinned, not endorsed", async () => {
-    // PINNED BEHAVIOUR, not a claim that it is right. `TaskStateStore.setTodos`
+  test("a plan whose only step is REPORT-shaped no longer waives the gate", async () => {
+    // Was PINNED, NOT ENDORSED, and is now settled. `TaskStateStore.setTodos`
     // closes a step whose wording matches `REPORT_STEP_RE` with
     // `closedBy: "report"` and NO `unproven` mark when it carries zero tool
-    // evidence. `todoCounts().unproven` therefore stays 0, the plan settles,
-    // and the settled-plan waiver stands the execution-evidence gate down —
-    // for a run that wrote a file and executed nothing at all.
+    // evidence — right for the step, because no tool can attest "told the
+    // user". `todoCounts().unproven` therefore stayed 0, the plan settled, and
+    // the settled-plan waiver stood the execution-evidence gate down for a run
+    // that wrote a file and executed nothing at all.
     //
-    // The fix (requiring `writeCount === 0` for the report clause) is the
-    // founder's call and sits in docs/program/backlog.md; F2's director left
-    // it there deliberately. This test exists so the cost is measured and any
-    // future change to it is deliberate rather than accidental.
+    // Phase 3B (Lane A, the finish path) settles it on the director's ruling:
+    // a report-shaped closure cannot grant the waiver when a write happened
+    // after the last step that closed on real evidence. That is the backlog
+    // item `docs/program/backlog.md` recorded against
+    // `packages/orchestrator/src/task-state.ts` — "a `closedBy: "report"` step
+    // … can still latch the settled-plan waiver even though the run wrote
+    // files" — and this test is where it is now closed.
+    //
+    // The line is narrow: the handoff step itself was never the problem. A
+    // report step closing beside an evidenced one, or with nothing written
+    // since, still settles the plan — `agent-loop-report-step.test.ts`
+    // ("closing the handoff step is not refused") holds that case.
     const item = { content: "Report back to the user", kind: "verify" as const };
     const ts = new TaskStateStore();
     const gw = makeGateway([
@@ -196,13 +205,23 @@ describe("a settled plan cannot waive evidence for a LATER write", () => {
     ]);
     const loop = makeLoop(gw, ts, { ledgerStatus: () => ({ total: 1, verified: 0 }) });
     await collect(loop.run("fix the parser", "s1", "/tmp"));
+    // The step still closes on the report, and still carries no unproven mark:
+    // what changed is what the PLAN may borrow from that closure, not what the
+    // step is worth.
     expect(ts.todos[0]!.closedBy).toBe("report");
     expect(ts.todoCounts()).toMatchObject({ open: 0, unproven: 0 });
     expect(ts.checks).toHaveLength(0); // nothing was ever executed
-    // …and the gate stands down anyway, with no stop message. That is the
-    // measured cost of the report clause.
-    expect(stoodDown(ts)).toBe(true);
-    expect(stopMessages(loop)).toHaveLength(0);
+    expect(stoodDown(ts)).toBe(false);
+    expect(stopMessages(loop).map((m) => loop.originOf(m))).toEqual([
+      "gate:execution-evidence",
+      "gate:fix-verified",
+    ]);
+    // The run says why, in its own log, rather than leaving a silent waiver.
+    expect(
+      (ts.snapshot().log ?? []).some(
+        (e: any) => e.kind === "gate" && /report step with 1 write/.test(e.text),
+      ),
+    ).toBe(true);
   });
 
   test("a check whose failure is MASKED by the shell leaves the waiver standing", async () => {

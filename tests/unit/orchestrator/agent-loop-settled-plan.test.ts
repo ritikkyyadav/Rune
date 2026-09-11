@@ -83,7 +83,12 @@ function makeRegistry() {
                 stdout: "",
                 stderr: String(input.args.command ?? "").includes("failing") ? "1 fail" : "",
               })
-            : "ok",
+            : // The write tools compute a unified diff from both texts and put
+              // it in their result. `emptyDiff` scripts the one that reproduced
+              // what was already on disk.
+              input.args?.emptyDiff
+              ? JSON.stringify({ path: input.args.path, diff: "" })
+              : "ok",
       durationMs: 1,
     })),
   } as any;
@@ -273,6 +278,93 @@ describe("finish gates", () => {
     expect(ts.checks.map((c) => c.passed)).toEqual([true, false]);
     expect(stoodDown(ts)).toBe(false);
     expect(stopMessages(loop).map((m) => loop.originOf(m))).toEqual(["gate:fix-verified"]);
+  });
+
+  // ── Phase 3B, A3: the waiver is measured against what the write DID ──
+  //
+  // `settledPlanAtWriteCount === writeCount` counted every call of a write tool
+  // alike, so a call that hit no file — a patch whose targets were already
+  // applied, a `multi_edit` with nothing to do — re-armed all five gates after
+  // a green check and cost the run a refused finish for an edit that never
+  // happened. What excuses a write is evidence, never a guess: Lane 0's
+  // `usefulEdit`, the unified write predicate's own verdict, says the call
+  // changed no file. A call that DID change one re-arms the gates as before,
+  // whatever check passed earlier — a check that ran before the edit has not
+  // measured the edit.
+  describe("A3 — a write that changed nothing", () => {
+    const item = { content: "repair parseCsv", kind: "change" as const };
+    /** Open the step, write, run `check`, close it — then `after`, then finish. */
+    const settledThen = (check: string, after: Step[]): Step[] => [
+      { tool: "todo_write", args: { items: [{ ...item, status: "in_progress" }] } },
+      WRITE_THEN_FINISH[0]!,
+      { tool: "bash", args: { command: check } },
+      { tool: "todo_write", args: { items: [{ ...item, status: "completed" }] } },
+      ...after,
+      { text: "The parser was checked." },
+    ];
+
+    test("a green check, a write that hit no file, a finish — zero gate re-prompts", async () => {
+      // RED at 730fd97: `multi_edit` with no path and a result naming none
+      // changed nothing, and the run was refused its finish anyway. This is
+      // the design's A3 case, stated as the acceptance check asks for it.
+      const ts = new TaskStateStore();
+      const steps = settledThen("bun test", [{ tool: "multi_edit", args: { edits: [] } }]);
+      const gw = makeGateway(steps);
+      const loop = makeLoop(gw, ts, { ledgerStatus: () => ({ total: 1, verified: 0 }) });
+      await collect(loop.run("fix the parser", "s1", "/tmp"));
+      expect(stopMessages(loop)).toHaveLength(0);
+      expect(stoodDown(ts)).toBe(true);
+      // No re-prompt means no extra completion: exactly the script, no more.
+      expect(gw.calls()).toBe(steps.length);
+    });
+
+    test("an edit whose own diff is empty is excused too", async () => {
+      // The reachable shape: `multi_edit` names its path (so the write
+      // predicate sees a file) but computes the unified diff from both texts
+      // and emits an EMPTY one — an edit that reproduced what was already
+      // there. The tool's own result is the evidence; nothing is inferred.
+      const ts = new TaskStateStore();
+      const steps = settledThen("bun test", [
+        { tool: "multi_edit", args: { path: "src/parser.ts", edits: [], emptyDiff: true } },
+      ]);
+      const gw = makeGateway(steps);
+      const loop = makeLoop(gw, ts, { ledgerStatus: () => ({ total: 1, verified: 0 }) });
+      await collect(loop.run("fix the parser", "s1", "/tmp"));
+      expect(stopMessages(loop)).toHaveLength(0);
+      expect(gw.calls()).toBe(steps.length);
+    });
+
+    test("a write that DID change a file re-arms the gates, as before", async () => {
+      // The control. `bun test` passed over the whole project a moment ago and
+      // that changes nothing here: it ran before this edit, so it has not
+      // measured it. Two refused finishes, two extra completions.
+      const ts = new TaskStateStore();
+      const steps = settledThen("bun test", [WRITE_THEN_FINISH[0]!]);
+      const gw = makeGateway(steps);
+      const loop = makeLoop(gw, ts, { ledgerStatus: () => ({ total: 1, verified: 0 }) });
+      await collect(loop.run("fix the parser", "s1", "/tmp"));
+      expect(stopMessages(loop).map((m) => loop.originOf(m))).toEqual([
+        "gate:execution-evidence",
+        "gate:fix-verified",
+      ]);
+      expect(stoodDown(ts)).toBe(false);
+      expect(gw.calls()).toBe(steps.length + 2);
+    });
+
+    test("a check going red after the excused write withdraws the waiver anyway", async () => {
+      // The excuse is about the WRITE, never about the check. A red check after
+      // it is new evidence and takes the waiver down, exactly as it always did.
+      const ts = new TaskStateStore();
+      const steps = settledThen("bun test", [
+        { tool: "multi_edit", args: { edits: [] } },
+        { tool: "bash", args: { command: "node failing-test.mjs" } },
+      ]);
+      const gw = makeGateway(steps);
+      const loop = makeLoop(gw, ts, { ledgerStatus: () => ({ total: 1, verified: 0 }) });
+      await collect(loop.run("fix the parser", "s1", "/tmp"));
+      expect(stoodDown(ts)).toBe(false);
+      expect(stopMessages(loop).map((m) => loop.originOf(m))).toEqual(["gate:fix-verified"]);
+    });
   });
 
   test("one open step is enough to keep the gates armed", async () => {

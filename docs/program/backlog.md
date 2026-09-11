@@ -399,10 +399,15 @@ tree as `980bf1e` + `c053ca4`; receipts in `docs/evidence/verification-20260910b
   stands down (`reason: "unscoped"`) for a step that touched no files, because there is nothing to
   relate a command to. The residual: a check that names SOME path can still close a step that wrote
   nothing. Correlating the command's output, not only its paths, would close it — Phase 1 — Claude
-- `packages/orchestrator/src/task-state.ts` — a `closedBy: "report"` step closes with no tool
+- ~~`packages/orchestrator/src/task-state.ts` — a `closedBy: "report"` step closes with no tool
   evidence and no `unproven` mark, so a plan whose last step is report-shaped can still latch the
-  settled-plan waiver even though the run wrote files. Deliberate elsewhere in the codebase, but it
-  is a live path into the finish-gate waiver and wants a decision — Phase 1 — Claude
+  settled-plan waiver even though the run wrote files.~~ **Closed 2026-09-11, Phase 3B Lane A.** The
+  director's ruling: a report-shaped closure cannot grant the waiver when a write happened after the
+  last step that closed on real evidence. The step itself is unchanged — communication is still the
+  step, and no tool can attest "told the user" — only what the PLAN may borrow from that closure.
+  `agent-loop.ts` (the `settledPlanAtWriteCount` site); the characterisation test that pinned the old
+  behaviour, `agent-loop-spine-writes.test.ts` "a plan whose only step is REPORT-shaped", now asserts
+  the new rule
 - `packages/orchestrator/src/headless.ts` (`headlessExitCode`) — a failed run and a cancelled run
   both exit 1; only `stopReason` in the envelope separates them. A harness that reads exit codes
   alone cannot tell "the task failed" from "the user stopped it". Adding a code is a contract change

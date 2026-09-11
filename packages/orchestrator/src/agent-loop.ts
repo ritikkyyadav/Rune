@@ -47,7 +47,7 @@ import type { HandoffReason, TaskStateStore, TodoItem } from "./task-state";
 import { evidenceWeight, TASK_STATE_BLOCK_BUDGET_AFTER_COMPACTION } from "./task-state";
 import type { ArtifactKind } from "@rune/protocol";
 import { bashCheckVerdict, isVerificationCommand } from "./brief";
-import { checkRelatedness, ranZeroTests } from "./verification-command";
+import { checkRelatedness, normalizeCommand, ranZeroTests } from "./verification-command";
 import { filesChangedFrom, isFileChangingTool } from "./lifecycle";
 
 // ─── Agent Turn Events (yielded to caller) ───
@@ -536,6 +536,67 @@ function writtenBy(
   }
   return filesChangedFrom(toolName, args, output.result);
 }
+
+/**
+ * Did this write call leave the tree exactly as it found it?
+ *
+ * Only ever answered from the runtime's OWN record of the call, never from a
+ * guess about what the model meant. Two things can say so, and both are facts
+ * the call already carried:
+ *
+ *   * the unified write predicate named no changed path — Lane 0 stamps this
+ *     verdict onto the call as `usefulEdit`, and it is what the auto-commit
+ *     scope, the headless envelope and both TUI surfaces already read; or
+ *   * the tool emitted the unified diff it renders red/green in the transcript
+ *     and that diff is EMPTY. `multi_edit` and `apply_patch` both compute it
+ *     from the two texts they had in hand, so an edit that reproduced what was
+ *     already there says so in its own result.
+ *
+ * Conservative on purpose: a result with no diff at all is not evidence of
+ * anything, and reads as a real change.
+ */
+function changedNothing(
+  toolName: string,
+  args: Record<string, unknown>,
+  output: { result?: string; structured?: Record<string, unknown> },
+): boolean {
+  if (writtenBy(toolName, args, output).length === 0) return true;
+  let parsed: unknown;
+  try {
+    parsed = output.result ? JSON.parse(output.result) : undefined;
+  } catch {
+    return false;
+  }
+  if (typeof parsed !== "object" || parsed === null) return false;
+  const record = parsed as { diff?: unknown; files?: unknown };
+  if (typeof record.diff === "string") return record.diff.trim() === "";
+  // `apply_patch` is one call over several files and carries a diff per file.
+  if (Array.isArray(record.files) && record.files.length > 0) {
+    return record.files.every(
+      (f) =>
+        typeof (f as { diff?: unknown })?.diff === "string" &&
+        String((f as { diff?: unknown }).diff).trim() === "",
+    );
+  }
+  return false;
+}
+
+/**
+ * Read-category tools that are the ledger's bookkeeping, not reading.
+ *
+ * The batching nudge counts consecutive single-READ turns; `todo_write` was
+ * already carved out by name because it is planning. `record_evidence` and
+ * `read_back` are the same kind of thing — a citation is not a file the model
+ * looked at — and a run doing exactly what the plan asks (run the check, cite
+ * it) was being told to batch its reads.
+ */
+const LEDGER_BOOKKEEPING_TOOLS: ReadonlySet<string> = new Set([
+  "todo_write",
+  "record_evidence",
+  "read_back",
+  "note_hypothesis",
+  "record_decision",
+]);
 
 /** Tools whose success means the agent LEARNED something — step evidence of the read kind. */
 const READ_EVIDENCE_TOOLS = new Set([
@@ -1288,6 +1349,42 @@ export class AgentLoop {
     // Closed steps receive no new effects, so their old evidence cannot
     // waive verification of a later write (including on a resumed run).
     let settledPlanAtWriteCount: number | null = null;
+    /**
+     * Writes since that closure that the CHECK LOG excuses (Phase 3B, A3).
+     *
+     * The rule above compares raw counts, so a formatting pass after a green
+     * project check re-armed all five finish gates and cost the run a refused
+     * finish for an edit nothing could have broken. The tail after the last
+     * edit was a median 13.1% of an Auto run (`phase-3-auto-efficiency.md`
+     * §2.1). A write is excused only on EVIDENCE, never on a guess — see
+     * `changedNothing`: the call named no changed path (Lane 0's `usefulEdit`
+     * verdict), or the tool's own unified diff is empty. A write that DID
+     * change a file re-arms the gates as before, whatever check passed earlier:
+     * a check that ran before the edit has not measured the edit.
+     */
+    let settledPlanExcusedWrites = 0;
+    /**
+     * The write count as of the last plan closure that carried real tool
+     * evidence. A `report`-shaped step closes with none (`closedBy: "report"`,
+     * `task-state.ts`), so without this a run could write a file, close a
+     * "tell the user how to run it" step, and have the waiver cover the write
+     * — pinned as a cost in `agent-loop-spine-writes.test.ts` and listed in
+     * `docs/program/backlog.md` until Phase 3B settled it.
+     */
+    let lastEvidencedWriteCount = 0;
+    /**
+     * Checks that passed during the PREVIOUS completion (Phase 3B, A2).
+     *
+     * `RECORD_EVIDENCE_SCHEMA` promises a citation batched with its check
+     * "costs no extra turn", and the loop keeps that promise inside one
+     * response — serial calls are a barrier, so `bash` then `record_evidence`
+     * cites a check already on record. A citation that arrives one completion
+     * late gets the same verdict and pays a whole completion for it. This is
+     * how the loop recognises that case after the fact.
+     */
+    let checksLastCompletion: string[] = [];
+    let checksThisCompletion: string[] = [];
+    let citationsCarriedForward = 0;
     // Repeated-failure circuit breaker: how many times each EXACT call
     // (tool + args) has failed this run. After 2 identical failures the call is
     // refused without executing — a failing fetch/command retried verbatim will
@@ -2273,6 +2370,7 @@ export class AgentLoop {
               // Same rule as a model-run check going red: a settled plan
               // cannot waive a failure recorded after it settled.
               settledPlanAtWriteCount = null;
+              settledPlanExcusedWrites = 0;
               latchEffort("verification failed");
               this.report(
                 "loop.verification_failed",
@@ -2433,12 +2531,17 @@ export class AgentLoop {
         // write after closure only enters the pending pool. Comparing the
         // write count prevents that later edit borrowing the old plan's pass.
         const planCounts = this.config.taskState?.todoCounts();
+        // A3: compare against the CHECK LOG, not the raw write count. A write
+        // the last passing check still covers — or one that changed no file at
+        // all — is counted as excused when it happens, so the comparison here
+        // stays the same equality it always was.
         const planSettled =
           !!planCounts &&
           planCounts.total > 0 &&
           planCounts.open === 0 &&
           planCounts.unproven === 0 &&
-          settledPlanAtWriteCount === writeCount;
+          settledPlanAtWriteCount !== null &&
+          settledPlanAtWriteCount + settledPlanExcusedWrites === writeCount;
         if (planSettled && anyWritesThisRun && !executedSinceWrite && !projectChecksPassed) {
           this.config.taskState?.logEvent(
             "gate",
@@ -3061,6 +3164,57 @@ export class AgentLoop {
         });
       }
 
+      // ── A2: a citation that arrived one completion late ──
+      //
+      // `RECORD_EVIDENCE_SCHEMA` tells the model to put the citation in the
+      // SAME response as its check, and the ordering guarantee below makes
+      // that free: serial calls are a barrier, so `bash` then `record_evidence`
+      // cites a check already on record. A model that runs the check, reads
+      // the result, and cites it on the next completion gets the identical
+      // verdict and pays a whole completion for it — 21.3% of pilot J's cost
+      // was plan bookkeeping of exactly this shape.
+      //
+      // The turn is given back. Not because the citation did nothing — it
+      // settled a criterion — but because the harness's own contract said this
+      // one would be free and the model met the contract's substance: the
+      // check ran, then it was cited, in that order, with nothing in between.
+      // Same-response citation is untouched; this only ever looks at a batch
+      // that is NOTHING BUT citations, every one of them naming a check that
+      // ran in the completion immediately before. Bounded by the refund cap
+      // (a quarter of the base ceiling, at most one per turn), and each check
+      // list is replaced every completion, so a check is only ever carryable
+      // from the one turn that follows it.
+      // Rotate first: from here on `checksLastCompletion` is the PREVIOUS
+      // completion's checks, and this completion's land in the empty list.
+      checksLastCompletion = checksThisCompletion;
+      checksThisCompletion = [];
+      const carriedForward =
+        planned.length > 0 &&
+        checksLastCompletion.length > 0 &&
+        planned.every((p) => p.tc.toolName === "record_evidence" && p.allowed && !p.output) &&
+        planned.every((p) =>
+          checksLastCompletion.includes(normalizeCommand(String(p.parsedArgs.command ?? ""))),
+        );
+      if (carriedForward) {
+        citationsCarriedForward++;
+        this.report(
+          "loop.citation_carried_forward",
+          "debug",
+          "citationCarryForward",
+          `a lone record_evidence cited a check from the previous completion — ` +
+            `carried forward (${citationsCarriedForward} this run)`,
+        );
+        // On the run's own audit trail as well as the incident stream: the
+        // refund moves the LOOP's ceiling, and the lifecycle projection carries
+        // the engine's snapshot of it, so this line is where a finished run can
+        // still say how many completions went to late citations.
+        this.config.taskState?.logEvent(
+          "check",
+          `citation for a check run in the previous completion — carried forward ` +
+            `(${citationsCarriedForward} this run)`,
+        );
+      }
+
       // ── Phase B: execute — in call order; runs of parallel-safe reads concurrently (bounded) ──
       // Execution runs as one background task while this generator pumps the
       // progress queue: yields happen the moment a note arrives, not after
@@ -3182,11 +3336,15 @@ export class AgentLoop {
       // Four in a row earns one corrective note — independent reads execute in
       // parallel when batched, and a 100-turn run at ~1.7 calls per turn was
       // measured spending most of its wall-clock on this.
+      // `record_evidence` and `read_back` are read-CATEGORY and are not reads:
+      // they are the evidence ledger's own bookkeeping. Counting them made the
+      // check/cite rhythm the plan asks for look like a serial crawl and earned
+      // a batching note on top of the completion it already cost (A2).
       const singleReadTurn =
         planned.length === 1 &&
         planned[0].allowed &&
         planned[0].output?.success === true &&
-        planned[0].tc.toolName !== "todo_write" &&
+        !LEDGER_BOOKKEEPING_TOOLS.has(planned[0].tc.toolName) &&
         planned[0].tc.toolName !== "read_many" && // read_many IS the batch
         this.registry.get(planned[0].tc.toolName)?.schema.category === "read";
       consecutiveSingleReadTurns = singleReadTurn ? consecutiveSingleReadTurns + 1 : 0;
@@ -3378,8 +3536,44 @@ export class AgentLoop {
             if (verdict.accepted) {
               acceptedPlan = structuredClone(ts.todos);
               const counts = ts.todoCounts();
-              if (verdict.completed.length > 0 && counts.open === 0 && counts.unproven === 0) {
+              // A step that closed on real tool evidence marks the water line
+              // the report clause is measured against.
+              if (verdict.completed.some((t) => t.closedBy !== "report")) {
+                lastEvidencedWriteCount = writeCount;
+              }
+              // ── A report-shaped step cannot bless a write ──
+              // `closedBy: "report"` closes a step with NO tool evidence and no
+              // unproven mark: communication is the step, and no tool can
+              // attest "told the user". That is right for the step and wrong
+              // for the plan — `todoCounts().unproven` stayed 0, so a run that
+              // wrote a file and executed nothing could settle its plan on a
+              // "tell the user how to run it" step and stand every evidence
+              // gate down. Pinned as a measured cost in
+              // `agent-loop-spine-writes.test.ts` and listed in
+              // `docs/program/backlog.md`; Phase 3B settles it.
+              //
+              // The line is narrow on purpose: a plan that closes ONLY
+              // report-shaped steps here, with writes since the last closure
+              // that carried evidence, does not settle. A report step closing
+              // beside an evidenced one, or with nothing written since, still
+              // does — the handoff step was never the problem.
+              const onlyReportClosures =
+                verdict.completed.length > 0 &&
+                verdict.completed.every((t) => t.closedBy === "report");
+              const unevidencedWrites = writeCount - lastEvidencedWriteCount;
+              if (onlyReportClosures && unevidencedWrites > 0) {
+                ts.logEvent(
+                  "gate",
+                  `plan closed on a report step with ${unevidencedWrites} write(s) since the last ` +
+                    "evidenced step — the waiver does not cover them",
+                );
+              } else if (
+                verdict.completed.length > 0 &&
+                counts.open === 0 &&
+                counts.unproven === 0
+              ) {
                 settledPlanAtWriteCount = writeCount;
+                settledPlanExcusedWrites = 0;
               }
               // A step closed over a FAILING check is the one sign of
               // difficulty the ledger sees. In attest mode it is accepted as
@@ -3533,7 +3727,10 @@ export class AgentLoop {
               // check that goes RED afterwards is new evidence about the same
               // code, and the old plan's pass cannot answer it: the waiver is
               // withdrawn and the finish gates arm again.
-              if (!verdict.passed) settledPlanAtWriteCount = null;
+              if (!verdict.passed) {
+                settledPlanAtWriteCount = null;
+                settledPlanExcusedWrites = 0;
+              }
             } else if (!TRIVIAL_EVIDENCE_RE.test(cmd)) {
               ts.noteEffect("run");
             }
@@ -3895,6 +4092,36 @@ export class AgentLoop {
             // a verify cycle, not a rut.
             writeCount++;
             executedSinceWrite = false; // new writes need fresh execution evidence
+            // ── A3: is the settled plan's evidence still good for this write? ──
+            //
+            // Asked here, once, while the call's own result is in hand — the
+            // gate block downstream only ever sees counts, which is why a
+            // formatting pass that hit no file used to re-arm all five gates
+            // and cost the run a refused finish.
+            //
+            // The only thing that excuses a write is the runtime's own verdict
+            // that it changed NOTHING: `writtenBy` is the unified predicate
+            // the auto-commit scope, the headless envelope and both TUI
+            // surfaces read, and Lane 0 stamps its answer on the call as
+            // `usefulEdit`. A call that named no changed path cannot have
+            // invalidated evidence, so the waiver survives it.
+            //
+            // A write that DID change a file re-arms the gates exactly as
+            // before, whatever check happens to have passed earlier: a check
+            // that ran before the edit has not measured the edit. See the
+            // report for why the design's "the last project-level check still
+            // covers it" clause was not taken — it would have stood the gates
+            // down for every source edit after any green suite.
+            if (
+              settledPlanAtWriteCount !== null &&
+              changedNothing(p.tc.toolName, p.parsedArgs, output)
+            ) {
+              settledPlanExcusedWrites++;
+              this.config.taskState?.logEvent(
+                "gate",
+                `a ${p.tc.toolName} after the plan settled changed no file — the waiver stands`,
+              );
+            }
             if (VISUAL_FILE_RE.test(String(p.parsedArgs.path ?? ""))) {
               wroteVisualThisRun = true; // the product-sight gate reads this
             }
@@ -3933,6 +4160,17 @@ export class AgentLoop {
             !TRIVIAL_EVIDENCE_RE.test(String(p.parsedArgs.command ?? ""))
           ) {
             executedSinceWrite = true;
+            // Which checks passed in THIS completion — the list A2's
+            // carry-forward reads on the next one. Kept beside the citation
+            // ledger's own log (`engine.ts` feeds that from the same hook) and
+            // recorded for every run, with or without task state.
+            const ranCommand = String(p.parsedArgs.command ?? "");
+            if (ranCommand && isVerificationCommand(ranCommand)) {
+              const checkVerdict = bashCheckVerdict(output);
+              if (checkVerdict.passed && !ranZeroTests(ranCommand, output.result)) {
+                checksThisCompletion.push(normalizeCommand(ranCommand));
+              }
+            }
           }
         }
       }
