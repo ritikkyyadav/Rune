@@ -487,6 +487,143 @@ describe("what a cited command is worth", () => {
   });
 });
 
+// ─── A1 — the refusal that says what to do next (P3B) ───
+//
+// Specified by Lane A in `.codex/audit-20260910/handoff/phase3/a1-spec.md`,
+// written here because `brief.ts` is Lane C's file. The whole change is PROSE:
+// a command that ran and exited 0 but is not a recognised check is still
+// `{ ok: true, rung: "observed" }` with no parent replay, exactly as before —
+// what moves is that the reply now names what happened and what to do instead,
+// so the model stops rewording the same citation. Pilot J spent three
+// completions and one supervisor screen on that loop.
+//
+// One case per example in the spec, asserted on the EXACT sentence, because the
+// wording is the deliverable: Lane A's integration script matches on
+// `not a recognised check`.
+
+const A1_NEXT_STEP =
+  "Not a recognised check: write the assertion as a test file a runner collects " +
+  "(`bun test path/to/x.test.ts`), or cite a project check command — a `package.json` script, " +
+  "`bunx tsc --noEmit`, `cargo test`. Re-citing this command in other words will get the same answer.";
+
+async function citeIt(
+  log: CheckLog,
+  command: string,
+  opts: { ledger?: boolean; probe?: () => void } = {},
+): Promise<string> {
+  const ledger = opts.ledger === false ? undefined : new BriefLedger(brief());
+  const tool = createRecordEvidenceTool(
+    () => ledger,
+    () => log,
+    opts.probe
+      ? () => {
+          opts.probe!();
+          return { command, status: "failed" as const };
+        }
+      : undefined,
+  );
+  const out = await tool.execute({
+    callId: "a1",
+    toolName: "record_evidence",
+    args: { criterion: 0, command },
+    sessionId: "s",
+    workspaceRoot: "/tmp",
+  });
+  return out.result ?? "";
+}
+
+describe("A1 — an unrecognised check is told what would raise it", () => {
+  // Spec example 1: an inline script that only prints. `isVerificationCommand`
+  // says no (`inlineCheck` needs an assert/expect/throw/non-zero exit), the
+  // native shell recorded exit 0.
+  test("example 1 — the receipt names the exit code the record carries", async () => {
+    const command = `bun -e 'console.log(parse("a,b,c"))'`;
+    const log = new CheckLog();
+    log.record({ command, passed: true, kind: "execution", exitCode: 0, at: 1, summary: "ok" });
+    const reply = await citeIt(log, command);
+    expect(reply).toContain(
+      "execution receipt only — ran, exit 0, not a recognised check; not replayed on the parent",
+    );
+    expect(reply).toContain(A1_NEXT_STEP);
+    // The rung the receipt reports is the one the runtime awarded, unchanged.
+    expect(reply).toContain("Recorded as observed");
+  });
+
+  // Spec example 2: a chain whose final word names no check. Same string; the
+  // only difference from example 1 is the criteria count, which is the ledger's.
+  test("example 2 — a chained command that names no check gets the same receipt", async () => {
+    const command = "node scripts/demo.mjs && cat out.json";
+    const log = new CheckLog();
+    log.record({ command, passed: true, kind: "execution", exitCode: 0, at: 1, summary: "ok" });
+    const reply = await citeIt(log, command);
+    expect(reply).toContain(
+      "execution receipt only — ran, exit 0, not a recognised check; not replayed on the parent",
+    );
+    expect(reply).toContain("(0 of 2 criteria verified)");
+    expect(reply).toContain(A1_NEXT_STEP);
+  });
+
+  // Spec example 3: an embedder's result carries no exit code. The reply must
+  // not invent `exit 0` for it — "No data is null, never zero" (`CheckRun`).
+  test("example 3 — with no exit code on the record the receipt says `ran and passed`", async () => {
+    const command = "./run-parser.sh fixtures/sample.csv";
+    const log = new CheckLog();
+    log.record({ command, passed: true, kind: "execution", at: 1 });
+    const reply = await citeIt(log, command);
+    expect(reply).toContain(
+      "execution receipt only — ran and passed, not a recognised check; not replayed on the parent",
+    );
+    expect(reply).not.toContain("exit 0");
+    expect(reply).toContain(A1_NEXT_STEP);
+  });
+
+  test("the same sentence arrives when no brief is in play", async () => {
+    const command = "node scripts/demo.mjs";
+    const log = new CheckLog();
+    log.record({ command, passed: true, kind: "execution", exitCode: 0, at: 1 });
+    const reply = await citeIt(log, command, { ledger: false });
+    expect(reply).toContain("No read_back criteria are in play");
+    expect(reply).toContain(A1_NEXT_STEP);
+  });
+
+  test("a RECOGNISED check is told nothing of the kind", async () => {
+    const log = logWith([["bun test", true, "44/44"]]);
+    const reply = await citeIt(log, "bun test");
+    expect(reply).toContain("Recorded as observed");
+    expect(reply).not.toContain("not a recognised check");
+    expect(reply).not.toContain("Re-citing this command");
+  });
+
+  test("the verdict does not move: observed, no parent replay, no parentCommitFailed", async () => {
+    const command = "node scripts/demo.mjs";
+    const log = new CheckLog();
+    log.record({ command, passed: true, kind: "execution", exitCode: 0, at: 1 });
+    log.recordParent({ command, status: "failed" });
+    const verdict = rungForCommand(log, command);
+    expect(verdict).toMatchObject({ ok: true, rung: "observed" });
+    if (verdict.ok) expect(verdict.evidence.parentCommitFailed).toBeUndefined();
+    // …and the probe is still never spent on an unrecognised execution.
+    const fresh = new CheckLog();
+    fresh.record({ command, passed: true, kind: "execution", exitCode: 0, at: 1 });
+    let probes = 0;
+    await citeIt(fresh, command, { probe: () => probes++ });
+    expect(probes).toBe(0);
+  });
+
+  test("the guidance is in the REPLY, never in the detail the ledger carries every turn", () => {
+    const command = "node scripts/demo.mjs";
+    const log = new CheckLog();
+    log.record({ command, passed: true, kind: "execution", exitCode: 0, at: 1 });
+    const verdict = rungForCommand(log, command);
+    expect(verdict.ok).toBe(true);
+    if (verdict.ok) {
+      expect(verdict.evidence.detail).toContain("execution receipt only");
+      expect(verdict.evidence.detail).not.toContain("Re-citing this command");
+      expect(verdict.evidence.detail).not.toContain("bun test path/to/x.test.ts");
+    }
+  });
+});
+
 describe("record_evidence — a citation is never a validation error", () => {
   test("with no brief in play it is acknowledged in one line, against the plan step or the claim", async () => {
     const log = logWith([["bun test", true, "44/44"]]);

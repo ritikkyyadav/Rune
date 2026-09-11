@@ -68,6 +68,26 @@ export const RUNG_MEANING: Record<ClaimRung, string> = {
   verified: "a test that failed on the parent commit passes now.",
 };
 
+/**
+ * A1 — what to do instead, when the cited command ran but is not a check.
+ *
+ * Appended to the `record_evidence` reply (both branches) whenever the cited
+ * command's latest run is `kind: "execution"`. The receipt already says what
+ * the runtime awarded; this says the two moves that would raise it, and — the
+ * sentence that actually closes the loop — that a fourth phrasing is not one of
+ * them. Pilot J spent three completions and one supervisor screen rewording a
+ * citation the runtime had already answered as fully as it could.
+ *
+ * It lives in the REPLY and not in `Evidence.detail` because the detail rides
+ * the plan ledger on every subsequent turn (`:193`) while the reply is read
+ * once: guidance that costs prompt bytes every turn to save one completion once
+ * is a bad trade.
+ */
+const UNRECOGNISED_CHECK_NEXT_STEP =
+  "Not a recognised check: write the assertion as a test file a runner collects " +
+  "(`bun test path/to/x.test.ts`), or cite a project check command — a `package.json` script, " +
+  "`bunx tsc --noEmit`, `cargo test`. Re-citing this command in other words will get the same answer.";
+
 // The brief and its criteria cross the wire: the read-back is a round-trip a
 // desktop or web client holds exactly as the terminal does, so @rune/protocol
 // owns the shapes and they are re-exported here.
@@ -496,9 +516,22 @@ export function rungForCommand(log: CheckLog, command: string): RungVerdict {
       rung: "observed",
       evidence: {
         ...base,
+        // A1 (Lane A's spec, `.codex/audit-20260910/handoff/phase3/a1-spec.md`):
+        // say what HAPPENED, not only what it was not. The verdict above is
+        // unchanged — `observed`, no parent replay — because a command that ran
+        // and exited 0 is real evidence of something; what Pilot J lost three
+        // completions to was a receipt that read like a refusal and named no
+        // way forward. The exit code comes off the record and is never invented:
+        // an embedder without a structured shell result has none (`CheckRun.exitCode`
+        // above: "No data is null, never zero"), and a passing run can only ever
+        // carry 0. The NEXT STEP is not in this string on purpose — `detail`
+        // rides the plan ledger on every turn (`:193`), so guidance belongs in
+        // the tool reply, which is read once.
         detail: joinDetail(
           last.summary,
-          "execution receipt only; not classified as a verification check and not replayed on the parent",
+          last.exitCode != null
+            ? `execution receipt only — ran, exit ${last.exitCode}, not a recognised check; not replayed on the parent`
+            : "execution receipt only — ran and passed, not a recognised check; not replayed on the parent",
         ),
       },
     };
@@ -669,6 +702,9 @@ export function createRecordEvidenceTool(
       const target = citationTarget(input.args ?? {});
       const command = String((input.args ?? {}).command ?? "");
       const log = getLog();
+      // A1: a pure read off the log already in hand — no verdict shape changes.
+      const unrecognisedCheck = log.history(command).at(-1)?.kind === "execution";
+      const nextStep = unrecognisedCheck ? ` ${UNRECOGNISED_CHECK_NEXT_STEP}` : "";
       if (!ledger) {
         // No brief: the citation still gets the runtime's verdict on the
         // command, attributed to the plan step or the claim it names, and
@@ -705,7 +741,8 @@ export function createRecordEvidenceTool(
                   : "it names only files this step never touched. ") +
                 "Cite the step's own check, or run one. "
               : "") +
-            "No read_back criteria are in play, so this settles no criterion.",
+            "No read_back criteria are in play, so this settles no criterion." +
+            nextStep,
         );
       }
       // A claim in words against a numbered brief: match it to a criterion
@@ -749,7 +786,8 @@ export function createRecordEvidenceTool(
           `(${ledger.met} of ${ledger.total} criteria verified)` +
           (verdict.rung === "verified"
             ? ""
-            : ". Passing evidence is recorded. This rung does not request another run; report its scope and limits. Repeat checks when code or requirements change, not solely to raise the rung."),
+            : ". Passing evidence is recorded. This rung does not request another run; report its scope and limits. Repeat checks when code or requirements change, not solely to raise the rung.") +
+          nextStep,
       );
     },
   };
