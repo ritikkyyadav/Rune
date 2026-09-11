@@ -788,41 +788,54 @@ export function artifactsFromResult(
 export { bashCheckVerdict } from "./brief";
 
 /**
+ * One message with the tail riding inside it, or null when it has nowhere to
+ * ride: a tool message whose last `tool_result` gains the text after its own,
+ * a user message that gains it as one more text block. An assistant turn takes
+ * nothing — there is no slot in it that the model reads as context.
+ *
+ * Never mutates: the message and its content array are copied, so what is
+ * STORED keeps the bare output and only the wire carries the tail.
+ */
+function foldTailInto(message: Message, tail: string): Message | null {
+  if (message.role === "tool") {
+    let idx = -1;
+    for (let i = message.content.length - 1; i >= 0; i--) {
+      if (message.content[i]!.type === "tool_result") {
+        idx = i;
+        break;
+      }
+    }
+    if (idx < 0) return null;
+    const result = message.content[idx] as Extract<ContentBlock, { type: "tool_result" }>;
+    const content = [...message.content];
+    content[idx] = { ...result, toolResultContent: `${result.toolResultContent}\n\n${tail}` };
+    return { ...message, content };
+  }
+  if (message.role === "user") {
+    return { ...message, content: [...message.content, { type: "text", text: tail }] };
+  }
+  return null;
+}
+
+/**
  * Attach the ephemeral tail blocks to the LAST stable message instead of
  * appending them as user messages — the wire shape for hosts where a trailing
  * user message ends the prompt cache (see `foldsEphemeralTail`).
  *
  * The request keeps ending on what it ended on: the tool output the model is
  * about to read gains the blocks after its own text; a user prompt gains them
- * as one more text block. Nothing stored is touched — the message and its
- * content array are copied — so next turn's transcript still carries the
- * bare output and the prefix stays byte-stable up to that one message.
+ * as one more text block. Nothing stored is touched.
+ *
+ * One request's shape. The LOOP folds through `foldedTails` instead, because
+ * the message this returns has to be replayed exactly like this on every later
+ * request or the prefix breaks at it — see `AgentLoop.withFoldedTails`.
  */
 export function withTailFolded(messages: Message[], blocks: string[]): Message[] {
   const tail = blocks.join("\n\n");
   const last = messages[messages.length - 1];
   if (!last) return [{ role: "user", content: [{ type: "text", text: tail }] }];
-  if (last.role === "tool") {
-    let idx = -1;
-    for (let i = last.content.length - 1; i >= 0; i--) {
-      if (last.content[i]!.type === "tool_result") {
-        idx = i;
-        break;
-      }
-    }
-    if (idx >= 0) {
-      const result = last.content[idx] as Extract<ContentBlock, { type: "tool_result" }>;
-      const content = [...last.content];
-      content[idx] = { ...result, toolResultContent: `${result.toolResultContent}\n\n${tail}` };
-      return [...messages.slice(0, -1), { ...last, content }];
-    }
-  }
-  if (last.role === "user") {
-    return [
-      ...messages.slice(0, -1),
-      { ...last, content: [...last.content, { type: "text", text: tail }] },
-    ];
-  }
+  const folded = foldTailInto(last, tail);
+  if (folded) return [...messages.slice(0, -1), folded];
   // Nothing after an assistant turn to ride on (a report turn, a halted run):
   // the only place left is a fresh user message, the shape every host takes.
   return [...messages, { role: "user", content: [{ type: "text", text: tail }] }];
@@ -1170,6 +1183,63 @@ export class AgentLoop {
    * run touches a lot of files and this is bookkeeping, not state.
    */
   private readonly contentHashes = new Map<string, string>();
+
+  /**
+   * The ephemeral tail each message has ALREADY GONE OUT carrying (P3B §3.3).
+   *
+   * On a folding host the plan ledger rides inside the last stable message
+   * rather than after it, and that message is stored bare — so the next
+   * request replayed it bare, the two requests diverged one message before
+   * the end, and the provider's cache stopped matching exactly where the
+   * conversation's largest item (the tool output the model just read) sits.
+   * Pilot H read a flat 12,160 cached tokens for nine completions.
+   *
+   * The fix is that HISTORY IS IMMUTABLE: a tail folded into a message is
+   * folded into that message on every later request, byte for byte, so
+   * consecutive requests share their whole stable prefix. The stale block is
+   * the ledger as it stood when that message was sent — a true record — and
+   * only the newest message carries the current one.
+   *
+   * Keyed on the message object, which is the identity the transcript itself
+   * uses: `appendMessage` pushes and the context engine passes those same
+   * objects through, so a tail follows its message and dies with it. That is
+   * also the bound on what accumulates — compaction rewrites history into new
+   * messages, and the tails of everything it summarised go with the old ones.
+   */
+  private readonly foldedTails = new WeakMap<Message, string>();
+
+  /**
+   * The wire shape for a folding host: every tail this run has already sent
+   * replayed where it was sent, and the current one folded into the newest
+   * message.
+   *
+   * The only case that rewrites an already-sent message is a second request
+   * built on the SAME last message with a DIFFERENT tail (a re-request with
+   * nothing appended between). The new block is appended to the old one rather
+   * than replacing it — the model reads both, newest last — because replacing
+   * it would tell the next request a different story about what was sent.
+   */
+  private withFoldedTails(stable: Message[], blocks: string[]): Message[] {
+    const tail = blocks.join("\n\n");
+    const last = stable[stable.length - 1];
+    const carrier = last ? foldTailInto(last, tail) : null;
+    if (last && carrier) {
+      const sent = this.foldedTails.get(last);
+      this.foldedTails.set(
+        last,
+        sent === undefined ? tail : sent.endsWith(tail) ? sent : `${sent}\n\n${tail}`,
+      );
+    }
+    const out = stable.map((message) => {
+      const sent = this.foldedTails.get(message);
+      return sent === undefined ? message : (foldTailInto(message, sent) ?? message);
+    });
+    // Nothing to ride on (an assistant turn last): the tail is its own message,
+    // the shape every host takes — and it is beyond the stable prefix, so it
+    // costs the next request nothing.
+    if (!carrier) out.push({ role: "user", content: [{ type: "text", text: tail }] });
+    return out;
+  }
 
   /** The hash this run last saw at `path`, or undefined if it never saw one. */
   private hashBefore(path: string, workspaceRoot: string): string | undefined {
@@ -1898,7 +1968,7 @@ export class AgentLoop {
       );
       if (ephemeralBlocks.length > 0) {
         requestMessages = foldsEphemeralTail(this.config.provider)
-          ? withTailFolded(stableMessages, ephemeralBlocks)
+          ? this.withFoldedTails(stableMessages, ephemeralBlocks)
           : [
               ...stableMessages,
               ...ephemeralBlocks.map((text): Message => ({
@@ -1912,11 +1982,15 @@ export class AgentLoop {
       // Measured HERE because this is the only place that knows which text is
       // the ephemeral tail: on the wire the plan ledger is an ordinary user
       // message — or, on a folding host, the end of a tool output —
-      // indistinguishable from the work. The stable messages are measured
-      // BEFORE the tail is attached, so the conversation row reads the same
-      // whichever wire shape the host gets. The doctrine share is what makes
-      // the JIT setting's effect visible — `/config doctrine full` moves ~2k
-      // of bytes back into this row on every single request.
+      // indistinguishable from the work. The messages measured are the ones
+      // that GO OUT, and the tail's bytes are given back to the ledger rather
+      // than counted twice, so the conversation row reads the same whichever
+      // wire shape the host gets and `prefixHash` fingerprints the bytes the
+      // provider's cache will actually match on (P3B I5 / §3.3 — it used to be
+      // handed the pre-fold messages, so it reported two requests as sharing a
+      // prefix where the wire had them diverging). The doctrine share is what
+      // makes the JIT setting's effect visible — `/config doctrine full` moves
+      // ~2k of bytes back into this row on every single request.
       //
       // Total by construction, and it must stay that way: this is TELEMETRY,
       // and a meter is never allowed to be the reason a request does not go
@@ -1930,13 +2004,14 @@ export class AgentLoop {
         // of doctrine and tool schemas — a confident, false number, which is
         // the failure the whole cost surface is built to avoid. An absent
         // composition already reads as "not measured" everywhere downstream.
-        if (!Array.isArray(stableMessages)) throw new Error("messages is not an array");
+        if (!Array.isArray(requestMessages)) throw new Error("messages is not an array");
         composition = measureComposition({
           system: requestSystemPrompt,
           tools,
-          messages: stableMessages,
+          messages: requestMessages,
           planLedger: taskBlock,
           taskState: [teamBlock, budgetBlock],
+          tailInMessages: true,
           // The cache decision this request actually sent, measured with the
           // prefix it applies to (P3B I5). `cacheCreationTokens` is 0 on every
           // row in the corpus — no provider in use reports a cache WRITE — so

@@ -14,6 +14,7 @@ import { AgentLoop, withTailFolded } from "../../../packages/orchestrator/src/ag
 import type { AgentTurnEvent } from "../../../packages/orchestrator/src/agent-loop";
 import { TaskStateStore } from "../../../packages/orchestrator/src/task-state";
 import type { Message } from "../../../packages/llm-gateway/src/types";
+import { messageBytes, utf8Bytes } from "../../../packages/llm-gateway/src/prompt-composition";
 import { foldsEphemeralTail } from "../../../packages/llm-gateway/src/providers/cache-policy";
 
 function ev(type: string, extra: Record<string, unknown> = {}) {
@@ -31,11 +32,21 @@ type Step = { tool?: string; args?: Record<string, unknown>; text?: string };
 /** Scripted gateway that captures every request as the provider would see it. */
 function makeGateway(turns: Step[]) {
   let i = 0;
-  const requests: Array<{ messages: Message[]; composition?: Record<string, number> }> = [];
+  const requests: Array<{
+    messages: Message[];
+    system?: string;
+    composition?: Record<string, number>;
+  }> = [];
   return {
     requests,
     inferStream: mock(async function* (req: any) {
-      requests.push({ messages: req.messages, composition: req.composition });
+      // A COPY: with no tail to fold the loop hands its own message array
+      // straight through, and a reference to it would grow under the test.
+      requests.push({
+        messages: JSON.parse(JSON.stringify(req.messages ?? [])),
+        system: req.system,
+        composition: req.composition,
+      });
       const t = turns[Math.min(i, turns.length - 1)]!;
       i++;
       if (t.tool) {
@@ -108,7 +119,11 @@ async function runOn(provider: string) {
   await collect(
     makeLoop(gw, provider, new TaskStateStore()).run("do a multi step thing", "s1", "/tmp"),
   );
-  return gw.requests as Array<{ messages: Message[]; composition?: Record<string, number> }>;
+  return gw.requests as Array<{
+    messages: Message[];
+    system?: string;
+    composition?: Record<string, number>;
+  }>;
 }
 
 describe("withTailFolded", () => {
@@ -212,17 +227,34 @@ describe("ephemeral tail wire shape per host", () => {
     }
   });
 
-  test("the composition meter reads the same on both wire shapes", async () => {
+  test("the meter measures the request that went out, on either wire shape", async () => {
     const [codex, anthropic] = await Promise.all([runOn("codex"), runOn("anthropic")]);
+    // Total by construction: the parts add up to the bytes the provider is
+    // sent. This is the property that makes the cost surface worth reading, and
+    // it is why the meter is handed the WIRE messages (§3.3) — measuring the
+    // pre-fold ones would have reported a request that was never sent.
+    for (const host of [codex, anthropic]) {
+      for (const req of host) {
+        const wire =
+          utf8Bytes(req.system ?? "") +
+          (req.messages ?? []).reduce((n: number, m: Message) => n + messageBytes(m), 0);
+        expect((req.composition as any).total).toBe(wire);
+      }
+    }
     for (let i = 1; i < Math.min(codex.length, anthropic.length); i++) {
       const a = codex[i]!.composition!;
       const b = anthropic[i]!.composition!;
       expect(a.planLedger).toBeGreaterThan(0);
-      expect(a.planLedger).toBe(b.planLedger);
       // The block is measured as the ledger, not as conversation, either way.
-      expect(a.conversation).toBe(b.conversation);
-      expect(a.total).toBe(b.total);
+      expect(a.planLedger).toBe(b.planLedger);
+      // The folding host's request is the bigger one, and honestly so: the
+      // block rides behind a blank line inside the last message, and every
+      // tail already sent is replayed where it was sent so the prefix can
+      // recur (§3.3). The first folded request carries no history yet, so the
+      // whole difference there is that one separator.
+      expect(a.conversation).toBeGreaterThanOrEqual(b.conversation);
     }
+    expect(codex[1]!.composition!.conversation - anthropic[1]!.composition!.conversation).toBe(2);
   });
 
   test("codex: the stored transcript never carries the block", async () => {

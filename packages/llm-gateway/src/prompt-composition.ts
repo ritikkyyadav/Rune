@@ -94,11 +94,11 @@ function foldMessage(hash: number, message: Message): number {
 /**
  * Measure a request's parts.
  *
- * The caller names which of the trailing messages are the ephemeral blocks —
- * the plan ledger, the budget/team notices — because only it knows: on the
- * wire they are ordinary user messages, indistinguishable from the work. This
- * is the same seam the cache breakpoint uses, and it is why `stableMessageCount`
- * exists in the agent loop.
+ * `messages` is what goes on the wire, and the caller names the ephemeral
+ * blocks inside it — the plan ledger, the budget/team notices — because only it
+ * knows: on the wire they are an ordinary user message, or the end of a tool
+ * output, indistinguishable from the work. This is the same seam the cache
+ * breakpoint uses, and it is why `stableMessageCount` exists in the agent loop.
  */
 export function measureComposition(parts: {
   system?: string;
@@ -110,6 +110,19 @@ export function measureComposition(parts: {
   /** Other ephemeral tails (team presence, turn budget). */
   taskState?: ReadonlyArray<string | null | undefined>;
   /**
+   * The blocks named above ride INSIDE `messages` rather than after them.
+   *
+   * Two wire shapes carry the same text: trailing user messages on most hosts,
+   * and — where a request that ends on a user message ends the prompt cache —
+   * folded into the last message (`withTailFolded`). Either way `messages` is
+   * what the provider is sent, because the prefix fingerprint has to be the
+   * fingerprint of the bytes that went out; this says to give those bytes back
+   * to the ledger instead of counting them twice, so `total` stays the size of
+   * the request. Tails from EARLIER requests that a folding host replays are
+   * not deducted: they are conversation now, and they are really on the wire.
+   */
+  tailInMessages?: boolean;
+  /**
    * The index the caller marked as the last cacheable message, when it marked
    * one. Recorded, not used: the cache decision belongs to the caller, and
    * this is the ruler that says what the decision was.
@@ -120,18 +133,21 @@ export function measureComposition(parts: {
   const toolsJson = parts.tools?.length ? JSON.stringify(parts.tools) : "";
   const doctrine = utf8Bytes(systemText);
   const toolSchemas = utf8Bytes(toolsJson);
-  let conversation = 0;
+  let messageBytesTotal = 0;
   // The prefix is what a provider's cache would match on: the system prompt,
-  // the tool surface and the stable conversation — everything the caller kept
-  // OUT of the ephemeral tail. Folded in the same pass that measures it.
+  // the tool surface and the messages, exactly as they were sent. Folded in the
+  // same pass that measures it.
   let prefix = fold(fold(FNV_OFFSET, systemText), toolsJson);
   for (const m of parts.messages) {
-    conversation += messageBytes(m);
+    messageBytesTotal += messageBytes(m);
     prefix = foldMessage(prefix, m);
   }
   const planLedger = utf8Bytes(parts.planLedger ?? "");
   let taskState = 0;
   for (const block of parts.taskState ?? []) taskState += utf8Bytes(block ?? "");
+  const conversation = parts.tailInMessages
+    ? Math.max(0, messageBytesTotal - planLedger - taskState)
+    : messageBytesTotal;
   return {
     doctrine,
     planLedger,
