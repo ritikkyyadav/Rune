@@ -31,7 +31,31 @@
 //
 // Selected over the readline path with `--tui` / RUNE_TUI=1; `--classic` opts
 // out to the plain printer. `--fullscreen` names the default and is a no-op.
+//
+// FOUR FILES, ONE OBJECT. `Tui` outgrew a file: at six thousand lines it was a
+// paint loop, a key router and forty slash commands sharing one scope, and any
+// two people working on the surface were editing the same thing. The class is
+// now declared here and its methods are mixed in from three siblings:
+//
+//   ./tui-frame.ts     geometry and paint -- the regions, the scroll, resize
+//   ./tui-input.ts     keys, the composer's edit operations, prompt history
+//   ./tui-commands.ts  the `/` catalogue, its dispatch, and the panels it opens
+//
+// What is left here is the controller: lifecycle, session and transcript state,
+// the turn loop, and the panels with their own state machines. See the bottom
+// of this file for how the three are attached, and why nothing is `private`.
 
+import {
+  cols,
+  rowsCount,
+  mouseCaptureEnabled,
+  MAX_TRANSCRIPT,
+  FRAME_METHODS,
+  type FrameMethods,
+} from "./tui-frame";
+import { INPUT_METHODS, type InputMethods } from "./tui-input";
+import { COMMAND_METHODS, type CommandMethods } from "./tui-commands";
+export { holdOpenRows } from "./tui-frame";
 import { setActivityWorkspaceRoot } from "./activity";
 import type {
   Engine,
@@ -40,10 +64,7 @@ import type {
   TranscriptLine,
 } from "../../engine";
 import { findCommand, type SlashCommand } from "../../commands";
-import { discoverUserSkills, ORIGIN_LABEL } from "../../skills-user";
 import {
-  hasStoredCredential,
-  openCredentialStore,
   setProviderKey as persistKey,
   addProviderKey as persistAddKey,
   removeProviderKey as persistRemoveKey,
@@ -55,103 +76,44 @@ import {
   setProviderDisabled as persistDisabled,
   setLocalEndpoint as persistLocalEndpoint,
   getPreset,
-  getSearchPreset,
-  PROVIDER_PRESETS,
-  SEARCH_PROVIDER_PRESETS,
-  searchProviderConnected,
   CUSTOM_PROVIDER_ID,
-  loadLastModel,
   loadPrefs,
   savePrefs,
   mayPersistGear,
   shouldAskAboutFourthGear,
-  saveLastModel,
-  saveBrowserState,
   getSystemMemoryPath,
 } from "@rune/shared";
 import type { CustomEndpoint } from "@rune/shared";
-import type { ReasoningEffort } from "@rune/llm-gateway";
-import { routeChoices, loginTargets, connectedSummary, type LoginTarget } from "./login-picker";
-import { getStrategy, type AuthContext } from "@rune/llm-gateway";
-import { probeSearchBackend } from "@rune/tool-registry";
-import { openBrowser } from "../byop-cli-shared";
-import {
-  providerChoices,
-  accountChoices,
-  modelChoices,
-  effortChoices,
-  fetchLiveModels,
-} from "./model-picker";
-import { configModeToPermissionMode } from "../../permissions";
-import { CONFIG_SETTINGS, displaySettingValue, settingChoices } from "../../config-settings";
-import { runSettingsCommand } from "../../settings-command";
-import {
-  runSandboxCommand,
-  SANDBOX_MODE_CHOICES,
-  SANDBOX_OVERRIDE_CHOICES,
-} from "../../sandbox-command";
-import { runTeamCommand } from "../../team/command";
 import { BottomRegion } from "./screen";
-import {
-  Viewport,
-  composeFrame,
-  holdHeight,
-  zones,
-  VIEWPORT_RESTORE,
-  type Zones,
-} from "./viewport";
+import { Viewport, zones, VIEWPORT_RESTORE } from "./viewport";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { arrowRun, parseKeys, type Key } from "./keys";
+import { type Key } from "./keys";
 import { fmtTokens } from "./events";
-import { PasteScanner, shouldCollapse, pasteChip, expandPastes, livePasteIds } from "./paste";
+import { PasteScanner, expandPastes } from "./paste";
 import {
-  renderComposer,
-  renderPicker,
-  renderSlashPalette,
-  renderKeysPanel,
-  renderKeyEditor,
-  renderKeyManagerPanel,
-  renderSessionsPanel,
-  renderMemoryPanel,
-  renderWorkReview,
   workReviewPageSize,
   MEMORY_ACTION_COUNT,
-  renderPermissionCard,
-  renderQueueStrip,
   sessionGroupLabel,
   statusLine,
   modeInfo,
   permissionModeBanner,
   autoApprovedChip,
   autoDeferralSummary,
-  waitingRung,
-  sandboxModeBanner,
-  browserModeBanner,
-  type RenderedBlock,
   type PickerItem,
-  type SlashItem,
   type KeyRow,
   type SessionRowView,
 } from "./composer";
 import { RUNE_MARK, renderBanner } from "./banner";
-import { renderStatus } from "./status";
 import { notifyWarp } from "./warp";
 import { setTitle, clearTitle } from "./title";
 import { renderReadBack, renderClose } from "./read-back";
 import * as F from "./flow";
-import {
-  questionAction,
-  questionLines,
-  questionPlaceholder,
-  QUESTION_SKIPPED,
-  QUESTION_UNANSWERED,
-} from "./question";
+import { questionAction, QUESTION_SKIPPED, QUESTION_UNANSWERED } from "./question";
 import {
   heldAction,
   heldCloseReceipt,
-  heldLines,
   heldOutcomeRow,
   nextUndecided,
   type HeldOutcome,
@@ -161,17 +123,11 @@ import { filesChangedFrom } from "../../lifecycle";
 import type { AutoModeDeferral } from "../../auto-mode";
 import type { Brief } from "../../brief";
 import { TurnRenderer, userBlock, renderReplay, HEX } from "./turn";
-import { truncate, clampVisible, setTermWidthOverride, visLen } from "./render";
-import { renderResearchPlan, renderClarifyingQuestions, formatResearchEvent } from "./research";
+import { truncate, clampVisible, setTermWidthOverride } from "./render";
+import { renderResearchPlan, renderClarifyingQuestions } from "./research";
 import { isClarification } from "../../research-types";
 import type { ResearchOptions, ResearchPlan, ResearchReport } from "../../research-types";
-import {
-  formatLoopDue,
-  formatLoopInterval,
-  loopPromptPreview,
-  type LoopCompletion,
-  type LoopTask,
-} from "../../loop-mode";
+import { formatLoopDue, type LoopCompletion, type LoopTask } from "../../loop-mode";
 import {
   bold,
   text,
@@ -183,31 +139,19 @@ import {
   accent,
   danger,
   warn,
-  setTheme,
   getTheme,
-  listThemes,
-  paintBrandWith,
   withThemeBg,
   themeBgSeq,
   terminalThemeSeq,
   stripAnsi,
   TERMINAL_THEME_RESET,
 } from "./theme";
-import { formatCostReport, formatRunEconomics } from "../../cost-report";
 import { glyph } from "./glyphs";
-import { mcpPanel } from "./mcp-panel";
-import { saveTheme } from "./theme-store";
 import { buildPermissionPreview, type PermissionPreview } from "./permission-preview";
 import { FoldLedger, type FoldRegion } from "./folds";
 import { BlockLedger, type BlockHandle } from "./blocks";
-import { renderWorkspaceDiff } from "./workspace-diff";
 import { workspaceConfigPath } from "@rune/shared";
-import {
-  buildInteractiveDirective,
-  saveInteractiveAuto,
-  shouldOfferInteractive,
-} from "./interactive";
-
+import { shouldOfferInteractive } from "./interactive";
 export interface TuiContext {
   engine: Engine;
   sessionId: string;
@@ -315,64 +259,26 @@ function isMeaningfulSession(session: SessionListItem): boolean {
   return session.eventCount > 0 || Boolean(session.title?.trim());
 }
 
-// `columns`/`rows` are 0 (not undefined) on a PTY with no winsize -- `||` so a
-// zero-size terminal falls back sanely instead of clamping every line to nothing.
-const cols = () => process.stdout.columns || 80;
-const rowsCount = () => process.stdout.rows || 24;
-
-/** Whether the fixed frame captures the mouse wheel. OFF by default so native
- *  click-drag selection and copy work; RUNE_MOUSE=1 trades that for the wheel. */
-const mouseCaptureEnabled = (): boolean => {
-  const v = process.env.RUNE_MOUSE;
-  return v != null && v !== "" && v !== "0" && v.toLowerCase() !== "false";
-};
-
-/**
- * How many blank rows the pinned block holds open beneath the transcript so the
- * field sits on the bottom of the window instead of floating under the header.
- *
- * Pure, and exported, because the interesting case is not the arithmetic — it
- * is what `printedRows` means after the screen has been wiped. It counts rows
- * committed to scrollback and only ever counts UP, which is right while a
- * session accumulates: once a window's worth of output exists there is nothing
- * left to hold open. But /clear erases that output, and if the count survives
- * the erase the padding stays at zero against a screen that is now empty, and
- * the whole bar collapses upward. Every path that clears the screen has to
- * reset the count with it — see resetTranscript.
- */
-export function holdOpenRows(viewport: number, printedRows: number, blockRows: number): number {
-  // One row spare: a pinned block that reaches the last cell wraps, and a wrap
-  // desyncs the relative cursor math for every frame after it.
-  return Math.max(0, viewport - printedRows - blockRows - 1);
-}
-const MAX_TRANSCRIPT = 5000; // cap the in-memory scrollback
-const SCROLL_STEP = 3; // lines per mouse-wheel notch
-/** Ceiling on the live block above the composer: the rung, its detail row, and
- *  up to a fleet's worth of sub-agent rows plus their `+N more`. Past this the
- *  status stops being a status. */
-/** The live block is ONE row -- the rung -- plus a row per sub-agent in
- *  flight when there is a fleet. The cap bounds the fleet, not the rung. */
-const LIVE_BLOCK_ROWS = 8;
 /** How long a window drag has to go quiet before the fixed layout repaints. */
 
 export async function runTui(ctx: TuiContext): Promise<void> {
   await new Tui(ctx).run();
 }
 
-class Tui {
-  private region = new BottomRegion(); // --inline compatibility surface only
+export class Tui {
+  region = new BottomRegion(); // --inline compatibility surface only
   /** The fixed-chrome surface: pinned header, scrolling body, pinned footer. */
-  private viewport = new Viewport();
+  viewport = new Viewport();
   /** False for the default fixed-chrome layout; true only through --inline / RUNE_INLINE. */
-  private readonly inline: boolean;
-  private transcript: string[] = []; // fixed layout: themed lines, self-managed scrollback window
+  readonly inline: boolean;
+  transcript: string[] = []; // fixed layout: themed lines, self-managed scrollback window
   /** Blocks that hold more than they show, openable in place -- see ./folds. */
-  private folds = new FoldLedger();
+  folds = new FoldLedger();
   /** Every committed block's rows, so the renderer can amend one in place --
    *  a call's row finishing, a burst folding, prose streaming. See ./blocks. */
-  private blocks = new BlockLedger();
+  blocks = new BlockLedger();
   /** Where the body zone sat on the last painted frame, for click -> row math. */
-  private lastBodyMap: {
+  lastBodyMap: {
     bodyTop: number;
     bodyRows: number;
     hiddenAbove: number;
@@ -387,73 +293,50 @@ class Tui {
    * worth of output there is nothing left to hold open, and the padding is
    * gone for good.
    */
-  private printedRows = 0;
-  private scroll = 0; // fixed layout: lines scrolled up from the bottom (0 = following latest)
-  private onResize = () => {
-    // A handler that throws once is never called again -- and an unhandled throw
-    // here was almost certainly the "resize breaks it and it stops reacting to
-    // anything" the founder hit. Whatever goes wrong at one odd size, swallow
-    // it: the next resize or keypress repaints from a clean slate.
-    try {
-      if (this.inline) {
-        // The terminal owns the scrollback and reflows it; the composer just
-        // trails the output, so all we do is redraw it at the new width. No
-        // repositioning maths -- that is exactly what used to drift it around.
-        this.renderRegion();
-        return;
-      }
-      // The fixed frame owns every cell, and a resize moved all of them. Forget
-      // the screen and repaint at the new size RIGHT NOW -- not after a settle
-      // timer. The old code waited 50ms of quiet before repainting, but a
-      // continuous drag never has 50ms of quiet, so the surface appeared frozen
-      // for the whole drag and only snapped to size when the mouse stopped.
-      // scheduleDraw already coalesces to one frame per ~16ms, so painting on
-      // every SIGWINCH is smooth, not a strobe -- and it tracks the drag.
-      setTermWidthOverride(this.contentCols());
-      this.viewport.invalidate();
-      this.scheduleDraw();
-    } catch {
-      /* next resize/keypress repaints */
-    }
-  };
-  private input = "";
-  private caret = 0;
-  private history: string[] = [];
-  private histIdx = -1;
-  private draft = "";
-  private mode: Mode = "input";
-  private slashSel = 0; // highlighted row in the `/` command palette
-  private sigintArmed = false;
-  private paste = new PasteScanner(); // carves bracketed pastes out of the stdin stream (see ./paste)
+  printedRows = 0;
+  scroll = 0; // fixed layout: lines scrolled up from the bottom (0 = following latest)
+  /** SIGWINCH. A field, not a method, because `process.stdout.on("resize", ...)`
+   *  needs a stable bound reference to add and remove; the work is in
+   *  ./tui-frame.ts with the rest of the geometry. */
+  onResize = () => this.handleResize();
+  input = "";
+  caret = 0;
+  history: string[] = [];
+  histIdx = -1;
+  draft = "";
+  mode: Mode = "input";
+  slashSel = 0; // highlighted row in the `/` command palette
+  sigintArmed = false;
+  paste = new PasteScanner(); // carves bracketed pastes out of the stdin stream (see ./paste)
   // Large/multi-line pastes are collapsed to a `[Pasted text #N +K lines]` chip in the composer
   // (Claude-Code idiom): the real content is held here and expanded back in on submit. Pasting the
   // raw body inline would put newlines into the single-line composer, which breaks the pinned
   // region's row math (garble) and re-renders megabytes every keystroke (freeze).
-  private pastes = new Map<number, string>();
-  private pasteSeq = 0;
+  pastes = new Map<number, string>();
+  pasteSeq = 0;
 
   // `/sessions` manager overlay
-  private sessionsList: SessionListItem[] = [];
-  private sessionsSel = 0;
-  private sessionsView: "active" | "archived" = "active";
-  private sessionsPendingDelete: string | null = null; // id armed for two-step delete
-  private sessionsQuery = "";
-  private sessionsSearching = false;
+  sessionsList: SessionListItem[] = [];
+  sessionsSel = 0;
+  sessionsView: "active" | "archived" = "active";
+  sessionsPendingDelete: string | null = null; // id armed for two-step delete
+  sessionsQuery = "";
+  sessionsSearching = false;
 
   // `/memory` System Memory panel
-  private memorySel = 0;
-  private memoryBusy = false;
-  private memoryNote: string | null = null;
-  private memoryPendingClear = false;
+  memorySel = 0;
+  memoryBusy = false;
+  memoryNote: string | null = null;
+  memoryPendingClear = false;
 
   // `/keys` BYOK panel
-  private keysSel = 0;
-  private keysRows: KeyRow[] = [];
+  keysSel = 0;
+  keysRows: KeyRow[] = [];
   // Per-provider key manager: which provider's pool is open + the selected entry.
   // null = the provider list is showing. Rows are read live from keysRows so the
   // manager reflects adds/removes without a stale copy.
-  private keysManage: { id: string; label: string; sel: number } | null = null;
-  private keysEdit: {
+  keysManage: { id: string; label: string; sel: number } | null = null;
+  keysEdit: {
     id: string;
     label: string;
     field: "key" | "baseUrl" | "model" | "label";
@@ -469,26 +352,26 @@ class Tui {
   } | null = null;
 
   // turn state
-  private turnStart = 0;
-  private tick: ReturnType<typeof setInterval> | null = null;
-  private streamBuf = "";
-  private queued: string[] = []; // type-ahead: messages composed mid-turn, run in order on completion
-  private aborting = false; // an esc/ctrl-c interrupt is in flight (guards the "interrupting..." flood)
+  turnStart = 0;
+  tick: ReturnType<typeof setInterval> | null = null;
+  streamBuf = "";
+  queued: string[] = []; // type-ahead: messages composed mid-turn, run in order on completion
+  aborting = false; // an esc/ctrl-c interrupt is in flight (guards the "interrupting..." flood)
   // Warp's badge is showing this pane as blocked on us. Set when we raise an
   // approval or a question, cleared by the first tool call that finishes after
   // -- which is the event that means the answer landed and work resumed. Kept
   // as a flag so a fifty-call turn writes one sequence, not fifty.
-  private warpBlocked = false;
+  warpBlocked = false;
   // Advanced by the turn tick, but only while output is actually arriving --
   // see ./title.ts. Not a clock.
-  private titleFrame = 0;
+  titleFrame = 0;
 
   /**
    * Redirect console.* to ~/.rune/logs/tui-console.log for the life of the
    * surface. Never swallowed: the lines are still written, just not over the
    * screen. Restored by exit().
    */
-  private guardConsole(): void {
+  guardConsole(): void {
     if (this.consoleRestore) return;
     const methods = ["log", "info", "warn", "error", "debug"] as const;
     const saved = methods.map((m) => [m, console[m]] as const);
@@ -520,51 +403,51 @@ class Tui {
       this.consoleRestore = null;
     };
   }
-  private consoleRestore: (() => void) | null = null;
+  consoleRestore: (() => void) | null = null;
 
   /** The tab's own name for this project. */
-  private titleProject(): string {
+  titleProject(): string {
     return this.ctx.workspaceRoot.split("/").filter(Boolean).pop() ?? "";
   }
 
   /** Paint the tab for an in-flight turn. Warp will not badge a pane it has not
    *  classified as an agent, but it renames one on OSC 0 like any terminal. */
-  private paintTitle(turn: { beat(): { quietMs: number } }): void {
+  paintTitle(turn: { beat(): { quietMs: number } }): void {
     const { quietMs } = turn.beat();
     if (quietMs < 4000) this.titleFrame++;
     setTitle({ kind: "working", frame: this.titleFrame, quietMs }, this.titleProject());
   }
-  private turnPreview: string[] | null = null; // one live intent row + one evidence row
-  private filesEdited = new Set<string>(); // session-wide, shown on the footer readout
-  private interactiveTipShown = false; // the /interactive offer fires at most once per session
-  private lastWorkLog: string | null = null; // the last turn's full work log (ctrl+r expands it)
-  private liveTurn: TurnRenderer | null = null; // in-flight renderer (ctrl+r mid-turn)
+  turnPreview: string[] | null = null; // one live intent row + one evidence row
+  filesEdited = new Set<string>(); // session-wide, shown on the footer readout
+  interactiveTipShown = false; // the /interactive offer fires at most once per session
+  lastWorkLog: string | null = null; // the last turn's full work log (ctrl+r expands it)
+  liveTurn: TurnRenderer | null = null; // in-flight renderer (ctrl+r mid-turn)
   /** The plan as the last turn set it down, so the next turn's first checklist
    *  is not a reprint of carried-over state. */
-  private lastPlanKey: string | null = null;
-  private loopPoll: ReturnType<typeof setInterval> | null = null;
-  private activeLoopId: string | null = null;
+  lastPlanKey: string | null = null;
+  loopPoll: ReturnType<typeof setInterval> | null = null;
+  activeLoopId: string | null = null;
 
   // Temporary work-details view. It replaces the pinned region and disappears
   // on Esc/Ctrl+R, so inspecting work never duplicates it into scrollback.
-  private reviewLog: string | null = null;
-  private reviewTop = 0;
-  private reviewReturnMode: "input" | "turn" = "input";
+  reviewLog: string | null = null;
+  reviewTop = 0;
+  reviewReturnMode: "input" | "turn" = "input";
 
   // render coalescing -- collapse bursts of draw requests into one paint per frame (~60fps), so a
   // streamed token, a held arrow key, or a flick of the mouse wheel never trigger N full repaints.
-  private drawScheduled = false;
-  private drawTimer: ReturnType<typeof setTimeout> | null = null;
-  private lastPaint = 0;
+  drawScheduled = false;
+  drawTimer: ReturnType<typeof setTimeout> | null = null;
+  lastPaint = 0;
 
   // hardware-scroll tracking: the visible window's bottom index (`end`) + band geometry at the last
   // and only the newly exposed lines need painting. -1 = no previous frame yet.
-  private prevEnd = -1;
-  private prevBandTop = -1;
-  private prevTransH = -1;
+  prevEnd = -1;
+  prevBandTop = -1;
+  prevTransH = -1;
 
   // transient resolvers
-  private picker: {
+  picker: {
     items: PickerItem[];
     sel: number;
     title: string;
@@ -574,7 +457,7 @@ class Tui {
     /** Optional second action key (e.g. `d` = "select as default") -- resolves with alt=true. */
     altKey?: string;
   } | null = null;
-  private perm: {
+  perm: {
     resolve: (d: UserPermissionDecision) => void;
     toolName: string;
     argsSummary: string;
@@ -582,11 +465,11 @@ class Tui {
     sel: number;
   } | null = null;
   // transient single-line text prompt (used by /research clarify & revise)
-  private askState: { resolve: (s: string | null) => void; title: string } | null = null;
+  askState: { resolve: (s: string | null) => void; title: string } | null = null;
   /** Grace window before a 4th-gear ask_user picker auto-continues. */
-  private static readonly QUESTION_AUTO_CONTINUE_MS = 60_000;
+  static readonly QUESTION_AUTO_CONTINUE_MS = 60_000;
   // ask_user tool: blocking question with numbered options (turn-time).
-  private questionState: {
+  questionState: {
     resolve: (s: string) => void;
     question: string;
     options: string[];
@@ -606,7 +489,7 @@ class Tui {
     deadline?: number;
   } | null = null;
   /** End-of-turn held steps: the interactive half of Auto's deferral ledger. */
-  private heldState: {
+  heldState: {
     steps: AutoModeDeferral[];
     outcomes: Array<HeldOutcome | null>;
     sel: number;
@@ -617,25 +500,14 @@ class Tui {
   /** Deferrals delivered by the engine mid-teardown, held until the turn's
    *  finally decides whether the panel may open (an aborted or queued-over
    *  turn gets the plain printed list instead). */
-  private pendingHeld: AutoModeDeferral[] | null = null;
+  pendingHeld: AutoModeDeferral[] | null = null;
 
-  constructor(private ctx: TuiContext) {
+  constructor(readonly ctx: TuiContext) {
     // Default: the fixed-chrome viewport. --inline keeps the legacy layout,
     // where the transcript is committed to the terminal's own scrollback and
     // only the composer is pinned.
     this.inline = Boolean(ctx.inline);
     setTermWidthOverride(this.inline ? null : this.contentCols());
-  }
-
-  /**
-   * The column the surface is allowed to draw into. The flow grammar bounds
-   * itself to a 78-cell measure, so this only has to stop a line from touching
-   * the right edge of a narrow window.
-   */
-  private contentCols(): number {
-    const width = cols();
-    if (this.inline) return width;
-    return Math.max(8, width - 1);
   }
 
   // -- lifecycle --
@@ -792,11 +664,11 @@ class Tui {
     });
   }
 
-  private exit: (code?: number) => void = () => {};
+  exit: (code?: number) => void = () => {};
 
   // -- input rendering --
 
-  private statusStr(): string {
+  statusStr(): string {
     let contextPercent: number | undefined;
     try {
       contextPercent = this.ctx.engine.getContextUsage().percent;
@@ -825,7 +697,7 @@ class Tui {
   }
 
   /** Shift up one gear (Shift+Tab / `/gear` / `/mode`) -- or straight to `target` -- and announce it. */
-  private cyclePermissionMode(mode?: ReturnType<Engine["getPermissionMode"]>): void {
+  cyclePermissionMode(mode?: ReturnType<Engine["getPermissionMode"]>): void {
     let next: ReturnType<Engine["getPermissionMode"]>;
     if (mode) {
       const result = this.ctx.engine.setPermissionMode(mode);
@@ -852,7 +724,7 @@ class Tui {
    * asked about once and the answer is what is kept: yes, and it persists like
    * any other; no, and it stays session-only and is never raised again.
    */
-  private async rememberGear(gear: ReturnType<Engine["getPermissionMode"]>): Promise<void> {
+  async rememberGear(gear: ReturnType<Engine["getPermissionMode"]>): Promise<void> {
     try {
       const prefs = loadPrefs();
       if (shouldAskAboutFourthGear(gear, prefs)) {
@@ -891,285 +763,7 @@ class Tui {
 
   // -- slash palette (live `/` menu) --
 
-  private slashCatalog(): SlashItem[] {
-    // Ordered by what a person actually reaches for, not alphabetically and
-    // not by when it was written. /theme led this list for a long time -- a
-    // cosmetic toggle, above the two things (which model, how do I connect)
-    // that decide whether the product works at all.
-    //
-    // What was REMOVED from the surface, and why:
-    //   /providers /keys   folded into /login, which asks what you have instead
-    //                      of what the system calls it.
-    //   /research
-    //   /deepresearch      research is already a TOOL the agent reaches for on
-    //                      its own (see the doctrine's Research line). Two
-    //                      commands that only set a mode taught users to drive
-    //                      manually something the agent should decide.
-    //   /rename            belongs to a session, so it lives in /sessions where
-    //                      you can see which one you are renaming.
-    //   /resume            /sessions already opens the picker.
-    //   /autonomy          legacy alias for /gear.
-    //   /mode              same thing as /gear, twice.
-    // All of them still WORK when typed -- they are hidden, not deleted, so no
-    // muscle memory or script breaks.
-    const builtins: SlashItem[] = [
-      { name: "/model", desc: "Choose model, provider, and thinking depth", tag: "settings" },
-      {
-        name: "/config",
-        desc: "Settings: cost, reasoning, agents, sandbox and learning",
-        tag: "settings",
-      },
-      { name: "/login", desc: "Connect a subscription, an API key, a local model, or web search" },
-      { name: "/sessions", desc: "Browse, resume, rename, archive & delete", tag: "history" },
-      {
-        name: "/gear",
-        desc: "Shift gears -- 1 | 2 | 3 | 4 | auto (empty shifts up)",
-        tag: "shift+tab",
-      },
-      { name: "/diff", desc: "Inspect staged and uncommitted workspace changes", tag: "git" },
-      { name: "/undo", desc: "Revert the last Rune auto-commit" },
-      { name: "/rewind", desc: "Roll back the conversation" },
-      { name: "/cost", desc: "Session cost" },
-      { name: "/status", desc: "Session status" },
-      { name: "/loop", desc: "Repeat a prompt while this session stays open" },
-      { name: "/loops", desc: "List and manage this session's loops" },
-      { name: "/team", desc: "Other Rune instances here -- status | send | claim | intent" },
-      { name: "/mcp", desc: "MCP connectors -- health, tool count | reconnect <server>" },
-      { name: "/skills", desc: "Browse or search available skills" },
-      { name: "/memory", desc: "System memory -- your evergreen profile" },
-      { name: "/notebook", desc: "Learned tactics for this workspace" },
-      { name: "/interactive", desc: "Live dashboard -- [focus] | auto on|off | open" },
-      {
-        name: "/sandbox",
-        desc: "OS sandbox for commands -- mode | override | exclude | config",
-      },
-      { name: "/browser", desc: "Agent web browser -- on | off" },
-      { name: "/compress", desc: "Summarize & shrink context" },
-      { name: "/theme", desc: "Switch accent colors and light / dark mode", tag: "cosmetic" },
-      { name: "/bug", desc: "Flag a problem -- records the flight trail" },
-      { name: "/clear", desc: "Clear the screen" },
-      { name: "/help", desc: "Show commands" },
-      { name: "/quit", desc: "Exit Rune" },
-    ];
-    const custom: SlashItem[] = this.ctx.customCommands.map((c) => ({
-      name: "/" + c.name,
-      desc: c.description || "Custom command",
-    }));
-    return [...builtins, ...custom];
-  }
-
-  /** Commands matching the `/`-prefixed token being typed; empty hides the palette. */
-  private slashMatches(): SlashItem[] {
-    if (this.mode !== "input") return [];
-    const v = this.input;
-    if (!v.startsWith("/") || /\s/.test(v)) return []; // not a command, or name already complete
-    const t = v.slice(1).toLowerCase();
-    const all = this.slashCatalog();
-    const pref = all.filter((c) => c.name.slice(1).toLowerCase().startsWith(t));
-    return pref.length ? pref : all.filter((c) => c.name.slice(1).toLowerCase().includes(t));
-  }
-
-  private composerBlock(height = Math.max(3, rowsCount() - 1)): RenderedBlock {
-    if (this.mode === "picker" && this.picker) {
-      return renderPicker(
-        this.picker.title,
-        this.picker.items,
-        this.picker.sel,
-        this.contentCols(),
-        height,
-        { footnote: this.picker.footnote },
-      );
-    }
-    if (this.mode === "permission" && this.perm) {
-      const card = renderPermissionCard(
-        this.perm.toolName,
-        this.perm.argsSummary,
-        this.contentCols(),
-        {
-          preview: this.perm.preview,
-          selected: this.perm.sel,
-          maxPreviewLines: Math.max(2, Math.min(7, rowsCount() - 15)),
-        },
-      );
-      // v2 status ladder: the run is paused on a human decision -- say so in
-      // the ochre "Waiting on approval..." rung above the card, with the live
-      // elapsed receipt and the gear the decision is needed in.
-      const waitSecs = Math.max(0, Math.floor((Date.now() - this.turnStart) / 1000));
-      const head = waitingRung(waitSecs, this.perm.toolName, this.ctx.engine.getPermissionMode());
-      return {
-        lines: [head, ...card.lines],
-        caretRow: card.caretRow + 1,
-        caretCol: card.caretCol,
-      };
-    }
-    if (this.mode === "held" && this.heldState) {
-      const st = this.heldState;
-      const lines = heldLines({
-        steps: st.steps,
-        outcomes: st.outcomes,
-        selected: st.sel,
-        running: st.running,
-        width: this.contentCols(),
-      });
-      // The caret parks on the hint row: there is no field here, and the
-      // marker already says where the selection is.
-      return { lines, caretRow: lines.length - 1, caretCol: F.BODY.length };
-    }
-    if (this.mode === "ask" && this.askState) {
-      const base = renderComposer({
-        input: this.input,
-        caret: this.caret,
-        width: this.contentCols(),
-        status: this.statusStr(),
-      });
-      const title = `  ${info("?")} ${text(this.askState.title)} ${faint("(Enter = ok | Esc = skip)")}`;
-      return {
-        lines: [title, ...base.lines],
-        caretRow: base.caretRow + 1,
-        caretCol: base.caretCol,
-      };
-    }
-    if (this.mode === "question" && this.questionState) {
-      const q = this.questionState;
-      const base = renderComposer({
-        input: this.input,
-        caret: this.caret,
-        width: this.contentCols(),
-        status: this.statusStr(),
-        placeholder: questionPlaceholder(q.options.length),
-      });
-      const head = questionLines({ ...q, input: this.input, width: this.contentCols() });
-      return {
-        lines: [...head, ...base.lines],
-        // The caret stays in the field, not on the highlighted row: typing an
-        // answer is a first-class path here, and the marker already says where
-        // the selection is. A caret parked on a list you may not be using is
-        // the thing that made this surface feel like it was guessing.
-        caretRow: base.caretRow + head.length,
-        caretCol: base.caretCol,
-      };
-    }
-    if (this.mode === "keys") {
-      if (this.keysEdit) {
-        const e = this.keysEdit;
-        return renderKeyEditor({
-          title: e.title,
-          subtitle: e.subtitle,
-          value: e.value,
-          caret: e.caret,
-          width: this.contentCols(),
-          masked: e.masked,
-        });
-      }
-      if (this.keysManage) {
-        const row = this.keysRows.find((r) => r.id === this.keysManage!.id);
-        return renderKeyManagerPanel(
-          this.keysManage.label,
-          row?.savedKeys ?? [],
-          this.keysManage.sel,
-          this.contentCols(),
-        );
-      }
-      return renderKeysPanel(
-        this.keysRows,
-        this.keysSel,
-        this.contentCols(),
-        Math.max(4, rowsCount() - 1),
-      );
-    }
-    if (this.mode === "sessions") {
-      return renderSessionsPanel(
-        this.sessionsList.map((s) => this.sessionRowView(s)),
-        this.sessionsSel,
-        {
-          view: this.sessionsView,
-          pendingDelete: this.sessionsPendingDelete != null,
-          query: this.sessionsQuery,
-          searching: this.sessionsSearching,
-        },
-        this.contentCols(),
-        Math.max(4, rowsCount() - 1),
-      );
-    }
-    if (this.mode === "memory") {
-      const m = this.ctx.engine.getSystemMemory();
-      return renderMemoryPanel(
-        {
-          content: m.content,
-          scheduleLabel: m.scheduleLabel,
-          tokens: m.tokens,
-          maxTokens: m.maxTokens,
-          lastDreamed: m.meta.lastReflectedAt ? this.relTime(m.meta.lastReflectedAt) : "never",
-          busy: this.memoryBusy,
-          note: this.memoryNote ?? undefined,
-          pendingClear: this.memoryPendingClear,
-        },
-        this.memorySel,
-        this.contentCols(),
-      );
-    }
-    if (this.mode === "review") {
-      const log = this.liveTurn?.fullLog() ?? this.reviewLog ?? `  ${faint("No work details yet")}`;
-      return renderWorkReview(
-        log,
-        this.reviewTop,
-        this.contentCols(),
-        Math.max(4, rowsCount() - 1),
-      );
-    }
-    if (this.mode === "turn") {
-      // The composer stays live while a turn streams so the next message can be typed ahead.
-      // The working indicator (and any queued messages) float above the still-editable box.
-      const base = renderComposer({
-        input: this.input,
-        caret: this.caret,
-        width: this.contentCols(),
-        status: this.statusStr(),
-      });
-      // The buffered prose run streams live here (it commits to the transcript only
-      // once the turn decides which partition -- work rail or response -- it belongs to).
-      const head = this.turnStateLines();
-      head.push(...renderQueueStrip(this.queued, this.contentCols()));
-      return {
-        lines: [...head, ...base.lines],
-        caretRow: base.caretRow + head.length,
-        caretCol: base.caretCol,
-      };
-    }
-    const base = renderComposer({
-      input: this.input,
-      caret: this.caret,
-      width: this.contentCols(),
-      status: this.statusStr(),
-    });
-    const matches = this.slashMatches();
-    if (matches.length === 0) return base;
-    // Float the palette above the input box; the caret stays in the box.
-    const palette = renderSlashPalette(
-      matches,
-      this.slashSel,
-      this.contentCols(),
-      Math.max(1, rowsCount() - base.lines.length - 2),
-      this.slashCatalog().length,
-    );
-    return {
-      lines: [...palette, ...base.lines],
-      caretRow: base.caretRow + palette.length,
-      caretCol: base.caretCol,
-    };
-  }
-
-  /** Append a block to the transcript, theming each line in the *current* theme and bounding
-   *  the buffer. (Lines keep their theme; switching themes recolours the live composer + new
-   *  output, and history stays readable in the theme it was written in.) */
-  /** Hard-bound a line to the terminal width. An over-wide line auto-wraps,
-   *  which breaks the pinned region's row math -- and then every repaint leaks
-   *  stale rows into the scrollback (the "duplicated spam" failure mode). */
-  private bound(ln: string): string {
-    return clampVisible(ln, Math.max(8, this.contentCols() - 1));
-  }
-
-  private pushLines(block: string): number {
+  pushLines(block: string): number {
     const lines = block.split("\n");
     // Store semantic ANSI only, at full width. Card/canvas backgrounds and the
     // width bound are applied per frame (renderViewport's themeBody), so a
@@ -1189,7 +783,7 @@ class Tui {
   /** Register a block's fold, if it has one: the region starts at its first
    *  visible row, so the blank rhythm line above a group never becomes part
    *  of what a click toggles. */
-  private registerFold(raw: string[], start: number, detail: string): void {
+  registerFold(raw: string[], start: number, detail: string): void {
     let first = 0;
     while (first < raw.length && !stripAnsi(raw[first]!).trim()) first++;
     if (first < raw.length && start + first >= 0) {
@@ -1201,7 +795,7 @@ class Tui {
     }
   }
 
-  private print(block: string, detail?: string): BlockHandle | undefined {
+  print(block: string, detail?: string): BlockHandle | undefined {
     if (this.inline) {
       // Inline: completed blocks flow into the terminal's native scrollback above the pinned
       // composer (the terminal owns scrolling from here). printAbove redraws the composer after.
@@ -1245,7 +839,7 @@ class Tui {
    * correction is the fold's: a splice at or below the reader's window
    * changes the distance between their content and the tail.
    */
-  private amend(handle: BlockHandle, block: string, detail?: string): void {
+  amend(handle: BlockHandle, block: string, detail?: string): void {
     if (this.inline) return;
     const region = this.blocks.get(handle);
     if (!region) return;
@@ -1278,7 +872,7 @@ class Tui {
    * and the tail, and without the correction the view visibly lurches by the
    * size of the fold.
    */
-  private toggleFold(region: FoldRegion): void {
+  toggleFold(region: FoldRegion): void {
     const top = this.transcript.length - this.scroll - this.frameZones().bodyRows;
     const splice = this.folds.toggle(region);
     this.transcript.splice(splice.start, splice.remove, ...splice.insert);
@@ -1295,209 +889,6 @@ class Tui {
     this.scheduleDraw();
   }
 
-  /** A left click landing in the transcript toggles the fold under it. */
-  private clickTranscript(_x: number, y: number): void {
-    if (this.inline || !this.lastBodyMap) return;
-    if (this.mode !== "input" && this.mode !== "turn") return;
-    const map = this.lastBodyMap;
-    const row = y - 1; // SGR cells are 1-based
-    const first = map.bodyTop + (map.marked ? 1 : 0);
-    const last = map.bodyTop + map.bodyRows - 1;
-    if (row < first || row > last) return;
-    const index = map.hiddenAbove + (row - first);
-    if (index < 0 || index >= this.transcript.length) return;
-    const fold = this.folds.at(index);
-    if (fold) this.toggleFold(fold);
-  }
-
-  /** --inline only: redraw just the pinned composer block (the transcript lives in the
-   *  terminal's own scrollback). The fixed layout uses renderViewport() instead. */
-  private renderRegion(): void {
-    const comp = this.pinnedBlock();
-    this.region.render(comp.lines, comp.caretRow, comp.caretCol, this.ownsCaret());
-  }
-
-  /** The zones of the current frame, without building it. Used by the scroll
-   *  keys, which need to know how tall a page is before they can move by one. */
-  private frameZones(): Zones {
-    const headerRows = this.bannerLines().length;
-    return zones(rowsCount(), headerRows, this.footerBlock(headerRows).lines.length);
-  }
-
-  /** How far back the transcript can be scrolled: everything that does not fit
-   *  in the body. Clamping here (and again in composeFrame) is what stops a
-   *  fast wheel from scrolling past the top into a screen of blank rows. */
-  private maxScroll(): number {
-    return Math.max(0, this.transcript.length - this.bodyRowsNow());
-  }
-
-  /** The body height of the frame on screen. Scrolling does not change the
-   *  footer, so the last painted frame's zones are exact -- and a wheel notch
-   *  must not rebuild the banner and the whole composer just to learn two
-   *  integers (a dozen notches arrive in one stdin chunk). */
-  private bodyRowsNow(): number {
-    return this.lastBodyMap?.bodyRows ?? this.frameZones().bodyRows;
-  }
-
-  /**
-   * The pinned FOOTER of the fixed layout.
-   *
-   * Same block as the inline surface's, minus the padding: the inline layout
-   * has to hold blank rows open beneath the transcript to push the field to the
-   * bottom of the window, because the terminal decides where the block lands.
-   * Here the footer is at the bottom by construction, so the padding would be
-   * a hole in the middle of the screen.
-   *
-   * A full-height panel (sessions, keys, memory, the work review) is still a
-   * footer as far as layout is concerned; it just claims almost every row. The
-   * clamp leaves the header standing and one row of transcript behind it, so
-   * even a panel never erases where you are.
-   */
-  private footerBlock(headerRows: number): { lines: string[]; caretRow: number; caretCol: number } {
-    const max = Math.max(3, rowsCount() - headerRows - 1);
-    // Let selectable dialogs window their own items within the actual footer.
-    // Cropping the rendered tail can otherwise remove the selected first row.
-    const comp = this.composerBlock(max);
-    let lines = comp.lines.map((l) => withThemeBg(this.bound(l)));
-    let caretRow = comp.caretRow;
-    if (lines.length > max) {
-      const drop = lines.length - max;
-      const marker = withThemeBg(
-        this.bound(
-          `  ${faint(`... ${drop} more line${drop === 1 ? "" : "s"} above (ctrl+r to expand)`)}`,
-        ),
-      );
-      lines = [marker, ...lines.slice(drop + 1)];
-      caretRow = Math.max(0, caretRow - drop);
-    }
-    return { lines, caretRow, caretCol: comp.caretCol };
-  }
-
-  /**
-   * Paint one whole frame of the fixed layout.
-   *
-   * The header is re-rendered every frame rather than drawn once, so a model
-   * switch, a gear change or a theme change is reflected in the band the moment
-   * it happens -- and costs nothing, because the diff only writes the rows whose
-   * text actually changed.
-   */
-  private renderViewport(): void {
-    const header = this.bannerLines().map((l) => withThemeBg(l));
-    const footer = this.footerBlock(header.length);
-    const frame = composeFrame({
-      rows: rowsCount(),
-      header,
-      transcript: this.transcript,
-      // Bound at paint time, for the rows that made the window only: the
-      // transcript is stored unbounded so a resize re-clips it.
-      themeBody: (l) => withThemeBg(this.bound(l)),
-      footer: footer.lines,
-      scroll: this.scroll,
-      caretRow: footer.caretRow,
-      caretCol: footer.caretCol,
-      blank: "",
-      scrolledMarker: (hidden) =>
-        withThemeBg(
-          this.bound(
-            `  ${faint(`${hidden} earlier line${hidden === 1 ? "" : "s"} above -- pgdn to follow the latest`)}`,
-          ),
-        ),
-    });
-    // composeFrame clamps the scroll to what the transcript can offer; adopting
-    // its answer is what keeps a held PgUp from accumulating an offset the body
-    // cannot honour, then swallowing the first N presses of PgDn on the way back.
-    this.scroll = frame.scroll;
-    // Where the body landed, for the click -> transcript-row math. Recorded
-    // from the frame actually painted, never recomputed later against state
-    // that may have moved.
-    this.lastBodyMap = {
-      bodyTop: frame.zones.bodyTop,
-      bodyRows: frame.zones.bodyRows,
-      hiddenAbove: frame.hiddenAbove,
-      marked: frame.scroll > 0 && frame.zones.bodyRows > 1,
-    };
-    this.viewport.render(frame, !this.ownsCaret());
-  }
-
-  /** --inline only. The pinned composer block, themed, width-bounded, and height-clamped to the
-   *  viewport. (The fixed layout's equivalent is footerBlock(), which needs none of the padding
-   *  below because its footer is at the bottom of the window by construction.) The
-   *  inline region draws with *relative* cursor moves, so a block taller than the screen would
-   *  scroll the terminal mid-draw and desync that math (garbled/duplicated footer under heavy
-   *  streaming). Keep the tail -- the composer + status the user is actually using -- and elide the
-   *  top (the older work/prose preview) behind a marker. */
-  /**
-   * The pinned block — and, at launch, the empty space that puts it where it
-   * belongs.
-   *
-   * A program that prints eight lines into a forty-row window leaves the header
-   * floating in the middle of the screen with the field somewhere under it and
-   * dead space below. Both are technically "in the terminal"; neither is in its
-   * place. The old surface solved this by taking the alternate screen and
-   * owning every cell, which put the header on row one and the field on the
-   * last row — and cost native scrollback, wheel scroll, ⌘F and pipeability to
-   * do it, and painted an empty session as a viewport of nothing.
-   *
-   * This holds the space open from below instead. The pinned block carries the
-   * blank rows itself, so the field sits on the bottom rows of the window from
-   * the first frame while the header stays at the top. As output arrives the
-   * padding shrinks by exactly as much as was printed, so the field never
-   * moves — and once the session has filled the window the padding reaches zero
-   * and the whole thing scrolls like any other program, with its history in the
-   * terminal's own buffer where it belongs.
-   *
-   * Nothing is painted into the held space: they are ordinary blank rows, so a
-   * pipe, NO_COLOR and a narrow window all see exactly what they should.
-   */
-  /**
-   * Whether the block about to be drawn paints its own caret.
-   *
-   * Only the writing surface does. A picker, a permission card and the sessions
-   * panel all use the caret purely to park the terminal's cursor somewhere
-   * sensible, and hiding it there would take away the one signal that says the
-   * pane is focused at all.
-   */
-  private ownsCaret(): boolean {
-    // Only the writing surface paints a caret. Every other mode — pickers, the
-    // permission card, the sessions panel, the key sheet — parks the terminal's
-    // cursor somewhere sensible and needs it visible, because there it is the
-    // only signal that the pane has focus at all.
-    //
-    // The sessions panel joined the writing surface on 2026-09-05: its selected
-    // row is a full-width band and its search field paints a caret cell, so
-    // the parked hardware cursor had become a second, foreign-coloured block
-    // sitting on the band (Warp draws its cursor in its own theme and ignores
-    // OSC 12 -- see theme.ts). Focus is already unmistakable there.
-    return this.mode === "input" || this.mode === "turn" || this.mode === "sessions";
-  }
-
-  private pinnedBlock(): { lines: string[]; caretRow: number; caretCol: number } {
-    const comp = this.composerBlock();
-    let lines = comp.lines.map((l) => withThemeBg(this.bound(l)));
-    let caretRow = comp.caretRow;
-
-    // No hold-open padding. In the Claude Code model the composer TRAILS the
-    // output: right under the masthead on a fresh session, and at the bottom of
-    // the window once a screenful has scrolled. The old padding tried to jam it
-    // to the bottom of an empty screen, which (a) put a gap of blank rows
-    // between the masthead and the field and (b) drifted the field to the
-    // middle after a reflow when the row count went stale -- both read as the
-    // "floating footer". Trailing the output is simpler and is exactly how the
-    // terminal already wants to place a prompt.
-    const max = Math.max(3, rowsCount() - 1);
-    if (lines.length > max) {
-      const drop = lines.length - max;
-      const marker = withThemeBg(
-        this.bound(
-          `  ${faint(`... ${drop} more line${drop === 1 ? "" : "s"} above (ctrl+r to expand)`)}`,
-        ),
-      );
-      lines = [marker, ...lines.slice(drop + 1)];
-      caretRow = Math.max(0, caretRow - drop);
-    }
-    return { lines, caretRow, caretCol: comp.caretCol };
-  }
-
   /** Print the banner once at the top; it scrolls away with the conversation.
    *
    *  This used to also clear the screen and paint it in the theme background.
@@ -1506,7 +897,7 @@ class Tui {
    *  opened Rune — and asserting a background is the single largest reason a
    *  TUI looks broken on someone else's theme. Inherit; do not assert. */
   /** Tell Warp this pane is an agent, and where it is. */
-  private warp(
+  warp(
     event: Parameters<typeof notifyWarp>[0]["event"],
     extra: {
       query?: string;
@@ -1532,7 +923,7 @@ class Tui {
    * hands the terminal to a child (the $EDITOR path), so both layouts have
    * exactly one place that knows how they are put on screen.
    */
-  private enterSurface(): void {
+  enterSurface(): void {
     // The cursor is the one piece of terminal chrome that sits inside our own
     // field, so it takes the theme's accent — see terminalThemeSeq. Handed back
     // on exit and by the crash handler; a terminal that ignores OSC 12 ignores
@@ -1567,7 +958,7 @@ class Tui {
     if (!this.inline) this.scheduleDraw();
   }
 
-  private mastheadPrinted = false;
+  mastheadPrinted = false;
   /**
    * Commit the one-line header once per session start (the wordmark row + the
    * seam rule). Idempotent: the launch picker and the direct-start path both
@@ -1586,7 +977,7 @@ class Tui {
    * picker settles on "new". That path used to print nothing at all and, on
    * the fixed frame, left the picker painted until the next keystroke.
    */
-  private openFreshSession(): void {
+  openFreshSession(): void {
     this.printMastheadOnce();
     const { engine } = this.ctx;
     // The empty start screen said nothing but a memory tip. A person's first
@@ -1623,7 +1014,7 @@ class Tui {
     this.scheduleDraw();
   }
 
-  private printMastheadOnce(): void {
+  printMastheadOnce(): void {
     if (this.mastheadPrinted) return;
     this.mastheadPrinted = true;
     if (!this.inline) return;
@@ -1643,7 +1034,7 @@ class Tui {
   }
 
   /** Unmount the render surface, leaving the terminal as it was found. */
-  private leaveSurface(): void {
+  leaveSurface(): void {
     if (this.inline)
       this.region.clear(); // leaves the transcript in scrollback
     else this.viewport.leave(); // restores the shell's screen untouched
@@ -1651,7 +1042,7 @@ class Tui {
   }
 
   /** Apply a runtime theme change to the terminal surface as well as future tokens. */
-  private refreshThemeSurface(): void {
+  refreshThemeSurface(): void {
     // Reset first so switching from an explicit palette back to Auto truly hands
     // foreground/background control back to the host terminal.
     process.stdout.write(TERMINAL_THEME_RESET + terminalThemeSeq());
@@ -1667,14 +1058,14 @@ class Tui {
   }
 
   /** The preset's human label for the active model ("Gemini 2.5 Flash"), when known. */
-  private modelLabel(): string | undefined {
+  modelLabel(): string | undefined {
     const { engine } = this.ctx;
     const model = engine.getModel();
     return getPreset(engine.getProvider())?.models?.find((m) => m.id === model)?.label;
   }
 
   /** Connected MCP servers, for the header badge. */
-  private mcpServerCount(): number {
+  mcpServerCount(): number {
     try {
       return this.ctx.engine.getMcpStatus().length;
     } catch {
@@ -1684,7 +1075,7 @@ class Tui {
 
   /** The active gear, as the header states it: what proceeds without asking,
    *  and -- in 1st gear, where nothing does -- what still asks. */
-  private gearScope(): { scope: string; caution?: string } {
+  gearScope(): { scope: string; caution?: string } {
     const mode = modeInfo(this.ctx.engine.getPermissionMode());
     return {
       scope: mode.label,
@@ -1700,7 +1091,7 @@ class Tui {
    *  the user asked for a clear screen, and this is exactly what clear(1) does.
    *  It is not a render path — nothing repaints through here — so it cannot rot
    *  the way a per-frame absolute address does. No background is painted. */
-  private resetTranscript(): void {
+  resetTranscript(): void {
     this.transcript = [];
     this.folds.clear();
     this.blocks.clear();
@@ -1724,91 +1115,7 @@ class Tui {
     this.printMastheadOnce();
   }
 
-  /** The banner, rendered live (re-themed every frame) so the header always matches the
-   *  current theme -- pinned at the top of the viewport by renderViewport(). */
-  private bannerLines(): string[] {
-    const { engine } = this.ctx;
-    return renderBanner({
-      model: engine.getModel(),
-      modelLabel: this.modelLabel(),
-      provider: engine.getProvider(),
-      effort: engine.getReasoningEffort(),
-      sessionId: this.ctx.sessionId,
-      workspace: this.ctx.workspaceRoot,
-      version: this.ctx.version,
-      ...this.gearScope(),
-    })
-      .split("\n")
-      .map((l) => this.bound(l));
-  }
-
-  /** Request a repaint, coalesced to at most one paint per ~16ms (60fps). Almost every input and
-   *  stream event funnels through here; together with the diff renderer this turns a burst of
-   *  changes into a single frame, which is what removes the scroll/stream jitter. */
-  private scheduleDraw(): void {
-    if (this.drawScheduled) return;
-    this.drawScheduled = true;
-    const wait = Math.max(0, 16 - (Date.now() - this.lastPaint));
-    this.drawTimer = setTimeout(() => this.paint(), wait);
-  }
-
-  private paint(): void {
-    this.drawScheduled = false;
-    this.drawTimer = null;
-    this.lastPaint = Date.now();
-    if (this.inline) this.renderRegion();
-    else this.renderViewport();
-  }
-
-  /** Scroll the body by whole screens (PgUp/PgDn). One row of overlap, so the
-   *  line you were reading at the seam is still there after the jump. */
-  private scrollBy(pages: number): void {
-    this.scrollLines(pages * Math.max(1, this.bodyRowsNow() - 1));
-  }
-
-  /**
-   * Scroll the body. Positive moves back through history, negative returns
-   * toward the live tail -- matching `scroll`, which counts lines ABOVE the
-   * bottom.
-   *
-   * Under --inline this stays a no-op on purpose: there the transcript is in
-   * the terminal's own buffer, and a program that also scrolled it would be
-   * fighting the scrollbar the user is already holding.
-   */
-  /**
-   * Fixed frame only: does an arrow key READ the transcript or RECALL history?
-   * The same two keys carry both, because alternate-scroll mode delivers the
-   * wheel as arrows and the composer already uses them for history. The two
-   * meanings are told apart here, in one place, so the input and mid-turn
-   * paths cannot drift. `burst` is true when the whole read was a one-way
-   * arrow run (arrowRun) -- the wheel's signature. History stays reachable
-   * on ctrl+p / ctrl+n whatever this decides.
-   *
-   * TODO(human): this is the policy seam. Current rule: a burst always
-   * scrolls; once the transcript is scrolled away from the tail the arrows
-   * keep scrolling (down returns to the tail); a lone arrow on an EMPTY
-   * composer scrolls; a lone arrow with a draft in the composer recalls
-   * history. The trade: Up-on-empty no longer recalls the last prompt the way
-   * Claude Code does, because a slow trackpad sends one arrow per read and
-   * would otherwise recall history mid-scroll.
-   */
-  private arrowScrolls(burst: boolean): boolean {
-    if (this.inline) return false;
-    if (this.mode !== "input" && this.mode !== "turn") return false;
-    if (burst) return true;
-    if (this.scroll > 0) return true;
-    return this.input.length === 0;
-  }
-
-  private scrollLines(lines: number): void {
-    if (this.inline) return;
-    const next = Math.max(0, Math.min(this.maxScroll(), this.scroll + lines));
-    if (next === this.scroll) return;
-    this.scroll = next;
-    this.scheduleDraw();
-  }
-
-  private workingText(): string {
+  workingText(): string {
     if (this.aborting) return `${accent(HEX)} ${bold(text("Interrupting..."))}`;
     const elapsed = Date.now() - this.turnStart;
     const secs = Math.floor(elapsed / 1000);
@@ -1823,7 +1130,7 @@ class Tui {
    *  has to show for itself -- a row per sub-agent in flight, or the tail of
    *  the answer as it streams) -- or the interrupting state while an abort
    *  drains. */
-  private turnStateLines(): string[] {
+  turnStateLines(): string[] {
     if (this.aborting) return this.pinLiveHeight([`  ${this.workingText()}`]);
     const lines = [...(this.turnPreview ?? [])];
     if (lines.length === 0) {
@@ -1845,395 +1152,18 @@ class Tui {
     );
   }
 
-  private liveBlockBudget(): number {
-    return Math.max(2, Math.min(LIVE_BLOCK_ROWS, Math.floor(rowsCount() / 3)));
-  }
-
-  /**
-   * Hold the live block at the tallest it has been THIS TURN.
-   *
-   * The block's natural height moves constantly: the streaming prose tail is
-   * four rows while the agent narrates and zero the instant a tool call starts
-   * (the prose is captured as intent), then four again on the next sentence.
-   * Every change re-splits the frame, the body shrinks or grows by that many
-   * rows, and the transcript re-indexes -- the whole body repainted, the text
-   * the user was reading jumping up or down. Twenty tool calls, forty jumps.
-   * Pinning the height to the turn's high-water mark makes the block grow a
-   * few times early and then stand still; the one collapse comes at the end
-   * of the turn, where the reader expects the screen to settle anyway.
-   */
-  private pinLiveHeight(lines: string[]): string[] {
-    const held = holdHeight(lines, this.liveBlockRows, this.liveBlockBudget());
-    this.liveBlockRows = held.highWater;
-    return held.rows;
-  }
   /** High-water mark of the live block this turn; reset when a turn starts. */
-  private liveBlockRows = 0;
+  liveBlockRows = 0;
   /** What the tick last painted, so an unchanged rung costs no frame. */
-  private lastTickKey = "";
+  lastTickKey = "";
 
   // -- stdin routing --
 
-  private onData(chunk: string): void {
-    // Bracketed paste is carved out of the stream as substrings (PasteScanner) -- never fed through
-    // parseKeys. A multi-megabyte paste (e.g. dumping a large doc) would otherwise allocate one Key
-    // object per character and rebuild an accumulator char-by-char (O(n2)), freezing the UI for
-    // seconds. Here the whole body is one substring, so a huge paste is effectively free.
-    for (const seg of this.paste.push(chunk)) {
-      if (seg.type === "paste") this.endPaste(seg.content);
-      else {
-        const keys = parseKeys(seg.data);
-        // A wheel notch under alternate-scroll mode lands as several arrows
-        // in ONE read; a finger on a key never does. Route the burst as a
-        // scroll of that many lines, never as a stack of history recalls.
-        const run = arrowRun(keys);
-        if (run !== 0 && this.arrowScrolls(true)) {
-          this.scrollLines(run);
-          continue;
-        }
-        for (const key of keys) this.routeKey(key);
-      }
-    }
-  }
-
-  /** Route one decoded key event to the active mode (paste is handled upstream in onData). */
-  private routeKey(key: Key): void {
-    if (this.mode === "review" && (key.type === "wheel-up" || key.type === "wheel-down")) {
-      this.moveWorkReview(key.type === "wheel-up" ? -SCROLL_STEP : SCROLL_STEP);
-      return;
-    }
-    // The mouse wheel scrolls the transcript in every mode -- even while a turn streams.
-    if (key.type === "wheel-up") {
-      this.scrollLines(SCROLL_STEP);
-      return;
-    }
-    if (key.type === "wheel-down") {
-      this.scrollLines(-SCROLL_STEP);
-      return;
-    }
-    // A left click opens or closes the fold under it; ctrl+o answers for the
-    // newest fold without leaving the keyboard, and falls back to the full
-    // work log where there is nothing to open.
-    if (key.type === "click") {
-      this.clickTranscript(key.x, key.y);
-      return;
-    }
-    if (
-      key.type === "ctrl" &&
-      key.name === "o" &&
-      (this.mode === "input" || this.mode === "turn")
-    ) {
-      const fold = this.inline ? undefined : this.folds.newest();
-      if (fold) this.toggleFold(fold);
-      else this.expandWorkLog();
-      return;
-    }
-    // Shift+Tab cycles confirm -> Autonomy I -> II -> III -> Auto -> confirm while composing.
-    // Inside an approval ask it is the explicit "allow for session" shortcut printed
-    // beside choice 2, so the visible contract and the keyboard behavior stay identical.
-    if (key.type === "shift-tab") {
-      if (this.mode === "permission") this.permKey(key);
-      else if (this.mode === "input" || this.mode === "turn") this.cyclePermissionMode();
-      return;
-    }
-    switch (this.mode) {
-      case "input":
-        this.inputKey(key);
-        break;
-      case "turn":
-        this.turnKey(key);
-        break;
-      case "picker":
-        this.pickerKey(key);
-        break;
-      case "permission":
-        this.permKey(key);
-        break;
-      case "keys":
-        this.keysKey(key);
-        break;
-      case "sessions":
-        this.sessionsKey(key);
-        break;
-      case "memory":
-        this.memoryKey(key);
-        break;
-      case "ask":
-        this.askKey(key);
-        break;
-      case "question":
-        this.questionKey(key);
-        break;
-      case "held":
-        this.heldKey(key);
-        break;
-      case "review":
-        this.workReviewKey(key);
-        break;
-    }
-  }
-
-  /** Land a finished paste: small single-line pastes drop in inline; anything multi-line or long
-   *  collapses to a chip so the composer stays a clean single line (see `pastes`). */
-  private endPaste(content: string): void {
-    // Key/URL editor is a single-line field -- always inline, newlines stripped by insertActive.
-    if (this.mode === "keys") {
-      this.insertActive(content);
-      this.scheduleDraw();
-      return;
-    }
-    if (shouldCollapse(content)) {
-      const id = ++this.pasteSeq;
-      this.pastes.set(id, content);
-      this.insert(pasteChip(id, content));
-    } else {
-      this.insert(content);
-    }
-    this.scheduleDraw();
-  }
-
-  /** Swap `[Pasted text #N ...]` chips back to their stored bodies just before a message is sent. */
-  private expandPastes(s: string): string {
-    return expandPastes(s, this.pastes);
-  }
-
-  /** Drop paste bodies whose chip no longer appears in the composer (consumed or edited away). */
-  private gcPastes(): void {
-    if (this.pastes.size === 0) return;
-    const live = livePasteIds(this.input);
-    for (const id of [...this.pastes.keys()]) if (!live.has(id)) this.pastes.delete(id);
-  }
-
   // -- input mode --
-
-  private insert(s: string): void {
-    const clean = s.replace(/\r/g, "");
-    this.input = this.input.slice(0, this.caret) + clean + this.input.slice(this.caret);
-    this.caret += clean.length;
-  }
-
-  /** Route pasted text to whichever field is active (composer, or a key editor). */
-  private insertActive(s: string): void {
-    if (this.mode === "keys") {
-      if (!this.keysEdit) return; // ignore pastes on the list view
-      const clean = s.replace(/[\r\n]+/g, ""); // keys/URLs are single-line
-      const e = this.keysEdit;
-      e.value = e.value.slice(0, e.caret) + clean + e.value.slice(e.caret);
-      e.caret += clean.length;
-      return;
-    }
-    this.insert(s);
-  }
-
-  /** Apply a pure text-editing key to the composer (insert / caret motion / deletion). Returns
-   *  true when it handled the key. Shared by input mode and mid-turn type-ahead so the composer
-   *  edits identically whether or not a turn is streaming; callers own redraw + side effects. */
-  private editComposer(key: Key): boolean {
-    switch (key.type) {
-      case "char":
-        this.insert(key.value);
-        this.scroll = 0; // typing returns to the latest output
-        return true;
-      case "backspace":
-        if (this.caret > 0) {
-          this.input = this.input.slice(0, this.caret - 1) + this.input.slice(this.caret);
-          this.caret--;
-        }
-        return true;
-      case "delete":
-        if (this.caret < this.input.length) {
-          this.input = this.input.slice(0, this.caret) + this.input.slice(this.caret + 1);
-        }
-        return true;
-      case "left":
-        if (this.caret > 0) this.caret--;
-        return true;
-      case "right":
-        if (this.caret < this.input.length) this.caret++;
-        return true;
-      case "home":
-        this.caret = 0;
-        return true;
-      case "end":
-        this.caret = this.input.length;
-        return true;
-      default:
-        return false;
-    }
-  }
-
-  private inputKey(key: Key): void {
-    // Reference-card shortcuts: left from an empty composer opens history; `?`
-    // opens the same live command palette as `/` without submitting a message.
-    if (key.type === "left" && this.input.length === 0) {
-      this.openSessions();
-      return;
-    }
-    if (key.type === "char" && key.value === "?" && this.input.length === 0) {
-      this.input = "/";
-      this.caret = 1;
-      this.slashSel = 0;
-      this.scheduleDraw();
-      return;
-    }
-    // When the `/` palette is open, up/down navigate it and tab/enter pick from it.
-    const sm = this.slashMatches();
-    if (sm.length > 0) {
-      const sel = Math.max(0, Math.min(this.slashSel, sm.length - 1));
-      switch (key.type) {
-        case "up":
-          this.slashSel = (sel - 1 + sm.length) % sm.length;
-          this.scheduleDraw();
-          return;
-        case "down":
-          this.slashSel = (sel + 1) % sm.length;
-          this.scheduleDraw();
-          return;
-        case "tab":
-          this.input = sm[sel]!.name + " ";
-          this.caret = this.input.length;
-          this.slashSel = 0;
-          this.scheduleDraw();
-          return;
-        case "enter":
-          this.input = sm[sel]!.name;
-          this.caret = this.input.length;
-          this.slashSel = 0;
-          void this.submit();
-          return;
-      }
-    }
-    // Text editing (insert / caret / delete) is shared with mid-turn type-ahead.
-    if (this.editComposer(key)) {
-      this.sigintArmed = false;
-      this.slashSel = 0;
-      this.scheduleDraw();
-      return;
-    }
-    switch (key.type) {
-      case "pageup":
-        this.scrollBy(1);
-        break;
-      case "pagedown":
-        this.scrollBy(-1);
-        break;
-      case "enter":
-        void this.submit();
-        break;
-      case "up":
-        if (this.arrowScrolls(false)) this.scrollLines(1);
-        else this.historyPrev();
-        break;
-      case "down":
-        if (this.arrowScrolls(false)) this.scrollLines(-1);
-        else this.historyNext();
-        break;
-      case "esc":
-        if (this.input.length === 0) {
-          const cancelled = this.ctx.engine.cancelLoopTask(this.ctx.sessionId);
-          if (cancelled.ok && cancelled.task) {
-            this.print(
-              `  ${danger(glyph("failure"))} ${muted("stopped loop")} ${info(cancelled.task.id)} ${faint(loopPromptPreview(cancelled.task.prompt, 56))}`,
-            );
-          }
-        } else {
-          this.input = "";
-          this.caret = 0;
-          this.scheduleDraw();
-        }
-        break;
-      case "ctrl":
-        this.ctrlKey(key.name);
-        break;
-    }
-  }
-
-  private ctrlKey(name: string): void {
-    switch (name) {
-      // History, by name: the arrows read the transcript in the fixed frame
-      // (arrowScrolls), so recall keeps a pair of keys that never scroll.
-      case "p":
-        this.historyPrev();
-        return;
-      case "n":
-        this.historyNext();
-        return;
-      case "r":
-        this.expandWorkLog();
-        return;
-      case "c":
-        if (this.input.length > 0) {
-          this.input = "";
-          this.caret = 0;
-          this.sigintArmed = false;
-          this.scheduleDraw();
-          return;
-        }
-        if (this.sigintArmed) {
-          this.exit(0);
-          return;
-        }
-        this.sigintArmed = true;
-        this.print(`  ${faint("(ctrl-c again to exit)")}`);
-        setTimeout(() => {
-          this.sigintArmed = false;
-        }, 2000);
-        break;
-      case "d":
-        if (this.input.length === 0) this.exit(0);
-        break;
-      case "l":
-        this.resetTranscript();
-        break;
-      case "u":
-        this.input = this.input.slice(this.caret);
-        this.caret = 0;
-        this.scheduleDraw();
-        break;
-      case "a":
-        this.caret = 0;
-        this.scheduleDraw();
-        break;
-      case "e":
-        this.caret = this.input.length;
-        this.scheduleDraw();
-        break;
-      case "t":
-        this.print(`  ${faint("Transcript view (ctrl+t) is coming in a later build.")}`);
-        break;
-    }
-  }
-
-  private historyPrev(): void {
-    if (this.history.length === 0) return;
-    if (this.histIdx === -1) {
-      this.draft = this.input;
-      this.histIdx = this.history.length;
-    }
-    if (this.histIdx > 0) {
-      this.histIdx--;
-      this.input = this.history[this.histIdx]!;
-      this.caret = this.input.length;
-      this.scheduleDraw();
-    }
-  }
-
-  private historyNext(): void {
-    if (this.histIdx === -1) return;
-    this.histIdx++;
-    if (this.histIdx >= this.history.length) {
-      this.histIdx = -1;
-      this.input = this.draft;
-    } else {
-      this.input = this.history[this.histIdx]!;
-    }
-    this.caret = this.input.length;
-    this.scheduleDraw();
-  }
 
   // -- submit --
 
-  private async submit(): Promise<void> {
+  async submit(): Promise<void> {
     const raw = this.expandPastes(this.input).trim();
     this.input = "";
     this.caret = 0;
@@ -2254,7 +1184,7 @@ class Tui {
   /** The v2 task-bar receipt: the turn about to run and the latest checkpoint. */
   /** Echo, record, and execute one line of input -- a slash command or a model turn. Shared by
    *  submit() and the type-ahead queue drained when a turn completes, so both run identically. */
-  private async runInput(raw: string, scheduledLoop?: LoopTask): Promise<void> {
+  async runInput(raw: string, scheduledLoop?: LoopTask): Promise<void> {
     // A new message supersedes any pending quota auto-resume — the user is
     // driving again.
     this.cancelQuotaResume(true);
@@ -2289,1264 +1219,9 @@ class Tui {
 
   // -- slash commands --
 
-  private async handleSlash(raw: string): Promise<boolean> {
-    const { engine } = this.ctx;
-    const [cmd, ...rest] = raw.slice(1).split(" ");
-    const arg = rest.join(" ").trim();
-
-    switch (cmd) {
-      case "settings":
-      case "config": {
-        if (arg) this.print(await runSettingsCommand(engine, arg));
-        else await this.showSettings();
-        return true;
-      }
-      case "quit":
-      case "exit":
-        this.exit(0);
-        return true;
-      case "clear":
-        this.resetTranscript();
-        return true;
-      case "notebook": {
-        const entries = engine.getNotebookEntries(10);
-        if (entries.length === 0) {
-          this.print(
-            `  ${muted("Notebook is empty for this workspace -- Rune fills it as it verifies how your repos work.")}`,
-          );
-        } else {
-          this.print(
-            [
-              `  ${bold(text("Notebook -- active for this workspace"))}`,
-              ...entries.map(
-                (e) =>
-                  `    ${info(e.id.slice(-8))} ${muted(`[${e.scope}]`)} ${text(e.body.slice(0, 90))}`,
-              ),
-              `    ${muted("manage: rune notebook [show <id>|rm <id>|export]")}`,
-            ].join("\n"),
-          );
-        }
-        return true;
-      }
-      case "bug": {
-        const rec = engine.getRecorder();
-        if (!rec) {
-          this.print(`  ${muted("Diagnostics are disabled ([diagnostics] enabled = false).")}`);
-          return true;
-        }
-        const id = rec.record({
-          class: "ux.user_reported",
-          severity: "warn",
-          component: "tui",
-          where: "slash#bug",
-          message: arg || "user flagged the last exchange (no note given)",
-        });
-        this.print(
-          id
-            ? `  ${text("* Logged with the current flight trail.")} ${muted(`rune incidents show ${id.slice(-8)}`)}`
-            : `  ${muted("Could not record -- see rune doctor.")}`,
-        );
-        return true;
-      }
-      case "help": {
-        // Grouped by what the person is doing, most-reached-for group first.
-        // A flat list of 26 rows scrolled its own top half off a 24-row
-        // window, so /help opened on /loop and /team and never showed /model
-        // or /login (2026-09-10). Wide windows get two columns.
-        const commands = this.slashCatalog();
-        const groups: Array<[string, string[]]> = [
-          ["work", ["/diff", "/undo", "/rewind", "/compress", "/clear", "/cost", "/status"]],
-          ["setup", ["/model", "/login", "/config", "/theme"]],
-          ["autonomy", ["/gear", "/sandbox", "/browser", "/interactive", "/loop", "/loops"]],
-          ["knowledge", ["/memory", "/notebook", "/skills", "/mcp", "/team"]],
-          ["session", ["/sessions", "/bug", "/help", "/quit"]],
-        ];
-        const placed = new Set(groups.flatMap(([, names]) => names));
-        const custom = commands.filter((item) => !placed.has(item.name)).map((i) => i.name);
-        if (custom.length > 0) groups.push(["custom", custom]);
-        const byName = new Map(commands.map((item) => [item.name, item]));
-        const nameWidth = Math.max(...commands.map((item) => item.name.length)) + 2;
-        const width = cols();
-        const rows: string[] = [`  ${bold(text("Commands"))}`];
-        // A window too short for the full list gets one row per group, names
-        // only: every command visible at once, descriptions in the palette as
-        // you type. The full list on a 24-row window scrolled /model and
-        // /login off the top before anyone read them.
-        const fullRows = groups.reduce((n, [, names]) => n + 1 + names.length, 1);
-        const usable = rowsCount() - 8;
-        if (width < 110 && fullRows > usable) {
-          for (const [label, names] of groups) {
-            const present = names.filter((name) => byName.has(name));
-            if (present.length === 0) continue;
-            rows.push(`  ${faint(label.padEnd(10))}${present.map((name) => info(name)).join(" ")}`);
-          }
-          this.print(rows.join("\n"));
-          return true;
-        }
-        for (const [label, names] of groups) {
-          const items = names.map((name) => byName.get(name)).filter((i): i is SlashItem => !!i);
-          if (items.length === 0) continue;
-          rows.push(`  ${faint(label)}`);
-          if (width < 64) {
-            for (const item of items)
-              rows.push(`    ${info(item.name)}`, `      ${muted(item.desc)}`);
-            continue;
-          }
-          // Two columns when the window can hold two descriptions side by side.
-          const colWidth = Math.floor((width - 4) / 2);
-          const cell = (item: SlashItem): string =>
-            `${info(item.name.padEnd(nameWidth))}${muted(truncate(item.desc, colWidth - nameWidth - 2))}`;
-          if (width >= 110) {
-            for (let i = 0; i < items.length; i += 2) {
-              const left = items[i]!;
-              const right = items[i + 1];
-              const leftCell = cell(left);
-              const pad = " ".repeat(Math.max(1, colWidth - visLen(leftCell)));
-              rows.push(`    ${leftCell}${right ? pad + cell(right) : ""}`);
-            }
-          } else {
-            for (const item of items) {
-              rows.push(`    ${info(item.name.padEnd(nameWidth))}${muted(item.desc)}`);
-            }
-          }
-        }
-        this.print(rows.join("\n"));
-        return true;
-      }
-      case "sessions":
-      case "resume":
-        this.openSessions("active");
-        return true;
-      case "rename": {
-        if (!arg) {
-          this.print(
-            `  ${warn("Usage:")} ${info("/rename <title>")} ${faint("-- renames the current session (or use /sessions)")}`,
-          );
-          return true;
-        }
-        engine.renameSession(this.ctx.sessionId, arg);
-        this.print(`  ${ok(glyph("verified"))} ${muted("renamed session to")} ${text(arg)}`);
-        return true;
-      }
-      case "status": {
-        const s = engine.getStatus(this.ctx.sessionId);
-        this.print(
-          renderStatus({
-            model: s.model,
-            provider: s.provider,
-            workspace: s.workspace,
-            sessionId: this.ctx.sessionId,
-            cost: s.cost,
-            costSummary: s.costSummary,
-            yoloMode: s.yoloMode,
-            trustWorkspace: s.trustWorkspace,
-            permissionMode: s.permissionMode,
-            sandboxEnabled: s.sandboxEnabled,
-            sandboxDegraded: s.sandboxDegraded,
-            sandboxMode: s.sandboxMode,
-            sandboxFallback: s.sandboxFallback,
-            sandboxExcluded: s.sandboxExcluded,
-            orgPolicy: s.orgPolicy,
-            autoMode: s.autoMode,
-            registeredProviders: s.registeredProviders,
-            version: this.ctx.version,
-            contextUsage: engine.getContextUsage(),
-            providerHealth: engine.getProviderHealth(),
-          }),
-        );
-        const team = engine.getTeamStatus();
-        if (team.enabled && team.peerCount > 0) {
-          this.print(
-            `  ${muted("Team")}  ${text(`${team.peerCount} other instance${team.peerCount === 1 ? "" : "s"} in this repo`)} ${faint("(/team)")}`,
-          );
-        }
-        return true;
-      }
-      case "cost": {
-        // Was a lone `$0.0000` — true on a subscription route and useless.
-        // The readout now answers the three questions that number can't:
-        // what left the building, what it would cost metered, and what the
-        // prompt cache is actually saving.
-        // Money first, then the half free tiers actually run on: completions
-        // split work vs governance, fresh tokens per call, cache-read ratio,
-        // list estimate, and what a prompt is made of. Appended rather than
-        // replacing anything — the existing readout is unchanged.
-        const rows = [
-          ...formatCostReport(engine.getCostBreakdown()),
-          ...formatRunEconomics(engine.getRunEconomics()),
-        ];
-        const width = Math.max(...rows.map((r) => r.label.length));
-        for (const row of rows) {
-          const label = faint(row.label.padStart(width));
-          const paint =
-            row.tone === "warn"
-              ? warn
-              : row.tone === "good"
-                ? ok
-                : row.tone === "muted"
-                  ? muted
-                  : text;
-          const note = row.note ? ` ${faint(`(${row.note})`)}` : "";
-          this.print(`  ${label}  ${paint(row.value)}${note}`);
-        }
-        return true;
-      }
-      case "team": {
-        const lines = runTeamCommand(engine.getTeamBus(), arg);
-        this.print(lines.map((l, i) => `  ${i === 0 ? text(l) : muted(l)}`).join("\n"));
-        return true;
-      }
-      case "loop":
-      case "loops":
-        this.handleLoopSlash(cmd, arg);
-        return true;
-      case "providers": {
-        const a = arg.split(/\s+/).filter(Boolean);
-        const op = (a[0] ?? "").toLowerCase();
-        // `/providers on|off <id>` toggles a provider live.
-        if ((op === "on" || op === "off") && a[1]) {
-          const id = a[1].toLowerCase();
-          if (!getPreset(id) && id !== CUSTOM_PROVIDER_ID) {
-            this.print(
-              `  ${warn("Unknown provider")} ${info(id)} ${faint("(one word, no spaces -- e.g. openai)")}`,
-            );
-            this.print(
-              `  ${faint("Providers: ")}${faint(PROVIDER_PRESETS.map((p) => p.id).join(", "))}`,
-            );
-            return true;
-          }
-          const disabled = op === "off";
-          persistDisabled(id, disabled);
-          const res = engine.setProviderDisabled(id, disabled, this.ctx.sessionId);
-          this.print(
-            `  ${ok(glyph("verified"))} ${info(id)} ${muted(disabled ? "disabled" : "enabled")}`,
-          );
-          // Enabling only re-includes an already-credentialed provider -- it does
-          // NOT add a key. If it has none, point the user at how to add one.
-          if (!disabled) {
-            const row = engine.getProviderStatus().find((r) => r.id === id);
-            if (row && !row.hasKey && !row.local) {
-              this.print(
-                `  ${warn("->")} ${muted(`${id} has no key yet -- add one:`)} ${info(`/keys set ${id} <key>`)} ${muted("or")} ${info(`rune login ${id}`)}`,
-              );
-            }
-          }
-          if (res.switchedTo) {
-            this.print(
-              `  ${warn("->")} ${muted("active provider was off -- now on")} ${info(`${res.switchedTo.provider}/${res.switchedTo.model}`)}`,
-            );
-          }
-          return true;
-        }
-        // Data-driven listing: all providers, key state, on/off, active.
-        const rows = engine.getProviderStatus().map((r) => {
-          const dot = r.disabled
-            ? faint("o")
-            : r.active
-              ? ok(glyph("live"))
-              : r.hasKey
-                ? info(glyph("live"))
-                : faint("o");
-          const c = r.active ? ok : r.hasKey && !r.disabled ? text : faint;
-          const st = r.disabled
-            ? warn("off")
-            : r.active
-              ? ok("active")
-              : r.hasKey
-                ? muted("ready")
-                : faint("no key");
-          // Show the real credential source so the panel never lies about what
-          // the gateway uses: oauth / keychain / env, or "key" for a saved key.
-          // "chain" is an enterprise cloud route with no Rune-held secret; it
-          // reads as "cloud" because that is what a user recognises.
-          const srcLabel =
-            r.source === "none"
-              ? ""
-              : r.source === "saved"
-                ? "key"
-                : r.source === "chain"
-                  ? "cloud"
-                  : r.source; // env | oauth | keychain
-          const src = srcLabel ? faint(`  ${srcLabel}`) : "";
-          return `    ${dot} ${c(r.id.padEnd(13))} ${st}${src}`;
-        });
-        this.print(
-          [
-            `  ${bold(text("Providers"))}`,
-            ...rows,
-            `  ${faint("toggle /providers on|off <id> | keys /keys | switch /model")}`,
-          ].join("\n"),
-        );
-        return true;
-      }
-      case "login":
-      case "signin":
-        void this.openLogin();
-        return true;
-      case "keys":
-        this.openKeys();
-        return true;
-      case "mcp": {
-        const [verb, who] = arg.split(/\s+/, 2);
-        if (verb === "reconnect") {
-          if (!who) {
-            this.print(`  ${muted("usage: /mcp reconnect <server>")}`);
-            return true;
-          }
-          const back = await engine.reconnectMcpServer(who);
-          this.print(
-            back
-              ? `  ${ok(glyph("verified"))} ${text(who)} ${muted("reconnected")}`
-              : `  ${warn(glyph("retry"))} ${text(who)} ${muted("did not come back")}  ${info("rune mcp doctor")}`,
-          );
-          return true;
-        }
-        this.print(mcpPanel(await engine.listMcpServers()));
-        return true;
-      }
-      case "skills": {
-        if (arg) {
-          const hits = await engine.searchSkills(arg);
-          this.print(
-            [
-              `  ${bold(text("Skills"))} ${muted(`matching "${arg}"`)}`,
-              ...(hits.length
-                ? hits.flatMap((hit) => [
-                    `    ${info(hit.id)}`,
-                    ...(hit.description ? [`      ${faint(hit.description)}`] : []),
-                  ])
-                : [`    ${muted("No matches.")}`]),
-            ].join("\n"),
-          );
-          return true;
-        }
-        const catalog = await engine.listSkills();
-        // The loader files both `.rune/skills` and `~/.rune/skills` under the
-        // synthetic "user" plugin; a listing has to say which of the two, and
-        // what each skill is for, or it cannot be acted on.
-        const origins = new Map(
-          discoverUserSkills(this.ctx.workspaceRoot).map(
-            (skill) => [skill.name, ORIGIN_LABEL[skill.origin]] as const,
-          ),
-        );
-        const groupRows = (plugin: (typeof catalog.plugins)[number]): string[] => {
-          const head = `    ${ok(glyph("live"))} ${text(plugin.plugin)} ${muted(`(${plugin.skills.length})`)}`;
-          if (plugin.plugin !== "user") {
-            return [head, `      ${faint(plugin.skills.map((skill) => skill.name).join(", "))}`];
-          }
-          return [
-            head,
-            ...plugin.skills.flatMap((skill) => {
-              const from = origins.get(skill.name);
-              return [
-                `      ${info("/" + skill.name)}${from ? ` ${muted(from)}` : ""}`,
-                ...(skill.description ? [`        ${faint(skill.description)}`] : []),
-              ];
-            }),
-          ];
-        };
-        this.print(
-          [
-            `  ${bold(text("Skills"))} ${muted(`(${catalog.total} across ${catalog.plugins.length} domains)`)}`,
-            ...(catalog.total
-              ? catalog.plugins.flatMap(groupRows)
-              : [
-                  `    ${muted("None found. Add one with ")}${info("rune skill add <path>")}${muted(".")}`,
-                ]),
-            `  ${faint("Skills load automatically when a request matches | run one with /<name> | search with /skills <keywords>")}`,
-          ].join("\n"),
-        );
-        return true;
-      }
-      case "research":
-      case "deepresearch": {
-        const deep = cmd === "deepresearch";
-        if (!arg) {
-          const verb = deep ? "deep, multi-round research" : "research with a cited report";
-          this.print(`  ${warn("Usage:")} ${info(`/${cmd} <question>`)} ${faint(`-- ${verb}`)}`);
-          return true;
-        }
-        await this.runResearchFlow(arg, deep ? "deep" : undefined);
-        return true;
-      }
-      case "gear": {
-        // /gear          -> shift up one gear
-        // /gear 3 | 3rd | auto -> shift straight to that gear
-        const target = configModeToPermissionMode(arg || undefined);
-        if (arg && !target) {
-          this.print(
-            `  ${warn("Usage:")} ${info("/gear")} ${faint("[1|2|3|4|auto] -- empty shifts up")}`,
-          );
-        } else this.cyclePermissionMode(target);
-        return true;
-      }
-      case "autonomy": {
-        // Legacy alias: /autonomy I|II|III -> 2nd|3rd|4th gear.
-        const target = configModeToPermissionMode(arg ? `autonomy-${arg}` : undefined);
-        if (target) this.cyclePermissionMode(target);
-        else
-          this.print(
-            `  ${warn("Usage:")} ${info("/autonomy")} ${faint("[I|II|III] -- or /gear 1|2|3|4|auto")}`,
-          );
-        return true;
-      }
-      case "turing": // hidden compatibility aliases: toggle 4th gear
-      case "hands-free": {
-        this.cyclePermissionMode(engine.getPermissionMode() === "gear-4" ? "gear-1" : "gear-4");
-        return true;
-      }
-      case "mode": {
-        const raw = (arg ?? "").toLowerCase().trim();
-        // `/mode default` pins the CURRENT gear as the startup gear, including
-        // 4th. There has to be a way in that is not the one-time prompt: a
-        // prompt you can miss, or that times out, is not a control — and the
-        // whole point of remembering 4th gear is that it must be chosen out
-        // loud, which typing this is.
-        if (raw === "default" || raw === "save" || raw === "keep") {
-          const current = engine.getPermissionMode();
-          savePrefs({ gear: current, ...(current === "gear-4" ? { stickyFourthGear: true } : {}) });
-          const label = modeInfo(current).label;
-          this.print(
-            `  ${accent(glyph("phase"))} ${muted("startup gear --")} ${info(label)}` +
-              (current === "gear-4"
-                ? ` ${warn("| full autonomy, every prompt bypassed")}`
-                : ` ${faint("(used for new sessions)")}`),
-          );
-          return true;
-        }
-        if (raw === "forget" || raw === "reset") {
-          savePrefs({ gear: undefined, stickyFourthGear: undefined });
-          this.print(
-            `  ${ok(glyph("verified"))} ${muted("startup gear cleared")} ${faint("| new sessions use the built-in default again")}`,
-          );
-          return true;
-        }
-        const mode = configModeToPermissionMode(raw);
-        if (mode) {
-          this.cyclePermissionMode(mode);
-        } else if (raw) {
-          this.print(
-            `  ${warn("Usage:")} ${info("/mode")} ${faint("[1|2|3|4|auto] -- empty shifts up; `default` pins the current gear for new sessions; `forget` clears it")}`,
-          );
-        } else {
-          this.cyclePermissionMode(); // no arg -> advance the cycle, like Shift+Tab
-          const remembered = loadPrefs().gear;
-          if (remembered) {
-            this.print(
-              `  ${faint(`startup rune: ${modeInfo(remembered as never).label} -- /mode default to change it`)}`,
-            );
-          }
-        }
-        return true;
-      }
-      case "sandbox": {
-        const raw = (arg ?? "").trim();
-        if (!raw) {
-          await this.runSandboxMenu();
-          return true;
-        }
-        const result = runSandboxCommand(engine, raw);
-        if (result.changed === "mode")
-          this.print(sandboxModeBanner(engine.getSandboxPolicy().mode));
-        this.print(result.lines.map((l, i) => `  ${i === 0 ? text(l) : muted(l)}`).join("\n"));
-        return true;
-      }
-      case "browser": {
-        const raw = (arg ?? "").toLowerCase();
-        if (raw === "on" || raw === "off") {
-          const enabled = raw === "on";
-          await engine.setBrowserEnabled(enabled);
-          saveBrowserState(enabled);
-          this.print(browserModeBanner(enabled));
-        } else if (raw) {
-          this.print(
-            `  ${warn("Usage:")} ${info("/browser")} ${faint("[on|off] -- empty shows the current state")}`,
-          );
-        } else {
-          this.print(browserModeBanner(engine.isBrowserEnabled()));
-        }
-        return true;
-      }
-      case "diff": {
-        this.print(renderWorkspaceDiff(this.ctx.workspaceRoot));
-        return true;
-      }
-      case "theme": {
-        const themes = listThemes();
-        if (arg) {
-          if (setTheme(arg)) {
-            this.refreshThemeSurface();
-            saveTheme(getTheme().name);
-            this.print(
-              `  ${ok(glyph("verified"))} ${muted("theme set to")} ${warn(getTheme().label)}`,
-            );
-          } else
-            this.print(`  ${danger(glyph("failure"))} ${muted("unknown theme:")} ${faint(arg)}`);
-          return true;
-        }
-        // Live-preview keeps compatibility with the existing picker flow; the
-        // choices only select Flow foreground roles or the terminal-native rung.
-        const original = getTheme().name;
-        const items: PickerItem[] = themes.map((t) => ({
-          label: t.label,
-          hint: t.name === "auto" ? "follows the host terminal" : "six ANSI16 foreground roles",
-          prefix: paintBrandWith(t.name, glyph("live")),
-          current: t.name === original,
-          tags: [t.name],
-        }));
-        const start = Math.max(
-          0,
-          themes.findIndex((t) => t.name === original),
-        );
-        const i = await this.pick(
-          "Color mode",
-          items,
-          start,
-          (idx) => {
-            setTheme(themes[idx]!.name);
-            this.refreshThemeSurface();
-          },
-          "Flow or terminal native | persisted to ~/.rune/theme.json",
-        );
-        if (i != null) {
-          setTheme(themes[i]!.name);
-          this.refreshThemeSurface();
-          saveTheme(themes[i]!.name);
-          this.print(
-            `  ${ok(glyph("verified"))} ${muted("theme set to")} ${warn(getTheme().label)}`,
-          );
-        } else {
-          setTheme(original); // revert the live preview on cancel
-          this.refreshThemeSurface();
-        }
-        return true;
-      }
-      case "model": {
-        // Quick forms: `/model <provider>/<model>` (this session only),
-        // `/model default` (show) and `/model default <provider>/<model>` (persist).
-        if (arg === "default" || arg.startsWith("default ")) {
-          const rest = arg.slice("default".length).trim();
-          if (!rest) {
-            const def = loadLastModel();
-            this.print(
-              def
-                ? `  ${accent(glyph("phase"))} ${muted("default:")} ${info(`${def.provider}/${def.model}`)} ${faint("| change: /model default <provider>/<model>, or d in /model")}`
-                : `  ${muted("no default set --")} ${info("/model default <provider>/<model>")}${muted(", or press d on a model in /model")}`,
-            );
-            return true;
-          }
-          const si = rest.indexOf("/");
-          const prov = si > 0 ? rest.slice(0, si) : engine.getProvider();
-          const mod = si > 0 ? rest.slice(si + 1) : rest;
-          this.applyModelSwitch(String(prov), mod, true);
-          return true;
-        }
-        if (arg.includes("/")) {
-          const [p, ...m] = arg.split("/");
-          this.applyModelSwitch(p!, m.join("/"), false);
-          return true;
-        }
-        if (arg) {
-          this.applyModelSwitch(engine.getProvider(), arg, false);
-          return true;
-        }
-        await this.modelTree();
-        return true;
-      }
-      case "rewind": {
-        const turns = engine.listUserTurns(this.ctx.sessionId);
-        if (turns.length === 0) {
-          this.print(`  ${muted("Nothing to rewind yet.")}`);
-          return true;
-        }
-        const n = parseInt(arg, 10);
-        if (!arg || isNaN(n) || n < 1 || n > turns.length) {
-          const rows = turns.map(
-            (t, i) =>
-              `    ${warn(String(i + 1).padStart(2))}  ${muted(t.text.replace(/\s+/g, " ").slice(0, 60))}`,
-          );
-          this.print(
-            [`  ${bold(text("Rewind"))}`, ...rows, `  ${faint("Run /rewind <n>")}`].join("\n"),
-          );
-          return true;
-        }
-        const removed = engine.rewindTo(this.ctx.sessionId, turns[n - 1]!.seq - 1);
-        this.print(
-          `  ${ok(glyph("verified"))} ${muted(`rewound to turn ${n} (removed ${removed})`)}`,
-        );
-        return true;
-      }
-      case "interactive": {
-        const [sub = "", ...rest] = arg.split(/\s+/).filter(Boolean);
-        if (sub === "auto") {
-          const v = (rest[0] ?? "").toLowerCase();
-          if (v === "on" || v === "off") {
-            const on = v === "on";
-            engine.setInteractiveAuto(on);
-            saveInteractiveAuto(on);
-            this.print(
-              `  ${ok(glyph("verified"))} ${muted(`autonomous dashboards ${on ? "on" : "off"}`)} ${faint(
-                on
-                  ? "-- Rune builds one when an answer is data-heavy"
-                  : "-- dashboards only when you ask (/interactive)",
-              )}`,
-            );
-          } else {
-            this.print(
-              `  ${muted(`Autonomous dashboards: ${engine.isInteractiveAuto() ? "on" : "off"}`)} ${faint(
-                "| toggle: /interactive auto on|off",
-              )}`,
-            );
-          }
-          return true;
-        }
-        if (sub === "open") {
-          const info = engine.openDashboard(rest[0]);
-          this.print(
-            info
-              ? `  ${ok(glyph("verified"))} ${muted(`opened "${info.title}"`)} ${faint(info.url)}`
-              : `  ${muted("No dashboard yet -- run /interactive after a report, or ask for one.")}`,
-          );
-          return true;
-        }
-        // Bare /interactive (or with a focus) rides the normal turn loop so the
-        // model builds the dashboard with full conversation context.
-        const focus = sub === "view" ? rest.join(" ") : arg;
-        await this.runTurn(buildInteractiveDirective(focus || undefined));
-        return true;
-      }
-      case "undo": {
-        const r = engine.undoLastAutoCommit();
-        if (r.ok) {
-          this.print(
-            `  ${ok(glyph("verified"))} ${muted(`reverted ${r.undoneSha}`)} ${faint(`(${r.subject})`)}`,
-          );
-        } else {
-          this.print(`  ${muted(`Cannot undo -- ${r.reason}`)}`);
-          if (!engine.isAutoCommitEnabled()) {
-            this.print(
-              `  ${faint("Tip: set [git] autoCommit = true in ~/.rune/config.toml so every run lands as a revertible commit.")}`,
-            );
-          }
-        }
-        return true;
-      }
-      case "compress": {
-        this.print(`  ${faint("Compressing...")}`);
-        const r = await engine.compactSession(this.ctx.sessionId, arg || undefined);
-        if (!r.compacted) {
-          this.print(`  ${muted(`Nothing to compact -- ${r.reason}.`)}`);
-          return true;
-        }
-        const fmtTok = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
-        const saved =
-          r.sourceTokens > 0
-            ? Math.max(0, Math.round((1 - r.summaryTokens / r.sourceTokens) * 100))
-            : 0;
-        this.print(
-          `  ${ok(glyph("verified"))} ${muted(`compacted ${r.originalMessages} messages | ~${fmtTok(r.sourceTokens)} -> ~${fmtTok(r.summaryTokens)} tokens (${saved}% smaller)`)}`,
-        );
-        return true;
-      }
-      case "memory": {
-        const sub = (arg.split(/\s+/)[0] ?? "").toLowerCase();
-        const subArg = arg.slice(sub.length).trim();
-        const fmtTok = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
-
-        // Bare `/memory` opens the interactive panel (view + refresh/cadence/add/edit/clear).
-        // The `/memory <sub>` text forms below stay for power users + scriptability.
-        if (!sub) {
-          this.openMemory();
-          return true;
-        }
-
-        // -- update / refresh (the "dream") --
-        if (sub === "update" || sub === "refresh" || sub === "dream") {
-          this.print(`  ${faint("Dreaming -- distilling your profile...")}`);
-          const r = await engine.reflectSystemMemory({
-            focus: subArg || undefined,
-            trigger: "manual",
-          });
-          if (!r.updated) {
-            this.print(`  ${muted(`Memory unchanged -- ${r.reason}.`)}`);
-            return true;
-          }
-          const preview = (r.content ?? "")
-            .split("\n")
-            .map((l) => l.trimEnd())
-            .filter(Boolean)
-            .slice(0, 8);
-          this.print(
-            [
-              `  ${ok(glyph("verified"))} ${muted(`system memory refreshed | ~${fmtTok(r.tokensBefore)} -> ~${fmtTok(r.tokensAfter)} tokens`)}`,
-              ...preview.map((l) => `  ${faint(l.slice(0, 100))}`),
-            ].join("\n"),
-          );
-          return true;
-        }
-
-        // -- add a manual note --
-        if (sub === "add" || sub === "note") {
-          if (!subArg) {
-            this.print(`  ${warn("Usage:")} ${info("/memory add <note>")}`);
-            return true;
-          }
-          const r = engine.appendSystemMemoryNote(subArg);
-          this.print(
-            `  ${ok(glyph("verified"))} ${muted(`noted | ~${fmtTok(r.tokens)} tokens total`)}`,
-          );
-          return true;
-        }
-
-        // -- edit: suspend the TUI and open the profile in $EDITOR for real --
-        if (sub === "edit") {
-          await this.editMemoryInEditor();
-          return true;
-        }
-
-        // -- clear --
-        if (sub === "clear" || sub === "reset" || sub === "forget") {
-          engine.clearSystemMemory();
-          this.print(`  ${ok(glyph("verified"))} ${muted("system memory cleared")}`);
-          return true;
-        }
-
-        // -- set cadence (off | manual | daily | weekly | Nd | every N days) --
-        if (
-          sub === "off" ||
-          sub === "manual" ||
-          sub === "daily" ||
-          sub === "weekly" ||
-          /^\d+\s*d/.test(arg) ||
-          /^every\s+\d+/.test(arg)
-        ) {
-          const r = engine.setSystemMemorySchedule(arg);
-          const verb = r.label === "manual" ? "manual (no auto-refresh)" : `auto | ${r.label}`;
-          this.print(`  ${ok(glyph("verified"))} ${muted("memory cadence:")} ${info(verb)}`);
-          return true;
-        }
-
-        // -- default: status + show the profile --
-        const mem = engine.getSystemMemory();
-        const last = mem.meta.updatedAt ? this.relTime(mem.meta.updatedAt) : "never";
-        const dreamt = mem.meta.lastReflectedAt ? this.relTime(mem.meta.lastReflectedAt) : "never";
-        const head = [
-          `  ${bold(text("System memory"))}${mem.enabled ? "" : ` ${faint("(disabled)")}`}`,
-          `  ${faint(`cadence: ${mem.scheduleLabel} | ~${fmtTok(mem.tokens)}/${fmtTok(mem.maxTokens)} tokens | updated ${last} | dreamed ${dreamt}`)}`,
-        ];
-        if (!mem.content.trim()) {
-          this.print(
-            [
-              ...head,
-              `  ${muted("Empty -- Rune hasn't built your profile yet.")}`,
-              `  ${faint("Seed it: /memory update | note: /memory add <...> | auto: /memory weekly")}`,
-            ].join("\n"),
-          );
-          return true;
-        }
-        this.print(
-          [
-            ...head,
-            "",
-            ...mem.content.split("\n").map((l) => `  ${text(l)}`),
-            "",
-            `  ${faint("update: /memory update | note: /memory add <...> | cadence: /memory daily|3d|weekly|manual")}`,
-          ].join("\n"),
-        );
-        return true;
-      }
-      default: {
-        const custom = findCommand(this.ctx.customCommands, cmd!);
-        if (custom) {
-          await this.runTurn(custom.render(arg));
-          return true;
-        }
-        this.print(
-          `  ${danger(glyph("failure"))} ${muted(`unknown command: /${cmd}`)} ${faint("| /help")}`,
-        );
-        return true;
-      }
-    }
-  }
-
-  private handleLoopSlash(command: "loop" | "loops", arg: string): void {
-    const tokens = arg.split(/\s+/).filter(Boolean);
-    const operation = (tokens[0] ?? "").toLowerCase();
-    const shouldList =
-      (command === "loops" && !arg) ||
-      operation === "list" ||
-      operation === "ls" ||
-      operation === "status";
-
-    if (shouldList) {
-      const tasks = this.ctx.engine.listLoopTasks(this.ctx.sessionId);
-      if (tasks.length === 0) {
-        this.print(
-          `  ${muted("No loops are active in this session.")} ${faint("Try /loop 5m check CI")}`,
-        );
-        return;
-      }
-      this.print(
-        [
-          `  ${bold(text(`Loops -- ${tasks.length} active`))}`,
-          ...tasks.map(
-            (task) =>
-              `    ${warn(glyph("retry"))} ${info(task.id)} ${text(task.cadence === "fixed" ? `every ${formatLoopInterval(task.intervalMs)}` : `adaptive ${formatLoopInterval(task.intervalMs)}`)} ${faint(`| ${formatLoopDue(task.nextRunAt)} | ${loopPromptPreview(task.prompt, 54)}`)}`,
-          ),
-          `  ${faint("/loop cancel <id> | /loop clear | Esc stops the newest loop")}`,
-        ].join("\n"),
-      );
-      return;
-    }
-
-    if (["cancel", "stop", "off", "delete", "rm"].includes(operation)) {
-      const result = this.ctx.engine.cancelLoopTask(this.ctx.sessionId, tokens[1]);
-      if (!result.ok || !result.task) {
-        this.print(
-          `  ${danger(glyph("failure"))} ${muted(result.error ?? "Could not stop that loop.")}`,
-        );
-      } else {
-        this.print(
-          `  ${danger(glyph("failure"))} ${muted("stopped loop")} ${info(result.task.id)} ${faint(loopPromptPreview(result.task.prompt, 58))}`,
-        );
-      }
-      return;
-    }
-
-    if (["clear", "cancel-all", "stop-all"].includes(operation)) {
-      const count = this.ctx.engine.clearLoopTasks(this.ctx.sessionId);
-      this.print(
-        count > 0
-          ? `  ${danger(glyph("failure"))} ${muted(`stopped ${count} ${count === 1 ? "loop" : "loops"}`)}`
-          : `  ${muted("No loops are active in this session.")}`,
-      );
-      return;
-    }
-
-    if (operation === "help") {
-      this.print(
-        [
-          `  ${bold(text("Loop mode"))}`,
-          `    ${info("/loop 5m check the deploy")} ${faint("fixed interval")}`,
-          `    ${info("/loop check CI and review comments")} ${faint("adaptive 1-60m cadence")}`,
-          `    ${info("/loop")} ${faint("built-in maintenance prompt, or .rune/loop.md")}`,
-          `    ${info("/loops")} ${faint("list active tasks")}`,
-          `    ${info("/loop cancel <id>")} ${faint("stop one | /loop clear stops all")}`,
-        ].join("\n"),
-      );
-      return;
-    }
-
-    try {
-      const result = this.ctx.engine.scheduleLoop(this.ctx.sessionId, arg);
-      const task = result.task;
-      const cadence =
-        task.cadence === "fixed"
-          ? `every ${formatLoopInterval(task.intervalMs)}`
-          : `adaptive | first check ${formatLoopDue(task.nextRunAt)}`;
-      this.print(
-        [
-          `  ${ok(glyph("verified"))} ${text("loop scheduled")} ${info(task.id)} ${faint(`| ${cadence} | expires in 7d`)}`,
-          `    ${faint(glyph("gutter"))} ${muted(loopPromptPreview(task.prompt, Math.max(36, cols() - 10)))}`,
-          ...(result.promptPath ? [`    ${faint(`prompt: ${result.promptPath}`)}`] : []),
-          ...result.warnings.map((warning) => `    ${warn(glyph("observed"))} ${muted(warning)}`),
-        ].join("\n"),
-      );
-    } catch (error) {
-      this.print(
-        `  ${danger(glyph("failure"))} ${muted(error instanceof Error ? error.message : String(error))}`,
-      );
-    }
-  }
-
-  private modelPresets(reg: string[]): { provider: string; model: string; label: string }[] {
-    // Data-driven from the provider presets: every registered provider with a
-    // curated `models` list contributes its models, so adding a provider is a
-    // one-line preset edit -- no picker code to touch. Local runtimes (ollama /
-    // are listed even when not yet active so they're discoverable --
-    // picking one switches to it. Free-form `/model <provider>/<id>` still works.
-    const localIds = PROVIDER_PRESETS.filter((p) => p.local).map((p) => p.id);
-    const ids = [...reg, ...localIds.filter((id) => !reg.includes(id))];
-    const out: { provider: string; model: string; label: string }[] = [];
-    for (const id of ids) {
-      const preset = getPreset(id);
-      if (!preset?.models?.length) continue;
-      for (const m of preset.models) out.push({ provider: id, model: m.id, label: m.label });
-    }
-    return out;
-  }
-
-  /** v2 picker chips: provider name, plus real free/local markers from the presets. */
-  private modelTags(p: { provider: string; model: string; label: string }): string[] {
-    const tags: string[] = [];
-    const preset = getPreset(p.provider);
-    if (preset?.local) tags.push("local");
-    if (/:free$/i.test(p.model) || /\(free\)/i.test(p.label) || /\bfree\b/i.test(p.label)) {
-      tags.push("free");
-    }
-    tags.push(p.provider);
-    return tags;
-  }
-
-  /** Switch provider/model for this session; `asDefault` also persists it as the startup default. */
-  private applyModelSwitch(prov: string, model: string, asDefault: boolean): void {
-    const engine = this.ctx.engine;
-    engine.switchModel(model, prov as any, this.ctx.sessionId);
-    const now = `${engine.getProvider()}/${engine.getModel()}`;
-    // Switching model IS the decision. Asking the user to confirm it a second
-    // time, with a different key in a different place, meant the next session
-    // opened on the model they had already rejected — so a plain pick persists
-    // now, and `asDefault` only changes how loudly it says so.
-    saveLastModel({ provider: engine.getProvider(), model: engine.getModel() });
-    this.print(
-      asDefault
-        ? `  ${accent(glyph("phase"))} ${muted("default set --")} ${info(now)} ${faint("(used at startup)")}`
-        : `  ${ok(glyph("verified"))} ${muted("switched to")} ${info(now)} ${faint("| kept for new sessions too")}`,
-    );
-  }
-
-  /**
-   * The /model tree: providers -> accounts/endpoints -> models.
-   * Level 1 lists only configured providers (plus local runtimes); level 2 the
-   * real access paths for the chosen one (skipped when there is just one);
-   * level 3 the models under that account -- live-listed for local runtimes.
-   * enter switches this session; `d` also makes the pick the startup default.
-   */
-  private async modelTree(): Promise<void> {
-    const engine = this.ctx.engine;
-    const rows = engine.getProviderStatus();
-    const customEp = engine.getCustomEndpoint();
-    const current = { provider: String(engine.getProvider()), model: engine.getModel() };
-    const def = loadLastModel();
-    const defNote = def ? ` | default ${def.provider}/${def.model}` : "";
-
-    // -- Level 1: providers --
-    const provs = providerChoices(rows, customEp, process.env, getPreset);
-    const typeItem: PickerItem = { label: "Type provider/model...", hint: "anything not listed" };
-    const l1: PickerItem[] = [
-      ...provs.map((p) => ({
-        label: p.label,
-        hint: stripAnsi(p.hint),
-        current: p.id === current.provider,
-        tags: p.local ? ["local"] : [],
-      })),
-      typeItem,
-    ];
-    const l1start = Math.max(
-      0,
-      provs.findIndex((p) => p.id === current.provider),
-    );
-    const a1 = await this.pick(
-      `Model | current ${current.provider}/${current.model}${defNote}`,
-      l1,
-      l1start,
-      undefined,
-      provs.length
-        ? "subscriptions (Claude Pro/Max | ChatGPT): rune login | keys: /keys"
-        : "no providers configured yet -- add a key with /keys or sign in with rune login",
-    );
-    if (a1 == null) return;
-    if (a1 >= provs.length) {
-      const typed = await this.promptLine("provider/model");
-      if (!typed) return;
-      const si = typed.indexOf("/");
-      if (si <= 0) {
-        this.print(`  ${warn("Use the form")} ${info("provider/model")}`);
-        return;
-      }
-      this.applyModelSwitch(typed.slice(0, si), typed.slice(si + 1), false);
-      return;
-    }
-    const chosen = provs[a1]!;
-    const row = rows.find((r) => r.id === chosen.id)!;
-    const preset = getPreset(chosen.id);
-    const accounts = accountChoices(preset, row, customEp, process.env);
-
-    // -- Level 2: accounts / endpoints (skipped when only one path) --
-    let account = accounts[0];
-    if (accounts.length > 1) {
-      const l2: PickerItem[] = [
-        ...accounts.map((ac) => ({
-          label: ac.label,
-          hint: ac.detail,
-          current: ac.active === true,
-        })),
-        { label: "Back", hint: "choose another provider" },
-      ];
-      const a2 = await this.pick(
-        `Model | ${chosen.label} | account`,
-        l2,
-        Math.max(
-          0,
-          accounts.findIndex((ac) => ac.active),
-        ),
-        undefined,
-        "the selected credential becomes the active one for this provider",
-      );
-      if (a2 == null) return;
-      if (a2 >= accounts.length) return this.modelTree();
-      account = accounts[a2];
-      if (account?.kind === "key" && account.entryId && !account.active) {
-        // Picking a pooled key makes it the ACTIVE key -- persisted and applied
-        // to the live gateway, same as the /keys manager.
-        const file = persistSetActiveKey(chosen.id, account.entryId);
-        engine.setProviderKeys(
-          chosen.id,
-          readProviderKeyEntries(file, chosen.id),
-          file.activeKeyId?.[chosen.id],
-          this.ctx.sessionId,
-        );
-        this.print(
-          `  ${ok(glyph("verified"))} ${muted("active key now")} ${text(account.label)} ${faint(account.detail)}`,
-        );
-      }
-      if (row.source === "oauth" || row.source === "keychain") {
-        if (account?.kind === "key" || account?.kind === "env") {
-          this.print(
-            `  ${faint(`note: the signed-in ${row.source} credential wins on the wire --`)} ${info(`rune logout ${chosen.id}`)} ${faint("to use API keys")}`,
-          );
-        }
-      } else if (account?.kind === "env" && accounts.some((x) => x.kind === "key")) {
-        this.print(
-          `  ${faint("note: the saved key wins on the wire --")} ${info(`/keys clear ${chosen.id}`)} ${faint("to use the env key")}`,
-        );
-      }
-    }
-
-    // -- Level 3: models under that account --
-    let live: string[] | null = null;
-    if (preset && (chosen.local || account?.kind === "endpoint")) {
-      live = await fetchLiveModels(preset.kind, row.endpoint ?? preset.baseUrl ?? "");
-    }
-    const models = modelChoices(preset, chosen.id, { live, custom: customEp, current, def });
-    const l3: PickerItem[] = [
-      ...models.map((m) => ({
-        label: m.label,
-        hint: m.label !== m.id ? m.id : undefined,
-        current: m.current,
-        tags: [
-          ...(m.isDefault ? ["default"] : []),
-          ...(/:free$/i.test(m.id) || /\bfree\b/i.test(m.label) ? ["free"] : []),
-          ...(chosen.local ? ["local"] : []),
-        ],
-      })),
-      { label: "Type a model id...", hint: "anything not listed" },
-      {
-        label: "Back",
-        hint: accounts.length > 1 ? "choose another account" : "choose another provider",
-      },
-    ];
-    const crumb =
-      accounts.length > 1 && account
-        ? `Model | ${chosen.label} | ${account.label.replace("API key | ", "key ")}`
-        : `Model | ${chosen.label}`;
-    if (chosen.local && !live) {
-      this.print(
-        `  ${faint(`endpoint ${row.endpoint ?? ""} not reachable -- showing suggestions`)}`,
-      );
-    }
-    const a3 = await this.pickAlt(
-      crumb,
-      l3,
-      Math.max(
-        0,
-        models.findIndex((m) => m.current),
-      ),
-      "enter use now (this session) | d = use now and make it the startup default | esc back",
-      "d",
-    );
-    if (a3 == null) return;
-    if (a3.index === models.length) {
-      const typed = await this.promptLine("model id");
-      if (typed) this.applyModelSwitch(chosen.id, typed, a3.alt);
-      return;
-    }
-    if (a3.index > models.length) return this.modelTree();
-    const pickM = models[a3.index]!;
-    await this.applyModelWithEffort(chosen.id, pickM.id, pickM.label, a3.alt);
-  }
-
-  /**
-   * Switch the model, then — where the model actually has a depth dial — ask
-   * for it in the same breath, with the same keys.
-   *
-   * Depth used to live behind `/config effort max`, which is the wrong shape
-   * twice over: nobody discovers a setting they have to already know the name
-   * of, and a person mid-decision about a model should not have to leave the
-   * decision to type an incantation. It is a property of the model being
-   * chosen, so it is asked for where the model is chosen. Escape keeps
-   * whatever was already set — backing out of the depth question must never
-   * undo the model switch that already happened.
-   */
-  private async applyModelWithEffort(
-    prov: string,
-    model: string,
-    label: string,
-    asDefault: boolean,
-  ): Promise<void> {
-    this.applyModelSwitch(prov, model, asDefault);
-    const engine = this.ctx.engine;
-    const current = engine.getReasoningEffort() as ReasoningEffort;
-    const efforts = effortChoices(prov, model, current);
-    if (efforts.length === 0) return;
-
-    const items: PickerItem[] = efforts.map((e) => ({
-      label: e.label,
-      hint: e.hint,
-      current: e.current,
-    }));
-    const picked = await this.pick(
-      `Thinking depth | ${label}`,
-      items,
-      Math.max(
-        0,
-        efforts.findIndex((e) => e.current),
-      ),
-      undefined,
-      "enter set depth | esc keep " + current,
-    );
-    if (picked == null) return;
-    const chosenEffort = efforts[picked]!.id;
-    engine.setReasoningEffort(chosenEffort);
-    this.print(
-      `  ${ok(glyph("verified"))} ${muted("thinking depth")} ${info(chosenEffort)} ${faint(`| ${efforts[picked]!.hint}`)}`,
-    );
-  }
-
   // -- picker mode --
 
-  private async showSettings(): Promise<void> {
-    const engine = this.ctx.engine;
-    const shortcuts = [
-      { label: "Model and reasoning", hint: "choose intelligence", command: "model" },
-      {
-        label: "API keys and internet search",
-        hint: "manage keys | /login to connect",
-        command: "keys",
-      },
-      { label: "Browser", hint: engine.isBrowserEnabled() ? "on" : "off", command: "browser" },
-    ];
-    while (true) {
-      const rows: PickerItem[] = [
-        ...shortcuts,
-        ...CONFIG_SETTINGS.map((s) => {
-          const value = engine.readConfigSetting(s.key);
-          return {
-            label: s.key.replaceAll("_", " "),
-            hint: value === undefined ? "per effort" : displaySettingValue(s, value),
-          };
-        }),
-      ];
-      const selected = await this.pick(
-        "Settings",
-        rows,
-        0,
-        undefined,
-        "Changes apply now and are saved. Esc closes.",
-      );
-      if (selected === null) return;
-      if (selected < shortcuts.length) {
-        await this.handleSlash(`/${shortcuts[selected]!.command}`);
-        return;
-      }
-      const setting = CONFIG_SETTINGS[selected - shortcuts.length]!;
-      const current = engine.readConfigSetting(setting.key);
-      let value: string | null = null;
-      if (setting.kind === "number") {
-        value = await this.promptLine(`${setting.key} (${settingChoices(setting)})`, current ?? "");
-      } else {
-        const values = setting.kind === "boolean" ? ["true", "false"] : [...setting.values!];
-        const choice = await this.pick(
-          setting.key.replaceAll("_", " "),
-          values.map((v) => ({ label: displaySettingValue(setting, v) })),
-          Math.max(0, values.indexOf(current ?? "")),
-          undefined,
-          setting.description,
-        );
-        if (choice !== null) value = values[choice]!;
-      }
-      if (value !== null && value.trim())
-        this.print(await runSettingsCommand(engine, `${setting.key} ${value}`));
-    }
-  }
-
-  /**
-   * `/sandbox` with no argument: the three-tab menu. Mode and Overrides are
-   * pickers with the current choice marked; Config is a readout of what the
-   * sandbox actually enforces, plus how to change it. Every choice made here
-   * is also reachable as text (`/sandbox mode regular`), which is what the
-   * plain CLI uses.
-   */
-  private async runSandboxMenu(): Promise<void> {
-    const engine = this.ctx.engine;
-    const policy = engine.getSandboxPolicy();
-    const tab = await this.pick(
-      "sandbox",
-      [
-        {
-          label: "Mode",
-          hint: `${policy.mode} -- ${SANDBOX_MODE_CHOICES.find((c) => c.mode === policy.mode)?.hint ?? ""}`,
-        },
-        {
-          label: "Overrides",
-          hint: policy.allowUnsandboxedFallback
-            ? "allow unsandboxed fallback"
-            : "strict sandbox mode",
-        },
-        {
-          label: "Config",
-          hint: `${policy.excludedCommands.length} excluded, filesystem read/write rules`,
-        },
-      ],
-      0,
-      undefined,
-      "Learn more: docs/sandbox.md -- text forms: /sandbox mode|override|exclude|config",
-    );
-    if (tab === null) return;
-    if (tab === 0) {
-      const current = SANDBOX_MODE_CHOICES.findIndex((c) => c.mode === policy.mode);
-      const picked = await this.pick(
-        "sandbox mode",
-        SANDBOX_MODE_CHOICES.map((c) => ({
-          label: c.label,
-          hint: c.hint,
-          current: c.mode === policy.mode,
-        })),
-        Math.max(0, current),
-        undefined,
-        "Auto-allow: the sandbox vouches for a command. Regular: contained but still prompted. Off: full access.",
-      );
-      if (picked === null) return;
-      const result = runSandboxCommand(engine, `mode ${SANDBOX_MODE_CHOICES[picked]!.mode}`);
-      this.print(sandboxModeBanner(engine.getSandboxPolicy().mode));
-      this.print(result.lines.map((l) => `  ${muted(l)}`).join("\n"));
-      return;
-    }
-    if (tab === 1) {
-      const picked = await this.pick(
-        "sandbox overrides",
-        SANDBOX_OVERRIDE_CHOICES.map((c) => ({
-          label: c.label,
-          hint: c.hint,
-          current: c.fallback === policy.allowUnsandboxedFallback,
-        })),
-        policy.allowUnsandboxedFallback ? 0 : 1,
-        undefined,
-        "Strict: unsandboxed: true is refused; only excludedCommands run on the host.",
-      );
-      if (picked === null) return;
-      const result = runSandboxCommand(
-        engine,
-        `override ${SANDBOX_OVERRIDE_CHOICES[picked]!.fallback ? "fallback" : "strict"}`,
-      );
-      this.print(result.lines.map((l, i) => `  ${i === 0 ? text(l) : muted(l)}`).join("\n"));
-      return;
-    }
-    const result = runSandboxCommand(engine, "config");
-    this.print(result.lines.map((l, i) => `  ${i === 0 ? text(l) : muted(l)}`).join("\n"));
-  }
-
-  private pick(
+  pick(
     title: string,
     items: PickerItem[],
     start: number,
@@ -3572,7 +1247,7 @@ class Tui {
    * `altKey` resolves `{ index, alt: true }` (the /model tree uses `d` for
    * "use now AND make it the startup default"). esc -> null.
    */
-  private pickAlt(
+  pickAlt(
     title: string,
     items: PickerItem[],
     start: number,
@@ -3593,7 +1268,7 @@ class Tui {
     });
   }
 
-  private pickerKey(key: Key): void {
+  pickerKey(key: Key): void {
     if (!this.picker) return;
     const p = this.picker;
     // onPreview runs before the redraw so the composer renders in the previewed theme.
@@ -3633,7 +1308,7 @@ class Tui {
     }
   }
 
-  private closePicker(result: number | null, alt = false): void {
+  closePicker(result: number | null, alt = false): void {
     const p = this.picker;
     this.picker = null;
     this.mode = "input";
@@ -3646,271 +1321,7 @@ class Tui {
 
   // -- ask mode (transient single-line text prompt; used by /research) --
 
-  /**
-   * `/login` -- the three-step connect flow.
-   *
-   * It replaces /providers + /keys as the way in. Those exposed the plumbing
-   * and neither answered the only question someone who just installed Rune
-   * actually has: how do I connect this? A person who pays for ChatGPT knows
-   * that; they do not know the provider is called "codex", that it signs in by
-   * OAuth, or why a "provider" and a "key" are two different screens.
-   *
-   * So it asks what you HAVE (subscription / key / offline), names the products
-   * the way you would say them, and runs the provider's own auth strategy --
-   * the same one `rune login` uses, so there is one code path for real auth.
-   */
-  private async openLogin(): Promise<void> {
-    const routes = routeChoices();
-    const engine = this.ctx.engine;
-    const connectedIds = PROVIDER_PRESETS.map((p) => p.id).filter((id) => hasStoredCredential(id));
-    const searchIds = SEARCH_PROVIDER_PRESETS.filter(
-      (p) => !p.keyless && this.searchConnected(p.id),
-    ).map((p) => p.id);
-    this.print(
-      [
-        `  ${bold(text("Connect"))} ${faint("| a model, an API key, a local server, or web search")}`,
-        `  ${faint(connectedSummary(connectedIds, searchIds))}`,
-      ].join("\n"),
-    );
-
-    const r = await this.pick(
-      "Connect | what do you want to connect?",
-      routes.map((c) => ({ label: c.label, hint: c.hint })),
-      0,
-      undefined,
-      "enter choose | esc cancel",
-    );
-    if (r == null) return;
-    const route = routes[r]!;
-
-    const targets = loginTargets(route.id, {
-      connected: (id) =>
-        route.id === "search"
-          ? this.searchConnected(id)
-          : id === CUSTOM_PROVIDER_ID
-            ? !!engine.getCustomEndpoint()
-            : hasStoredCredential(id),
-    });
-    if (targets.length === 0) {
-      this.print(`  ${faint("nothing to connect on that route")}`);
-      return;
-    }
-    const t = await this.pick(
-      `Connect | ${route.label}`,
-      targets.map((x) => ({
-        label: x.label,
-        hint: x.hint,
-        current: x.connected,
-      })),
-      0,
-      undefined,
-      targets.length > 9
-        ? "enter connect | type a letter to jump | esc back"
-        : "enter connect | esc back",
-    );
-    if (t == null) return;
-    const target = targets[t]!;
-    await this.runLoginFor(target);
-  }
-
-  /** A search engine counts as connected on any usable credential: keychain, secrets, env, or URL. */
-  private searchConnected(id: string): boolean {
-    return hasStoredCredential(id) || searchProviderConnected(id);
-  }
-
-  /** Run one target's real auth strategy and apply the result to this session. */
-  private async runLoginFor(target: LoginTarget): Promise<void> {
-    if (target.kind === "search") return this.runSearchLogin(target);
-    if (target.providerId === CUSTOM_PROVIDER_ID) return this.runCustomLocalLogin();
-    const preset = getPreset(target.providerId);
-    if (!preset) return;
-
-    // Local runtimes have nothing to authenticate: connecting IS pointing at
-    // the endpoint, so confirm reachability instead of asking for a secret.
-    if (target.method === "local") {
-      this.applyModelSwitch(target.providerId, preset.defaultModel, false);
-      this.print(`  ${faint("if it is not running, start it first -")} ${info(target.hint)}`);
-      return;
-    }
-
-    const strategy = getStrategy(target.method, target.providerId);
-    if (!strategy) {
-      this.print(`  ${warn("!")} ${muted("that sign-in method is not wired up yet")}`);
-      return;
-    }
-
-    this.print(`  ${faint("signing in to")} ${info(target.label)}${faint("...")}`);
-    try {
-      const store = await openCredentialStore();
-      const cred = await strategy.authenticate({
-        providerId: target.providerId,
-        preset,
-        store,
-        env: process.env,
-        baseUrl: preset.baseUrl,
-        openBrowser,
-        prompt: async (q: string) => (await this.promptLine(q)) ?? "",
-        log: (line?: string) => this.print(`  ${faint(line ?? "")}`),
-      } as AuthContext);
-      const valid = await strategy.validate(
-        { providerId: target.providerId, preset, store, env: process.env } as AuthContext,
-        cred,
-      );
-      // Hand the credential to the engine BEFORE switching to it. The gateway
-      // rebuilds from the credentials the engine holds, and until now nobody
-      // told it about this one: the key went into the keychain, the model
-      // switched, and the next message failed with "provider not registered"
-      // until a restart re-read the store.
-      this.ctx.engine.setResolvedCredential(target.providerId, cred, this.ctx.sessionId);
-      this.print(
-        `  ${ok(glyph("verified"))} ${muted("connected")} ${info(target.label)}${valid ? "" : faint(" (unverified)")}`,
-      );
-      // A fresh sign-in is almost always what you want to use next -- and this
-      // is the moment the choice is unambiguous, so it is made here rather than
-      // left as a second errand.
-      this.applyModelSwitch(target.providerId, preset.defaultModel, false);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.print(`  ${danger(glyph("failure"))} ${muted("sign-in failed --")} ${faint(message)}`);
-    }
-  }
-
-  /**
-   * Connect a web-search engine: paste a key (or a URL for a self-hosted one),
-   * keep it in the keychain, and prove it with one real search. A format check
-   * would pass a revoked key; the engine's own answer is the only verification
-   * that means anything, so that is what "connected" reports.
-   */
-  private async runSearchLogin(target: LoginTarget): Promise<void> {
-    const preset = getSearchPreset(target.providerId);
-    if (!preset) return;
-    if (preset.keyless) {
-      this.print(
-        `  ${ok(glyph("verified"))} ${info(preset.label)} ${muted("is built in -- it answers whenever nothing better is connected")}`,
-      );
-      return;
-    }
-    if (preset.urlEnvVar) {
-      const current = process.env[preset.urlEnvVar] || preset.baseUrl || "";
-      const url = (await this.promptLine(`${preset.label} URL:`, current))?.trim();
-      if (!url) return;
-      persistLocalEndpoint(preset.id, url);
-      process.env[preset.urlEnvVar] = url;
-      if (await this.reportSearchProbe(preset.id, preset.label)) this.preferSearch(preset);
-      return;
-    }
-    const strategy = getStrategy("api_key", preset.id);
-    if (!strategy) return;
-    this.print(`  ${faint("connecting")} ${info(preset.label)} ${faint(`-- ${preset.hint}`)}`);
-    try {
-      const store = await openCredentialStore();
-      const cred = await strategy.authenticate({
-        providerId: preset.id,
-        preset,
-        store,
-        env: process.env,
-        prompt: async (q: string) => (await this.promptLine(q)) ?? "",
-        log: (line?: string) => this.print(`  ${faint(line ?? "")}`),
-      } as AuthContext);
-      // The backends read the environment at call time; this is how the key
-      // reaches the very next web_search without a restart.
-      if (cred.secret && preset.envVar) process.env[preset.envVar] = cred.secret;
-      if (await this.reportSearchProbe(preset.id, preset.label)) this.preferSearch(preset);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.print(`  ${danger(glyph("failure"))} ${muted("connect failed --")} ${faint(message)}`);
-    }
-  }
-
-  /** One real search, reported honestly: connected, or saved-but-failing with the host's words. */
-  private async reportSearchProbe(id: string, label: string): Promise<boolean> {
-    this.print(`  ${faint("running a test search...")}`);
-    const probe = await probeSearchBackend(id);
-    if (probe.ok) {
-      this.print(
-        `  ${ok(glyph("verified"))} ${muted("connected")} ${info(label)} ${faint(`| answered in ${probe.ms}ms`)}`,
-      );
-    } else {
-      this.print(
-        `  ${warn("!")} ${muted("saved, but a test search failed --")} ${faint(probe.detail ?? "no results")}`,
-      );
-      this.print(
-        `  ${faint("it stays connected; web_search will try it after the engines that work")}`,
-      );
-    }
-    return probe.ok;
-  }
-
-  /**
-   * The engine you just connected is the one you meant to use -- the same
-   * reasoning that makes a fresh model sign-in the session model. It leads
-   * this session (RUNE_SEARCH_BACKEND is read per call) and the next ones
-   * (prefs); `[search] provider` in config.toml still outranks it at boot.
-   */
-  private preferSearch(preset: { id: string; label: string }): void {
-    process.env.RUNE_SEARCH_BACKEND = preset.id;
-    savePrefs({ search: preset.id });
-    this.print(
-      `  ${accent(glyph("phase"))} ${muted("web_search asks")} ${info(preset.label)} ${muted("first now")} ${faint("| kept for new sessions too")}`,
-    );
-  }
-
-  /**
-   * "Other local server" on the Offline route: LM Studio, vLLM, llama.cpp,
-   * LiteLLM -- anything OpenAI-compatible on this machine. It is the one
-   * custom endpoint slot, previously reachable only as
-   * `/keys custom <url> <model> <key>`. The server's own /models list picks the
-   * model when the server is up; otherwise the id is typed.
-   */
-  private async runCustomLocalLogin(): Promise<void> {
-    const engine = this.ctx.engine;
-    const existing = engine.getCustomEndpoint();
-    const baseUrl = (
-      await this.promptLine(
-        "Server URL (OpenAI-compatible):",
-        existing?.baseUrl ?? "http://localhost:1234/v1",
-      )
-    )?.trim();
-    if (!baseUrl) return;
-    const live = await fetchLiveModels("openai-compat", baseUrl);
-    let model: string | undefined;
-    if (live && live.length > 0) {
-      const picked = await this.pick(
-        `Model | ${baseUrl}`,
-        live.map((id) => ({ label: id, current: id === existing?.model })),
-        Math.max(0, live.indexOf(existing?.model ?? "")),
-        undefined,
-        "enter choose | esc back",
-      );
-      if (picked == null) return;
-      model = live[picked];
-    } else {
-      this.print(
-        `  ${warn("!")} ${muted("no model list at")} ${info(baseUrl)} ${faint("-- is the server running? type the model id")}`,
-      );
-      model = (await this.promptLine("Model id:", existing?.model ?? ""))?.trim();
-    }
-    if (!model) return;
-    const typedKey = (
-      await this.promptLine(
-        "API key (enter for none):",
-        existing?.key && existing.key !== "local" ? existing.key : "",
-      )
-    )?.trim();
-    // The gateway registers the custom slot only with a non-empty key; a
-    // keyless local server gets a placeholder it will ignore.
-    const ep: CustomEndpoint = {
-      baseUrl,
-      model,
-      key: typedKey || "local",
-      label: existing?.label ?? "Local server",
-    };
-    persistCustom(ep);
-    engine.setCustomEndpoint(ep, this.ctx.sessionId);
-    this.applyModelSwitch(CUSTOM_PROVIDER_ID, model, false);
-  }
-
-  private promptLine(title: string, initial = ""): Promise<string | null> {
+  promptLine(title: string, initial = ""): Promise<string | null> {
     return new Promise((resolve) => {
       this.input = initial;
       this.caret = initial.length;
@@ -3920,7 +1331,7 @@ class Tui {
     });
   }
 
-  private askKey(key: Key): void {
+  askKey(key: Key): void {
     if (!this.askState) return;
     const finish = (val: string | null) => {
       const r = this.askState!.resolve;
@@ -3969,7 +1380,7 @@ class Tui {
   // -- sessions manager (`/sessions`) --
 
   /** A compact "2h ago" style age for the session list. */
-  private relTime(iso: string): string {
+  relTime(iso: string): string {
     const then = new Date(iso).getTime();
     if (Number.isNaN(then)) return "";
     const s = Math.max(0, Math.floor((Date.now() - then) / 1000));
@@ -3987,16 +1398,16 @@ class Tui {
     return `${Math.floor(d / 365)}y ago`;
   }
 
-  private shortId(id: string): string {
+  shortId(id: string): string {
     return id.slice(0, 8);
   }
 
-  private sessionGroup(iso: string): string {
+  sessionGroup(iso: string): string {
     return sessionGroupLabel(iso, new Date(), { withDate: true });
   }
 
   /** Permanently discard only untouched, unnamed launch placeholders. */
-  private discardSessionIfEmpty(id: string): void {
+  discardSessionIfEmpty(id: string): void {
     const session = this.ctx.engine.getSessionInfo(id);
     if (!session || session.eventCount > 0 || session.title?.trim()) return;
     try {
@@ -4006,7 +1417,7 @@ class Tui {
     }
   }
 
-  private sessionRowView(s: SessionListItem): SessionRowView {
+  sessionRowView(s: SessionListItem): SessionRowView {
     const title = s.title && s.title.trim() ? s.title.trim() : "untitled";
     const parts = [s.model];
     if (s.eventCount > 0) parts.push(`${s.eventCount} events`);
@@ -4025,7 +1436,7 @@ class Tui {
     };
   }
 
-  private filteredSessions(view: "active" | "archived"): SessionListItem[] {
+  filteredSessions(view: "active" | "archived"): SessionListItem[] {
     const all = this.ctx.engine
       .listSessions({ status: view })
       .filter((session) => session.id === this.ctx.sessionId || isMeaningfulSession(session));
@@ -4045,7 +1456,7 @@ class Tui {
     );
   }
 
-  private openSessions(view: "active" | "archived" = "active"): void {
+  openSessions(view: "active" | "archived" = "active"): void {
     if (this.mode !== "sessions") {
       this.sessionsQuery = "";
       this.sessionsSearching = false;
@@ -4060,7 +1471,7 @@ class Tui {
   }
 
   /** Reload the list for the current view after a mutation, keeping the cursor in range. */
-  private refreshSessions(): void {
+  refreshSessions(): void {
     this.sessionsList = this.filteredSessions(this.sessionsView);
     if (this.sessionsSel >= this.sessionsList.length) {
       this.sessionsSel = Math.max(0, this.sessionsList.length - 1);
@@ -4068,14 +1479,14 @@ class Tui {
     this.scheduleDraw();
   }
 
-  private closeSessions(): void {
+  closeSessions(): void {
     this.sessionsPendingDelete = null;
     this.sessionsSearching = false;
     this.mode = "input";
     this.scheduleDraw();
   }
 
-  private sessionsKey(key: Key): void {
+  sessionsKey(key: Key): void {
     const n = this.sessionsList.length;
     if (key.type === "ctrl" && key.name === "n") {
       this.startNewSession();
@@ -4156,7 +1567,7 @@ class Tui {
     }
   }
 
-  private startNewSession(): void {
+  startNewSession(): void {
     const previous = this.ctx.sessionId;
     const next = this.ctx.engine.createSession();
     this.ctx.sessionId = next;
@@ -4170,7 +1581,7 @@ class Tui {
   }
 
   /** Load the selected session's history into the transcript and continue it. */
-  private resumeSelected(): void {
+  resumeSelected(): void {
     const s = this.sessionsList[this.sessionsSel];
     if (!s) {
       this.closeSessions();
@@ -4191,7 +1602,7 @@ class Tui {
     this.replayTranscript(s.id, s, res);
   }
 
-  private replayTranscript(
+  replayTranscript(
     id: string,
     s: SessionListItem,
     res: { switched: boolean; providerKnown: boolean },
@@ -4224,7 +1635,7 @@ class Tui {
   /** Render replayed history lines into the transcript (shared by resume + startup seeding).
    *  Uses the same two-partition renderer as a live turn so a resumed session is faithful:
    *  work inside the rail, each turn's final answer outside it. */
-  private printTranscriptLines(lines: TranscriptLine[]): void {
+  printTranscriptLines(lines: TranscriptLine[]): void {
     if (lines.length === 0) return;
     this.print(renderReplay(lines));
   }
@@ -4234,7 +1645,7 @@ class Tui {
    * `rune resume`), replay it into the viewport so the user lands where they left
    * off instead of on a blank screen.
    */
-  private seedFromHistory(): void {
+  seedFromHistory(): void {
     const lines = this.ctx.engine.getTranscript(this.ctx.sessionId);
     if (lines.length === 0) return;
     const info = this.ctx.engine.getSessionInfo(this.ctx.sessionId);
@@ -4252,7 +1663,7 @@ class Tui {
    * session). Picking an older session loads it and discards the throwaway session
    * we created to land in, so launches never litter the history.
    */
-  private async runLaunchPicker(): Promise<void> {
+  async runLaunchPicker(): Promise<void> {
     const fresh = this.ctx.sessionId;
     const recent = this.ctx.engine
       .listSessions({ status: "active" })
@@ -4292,7 +1703,7 @@ class Tui {
     this.replayTranscript(s.id, s, res);
   }
 
-  private async renameSelected(): Promise<void> {
+  async renameSelected(): Promise<void> {
     const s = this.sessionsList[this.sessionsSel];
     if (!s) return;
     const current = s.title && s.title.trim() ? s.title.trim() : "untitled";
@@ -4305,7 +1716,7 @@ class Tui {
     this.scheduleDraw();
   }
 
-  private archiveSelected(): void {
+  archiveSelected(): void {
     const s = this.sessionsList[this.sessionsSel];
     if (!s) return;
     this.ctx.engine.archiveSession(s.id);
@@ -4321,7 +1732,7 @@ class Tui {
     this.refreshSessions();
   }
 
-  private restoreSelected(): void {
+  restoreSelected(): void {
     const s = this.sessionsList[this.sessionsSel];
     if (!s) return;
     this.ctx.engine.restoreSession(s.id);
@@ -4332,7 +1743,7 @@ class Tui {
   }
 
   /** Two-step delete: the first 'd' arms (footer shows a confirm); the second deletes. */
-  private deleteSelected(): void {
+  deleteSelected(): void {
     const s = this.sessionsList[this.sessionsSel];
     if (!s) return;
     if (this.sessionsPendingDelete !== s.id) {
@@ -4358,7 +1769,7 @@ class Tui {
 
   // -- memory panel (`/memory`) --
 
-  private openMemory(): void {
+  openMemory(): void {
     this.memorySel = 0;
     this.memoryBusy = false;
     this.memoryNote = null;
@@ -4367,14 +1778,14 @@ class Tui {
     this.scheduleDraw();
   }
 
-  private closeMemory(): void {
+  closeMemory(): void {
     this.memoryPendingClear = false;
     this.memoryNote = null;
     this.mode = "input";
     this.scheduleDraw();
   }
 
-  private memoryKey(key: Key): void {
+  memoryKey(key: Key): void {
     // While a dream runs, only esc/ctrl-c (leave) are honoured.
     if (this.memoryBusy) {
       if (key.type === "esc" || (key.type === "ctrl" && key.name === "c")) this.closeMemory();
@@ -4414,7 +1825,7 @@ class Tui {
     }
   }
 
-  private async memoryRunAction(action: number): Promise<void> {
+  async memoryRunAction(action: number): Promise<void> {
     // Any action other than (re)pressing Clear disarms the clear confirmation.
     if (action !== 4) this.memoryPendingClear = false;
     switch (action) {
@@ -4436,7 +1847,7 @@ class Tui {
     }
   }
 
-  private async memoryRefresh(): Promise<void> {
+  async memoryRefresh(): Promise<void> {
     this.memorySel = 0;
     this.memoryNote = null;
     this.memoryBusy = true;
@@ -4453,7 +1864,7 @@ class Tui {
     this.scheduleDraw();
   }
 
-  private memoryCycleCadence(): void {
+  memoryCycleCadence(): void {
     const order = ["manual", "daily", "3d", "weekly"];
     const label = this.ctx.engine.getSystemMemory().scheduleLabel;
     const curToken =
@@ -4471,7 +1882,7 @@ class Tui {
     this.scheduleDraw();
   }
 
-  private async memoryAddNote(): Promise<void> {
+  async memoryAddNote(): Promise<void> {
     // promptLine switches to "ask" mode and resolves on Enter/Esc; then we return.
     const note = await this.promptLine("Add a note to your memory");
     if (note && note.trim()) {
@@ -4483,7 +1894,7 @@ class Tui {
     this.scheduleDraw();
   }
 
-  private memoryClear(): void {
+  memoryClear(): void {
     // Two-step confirm, mirroring the /sessions delete arm.
     if (!this.memoryPendingClear) {
       this.memoryPendingClear = true;
@@ -4502,7 +1913,7 @@ class Tui {
    * child), open the profile in $EDITOR, then restore the TUI and fold the edits
    * back in. The genuine in-app edit path -- no "go use classic mode" punt.
    */
-  private async editMemoryInEditor(): Promise<void> {
+  async editMemoryInEditor(): Promise<void> {
     const { engine } = this.ctx;
     const path = getSystemMemoryPath();
     if (!engine.getSystemMemory().content.trim()) {
@@ -4560,28 +1971,7 @@ class Tui {
     this.scheduleDraw();
   }
 
-  private openKeys(): void {
-    this.keysRows = this.buildKeyRows();
-    this.keysSel = 0;
-    this.keysEdit = null;
-    this.keysManage = null;
-    this.mode = "keys";
-    this.scheduleDraw();
-  }
-
-  private buildKeyRows(): KeyRow[] {
-    // getProviderStatus() returns a superset of KeyRow (adds hasKey + pools).
-    return this.ctx.engine.getProviderStatus();
-  }
-
-  private closeKeys(): void {
-    this.keysEdit = null;
-    this.keysManage = null;
-    this.mode = "input";
-    this.scheduleDraw();
-  }
-
-  private keysKey(key: Key): void {
+  keysKey(key: Key): void {
     if (this.keysEdit) {
       this.keysEditKey(key);
       return;
@@ -4629,12 +2019,12 @@ class Tui {
   }
 
   /** Open the per-provider key manager for the selected cloud provider. */
-  private openKeyManager(row: KeyRow): void {
+  openKeyManager(row: KeyRow): void {
     this.keysManage = { id: row.id, label: row.label, sel: 0 };
     this.scheduleDraw();
   }
 
-  private keysManageKey(key: Key): void {
+  keysManageKey(key: Key): void {
     const mgr = this.keysManage;
     if (!mgr) return;
     const row = this.keysRows.find((r) => r.id === mgr.id);
@@ -4679,7 +2069,7 @@ class Tui {
   }
 
   /** Begin adding a NEW key to a provider's pool (append, not replace). */
-  private startKeyAdd(mgr: { id: string; label: string }): void {
+  startKeyAdd(mgr: { id: string; label: string }): void {
     const preset = getPreset(mgr.id);
     this.keysEdit = {
       id: mgr.id,
@@ -4697,7 +2087,7 @@ class Tui {
   }
 
   /** Make one pooled key active (the one the gateway uses), persist + apply live. */
-  private setActiveManagedKey(entryId: string): void {
+  setActiveManagedKey(entryId: string): void {
     const mgr = this.keysManage;
     if (!mgr) return;
     const file = persistSetActiveKey(mgr.id, entryId);
@@ -4713,7 +2103,7 @@ class Tui {
   }
 
   /** Remove one pooled key, persist + apply live, and keep the cursor in range. */
-  private removeManagedKey(entryId: string): void {
+  removeManagedKey(entryId: string): void {
     const mgr = this.keysManage;
     if (!mgr) return;
     const file = persistRemoveKey(mgr.id, entryId);
@@ -4730,7 +2120,7 @@ class Tui {
     this.scheduleDraw();
   }
 
-  private startKeyEdit(): void {
+  startKeyEdit(): void {
     const row = this.keysRows[this.keysSel];
     if (!row) return;
     const localPreset = getPreset(row.id);
@@ -4780,7 +2170,7 @@ class Tui {
     this.scheduleDraw();
   }
 
-  private keysEditKey(key: Key): void {
+  keysEditKey(key: Key): void {
     const e = this.keysEdit;
     if (!e) return;
     switch (key.type) {
@@ -4838,7 +2228,7 @@ class Tui {
     }
   }
 
-  private commitKeyEdit(): void {
+  commitKeyEdit(): void {
     const e = this.keysEdit;
     if (!e) return;
     const val = e.value.trim();
@@ -4958,7 +2348,7 @@ class Tui {
     this.scheduleDraw();
   }
 
-  private toggleSelected(): void {
+  toggleSelected(): void {
     const row = this.keysRows[this.keysSel];
     if (!row) return;
     const next = !row.disabled;
@@ -4969,7 +2359,7 @@ class Tui {
     this.scheduleDraw();
   }
 
-  private clearSelectedKey(): void {
+  clearSelectedKey(): void {
     const row = this.keysRows[this.keysSel];
     if (!row || row.source !== "saved") return; // only saved keys are ours to clear
     let res: ReturnType<Engine["setProviderKey"]>;
@@ -4986,7 +2376,7 @@ class Tui {
   }
 
   /** Surface an auto-switch (active provider went away) into the transcript. */
-  private noteForcedSwitch(res: { switchedTo?: { provider: string; model: string } }): void {
+  noteForcedSwitch(res: { switchedTo?: { provider: string; model: string } }): void {
     if (res.switchedTo) {
       this.print(
         `  ${warn("->")} ${muted("active provider unavailable -- now on")} ${info(`${res.switchedTo.provider}/${res.switchedTo.model}`)}`,
@@ -4996,7 +2386,7 @@ class Tui {
 
   // -- permission mode --
 
-  private permissionHandler: PermissionHandler = async (prompt) => {
+  permissionHandler: PermissionHandler = async (prompt) => {
     const preview = await buildPermissionPreview({
       toolName: prompt.toolName,
       argsSummary: prompt.argsSummary,
@@ -5032,7 +2422,7 @@ class Tui {
 
   // -- ask_user question mode --
 
-  private questionHandler = (q: {
+  questionHandler = (q: {
     question: string;
     options: string[];
     index?: number;
@@ -5077,7 +2467,7 @@ class Tui {
    * turn went well, because a brief that quietly stops being mentioned when the
    * work went badly is worse than no brief at all.
    */
-  private printClose(): void {
+  printClose(): void {
     const ledger = this.ctx.engine.currentLedger();
     if (!ledger || ledger.total === 0) return;
     this.print(renderClose(ledger));
@@ -5094,7 +2484,7 @@ class Tui {
    * letting it start on a brief nobody agreed to. That loop is the entire
    * mechanism: a misread costs four seconds here instead of a session.
    */
-  private briefHandler = async (
+  briefHandler = async (
     brief: Brief,
   ): Promise<{ accepted: boolean; edited?: Brief; note?: string }> => {
     this.print(renderReadBack(brief));
@@ -5117,7 +2507,7 @@ class Tui {
    * -- rather than a tick beside a string clipped at 80 columns, which read as
    * a log line and not as the answer that steered the work.
    */
-  private finishQuestion(answer: string, chosen?: number): void {
+  finishQuestion(answer: string, chosen?: number): void {
     const q = this.questionState;
     if (!q) return;
     if (q.timer) clearTimeout(q.timer);
@@ -5135,7 +2525,7 @@ class Tui {
     q.resolve(answer);
   }
 
-  private questionKey(key: Key): void {
+  questionKey(key: Key): void {
     const q = this.questionState;
     if (!q) return;
     // The state machine is pure and lives in ./question, so what a key means
@@ -5161,7 +2551,7 @@ class Tui {
     }
   }
 
-  private permKey(key: Key): void {
+  permKey(key: Key): void {
     if (!this.perm) return;
     const choiceCount = this.perm.preview.choices.length === 2 ? 2 : 3;
     const action = permissionKeyAction(key, this.perm.sel, choiceCount);
@@ -5189,7 +2579,7 @@ class Tui {
 
   // -- turn mode (streaming) --
 
-  private turnKey(key: Key): void {
+  turnKey(key: Key): void {
     // Ctrl+R mid-turn: print the in-flight work log so far.
     if (key.type === "ctrl" && key.name === "r") {
       this.expandWorkLog();
@@ -5264,7 +2654,7 @@ class Tui {
     if (this.editComposer(key)) this.scheduleDraw();
   }
 
-  private async runTurn(input: string, scheduledLoop?: LoopTask): Promise<void> {
+  async runTurn(input: string, scheduledLoop?: LoopTask): Promise<void> {
     const { engine } = this.ctx;
     this.mode = "turn";
     this.aborting = false;
@@ -5526,7 +2916,7 @@ class Tui {
   // session grant — the "approve exactly this" surface, so the way past a held
   // publish stops being a grant of everything.
 
-  private openHeldPanel(steps: AutoModeDeferral[]): void {
+  openHeldPanel(steps: AutoModeDeferral[]): void {
     this.heldState = {
       steps,
       outcomes: steps.map(() => null),
@@ -5539,7 +2929,7 @@ class Tui {
     this.scheduleDraw();
   }
 
-  private heldKey(key: Key): void {
+  heldKey(key: Key): void {
     const st = this.heldState;
     if (!st) return;
     const action = heldAction(key, {
@@ -5571,7 +2961,7 @@ class Tui {
     }
   }
 
-  private async runHeldSelected(index: number): Promise<void> {
+  async runHeldSelected(index: number): Promise<void> {
     const st = this.heldState;
     if (!st || st.running) return;
     const step = st.steps[index]!;
@@ -5608,7 +2998,7 @@ class Tui {
     this.advanceHeld(index);
   }
 
-  private advanceHeld(from: number): void {
+  advanceHeld(from: number): void {
     const st = this.heldState;
     if (!st) return;
     const next = nextUndecided(st.outcomes, from);
@@ -5622,7 +3012,7 @@ class Tui {
 
   /** Close the panel; whatever is still undecided stays unrun, and the next
    *  run is told so instead of re-litigating it. */
-  private closeHeldPanel(): void {
+  closeHeldPanel(): void {
     const st = this.heldState;
     if (!st) return;
     st.abort?.abort();
@@ -5649,10 +3039,10 @@ class Tui {
   // until someone notices. Each retry re-parses the FRESH window from the next
   // stop message, so backoff follows the provider's own clock.
 
-  private quotaResume: { timer: ReturnType<typeof setTimeout>; at: number } | null = null;
-  private quotaResumeAttempts = 0;
+  quotaResume: { timer: ReturnType<typeof setTimeout>; at: number } | null = null;
+  quotaResumeAttempts = 0;
 
-  private scheduleQuotaResume(stopMessage: string): void {
+  scheduleQuotaResume(stopMessage: string): void {
     if (this.ctx.quotaAutoResume === false) return;
     if (this.mode !== "input" || this.queued.length > 0) return; // user is already driving
     if (this.quotaResume) return;
@@ -5683,14 +3073,14 @@ class Tui {
     this.quotaResume = { timer, at };
   }
 
-  private cancelQuotaResume(silent = false): void {
+  cancelQuotaResume(silent = false): void {
     if (!this.quotaResume) return;
     clearTimeout(this.quotaResume.timer);
     this.quotaResume = null;
     if (!silent) this.print(`  ${faint("auto-resume cancelled")}`);
   }
 
-  private renderLoopCompletion(task: LoopTask, completion: LoopCompletion): string {
+  renderLoopCompletion(task: LoopTask, completion: LoopCompletion): string {
     if (completion.state === "rescheduled" && completion.task) {
       return `  ${warn(glyph("retry"))} ${muted(`loop ${task.id} next ${formatLoopDue(completion.task.nextRunAt)}`)} ${faint(`| ${completion.reason}`)}`;
     }
@@ -5703,7 +3093,7 @@ class Tui {
     return `  ${muted(`loop ${task.id} stopped`)}`;
   }
 
-  private async runDueLoopTask(): Promise<void> {
+  async runDueLoopTask(): Promise<void> {
     // A due loop iteration outranks an unanswered held panel: leaving it open
     // would stall every later iteration of an unattended session, which is the
     // exact strand-the-run failure this release keeps paying for. The panel
@@ -5734,7 +3124,7 @@ class Tui {
   }
 
   /** Ctrl+R opens a reversible details surface; nothing is copied into scrollback. */
-  private expandWorkLog(): void {
+  expandWorkLog(): void {
     const log = this.liveTurn?.fullLog() ?? this.lastWorkLog;
     if (!log) {
       this.print(`  ${faint("no work log yet")}`);
@@ -5748,7 +3138,7 @@ class Tui {
     this.scheduleDraw();
   }
 
-  private moveWorkReview(delta: number): void {
+  moveWorkReview(delta: number): void {
     const log = this.liveTurn?.fullLog() ?? this.reviewLog ?? "";
     const body = Math.max(0, log.split("\n").filter((line) => stripAnsi(line).trim()).length - 1);
     const maxTop = Math.max(0, body - workReviewPageSize(Math.max(4, rowsCount() - 1)));
@@ -5756,14 +3146,14 @@ class Tui {
     this.scheduleDraw();
   }
 
-  private closeWorkReview(): void {
+  closeWorkReview(): void {
     this.mode = this.reviewReturnMode === "turn" && this.liveTurn ? "turn" : "input";
     this.reviewLog = null;
     this.reviewTop = 0;
     this.scheduleDraw();
   }
 
-  private workReviewKey(key: Key): void {
+  workReviewKey(key: Key): void {
     const page = workReviewPageSize(Math.max(4, rowsCount() - 1));
     if (key.type === "up") this.moveWorkReview(-1);
     else if (key.type === "down") this.moveWorkReview(1);
@@ -5782,7 +3172,7 @@ class Tui {
    *  message (which itself drains the rest on completion). On an interrupt, the queue is
    *  cancelled -- the most recent draft is restored to the composer (when empty) so nothing
    *  the user typed is silently lost. */
-  private drainQueue(wasAborted: boolean): void {
+  drainQueue(wasAborted: boolean): void {
     if (wasAborted) {
       if (this.queued.length && this.input.trim().length === 0) {
         this.input = this.queued[0]!;
@@ -5798,7 +3188,7 @@ class Tui {
 
   // -- research mode (/research) --
 
-  private async runResearchFlow(query: string, depth?: ResearchOptions["depth"]): Promise<void> {
+  async runResearchFlow(query: string, depth?: ResearchOptions["depth"]): Promise<void> {
     const { engine } = this.ctx;
     const researchOpts: ResearchOptions | undefined = depth ? { depth } : undefined;
     let question = query;
@@ -5853,7 +3243,7 @@ class Tui {
     }
   }
 
-  private async runResearchTurn(
+  async runResearchTurn(
     plan: ResearchPlan,
     question: string,
     opts?: ResearchOptions,
@@ -5949,7 +3339,7 @@ class Tui {
     this.drainQueue(wasAborted); // run/restore any message typed ahead during research
   }
 
-  private saveResearchReport(plan: ResearchPlan, question: string, report: ResearchReport): void {
+  saveResearchReport(plan: ResearchPlan, question: string, report: ResearchReport): void {
     const cfg = this.ctx.engine.getResearchConfig();
     if (cfg.save === false) return;
     try {
@@ -5977,3 +3367,18 @@ class Tui {
     }
   }
 }
+
+// ─── The other three quarters ───
+//
+// `Tui` is one object spread over four files. The methods below were lifted out
+// of this one verbatim; they are mixed onto the prototype here, at module load,
+// long before anything constructs a Tui. The interface merge is what tells
+// TypeScript they exist — an interface and a class of the same name in the same
+// file are one declaration, so `this.renderViewport()` type-checks inside the
+// class and `tui.frameZones()` type-checks inside tui-frame.ts.
+//
+// The members the moved methods reach are not marked `private` for the same
+// reason: TypeScript's `private` is per declaration site, and there is only one
+// declaration site. Nothing outside these four files imports `Tui`.
+export interface Tui extends FrameMethods, InputMethods, CommandMethods {}
+Object.assign(Tui.prototype, FRAME_METHODS, INPUT_METHODS, COMMAND_METHODS);
