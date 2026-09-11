@@ -538,29 +538,59 @@ function writtenBy(
 }
 
 /**
- * Did this write call leave the tree exactly as it found it?
+ * A unified diff that shows no change at all.
  *
- * Only ever answered from the runtime's OWN record of the call, never from a
- * guess about what the model meant. Two things can say so, and both are facts
- * the call already carried:
- *
- *   * the unified write predicate named no changed path — Lane 0 stamps this
- *     verdict onto the call as `usefulEdit`, and it is what the auto-commit
- *     scope, the headless envelope and both TUI surfaces already read; or
- *   * the tool emitted the unified diff it renders red/green in the transcript
- *     and that diff is EMPTY. `multi_edit` and `apply_patch` both compute it
- *     from the two texts they had in hand, so an edit that reproduced what was
- *     already there says so in its own result.
- *
- * Conservative on purpose: a result with no diff at all is not evidence of
- * anything, and reads as a real change.
+ * The two shapes mean the same thing. `multi_edit` and `apply_patch` compute
+ * their diffs in TS and emit `""` when the two texts they held were equal;
+ * `edit_file` (the Rust binary, edit_file.rs:288) writes the `--- a/… / +++ b/…`
+ * header before it asks whether there are hunks, so a byte-identical edit
+ * reports exactly those two lines and can never report the empty string.
+ * Either way: no hunk, nothing changed.
  */
-function changedNothing(
+function diffShowsNoChange(diff: string): boolean {
+  for (const line of diff.split("\n")) {
+    if (line.trim() === "") continue;
+    if (line.startsWith("--- ") || line.startsWith("+++ ")) continue;
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Did this write leave the file's CONTENT exactly as it found it?
+ *
+ * Only ever answered from the tool's own result, never from a guess about what
+ * the model meant — and never from the fact that a diff was empty alone, which
+ * is the trap this predicate exists to avoid. `unifiedDiff` returns `""`
+ * exactly when the two TEXTS it was handed are equal, and for three of
+ * `apply_patch`'s four outcomes those are not the two texts that describe the
+ * change: a move diffs the content that did not move, a delete of an empty file
+ * diffs `""` against `""`, an add of an empty file the same. All three changed
+ * the tree; all three reported an empty diff, and all three stood the finish
+ * gates down after a green check (V-A, 2026-09-11).
+ *
+ * Four kinds of evidence, in order of how directly they answer the question:
+ *
+ *   1. the tool said so (`unchanged`, which `multi_edit` now reports because it
+ *      compares the bytes it is about to write against the bytes on disk);
+ *   2. both hashes in one result (`prior_hash` vs `hash`) — the bytes, not the
+ *      decoded text, which is what a rewrite of a non-UTF-8 file turns on;
+ *   3. the hash against what the run last saw at that path. `write_file`
+ *      emits no diff at all — only `{hash, bytes_written, created}` — so a
+ *      rewrite of byte-identical content is `created: false` with the hash
+ *      unchanged, and that is the only shape it has to say it;
+ *   4. the tool's own diff, for an UPDATE in place, where the two texts the
+ *      diff was computed from are the two texts that describe the change.
+ *
+ * Conservative in every gap: an unparseable result, a path the run has never
+ * seen a hash for, a file that was CREATED — all read as a real change.
+ */
+function wroteSameContent(
   toolName: string,
   args: Record<string, unknown>,
   output: { result?: string; structured?: Record<string, unknown> },
+  hashBefore: (path: string) => string | undefined,
 ): boolean {
-  if (writtenBy(toolName, args, output).length === 0) return true;
   let parsed: unknown;
   try {
     parsed = output.result ? JSON.parse(output.result) : undefined;
@@ -568,17 +598,109 @@ function changedNothing(
     return false;
   }
   if (typeof parsed !== "object" || parsed === null) return false;
-  const record = parsed as { diff?: unknown; files?: unknown };
-  if (typeof record.diff === "string") return record.diff.trim() === "";
+  const record = parsed as {
+    diff?: unknown;
+    files?: unknown;
+    hash?: unknown;
+    prior_hash?: unknown;
+    unchanged?: unknown;
+    created?: unknown;
+    path?: unknown;
+  };
+
+  // (1) The tool's own verdict.
+  if (typeof record.unchanged === "boolean") return record.unchanged;
+
   // `apply_patch` is one call over several files and carries a diff per file.
+  // An empty diff is evidence of "nothing changed" only for a file UPDATED in
+  // place: `moved`, `added` and `deleted` all changed the tree whatever their
+  // diff says, and each of the three can report an empty one.
   if (Array.isArray(record.files) && record.files.length > 0) {
-    return record.files.every(
-      (f) =>
-        typeof (f as { diff?: unknown })?.diff === "string" &&
-        String((f as { diff?: unknown }).diff).trim() === "",
-    );
+    return record.files.every((entry) => {
+      const f = entry as { diff?: unknown; action?: unknown };
+      return f.action === "updated" && typeof f.diff === "string" && diffShowsNoChange(f.diff);
+    });
   }
+
+  // (2) Both hashes in hand.
+  if (typeof record.hash === "string" && typeof record.prior_hash === "string") {
+    return record.hash === record.prior_hash;
+  }
+
+  // A file that did not exist before this call exists now, whatever else the
+  // result says.
+  if (record.created === true) return false;
+
+  // (3) The hash against the last one the run saw at that path.
+  const named =
+    typeof record.path === "string" && record.path
+      ? record.path
+      : typeof args.path === "string"
+        ? args.path
+        : "";
+  if (typeof record.hash === "string" && named) {
+    const before = hashBefore(named);
+    if (before !== undefined) return before === record.hash;
+  }
+
+  // (4) The tool's own diff.
+  if (typeof record.diff === "string") return diffShowsNoChange(record.diff);
   return false;
+}
+
+/** A path as an absolute one, resolved against the workspace when relative. */
+function absoluteWithin(path: string, workspaceRoot: string): string {
+  return isAbsolute(path) ? resolve(path) : resolve(workspaceRoot, path);
+}
+
+/** How many paths the content-hash memory holds before the oldest is dropped. */
+const CONTENT_HASH_MEMORY = 1024;
+
+/**
+ * The content hash a tool result reports for each path it names.
+ *
+ * Every write tool and `read_file` carry the sha256 of the file's contents;
+ * this is what makes `wroteSameContent`'s third question answerable at all. A
+ * deletion is recorded as a MISS rather than a hash, so a later write to that
+ * path reads as the change it is.
+ */
+function hashesFromResult(
+  toolName: string,
+  args: Record<string, unknown>,
+  result: string | undefined,
+): Array<{ path: string; hash: string | null }> {
+  if (!result) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result);
+  } catch {
+    return [];
+  }
+  if (typeof parsed !== "object" || parsed === null) return [];
+  const record = parsed as { hash?: unknown; path?: unknown; files?: unknown };
+  if (Array.isArray(record.files)) {
+    const out: Array<{ path: string; hash: string | null }> = [];
+    for (const entry of record.files) {
+      const f = entry as { path?: unknown; moved_to?: unknown; hash?: unknown; action?: unknown };
+      const at = typeof f.moved_to === "string" && f.moved_to ? f.moved_to : f.path;
+      if (typeof at !== "string" || !at) continue;
+      if (f.action === "deleted") out.push({ path: at, hash: null });
+      else if (typeof f.hash === "string") out.push({ path: at, hash: f.hash });
+      // A move leaves nothing at the source path.
+      if (typeof f.moved_to === "string" && f.moved_to && typeof f.path === "string" && f.path) {
+        out.push({ path: f.path, hash: null });
+      }
+    }
+    return out;
+  }
+  const named =
+    typeof record.path === "string" && record.path
+      ? record.path
+      : typeof args.path === "string"
+        ? args.path
+        : "";
+  if (!named || typeof record.hash !== "string") return [];
+  return [{ path: named, hash: record.hash }];
 }
 
 /**
@@ -1035,6 +1157,45 @@ export class AgentLoop {
   }
 
   /**
+   * The content hash the run last saw at each absolute path, off the tools'
+   * own results (P3B I6, V-L0's open finding).
+   *
+   * `write_file` reports `{hash, bytes_written, created}` and no diff at all,
+   * so the ONLY way to know that a rewrite put back the same bytes is to have
+   * the hash it had before — which every write tool and `read_file` already
+   * report and nothing kept. A path whose entry is absent is a path the run
+   * cannot answer for, and every caller reads that as a real change.
+   *
+   * Bounded: oldest-first eviction at `CONTENT_HASH_MEMORY`, because a long
+   * run touches a lot of files and this is bookkeeping, not state.
+   */
+  private readonly contentHashes = new Map<string, string>();
+
+  /** The hash this run last saw at `path`, or undefined if it never saw one. */
+  private hashBefore(path: string, workspaceRoot: string): string | undefined {
+    return this.contentHashes.get(absoluteWithin(path, workspaceRoot));
+  }
+
+  /** Record what a result says the file at each path now contains. */
+  private noteContentHashes(
+    toolName: string,
+    args: Record<string, unknown>,
+    result: string | undefined,
+    workspaceRoot: string,
+  ): void {
+    for (const { path, hash } of hashesFromResult(toolName, args, result)) {
+      const key = absoluteWithin(path, workspaceRoot);
+      this.contentHashes.delete(key);
+      if (hash === null) continue;
+      this.contentHashes.set(key, hash);
+      if (this.contentHashes.size > CONTENT_HASH_MEMORY) {
+        const oldest = this.contentHashes.keys().next();
+        if (!oldest.done) this.contentHashes.delete(oldest.value);
+      }
+    }
+  }
+
+  /**
    * Close function-call pairs when Rune stops after the provider has already
    * emitted tool calls but before those tools execute. Persisting a bare
    * assistant tool_use poisons resume: strict providers (notably Codex's
@@ -1356,11 +1517,13 @@ export class AgentLoop {
      * project check re-armed all five finish gates and cost the run a refused
      * finish for an edit nothing could have broken. The tail after the last
      * edit was a median 13.1% of an Auto run (`phase-3-auto-efficiency.md`
-     * §2.1). A write is excused only on EVIDENCE, never on a guess — see
-     * `changedNothing`: the call named no changed path (Lane 0's `usefulEdit`
-     * verdict), or the tool's own unified diff is empty. A write that DID
-     * change a file re-arms the gates as before, whatever check passed earlier:
-     * a check that ran before the edit has not measured the edit.
+     * §2.1). A write is excused only on EVIDENCE, never on a guess, and the
+     * evidence is `usefulEdit` — the call named no changed path, or it named
+     * one whose content is byte-for-byte what it was (`wroteSameContent`). A
+     * write that DID change a file re-arms the gates as before, whatever check
+     * passed earlier: a check that ran before the edit has not measured the
+     * edit. A rename, a deletion and a new empty file are changes even where
+     * the tool's own diff is empty.
      */
     let settledPlanExcusedWrites = 0;
     /**
@@ -3188,32 +3351,20 @@ export class AgentLoop {
       // completion's checks, and this completion's land in the empty list.
       checksLastCompletion = checksThisCompletion;
       checksThisCompletion = [];
-      const carriedForward =
+      // Recognised HERE, because only the pre-rotation check list can say that
+      // every cited command ran in the completion immediately before — and
+      // REPORTED after the batch has run, because a refund is for work that was
+      // done. A citation the evidence ledger refuses settles no criterion: it
+      // earned nothing, and writing "carried forward" on the run's audit trail
+      // for it would be the harness claiming a criterion was cited when the
+      // ledger said it was not (V-A, 2026-09-11).
+      const citesLastCompletionsChecks =
         planned.length > 0 &&
         checksLastCompletion.length > 0 &&
         planned.every((p) => p.tc.toolName === "record_evidence" && p.allowed && !p.output) &&
         planned.every((p) =>
           checksLastCompletion.includes(normalizeCommand(String(p.parsedArgs.command ?? ""))),
         );
-      if (carriedForward) {
-        citationsCarriedForward++;
-        this.report(
-          "loop.citation_carried_forward",
-          "debug",
-          "citationCarryForward",
-          `a lone record_evidence cited a check from the previous completion — ` +
-            `carried forward (${citationsCarriedForward} this run)`,
-        );
-        // On the run's own audit trail as well as the incident stream: the
-        // refund moves the LOOP's ceiling, and the lifecycle projection carries
-        // the engine's snapshot of it, so this line is where a finished run can
-        // still say how many completions went to late citations.
-        this.config.taskState?.logEvent(
-          "check",
-          `citation for a check run in the previous completion — carried forward ` +
-            `(${citationsCarriedForward} this run)`,
-        );
-      }
 
       // ── Phase B: execute — in call order; runs of parallel-safe reads concurrently (bounded) ──
       // Execution runs as one background task while this generator pumps the
@@ -3813,10 +3964,28 @@ export class AgentLoop {
         // file. The predicate for "what did this write" already exists and is
         // already unified; this stamps its verdict onto the call so the tail of
         // a run is read rather than reconstructed. Absent on a non-write.
+        //
+        // TWO questions, and the second one is the one V-L0 found missing: did
+        // the call name a path it wrote, AND did that write change the file's
+        // content. `filesChangedFrom` reads the path out of the ARGUMENTS, so
+        // for every call that names a file the first question answers itself
+        // and a rewrite of byte-identical content was "a useful edit" — the
+        // marker the auto-commit scope, the headless envelope, both TUI
+        // surfaces and (since A3) the finish gates all read. The tools' own
+        // results carry the answer; `wroteSameContent` reads it.
         if (p.isWrite || isFileChangingTool(p.tc.toolName)) {
           output.usefulEdit =
-            output.success && writtenBy(p.tc.toolName, p.parsedArgs, output).length > 0;
+            output.success &&
+            writtenBy(p.tc.toolName, p.parsedArgs, output).length > 0 &&
+            !wroteSameContent(p.tc.toolName, p.parsedArgs, output, (path) =>
+              this.hashBefore(path, workspaceRoot),
+            );
           this.usefulEdits.set(p.tc.callId, output.usefulEdit);
+        }
+        // AFTER the verdict, never before: what this call left at each path is
+        // what the NEXT call there is measured against.
+        if (output.success) {
+          this.noteContentHashes(p.tc.toolName, p.parsedArgs, output.result, workspaceRoot);
         }
 
         // Worker output IS written code: it must count as writes for the
@@ -4100,22 +4269,23 @@ export class AgentLoop {
             // and cost the run a refused finish.
             //
             // The only thing that excuses a write is the runtime's own verdict
-            // that it changed NOTHING: `writtenBy` is the unified predicate
-            // the auto-commit scope, the headless envelope and both TUI
-            // surfaces read, and Lane 0 stamps its answer on the call as
-            // `usefulEdit`. A call that named no changed path cannot have
-            // invalidated evidence, so the waiver survives it.
+            // that it changed NOTHING — and that verdict is `usefulEdit`,
+            // stamped on this call a few lines above from the tool's own
+            // result: the call named no changed path, or it named one and the
+            // content there is byte-for-byte what it was. ONE predicate, read
+            // by the auto-commit scope, the headless envelope, both TUI
+            // surfaces and this gate, so they cannot drift apart.
             //
             // A write that DID change a file re-arms the gates exactly as
             // before, whatever check happens to have passed earlier: a check
-            // that ran before the edit has not measured the edit. See the
-            // report for why the design's "the last project-level check still
-            // covers it" clause was not taken — it would have stood the gates
-            // down for every source edit after any green suite.
-            if (
-              settledPlanAtWriteCount !== null &&
-              changedNothing(p.tc.toolName, p.parsedArgs, output)
-            ) {
+            // that ran before the edit has not measured the edit. A rename, a
+            // deletion and a new empty file are all changes — they were each
+            // excused while "the tool's diff was empty" stood in for "the tree
+            // is unchanged" (V-A, 2026-09-11). See the report for why the
+            // design's "the last project-level check still covers it" clause
+            // was not taken — it would have stood the gates down for every
+            // source edit after any green suite.
+            if (settledPlanAtWriteCount !== null && output.usefulEdit === false) {
               settledPlanExcusedWrites++;
               this.config.taskState?.logEvent(
                 "gate",
@@ -4173,6 +4343,33 @@ export class AgentLoop {
             }
           }
         }
+      }
+
+      // ── A2, decided: the citation ran, and the ledger took it ──
+      //
+      // Every planned call succeeded, which for a batch that is nothing but
+      // `record_evidence` means every criterion named was cited. The refund
+      // rides the incident funnel like every gate refund (`turn-refunds.ts`),
+      // so the cap, the once-per-turn rule and the clocked-sub-agent exemption
+      // are the same ones.
+      if (citesLastCompletionsChecks && planned.every((p) => p.output?.success === true)) {
+        citationsCarriedForward++;
+        this.report(
+          "loop.citation_carried_forward",
+          "debug",
+          "citationCarryForward",
+          `a lone record_evidence cited a check from the previous completion — ` +
+            `carried forward (${citationsCarriedForward} this run)`,
+        );
+        // On the run's own audit trail as well as the incident stream: the
+        // refund moves the LOOP's ceiling, and the lifecycle projection carries
+        // the engine's snapshot of it, so this line is where a finished run can
+        // still say how many completions went to late citations.
+        this.config.taskState?.logEvent(
+          "check",
+          `citation for a check run in the previous completion — carried forward ` +
+            `(${citationsCarriedForward} this run)`,
+        );
       }
 
       // Add tool results as user message

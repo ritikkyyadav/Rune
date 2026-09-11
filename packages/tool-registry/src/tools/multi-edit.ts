@@ -274,18 +274,36 @@ export function createMultiEditHandler(): ToolHandler {
         return fail(err instanceof Error ? err.message : String(err));
       }
 
-      // Atomic write: write to a temp file in the same dir, then rename over.
-      const tmp = `${abs}.rune-tmp-${randomBytes(6).toString("hex")}`;
-      try {
-        await writeFile(tmp, content, "utf8");
-        await rename(tmp, abs);
-      } catch (err) {
-        return fail(
-          `Failed to write ${args.path}: ${err instanceof Error ? err.message : String(err)}`,
-        );
+      // ── Does this edit have anything to write? ──
+      //
+      // Compared as BYTES, never as the decoded strings: `raw.toString("utf8")`
+      // replaces every byte that is not valid UTF-8 with U+FFFD, so an edit that
+      // reproduced the text it matched used to write those replacement
+      // characters back over a file that was not UTF-8 — corrupting it while
+      // reporting an EMPTY diff, because the diff is computed from the two
+      // decoded texts and those two were equal. The finish gates read that empty
+      // diff as "this write changed nothing" and stood down on a rewritten file
+      // (V-A, 2026-09-11).
+      //
+      // Equal bytes mean there is nothing to write at all: the file keeps its
+      // mtime, and the empty diff is then TRUE rather than merely reported.
+      const next = Buffer.from(content, "utf8");
+      const unchanged = next.equals(raw);
+
+      if (!unchanged) {
+        // Atomic write: write to a temp file in the same dir, then rename over.
+        const tmp = `${abs}.rune-tmp-${randomBytes(6).toString("hex")}`;
+        try {
+          await writeFile(tmp, next);
+          await rename(tmp, abs);
+        } catch (err) {
+          return fail(
+            `Failed to write ${args.path}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
 
-      const newHash = sha256Hex(Buffer.from(content, "utf8"));
+      const newHash = unchanged ? currentHash : sha256Hex(next);
       return {
         callId: input.callId,
         toolName: input.toolName,
@@ -293,6 +311,12 @@ export function createMultiEditHandler(): ToolHandler {
         result: JSON.stringify({
           path: args.path,
           hash: newHash,
+          // The hash the file had BEFORE this call, and the verdict that reads
+          // the two. An empty `diff` only ever says the two TEXTS matched; these
+          // say whether the bytes on disk moved, which is what "this edit
+          // changed nothing" has to mean to a gate that trusts it.
+          prior_hash: currentHash,
+          unchanged,
           edits_applied: reports.length,
           edits: reports,
           // The diff the transcript renders as red/green. multi_edit ran in TS

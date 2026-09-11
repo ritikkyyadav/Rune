@@ -354,4 +354,62 @@ describe("I6 — a useful_edit marker on the call that wrote something", () => {
     const verdicts = ["c1", "c2", "c3"].map((id) => loop.usefulEditOf(id));
     expect(verdicts).toEqual([true, false, undefined]);
   });
+
+  test("a rewrite of byte-identical content is not a useful edit", async () => {
+    // The second half of the claim — "and it CHANGED something". The predicate
+    // was `success && writtenBy(...).length > 0`, and `filesChangedFrom` reads
+    // the path straight out of the ARGUMENTS (lifecycle.ts:100), so for every
+    // call that names a file it answered itself: two identical `write_file`
+    // calls were both useful edits while the tool's own result said
+    // `created: false` with the hash unchanged (V-L0, reproduced on a mock-rig
+    // run). The hash is the evidence, and the loop keeps the last one it saw
+    // at each path for exactly this question.
+    const HASH = "02d2ca9929864de5c6c1873cee1f572ea28d605d86bb469fe2f720f3584395e2";
+    let call = 0;
+    const registry = {
+      toLlmTools: mock(() => []),
+      get: mock((name: string) => ({
+        schema: {
+          name,
+          version: "0.1.0",
+          description: "",
+          inputSchema: { type: "object", properties: {} },
+          category: "write",
+          permissionLevel: "auto",
+        },
+      })),
+      execute: mock(async (input: { toolName: string; callId: string }) => {
+        call++;
+        return {
+          callId: input.callId,
+          toolName: input.toolName,
+          success: true,
+          // The real `write_file` shape (write_file.rs:99): the file is created
+          // once, and the second write of the same content reports the same
+          // content hash.
+          result: JSON.stringify({
+            bytes_written: 5,
+            created: call === 1,
+            hash: HASH,
+            path: "src/a.ts",
+          }),
+          durationMs: 1,
+        };
+      }),
+    } as any;
+    const turns: Step[] = [
+      { tool: "write_file", args: { path: "src/a.ts", content: "same\n" } },
+      { tool: "write_file", args: { path: "src/a.ts", content: "same\n" } },
+      { text: "done" },
+    ];
+    const loop = new AgentLoop(
+      { model: "m", provider: "anthropic" as const, maxTokens: 100, maxTurns: 4 },
+      makeGateway(turns),
+      registry,
+      mock(async () => ({ allowed: true })) as any,
+    );
+    for await (const _ of loop.run("go", "s1", ROOT)) void _;
+    expect(loop.usefulEditOf("c1")).toBe(true);
+    expect(loop.usefulEditOf("c2")).toBe(false);
+  });
 });

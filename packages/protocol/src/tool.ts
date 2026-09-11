@@ -48,10 +48,15 @@ export interface ToolCallOutput {
    *
    * The verdict of the one write predicate the harness already has — the same
    * `filesChangedFrom` the headless envelope, the auto-commit scope and both
-   * TUI surfaces read, plus the worker's own `filesChanged` report. `true`
-   * means the call named at least one path it changed; `false` means a write
-   * tool succeeded and named none (a worker whose branch was retained, a patch
-   * that applied to nothing); absent means the call was not a write at all.
+   * TUI surfaces read, plus the worker's own `filesChanged` report — and, since
+   * the predicate reads the path out of the ARGUMENTS and so cannot see that
+   * nothing moved, the tool's own account of the CONTENT at that path: a hash
+   * unchanged from the one the run last saw there, an `unchanged` flag, or a
+   * diff with no hunk in it. `true` means the call named a path and the bytes
+   * there are not what they were; `false` means a write tool succeeded and
+   * changed nothing (a worker whose branch was retained, a patch that applied
+   * to nothing, a rewrite of byte-identical content); absent means the call was
+   * not a write at all.
    *
    * It exists because "time after the last useful edit" was inferred from the
    * last assistant message that CALLED an edit tool, which counts an edit that

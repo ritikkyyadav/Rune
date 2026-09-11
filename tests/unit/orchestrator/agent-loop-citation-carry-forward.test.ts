@@ -99,10 +99,13 @@ interface Run {
   gw: ReturnType<typeof makeGateway>;
   incidents: string[];
   maxTurns: () => number;
+  /** The run's own audit trail, which the carry-forward also writes to. */
+  taskState: TaskStateStore;
 }
 
 function build(turns: Step[], maxTurns = 12): Run {
   const incidents: string[] = [];
+  const taskState = new TaskStateStore();
   const config: Record<string, unknown> = {
     model: "m",
     provider: "anthropic",
@@ -110,7 +113,7 @@ function build(turns: Step[], maxTurns = 12): Run {
     maxTurns,
     systemPrompt: "s",
     effortRouting: "off",
-    taskState: new TaskStateStore(),
+    taskState,
     onIncident: (i: { class: string }) => incidents.push(i.class),
   };
   const gw = makeGateway(turns);
@@ -121,6 +124,7 @@ function build(turns: Step[], maxTurns = 12): Run {
     loop,
     gw,
     incidents,
+    taskState,
     maxTurns: () => (loop as unknown as { config: { maxTurns: number } }).config.maxTurns,
   };
 }
@@ -220,6 +224,49 @@ describe("A2 — a lone citation for the previous completion's check", () => {
     const run = build(pairs, 8);
     await collect(run.loop.run("prove the parser round-trips", "s1", "/tmp"));
     expect(run.maxTurns()).toBeLessThanOrEqual(8 + 2);
+  });
+
+  test("a citation the ledger REFUSED earns nothing and is not on the audit trail", async () => {
+    // The refund is for a completion the harness discarded, or one its own
+    // schema promised would be free and whose substance the model delivered:
+    // the check ran, then it was cited. A citation the evidence ledger refuses
+    // settled no criterion, so it delivered neither — and the decision used to
+    // be made in the PLANNING phase, before any call ran, which is the only
+    // reason it could be made about a call that then failed (V-A, 2026-09-11).
+    const run = build([
+      CHECK,
+      { tool: "record_evidence", args: { criterion: 9, command: "bun test" } },
+      DONE,
+    ]);
+    const before = run.maxTurns();
+    // The ledger's own refusal: read_back recorded one criterion, not ten.
+    (run.loop as unknown as { registry: { execute: unknown } }).registry.execute = mock(
+      async (input: { toolName: string; callId: string }) =>
+        input.toolName === "record_evidence"
+          ? {
+              callId: input.callId,
+              toolName: input.toolName,
+              success: false,
+              result: "",
+              error: "criterion 9 does not exist — read_back recorded 1 criterion",
+              durationMs: 1,
+            }
+          : {
+              callId: input.callId,
+              toolName: input.toolName,
+              success: true,
+              result: JSON.stringify({ exit_code: 0, stdout: "44 pass", stderr: "" }),
+              durationMs: 1,
+            },
+    );
+    await collect(run.loop.run("prove the parser round-trips", "s1", "/tmp"));
+    expect(run.incidents).not.toContain("loop.citation_carried_forward");
+    expect(run.maxTurns()).toBe(before);
+    expect(
+      (run.taskState.snapshot().log ?? []).some((e: { text?: string }) =>
+        /carried forward/.test(String(e.text)),
+      ),
+    ).toBe(false);
   });
 
   test("a lone citation does not read as a single-READ turn", async () => {
