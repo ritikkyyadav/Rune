@@ -23,7 +23,15 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  accessSync,
+  appendFileSync,
+  constants as fsConstants,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 
 import { Database } from "bun:sqlite";
@@ -431,6 +439,11 @@ export interface RunOptions {
   /** Extra CLI arguments. Never a provider or a model — see the class comment. */
   args?: string[];
   env?: Record<string, string>;
+  /**
+   * Run a COMPILED binary instead of `bun rune-cli.ts` — the installed
+   * `~/.rune/bin/rune`, say. Defaults to `RUNE_SCENARIO_CLI`, then to source.
+   */
+  cli?: string;
 }
 
 export interface HeadlessEnvelope {
@@ -624,6 +637,36 @@ export class Run {
 }
 
 /**
+ * Which binary `spawnRun` should drive: the source CLI, or a compiled one.
+ *
+ * Returns `""` for the default — `bun packages/orchestrator/src/bin/rune-cli.ts`,
+ * which is what every suite in this repository gets and what they got before
+ * this hook existed. A non-empty answer is an explicit request, from the
+ * `cli` option or from `RUNE_SCENARIO_CLI`, for the COMPILED binary instead.
+ *
+ * It is deliberately loud. A verification pass that asks for the installed
+ * binary and silently gets the source one back would produce a measurement
+ * labelled with the wrong subject, which is worse than no measurement, so a
+ * path that does not exist or cannot be executed throws here rather than at
+ * whatever the child fails to do later.
+ */
+function resolveScenarioCli(explicit?: string): string {
+  const requested = (explicit ?? process.env.RUNE_SCENARIO_CLI ?? "").trim();
+  if (!requested) return "";
+  if (!existsSync(requested)) {
+    throw new Error(
+      `RUNE_SCENARIO_CLI / RunOptions.cli points at a binary that does not exist: ${requested}`,
+    );
+  }
+  try {
+    accessSync(requested, fsConstants.X_OK);
+  } catch {
+    throw new Error(`RUNE_SCENARIO_CLI / RunOptions.cli is not executable: ${requested}`);
+  }
+  return requested;
+}
+
+/**
  * Spawn the real CLI, headless, against the mock.
  *
  * `--stream-json` is not decoration: it is the only way to observe the child's
@@ -636,7 +679,6 @@ export function spawnRun(opts: RunOptions): Run {
   const env = { ...curatedEnv(opts.home, opts.fixture, opts.toolsBin, opts.env ?? {}) };
   assertNoLiveCredentials(env);
   const args = [
-    RUNE_CLI,
     "-P",
     opts.prompt,
     "--stream-json",
@@ -646,14 +688,22 @@ export function spawnRun(opts: RunOptions): Run {
     ...(opts.resume ? ["--resume", opts.resume] : []),
     ...(opts.args ?? []),
   ];
-  const proc = Bun.spawn(["bun", ...args], {
+  // Source by default. `RUNE_SCENARIO_CLI` (or `opts.cli`) points the same rig
+  // at a COMPILED binary instead — the one a verification pass needs when the
+  // question is "does the thing the founder actually runs still do this", and
+  // the shape V4b drove by hand. Everything else is unchanged: the same fixture,
+  // the same scratch home whose only route is the loopback mock, and
+  // `assertNoLiveCredentials` before the process starts.
+  const cli = resolveScenarioCli(opts.cli);
+  const argv = cli ? [cli, ...args] : ["bun", RUNE_CLI, ...args];
+  const proc = Bun.spawn(argv, {
     cwd: opts.fixture.root,
     env,
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
   });
-  return new Run(proc as Bun.Subprocess<"ignore", "pipe", "pipe">, ["bun", ...args]);
+  return new Run(proc as Bun.Subprocess<"ignore", "pipe", "pipe">, argv);
 }
 
 // ─── Artifacts ───
