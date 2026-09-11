@@ -50,7 +50,12 @@ test("unknown prices and unknown historical usage cannot masquerade as a free ca
   expect(() => tracker.reserveRequest({ ...usageRequest(), model: "custom-unpriced" }, 5)).toThrow(
     "unpriced",
   );
-  tracker.record("custom-unpriced", "anthropic", { inputTokens: 100, outputTokens: 10 });
+  tracker.record(
+    "custom-unpriced",
+    "anthropic",
+    { inputTokens: 100, outputTokens: 10 },
+    { role: "primary" },
+  );
   expect(() => tracker.reserveRequest(usageRequest(), 5)).toThrow("unpriced");
   expect(tracker.getReservedUsd()).toBe(0);
 });
@@ -62,8 +67,18 @@ test("reservations follow observed output, so parallel children are admitted onc
   const coldUsd = tracker.getReservedUsd();
   cold();
   expect(tracker.expectedOutputTokens(request.model, request.maxTokens)).toBe(8_000);
-  tracker.record(request.model, "anthropic", { inputTokens: 1_000, outputTokens: 100 });
-  tracker.record(request.model, "anthropic", { inputTokens: 1_000, outputTokens: 100 });
+  tracker.record(
+    request.model,
+    "anthropic",
+    { inputTokens: 1_000, outputTokens: 100 },
+    { role: "primary" },
+  );
+  tracker.record(
+    request.model,
+    "anthropic",
+    { inputTokens: 1_000, outputTokens: 100 },
+    { role: "primary" },
+  );
   expect(tracker.expectedOutputTokens(request.model, request.maxTokens)).toBe(256);
   const warm = tracker.reserveRequest(request, 1_000);
   const warmUsd = tracker.getReservedUsd();

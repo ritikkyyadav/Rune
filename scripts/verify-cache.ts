@@ -248,6 +248,7 @@ function request(question: string): InferenceRequest {
     model: MODEL,
     provider: PROVIDER,
     maxTokens: 32,
+    role: "primary",
     stream: false,
     // The stable prefix ends at the last shared message; the question after it
     // is the varying suffix — exactly the shape the agent loop produces.

@@ -14,6 +14,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createWorkflowTool } from "./workflow-tool";
 import { formatCostSummary } from "./cost-report";
 import type {
+  CallRole,
   CostEntry,
   ReasoningEffort,
   Message,
@@ -6253,16 +6254,28 @@ export class Engine {
       ) {
         this.costTracker.recordEntry({
           ...(p as unknown as CostEntry),
+          // A row written before P12.1 carries no role and one written before
+          // P3B I3 carries no start stamp. `primary` is what every reader
+          // already assumed of the absent tag, and the timestamps are dates on
+          // the wire — rehydrated here rather than left as strings wearing a
+          // Date's type.
+          role: typeof p.role === "string" ? (p.role as CallRole) : "primary",
+          ...(typeof p.startedAt === "string" ? { startedAt: new Date(p.startedAt) } : {}),
           timestamp: new Date(String(p.timestamp)),
         });
         continue;
       }
-      this.costTracker.record(p.model, p.provider as ProviderName, {
-        inputTokens: Number(p.inputTokens) || 0,
-        outputTokens: Number(p.outputTokens) || 0,
-        cacheReadTokens: Number(p.cacheReadTokens) || 0,
-        cacheCreationTokens: Number(p.cacheCreationTokens) || 0,
-      });
+      this.costTracker.record(
+        p.model,
+        p.provider as ProviderName,
+        {
+          inputTokens: Number(p.inputTokens) || 0,
+          outputTokens: Number(p.outputTokens) || 0,
+          cacheReadTokens: Number(p.cacheReadTokens) || 0,
+          cacheCreationTokens: Number(p.cacheCreationTokens) || 0,
+        },
+        { role: typeof p.role === "string" ? (p.role as CallRole) : "primary" },
+      );
     }
     this.costTracker.setSessionBudget(this.config.maxSessionCostUsd ?? null);
     this.costSessionId = sessionId;

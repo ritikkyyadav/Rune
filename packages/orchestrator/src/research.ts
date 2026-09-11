@@ -303,6 +303,7 @@ export async function planResearch(
     provider: opts?.provider ?? deps.provider,
     maxTokens: 2048,
     responseFormat: { type: "json_schema", jsonSchema: PLAN_JSON_SCHEMA },
+    role: "research",
     stream: true,
   };
 
@@ -802,6 +803,7 @@ async function reflect(
     provider: deps.provider,
     maxTokens: 1024,
     responseFormat: { type: "json_schema", jsonSchema: REFLECT_JSON_SCHEMA },
+    role: "research",
     stream: true,
   };
 
@@ -1057,6 +1059,7 @@ export async function analyze(
     model,
     provider,
     maxTokens: 2_048,
+    role: "research",
     stream: true,
   };
   try {
@@ -1220,6 +1223,7 @@ Design the section outline now.`;
     provider,
     maxTokens: 2048,
     responseFormat: { type: "json_schema", jsonSchema: OUTLINE_JSON_SCHEMA },
+    role: "research",
     stream: true,
   };
 
@@ -1334,6 +1338,7 @@ export async function* synthesizeReport(
       model,
       provider,
       maxTokens: s.synthesisMaxTokens,
+      role: "research",
       stream: true,
     };
     yield* streamCall(deps.gateway, req, signal);
@@ -1398,6 +1403,7 @@ export async function* synthesizeReport(
       model,
       provider,
       maxTokens: s.sectionMaxTokens,
+      role: "research",
       stream: true,
     };
 

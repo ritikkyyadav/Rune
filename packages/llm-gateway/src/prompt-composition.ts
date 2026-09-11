@@ -47,6 +47,50 @@ export function toolSchemaBytes(tools: ReadonlyArray<ToolDefinition> | undefined
   return utf8Bytes(JSON.stringify(tools));
 }
 
+// ─── The prefix fingerprint (P3B I5) ───
+//
+// FNV-1a over UTF-16 code units. Not a checksum and not a security primitive:
+// it is only ever compared to the hash of ANOTHER request on the same machine
+// in the same run, to answer "did the prefix these two requests sent differ".
+// It is one multiply and one xor per character over text the caller has
+// already assembled, which is nothing beside the request it describes.
+//
+// It stores no content. Eight hex characters cannot reconstruct a prompt, and
+// that is deliberate — this rides in a session log the cost report reads.
+
+const FNV_OFFSET = 0x811c9dc5;
+
+function fold(hash: number, text: string): number {
+  let h = hash;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/** Fold one message's text the same way `messageBytes` counts it. */
+function foldMessage(hash: number, message: Message): number {
+  let h = fold(hash, message.role);
+  for (const block of message.content) {
+    h = fold(h, block.type);
+    switch (block.type) {
+      case "text":
+        h = fold(h, block.text);
+        break;
+      case "tool_use":
+        h = fold(fold(h, block.toolName), JSON.stringify(block.toolInput ?? {}));
+        break;
+      case "tool_result":
+        h = fold(h, block.toolResultContent ?? "");
+        break;
+      default:
+        h = fold(h, JSON.stringify(block));
+    }
+  }
+  return h;
+}
+
 /**
  * Measure a request's parts.
  *
@@ -65,11 +109,26 @@ export function measureComposition(parts: {
   planLedger?: string | null;
   /** Other ephemeral tails (team presence, turn budget). */
   taskState?: ReadonlyArray<string | null | undefined>;
+  /**
+   * The index the caller marked as the last cacheable message, when it marked
+   * one. Recorded, not used: the cache decision belongs to the caller, and
+   * this is the ruler that says what the decision was.
+   */
+  cacheBreakpointIndex?: number;
 }): PromptComposition {
-  const doctrine = utf8Bytes(parts.system ?? "");
-  const toolSchemas = toolSchemaBytes(parts.tools);
+  const systemText = parts.system ?? "";
+  const toolsJson = parts.tools?.length ? JSON.stringify(parts.tools) : "";
+  const doctrine = utf8Bytes(systemText);
+  const toolSchemas = utf8Bytes(toolsJson);
   let conversation = 0;
-  for (const m of parts.messages) conversation += messageBytes(m);
+  // The prefix is what a provider's cache would match on: the system prompt,
+  // the tool surface and the stable conversation — everything the caller kept
+  // OUT of the ephemeral tail. Folded in the same pass that measures it.
+  let prefix = fold(fold(FNV_OFFSET, systemText), toolsJson);
+  for (const m of parts.messages) {
+    conversation += messageBytes(m);
+    prefix = foldMessage(prefix, m);
+  }
   const planLedger = utf8Bytes(parts.planLedger ?? "");
   let taskState = 0;
   for (const block of parts.taskState ?? []) taskState += utf8Bytes(block ?? "");
@@ -80,13 +139,19 @@ export function measureComposition(parts: {
     toolSchemas,
     conversation,
     total: doctrine + planLedger + taskState + toolSchemas + conversation,
+    ...(parts.cacheBreakpointIndex !== undefined
+      ? { cacheBreakpointIndex: parts.cacheBreakpointIndex }
+      : {}),
+    prefixHash: prefix.toString(16).padStart(8, "0"),
   };
 }
 
+/** The five measured byte parts — the ones that have a share of the total. */
+export type CompositionPart =
+  "doctrine" | "planLedger" | "taskState" | "toolSchemas" | "conversation";
+
 /** The share each part took, for a readout. Null when nothing was measured. */
-export function compositionShares(
-  c: PromptComposition,
-): Record<keyof Omit<PromptComposition, "total">, number> | null {
+export function compositionShares(c: PromptComposition): Record<CompositionPart, number> | null {
   if (c.total <= 0) return null;
   return {
     doctrine: c.doctrine / c.total,

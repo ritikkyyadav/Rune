@@ -273,10 +273,14 @@ export class LlmGateway {
 
     for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
       const release = this.requestGuard?.(request);
+      // Stamped per ATTEMPT, not per call: a request that was retried twice
+      // was not slow for the whole ladder, and charging it the back-off it
+      // waited through would hide the retry behind the provider (P3B I3).
+      const startedAt = new Date();
       try {
         const response = await provider.infer(request);
         release?.();
-        this.recordCost(request.model, request.provider, response.usage, request);
+        this.recordCost(request.model, request.provider, response.usage, request, startedAt);
         return response;
       } catch (err) {
         lastError = err as Error;
@@ -286,7 +290,7 @@ export class LlmGateway {
         if (!this.shouldRetry(err as Error, attempt)) break;
         // No stream to yield on here, but the retry is still not allowed to be
         // silent — `retryEvent` reports it to the black box on the way past.
-        this.retryEvent(request.provider, request.model, attempt, lastError);
+        this.retryEvent(request.provider, request.model, attempt, lastError, request, startedAt);
         await this.backoff(lastError, attempt);
       } finally {
         release?.();
@@ -383,12 +387,21 @@ export class LlmGateway {
 
       for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
         const release = this.requestGuard?.(adjustedRequest);
+        // Per attempt, and per PROVIDER: a request that fell back measures the
+        // provider that actually served it, not the one that refused (P3B I3).
+        const startedAt = new Date();
         try {
           const gen = provider.inferStream(adjustedRequest, opts);
           for await (const event of gen) {
             if (event.type === "message_stop") {
               release?.();
-              this.recordCost(adjustedRequest.model, providerName, event.usage, adjustedRequest);
+              this.recordCost(
+                adjustedRequest.model,
+                providerName,
+                event.usage,
+                adjustedRequest,
+                startedAt,
+              );
             }
             yieldedSinceReset = true;
             yield event;
@@ -491,7 +504,14 @@ export class LlmGateway {
               yieldedSinceReset = false;
               yield { type: "stream_reset" };
             }
-            yield this.retryEvent(providerName, adjustedRequest.model, attempt, lastError);
+            yield this.retryEvent(
+              providerName,
+              adjustedRequest.model,
+              attempt,
+              lastError,
+              adjustedRequest,
+              startedAt,
+            );
             await this.backoff(lastError, attempt);
             continue;
           }
@@ -502,7 +522,14 @@ export class LlmGateway {
             yieldedSinceReset = false;
             yield { type: "stream_reset" };
           }
-          yield this.retryEvent(providerName, adjustedRequest.model, attempt, lastError);
+          yield this.retryEvent(
+            providerName,
+            adjustedRequest.model,
+            attempt,
+            lastError,
+            adjustedRequest,
+            startedAt,
+          );
           await this.backoff(lastError, attempt);
         } finally {
           release?.();
@@ -817,6 +844,10 @@ export class LlmGateway {
     model: string,
     attempt: number,
     err: Error | undefined,
+    /** The request that hit it, and when it went out — the incident's join
+     *  key back to the completion that paid for it (P3B I6b). */
+    request?: Pick<InferenceRequest, "role">,
+    startedAt?: Date,
   ): Extract<StreamEvent, { type: "retry" }> {
     const status = (err as unknown as { status?: number } | undefined)?.status;
     const waitMs = this.retryWaitMs(err, attempt);
@@ -830,6 +861,8 @@ export class LlmGateway {
       attempt: attempt + 1,
       of: this.config.maxRetries,
       waitMs,
+      ...(request?.role ? { role: request.role } : {}),
+      ...(startedAt ? { requestStartedAt: startedAt.toISOString() } : {}),
     });
     return {
       type: "retry",
@@ -884,13 +917,24 @@ export class LlmGateway {
     provider: ProviderName,
     usage: TokenUsage,
     /** The request that produced it, so the ledger can say what it was FOR. */
-    request?: Pick<InferenceRequest, "role" | "composition">,
+    request: Pick<InferenceRequest, "role" | "composition">,
+    /** When that request went to the provider (P3B I3). */
+    startedAt: Date,
   ): void {
     try {
-      const entry = this.costTracker.record(model, provider, usage, new Date(), {
-        ...(request?.role ? { role: request.role } : {}),
-        ...(request?.composition ? { composition: request.composition } : {}),
-      });
+      const landedAt = new Date();
+      const entry = this.costTracker.record(
+        model,
+        provider,
+        usage,
+        {
+          role: request.role,
+          ...(request.composition ? { composition: request.composition } : {}),
+          startedAt,
+          latencyMs: Math.max(0, landedAt.getTime() - startedAt.getTime()),
+        },
+        landedAt,
+      );
       for (const listener of this.usageListeners) {
         try {
           listener(entry);

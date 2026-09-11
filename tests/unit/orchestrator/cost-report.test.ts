@@ -38,7 +38,12 @@ describe("number formatting", () => {
 describe("the readout distinguishes free from unmeasured", () => {
   test("a subscription route shows $0 spent AND what it was worth", () => {
     const t = new CostTracker();
-    t.record("gpt-5.6-sol", "codex", { inputTokens: 1_000_000, outputTokens: 10_000 });
+    t.record(
+      "gpt-5.6-sol",
+      "codex",
+      { inputTokens: 1_000_000, outputTokens: 10_000 },
+      { role: "primary" },
+    );
     const rows = rowsFor(t);
 
     expect(rows.get("Spent")?.value).toBe("$0.00");
@@ -49,7 +54,12 @@ describe("the readout distinguishes free from unmeasured", () => {
 
   test("an unpriced model is called out, not folded into the total", () => {
     const t = new CostTracker();
-    t.record("some-unreleased-model", "openai", { inputTokens: 500_000, outputTokens: 1_000 });
+    t.record(
+      "some-unreleased-model",
+      "openai",
+      { inputTokens: 500_000, outputTokens: 1_000 },
+      { role: "primary" },
+    );
     const rows = rowsFor(t);
 
     expect(rows.get("Unpriced")?.value).toBe("some-unreleased-model");
@@ -59,7 +69,7 @@ describe("the readout distinguishes free from unmeasured", () => {
 
   test("inferred rates are marked with a tilde and explained", () => {
     const t = new CostTracker();
-    t.record("gpt-5.6-sol", "codex", { inputTokens: 1_000, outputTokens: 10 });
+    t.record("gpt-5.6-sol", "codex", { inputTokens: 1_000, outputTokens: 10 }, { role: "primary" });
     const rows = rowsFor(t);
     expect(rows.get("Metered equivalent")?.value.startsWith("~")).toBe(true);
     expect(rows.get("Note")?.value).toContain("inferred");
@@ -67,7 +77,12 @@ describe("the readout distinguishes free from unmeasured", () => {
 
   test("published rates carry no tilde", () => {
     const t = new CostTracker();
-    t.record("claude-sonnet-5", "anthropic", { inputTokens: 1_000_000, outputTokens: 0 });
+    t.record(
+      "claude-sonnet-5",
+      "anthropic",
+      { inputTokens: 1_000_000, outputTokens: 0 },
+      { role: "primary" },
+    );
     const rows = rowsFor(t);
     expect(rows.get("Metered equivalent")?.value).toBe("$2.00");
     expect(rows.has("Note")).toBe(false);
@@ -83,11 +98,16 @@ describe("cache reporting", () => {
 
   test("a warm session reports its hit rate and the dollars saved", () => {
     const t = new CostTracker();
-    t.record("claude-sonnet-5", "anthropic", {
-      inputTokens: 100_000,
-      outputTokens: 10_000,
-      cacheReadTokens: 900_000,
-    });
+    t.record(
+      "claude-sonnet-5",
+      "anthropic",
+      {
+        inputTokens: 100_000,
+        outputTokens: 10_000,
+        cacheReadTokens: 900_000,
+      },
+      { role: "primary" },
+    );
     const rows = rowsFor(t);
 
     expect(rows.get("Cache hit rate")?.value).toBe("90%");
@@ -99,7 +119,12 @@ describe("cache reporting", () => {
 
   test("a cold session reports 0% without claiming a saving", () => {
     const t = new CostTracker();
-    t.record("claude-sonnet-5", "anthropic", { inputTokens: 100_000, outputTokens: 1_000 });
+    t.record(
+      "claude-sonnet-5",
+      "anthropic",
+      { inputTokens: 100_000, outputTokens: 1_000 },
+      { role: "primary" },
+    );
     const rows = rowsFor(t);
     expect(rows.get("Cache hit rate")?.value).toBe("0%");
     expect(rows.get("Cache saved")?.value).toBe("$0.00");
@@ -109,17 +134,27 @@ describe("cache reporting", () => {
 describe("status-bar summary", () => {
   test("a metered route leads with actual spend", () => {
     const t = new CostTracker();
-    t.record("claude-sonnet-5", "anthropic", {
-      inputTokens: 1_000_000,
-      outputTokens: 0,
-      cacheReadTokens: 1_000_000,
-    });
+    t.record(
+      "claude-sonnet-5",
+      "anthropic",
+      {
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+        cacheReadTokens: 1_000_000,
+      },
+      { role: "primary" },
+    );
     expect(formatCostSummary(t.getBreakdown())).toBe("$2.20 · cache 50%");
   });
 
   test("a subscription route leads with value, since spend is always zero", () => {
     const t = new CostTracker();
-    t.record("gpt-5.6-sol", "codex", { inputTokens: 1_000_000, outputTokens: 10_000 });
+    t.record(
+      "gpt-5.6-sol",
+      "codex",
+      { inputTokens: 1_000_000, outputTokens: 10_000 },
+      { role: "primary" },
+    );
     expect(formatCostSummary(t.getBreakdown())).toBe("~$1.35 value · cache 0%");
   });
 });

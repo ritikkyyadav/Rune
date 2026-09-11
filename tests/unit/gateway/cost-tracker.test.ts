@@ -22,10 +22,15 @@ describe("CostTracker", () => {
 
   test("records entries and tracks total", () => {
     const tracker = new CostTracker();
-    tracker.record("claude-sonnet-4-6", "anthropic", {
-      inputTokens: 1000,
-      outputTokens: 500,
-    });
+    tracker.record(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        inputTokens: 1000,
+        outputTokens: 500,
+      },
+      { role: "primary" },
+    );
     const ledger = tracker.getLedger();
     expect(ledger.entries).toHaveLength(1);
     expect(ledger.totalCostUsd).toBeGreaterThan(0);
@@ -36,17 +41,27 @@ describe("CostTracker", () => {
       budgets: [{ scope: "session", limitUsd: 0.001 }],
     });
     expect(() => {
-      tracker.record("claude-sonnet-4-6", "anthropic", {
-        inputTokens: 1_000_000,
-        outputTokens: 500_000,
-      });
+      tracker.record(
+        "claude-sonnet-4-6",
+        "anthropic",
+        {
+          inputTokens: 1_000_000,
+          outputTokens: 500_000,
+        },
+        { role: "primary" },
+      );
     }).toThrow(BudgetExceededError);
   });
 
   test("getBreakdown groups by provider and model", () => {
     const tracker = new CostTracker();
-    tracker.record("claude-sonnet-4-6", "anthropic", { inputTokens: 100, outputTokens: 50 });
-    tracker.record("gpt-4o", "openai", { inputTokens: 100, outputTokens: 50 });
+    tracker.record(
+      "claude-sonnet-4-6",
+      "anthropic",
+      { inputTokens: 100, outputTokens: 50 },
+      { role: "primary" },
+    );
+    tracker.record("gpt-4o", "openai", { inputTokens: 100, outputTokens: 50 }, { role: "primary" });
     const breakdown = tracker.getBreakdown();
     expect(Object.keys(breakdown.byProvider).length).toBe(2);
     expect(Object.keys(breakdown.byModel).length).toBe(2);
@@ -54,7 +69,12 @@ describe("CostTracker", () => {
 
   test("reset clears the ledger", () => {
     const tracker = new CostTracker();
-    tracker.record("claude-sonnet-4-6", "anthropic", { inputTokens: 100, outputTokens: 50 });
+    tracker.record(
+      "claude-sonnet-4-6",
+      "anthropic",
+      { inputTokens: 100, outputTokens: 50 },
+      { role: "primary" },
+    );
     expect(tracker.getLedger().entries.length).toBe(1);
     tracker.reset();
     expect(tracker.getLedger().entries.length).toBe(0);
@@ -83,10 +103,15 @@ describe("CostTracker", () => {
       budgets: [{ scope: "session", limitUsd: 0.01 }],
     });
     // Record some cost first
-    tracker.record("claude-sonnet-4-6", "anthropic", {
-      inputTokens: 100,
-      outputTokens: 50,
-    });
+    tracker.record(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        inputTokens: 100,
+        outputTokens: 50,
+      },
+      { role: "primary" },
+    );
     // Check if adding a large cost would exceed
     expect(tracker.preExecutionCheck(1.0)).toBe(false);
   });

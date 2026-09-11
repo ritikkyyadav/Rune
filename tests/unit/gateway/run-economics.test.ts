@@ -303,24 +303,29 @@ describe("CostTracker attribution", () => {
       "claude-sonnet-4-6",
       "anthropic" as ProviderName,
       { inputTokens: 10, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 },
-      new Date(),
       { role: "summarizer", composition },
     );
     expect(e.role).toBe("summarizer");
     expect(e.composition).toEqual(composition);
   });
 
-  test("a caller that says nothing leaves both fields absent, not zeroed", () => {
+  // Replaces "a caller that says nothing leaves both fields absent, not
+  // zeroed". P3B I1 removed the caller that says nothing: `role` is required
+  // on the request, on the attribution and on the entry, so being filed as the
+  // user's work is now something a caller states rather than something that
+  // happens to it. Composition is still genuinely optional — a governance
+  // caller that measured nothing must not get a row of zeroes it did not earn.
+  test("the role is always on the row; an unmeasured composition still is not", () => {
     const tracker = new CostTracker();
-    const e = tracker.record("claude-sonnet-4-6", "anthropic" as ProviderName, {
-      inputTokens: 10,
-      outputTokens: 1,
-      cacheReadTokens: 0,
-      cacheCreationTokens: 0,
-    });
-    expect(e.role).toBeUndefined();
+    const e = tracker.record(
+      "claude-sonnet-4-6",
+      "anthropic" as ProviderName,
+      { inputTokens: 10, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 },
+      { role: "primary" },
+    );
+    expect(e.role).toBe("primary");
     expect(e.composition).toBeUndefined();
-    // …and it reads back as the work, which is what it was.
+    // …and it reads back as the work, which is what it said it was.
     expect(summarizeRunEconomics([e]).governanceCompletions).toBe(0);
   });
 });

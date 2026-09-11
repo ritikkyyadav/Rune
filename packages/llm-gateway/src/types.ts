@@ -302,6 +302,32 @@ export interface PromptComposition {
   conversation: number;
   /** Sum of the above. */
   total: number;
+
+  // ─── What this request asked the cache to do (P3B I5) ───
+  //
+  // `cacheReadTokens` / `cacheCreationTokens` on the CostEntry say what the
+  // cache DID. Neither says what was asked of it, so a miss could not be told
+  // apart from a breakpoint that moved or a prefix that changed mid-stream —
+  // and `cacheCreationTokens` is 0 on every one of the 2,931 rows measured,
+  // because no provider in use reports cache writes at all. These two fields
+  // are the request side of the same question, and they cost one integer and
+  // eight hex characters.
+
+  /**
+   * The index into `messages` the caller marked as the last cacheable turn,
+   * when it marked one. A miss against a breakpoint that moved is a different
+   * failure from a miss against a stable one.
+   */
+  cacheBreakpointIndex?: number;
+  /**
+   * A cheap, stable fold of everything ahead of the ephemeral tail — the
+   * system prompt, the tool schemas and every stable message. Two consecutive
+   * requests with the same hash sent a byte-identical prefix; a hash that
+   * changed while the conversation only grew means something rewrote history,
+   * which is the one thing that cannot be seen from a token count. Compared
+   * only to itself, never stored as a claim about content.
+   */
+  prefixHash?: string;
 }
 
 export interface InferenceRequest {
@@ -353,11 +379,19 @@ export interface InferenceRequest {
    */
   thinking?: { enabled: boolean; budgetTokens?: number; effort?: ReasoningEffort };
   /**
-   * What this completion is for. Absent means `primary`. Purely descriptive:
-   * no provider reads it, and nothing about the request changes because of it.
-   * It exists so the ledger can answer "how many of these were the work".
+   * What this completion is for. Purely descriptive: no provider reads it, and
+   * nothing about the request changes because of it. It exists so the ledger
+   * can answer "how many of these were the work".
+   *
+   * REQUIRED (P3B I1). It used to be optional and default to `primary`, which
+   * meant a new caller was silently filed as the user's work: 437 of 2,931
+   * rows in the founder's ledger carried a tag and the other 85% had to be
+   * inferred from the event sequence around them. Requiring it turns every
+   * unattributed call into a compile error instead of a silent misattribution.
+   * A caller that genuinely is the agent's own turn writes `"primary"`, which
+   * is a claim someone made rather than a field nobody filled in.
    */
-  role?: CallRole;
+  role: CallRole;
   /**
    * Bytes per prompt part, measured by the caller that assembled the request.
    * Only the agent loop attributes all five parts; a governance caller that
@@ -894,12 +928,33 @@ export interface CostEntry {
   /** True when the rate is inferred rather than published. */
   estimated: boolean;
   /**
-   * What the completion was for. Absent on replayed pre-P12.1 rows and on
-   * anything that did not say; readers treat absent as "primary".
+   * What the completion was for.
+   *
+   * REQUIRED since P3B I1 — `InferenceRequest.role` is required, so every row
+   * the gateway records carries one. The replay path (a pre-P12.1 row read
+   * back out of a session log with no tag) passes `"primary"` explicitly,
+   * which is what every reader already assumed of an absent field; the
+   * difference is that the assumption is now made once, in the open.
    */
-  role?: CallRole;
+  role: CallRole;
   /** Bytes per prompt part, when the caller measured them. */
   composition?: PromptComposition;
+
+  // ─── When the provider was actually busy (P3B I3) ───
+  //
+  // `timestamp` is when the response landed and nothing else, so per-completion
+  // wall clock had to be inferred from the gap between consecutive cost rows.
+  // That interval charges a completion for the tool time that preceded it and
+  // cannot see a concurrent caller at all — the out-of-band supervisor runs off
+  // the critical path by design and read as 36.7% of the clock. Both fields are
+  // optional because a row REPLAYED from a pre-I3 session log has neither, and
+  // an absent latency reads as "not measured" rather than as an instant
+  // response. Every row the gateway records carries both.
+
+  /** When the request was handed to the provider. */
+  startedAt?: Date;
+  /** `timestamp - startedAt` in milliseconds: the provider's own latency. */
+  latencyMs?: number;
   timestamp: Date;
 }
 
@@ -982,6 +1037,19 @@ export interface GatewayIncidentEvent {
   attempt?: number;
   of?: number;
   waitMs?: number;
+
+  // ─── Which completion paid for this (P3B I6b) ───
+  //
+  // The black box holds 3,284 incidents and 1,417 of them are provider rate
+  // limits, against 15 recorded retries in the cost ledger: the two stores had
+  // no join, so "what did this incident cost" had no answer. These two fields
+  // are the request's own identity, and with I3's `startedAt` on the cost row
+  // they name the completion exactly — no new id, no new table.
+
+  /** What the request that hit this was FOR. */
+  role?: CallRole;
+  /** ISO stamp of when that request went to the provider — I3's join key. */
+  requestStartedAt?: string;
 }
 
 export interface ProviderConfig {

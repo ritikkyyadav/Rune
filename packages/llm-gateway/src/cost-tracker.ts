@@ -239,13 +239,34 @@ export class CostTracker {
     return Math.min(ceiling, Math.max(256, Math.ceil(observed * 2)));
   }
 
+  /**
+   * Price one completion and put it in the ledger.
+   *
+   * `attribution` moved AHEAD of `timestamp` in P3B I1. It is required now —
+   * `role` used to be optional and absent meant `primary`, so a caller that
+   * forgot was silently filed as the user's own work — and a required argument
+   * behind an optional one makes every caller write `undefined` for a clock it
+   * did not care about. `timestamp` keeps its default; nothing else moved.
+   */
   record(
     model: string,
     provider: ProviderName,
     usage: TokenUsage,
+    /**
+     * What the completion was for, what its prompt was made of (P12.1), and
+     * when the provider was actually busy (P3B I3).
+     *
+     * `role` has no default anywhere. The replay path — a pre-P12.1 row read
+     * back out of a session log — passes `"primary"` on purpose, which is what
+     * every reader already assumed of the absent field.
+     */
+    attribution: {
+      role: CallRole;
+      composition?: PromptComposition;
+      startedAt?: Date;
+      latencyMs?: number;
+    },
     timestamp = new Date(),
-    /** What the completion was for, and what its prompt was made of (P12.1). */
-    attribution: { role?: CallRole; composition?: PromptComposition } = {},
   ): CostEntry {
     const u = normalizeUsage(usage);
     const price = this.pricingFor(model);
@@ -271,8 +292,10 @@ export class CostTracker {
       billing,
       priced,
       estimated: price?.estimated === true,
-      ...(attribution.role ? { role: attribution.role } : {}),
+      role: attribution.role,
       ...(attribution.composition ? { composition: attribution.composition } : {}),
+      ...(attribution.startedAt ? { startedAt: attribution.startedAt } : {}),
+      ...(attribution.latencyMs !== undefined ? { latencyMs: attribution.latencyMs } : {}),
       timestamp,
     };
     return this.recordEntry(entry);

@@ -74,20 +74,30 @@ describe("pricing coverage against the provider catalog", () => {
 
   test("an unknown model is flagged, not silently priced at zero", () => {
     const t = new CostTracker();
-    const entry = t.record("no-such-model-v9", "openai", {
-      inputTokens: 1_000_000,
-      outputTokens: 1_000,
-    });
+    const entry = t.record(
+      "no-such-model-v9",
+      "openai",
+      {
+        inputTokens: 1_000_000,
+        outputTokens: 1_000,
+      },
+      { role: "primary" },
+    );
     expect(entry.priced).toBe(false);
     expect(t.getBreakdown().unpricedModels).toContain("no-such-model-v9");
   });
 
   test("a genuinely free model is priced, and not flagged unpriced", () => {
     const t = new CostTracker();
-    const entry = t.record("stealth/ox-alpha", "openrouter", {
-      inputTokens: 1_000_000,
-      outputTokens: 1_000,
-    });
+    const entry = t.record(
+      "stealth/ox-alpha",
+      "openrouter",
+      {
+        inputTokens: 1_000_000,
+        outputTokens: 1_000,
+      },
+      { role: "primary" },
+    );
     expect(entry.priced).toBe(true);
     expect(entry.listCostUsd).toBe(0);
     expect(t.getBreakdown().unpricedModels).toEqual([]);
@@ -130,11 +140,16 @@ describe("cache-aware pricing", () => {
 
   test("breakdown reports hit rate and the dollars the cache saved", () => {
     const t = new CostTracker();
-    t.record("claude-sonnet-5", "anthropic", {
-      inputTokens: 100_000,
-      outputTokens: 10_000,
-      cacheReadTokens: 900_000,
-    });
+    t.record(
+      "claude-sonnet-5",
+      "anthropic",
+      {
+        inputTokens: 100_000,
+        outputTokens: 10_000,
+        cacheReadTokens: 900_000,
+      },
+      { role: "primary" },
+    );
     const b = t.getBreakdown();
     expect(b.cacheHitRate).toBeCloseTo(0.9, 6);
     expect(b.cacheSavingUsd).toBeCloseTo(2.1 - 0.48, 6);
@@ -148,10 +163,15 @@ describe("cache-aware pricing", () => {
 describe("billing mode separates spend from worth", () => {
   test("a subscription seat costs nothing but still reports list value", () => {
     const t = new CostTracker();
-    const entry = t.record("gpt-5.6-sol", "codex", {
-      inputTokens: 1_000_000,
-      outputTokens: 10_000,
-    });
+    const entry = t.record(
+      "gpt-5.6-sol",
+      "codex",
+      {
+        inputTokens: 1_000_000,
+        outputTokens: 10_000,
+      },
+      { role: "primary" },
+    );
     expect(entry.billing).toBe("subscription");
     expect(entry.costUsd).toBe(0);
     // 1M * $1.25 + 0.01M * $10 = 1.35
@@ -162,10 +182,15 @@ describe("billing mode separates spend from worth", () => {
 
   test("a metered route charges what it is worth", () => {
     const t = new CostTracker();
-    const entry = t.record("claude-sonnet-5", "anthropic", {
-      inputTokens: 1_000_000,
-      outputTokens: 0,
-    });
+    const entry = t.record(
+      "claude-sonnet-5",
+      "anthropic",
+      {
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+      },
+      { role: "primary" },
+    );
     expect(entry.billing).toBe("metered");
     expect(entry.costUsd).toBeCloseTo(2, 6);
   });
@@ -182,11 +207,17 @@ describe("billing mode separates spend from worth", () => {
 
   test("estimated rates are carried through so readouts can mark them", () => {
     const t = new CostTracker();
-    expect(t.record("gpt-5.6-sol", "codex", { inputTokens: 1, outputTokens: 1 }).estimated).toBe(
-      true,
-    );
     expect(
-      t.record("claude-sonnet-5", "anthropic", { inputTokens: 1, outputTokens: 1 }).estimated,
+      t.record("gpt-5.6-sol", "codex", { inputTokens: 1, outputTokens: 1 }, { role: "primary" })
+        .estimated,
+    ).toBe(true);
+    expect(
+      t.record(
+        "claude-sonnet-5",
+        "anthropic",
+        { inputTokens: 1, outputTokens: 1 },
+        { role: "primary" },
+      ).estimated,
     ).toBe(false);
     expect(t.getBreakdown().hasEstimatedRates).toBe(true);
   });

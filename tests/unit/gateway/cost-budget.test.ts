@@ -16,10 +16,15 @@ import { BudgetExceededError, CostTracker } from "../../../packages/llm-gateway/
 
 describe("session spend ceiling", () => {
   test("replaying cost rows preserves historical rates instead of repricing old work", () => {
-    const old = new CostTracker().record("claude-sonnet-5", "anthropic", {
-      inputTokens: 1000,
-      outputTokens: 100,
-    });
+    const old = new CostTracker().record(
+      "claude-sonnet-5",
+      "anthropic",
+      {
+        inputTokens: 1000,
+        outputTokens: 100,
+      },
+      { role: "primary" },
+    );
     const replay = new CostTracker();
     replay.recordEntry({ ...old, costUsd: 0.0042, listCostUsd: 0.0042 });
     expect(replay.getLedger().totalCostUsd).toBe(0.0042);
@@ -33,7 +38,12 @@ describe("session spend ceiling", () => {
     const t = new CostTracker({ budgets: [{ scope: "session", limitUsd: 1 }] });
     // gpt-5.6-sol on Codex: $0 spent, ~$1.25 of metered value.
     expect(() =>
-      t.record("gpt-5.6-sol", "codex", { inputTokens: 1_000_000, outputTokens: 0 }),
+      t.record(
+        "gpt-5.6-sol",
+        "codex",
+        { inputTokens: 1_000_000, outputTokens: 0 },
+        { role: "primary" },
+      ),
     ).toThrow(BudgetExceededError);
     // The point of the whole design: spend is zero and the cap still worked.
     expect(t.getLedger().totalCostUsd).toBe(0);
@@ -42,7 +52,12 @@ describe("session spend ceiling", () => {
   test("the response that trips the cap is still counted", () => {
     const t = new CostTracker({ budgets: [{ scope: "session", limitUsd: 1 }] });
     try {
-      t.record("claude-sonnet-5", "anthropic", { inputTokens: 1_000_000, outputTokens: 0 });
+      t.record(
+        "claude-sonnet-5",
+        "anthropic",
+        { inputTokens: 1_000_000, outputTokens: 0 },
+        { role: "primary" },
+      );
     } catch {
       /* expected */
     }
@@ -54,21 +69,33 @@ describe("session spend ceiling", () => {
   test("stays quiet below the limit", () => {
     const t = new CostTracker({ budgets: [{ scope: "session", limitUsd: 5 }] });
     expect(() =>
-      t.record("claude-sonnet-5", "anthropic", { inputTokens: 1_000_000, outputTokens: 0 }),
+      t.record(
+        "claude-sonnet-5",
+        "anthropic",
+        { inputTokens: 1_000_000, outputTokens: 0 },
+        { role: "primary" },
+      ),
     ).not.toThrow();
   });
 
   test("accumulates across calls rather than testing each in isolation", () => {
     const t = new CostTracker({ budgets: [{ scope: "session", limitUsd: 3 }] });
     const one = { inputTokens: 1_000_000, outputTokens: 0 };
-    expect(() => t.record("claude-sonnet-5", "anthropic", one)).not.toThrow(); // $2
-    expect(() => t.record("claude-sonnet-5", "anthropic", one)).toThrow(BudgetExceededError); // $4
+    expect(() => t.record("claude-sonnet-5", "anthropic", one, { role: "primary" })).not.toThrow(); // $2
+    expect(() => t.record("claude-sonnet-5", "anthropic", one, { role: "primary" })).toThrow(
+      BudgetExceededError,
+    ); // $4
   });
 
   test("no budget configured means no cap — the default must not surprise anyone", () => {
     const t = new CostTracker();
     for (let i = 0; i < 50; i++) {
-      t.record("claude-opus-5", "anthropic", { inputTokens: 1_000_000, outputTokens: 100_000 });
+      t.record(
+        "claude-opus-5",
+        "anthropic",
+        { inputTokens: 1_000_000, outputTokens: 100_000 },
+        { role: "primary" },
+      );
     }
     expect(t.getLedger().totalListCostUsd).toBeGreaterThan(100);
   });
@@ -76,7 +103,12 @@ describe("session spend ceiling", () => {
   test("the error carries what a user needs to act on", () => {
     const t = new CostTracker({ budgets: [{ scope: "session", limitUsd: 1 }] });
     try {
-      t.record("claude-sonnet-5", "anthropic", { inputTokens: 1_000_000, outputTokens: 0 });
+      t.record(
+        "claude-sonnet-5",
+        "anthropic",
+        { inputTokens: 1_000_000, outputTokens: 0 },
+        { role: "primary" },
+      );
       throw new Error("expected the cap to fire");
     } catch (err) {
       expect(err).toBeInstanceOf(BudgetExceededError);

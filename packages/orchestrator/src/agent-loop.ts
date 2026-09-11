@@ -1654,6 +1654,12 @@ export class AgentLoop {
           messages: stableMessages,
           planLedger: taskBlock,
           taskState: [teamBlock, budgetBlock],
+          // The cache decision this request actually sent, measured with the
+          // prefix it applies to (P3B I5). `cacheCreationTokens` is 0 on every
+          // row in the corpus — no provider in use reports a cache WRITE — so
+          // without these two a miss cannot be told from a breakpoint that
+          // moved or a prefix something rewrote behind the model's back.
+          ...(stableMessageCount > 0 ? { cacheBreakpointIndex: stableMessageCount - 1 } : {}),
         });
       } catch {
         composition = undefined;

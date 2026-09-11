@@ -153,6 +153,7 @@ async function runVariant(variant: Variant): Promise<Row[]> {
       model: MODEL,
       provider: "codex",
       maxTokens: 2048,
+      role: "primary",
       stream: true,
       thinking: { enabled: true, effort: "low" },
     };

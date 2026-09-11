@@ -48,13 +48,23 @@ describe("per-provider cache facts", () => {
   test("each provider reports its own rate, not a blend", () => {
     const t = new CostTracker();
     // A well-cached Anthropic leg...
-    t.record("claude-sonnet-4-6", "anthropic", {
-      inputTokens: 1_000,
-      outputTokens: 100,
-      cacheReadTokens: 9_000,
-    });
+    t.record(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        inputTokens: 1_000,
+        outputTokens: 100,
+        cacheReadTokens: 9_000,
+      },
+      { role: "primary" },
+    );
     // ...then a fallback onto a provider whose cache reports nothing.
-    t.record("gpt-oss:20b", "ollama-turbo", { inputTokens: 10_000, outputTokens: 100 });
+    t.record(
+      "gpt-oss:20b",
+      "ollama-turbo",
+      { inputTokens: 10_000, outputTokens: 100 },
+      { role: "primary" },
+    );
 
     const b = t.getBreakdown();
     expect(b.cacheByProvider.anthropic?.hitRate).toBeCloseTo(0.9, 5);
@@ -69,18 +79,33 @@ describe("per-provider cache facts", () => {
   test("a provider that reported no input at all is null, not zero", () => {
     const t = new CostTracker();
     // Output only: nothing was read, written, or sent fresh.
-    t.record("claude-sonnet-4-6", "anthropic", { inputTokens: 0, outputTokens: 50 });
+    t.record(
+      "claude-sonnet-4-6",
+      "anthropic",
+      { inputTokens: 0, outputTokens: 50 },
+      { role: "primary" },
+    );
     expect(t.getBreakdown().cacheByProvider.anthropic?.hitRate).toBeNull();
   });
 
   test("savings are attributed to the provider that earned them", () => {
     const t = new CostTracker();
-    t.record("claude-sonnet-4-6", "anthropic", {
-      inputTokens: 1_000,
-      outputTokens: 10,
-      cacheReadTokens: 100_000,
-    });
-    t.record("gpt-oss:20b", "ollama-turbo", { inputTokens: 10_000, outputTokens: 10 });
+    t.record(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        inputTokens: 1_000,
+        outputTokens: 10,
+        cacheReadTokens: 100_000,
+      },
+      { role: "primary" },
+    );
+    t.record(
+      "gpt-oss:20b",
+      "ollama-turbo",
+      { inputTokens: 10_000, outputTokens: 10 },
+      { role: "primary" },
+    );
 
     const b = t.getBreakdown();
     expect(b.cacheByProvider.anthropic!.savingUsd).toBeGreaterThan(0);
@@ -90,12 +115,22 @@ describe("per-provider cache facts", () => {
 
   test("the readout breaks out providers once there is more than one", () => {
     const t = new CostTracker();
-    t.record("claude-sonnet-4-6", "anthropic", {
-      inputTokens: 1_000,
-      outputTokens: 10,
-      cacheReadTokens: 9_000,
-    });
-    t.record("gpt-oss:20b", "ollama-turbo", { inputTokens: 10_000, outputTokens: 10 });
+    t.record(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        inputTokens: 1_000,
+        outputTokens: 10,
+        cacheReadTokens: 9_000,
+      },
+      { role: "primary" },
+    );
+    t.record(
+      "gpt-oss:20b",
+      "ollama-turbo",
+      { inputTokens: 10_000, outputTokens: 10 },
+      { role: "primary" },
+    );
 
     const labels = formatCostReport(t.getBreakdown()).map((l) => l.label.trim());
     expect(labels).toContain("anthropic");
@@ -104,11 +139,16 @@ describe("per-provider cache facts", () => {
 
   test("a single-provider session is not padded with a redundant breakdown", () => {
     const t = new CostTracker();
-    t.record("claude-sonnet-4-6", "anthropic", {
-      inputTokens: 1_000,
-      outputTokens: 10,
-      cacheReadTokens: 9_000,
-    });
+    t.record(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        inputTokens: 1_000,
+        outputTokens: 10,
+        cacheReadTokens: 9_000,
+      },
+      { role: "primary" },
+    );
     const labels = formatCostReport(t.getBreakdown()).map((l) => l.label.trim());
     expect(labels).not.toContain("anthropic");
   });

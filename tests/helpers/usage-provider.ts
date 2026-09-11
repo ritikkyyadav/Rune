@@ -62,6 +62,7 @@ export class UsageProvider implements LlmProvider {
 
 export const usageRequest = (): InferenceRequest => ({
   stream: true,
+  role: "primary",
   model: "claude-sonnet-5",
   provider: "anthropic",
   maxTokens: 100,

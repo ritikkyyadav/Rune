@@ -50,12 +50,22 @@ export function opencodeCost(data: string, model: string): ReturnType<typeof run
       const t = message.tokens;
       if (!(t.input || t.output || t.reasoning || t.cache?.read || t.cache?.write)) continue;
       const id = message.modelID ?? model;
-      tracker.record(id, "openai", {
-        inputTokens: t.input ?? 0,
-        outputTokens: (t.output ?? 0) + (t.reasoning ?? 0),
-        cacheReadTokens: t.cache?.read ?? 0,
-        cacheCreationTokens: t.cache?.write ?? 0,
-      });
+      tracker.record(
+        id,
+        "openai",
+        {
+          inputTokens: t.input ?? 0,
+          outputTokens: (t.output ?? 0) + (t.reasoning ?? 0),
+          cacheReadTokens: t.cache?.read ?? 0,
+          cacheCreationTokens: t.cache?.write ?? 0,
+        },
+        // Re-pricing a competitor's ledger. OpenCode records one row per
+        // assistant message and draws no line between its own overhead and the
+        // work, so every row here is the agent's turn as far as this side can
+        // tell — which is what `primary` means. Stating it beats inheriting a
+        // default (P3B I1).
+        { role: "primary" },
+      );
       entries++;
     }
     const b = tracker.getBreakdown();
