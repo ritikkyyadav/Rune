@@ -583,3 +583,74 @@ error, turn_complete, lifecycle, lifecycle` — the run under test had already e
   `bun test` exits 0 on an all-skipped run, so that step's contribution to "ALL STEPS PASSED" depends
   on a human reading the counts. Raised by V1 (finding 8), repeated by F1, still unfixed, and it
   gates every Linux claim any manifest makes — Phase 2 re-verification — Claude
+
+## Recorded by Phase 3 (2026-09-11), not fixed
+
+Found by the four Phase 3 verifiers, the four fix lanes, and the 3C closing pass. Manifest:
+[`../evidence/verification-20260912.json`](../evidence/verification-20260912.json). Reports:
+`.codex/audit-20260910/handoff/phase3/`.
+
+- **`packages/tool-registry/src/skills/loader.ts:112` — the skills catalog is 9,293 B, 32.8% of the
+  working-phase fixed prefix, and it is constant for the whole session.** 182 skills across 21
+  domains, rendered by `SkillLoader.catalogPrompt()` into every request of every run whether or not
+  a skill is ever used. It is **12.5× the 741 B** Lane C's doctrine trim went after and then had to
+  give back, and it is the largest block in the prefix after the doctrine itself. V-C raised it as
+  claim 5 and graded it HIGH on cost; F-C left it untouched and said so. The shape of the fix is the
+  one the tool surface already uses (`engine.ts:2670`, `:2684` — 20 advertised / 14 deferred, 51%
+  saved): advertise a domain index and load a domain's skills just in time. Nothing here is a
+  correctness risk, which is exactly why it has survived three passes — Phase 3 — Claude
+- **`packages/orchestrator/src/agent-loop.ts:1309` — `interject()` does not re-run
+  `doctrineForRequest`.** Just-in-time doctrine fires only from the message that STARTS a run — the
+  single `doctrineForRequest(userMessage)` call is at `agent-loop.ts:1535`, inside the run entry —
+  and `interject()` folds mid-run steering into the same run with `turn` only resetting per `run()`. So a founder who types "switch to plan mode" into a run already in flight
+  gets no routing at all: not from the prefix (Lane C's phase gate was reverted precisely because of
+  this, so the section IS in the working prompt when a mode tool is loaded — but only then), and not
+  from the JIT set. This is the residue of V-C finding 2b: F-C fixed the premise and said plainly
+  that the interject path is Lane A's file and still open. One call to the router on the interject
+  path would close it — Phase 3 — Claude
+- **`docs/threat-model.md:57-60` — the wildcard-bind list was incomplete.** It named `--host 0.0.0.0`,
+  `--bind ::` and `0.0.0.0:<port>`; the shipped `BEYOND_LOOPBACK_RE` (`auto-containment.ts:256-257`)
+  also matches `--hostname`, `--address`, `--listen`, `-b`, `-a` and `-H`, three of which were added
+  by `80aa136` after V-B proved `http-server -a 0.0.0.0 /` bound every interface unstopped at BOTH
+  commits it tested — a hole older than the lane. **Fixed in this pass**, and recorded here because
+  the class of defect is not: a prose list that duplicates a regex goes stale the first time the
+  regex moves, and this document has two more of them (the persistence paths and the credential
+  fields). Either generate them from the source or say "read the regex" — Phase 3 — Claude
+- **`packages/orchestrator/src/agent-loop.ts` — the content-hash memory cannot see a `bash`
+  rewrite.** `f006144` names the boundary in a comment rather than closing it: the loop keeps the
+  last content hash per path from `write_file`, `edit_file` and `read_file`, so a file rewritten by
+  `bash` (a `sed -i`, a formatter, a codegen step) leaves the memory stale, and the next write's
+  "did this change anything" answer is measured against a version that is no longer on disk. The
+  direction of the error is the safe one — the write looks like a change when it may not be, so the
+  gates re-arm — but the excuse predicate A3 depends on is only as good as this memory. Hashing the
+  file at decision time rather than remembering it would close it — Phase 3 — Claude
+- **The live frontier pair (~$0.43 at list) is the founder's decision, and the cache question waits
+  on it.** §3.3 of `phase-3-auto-efficiency.md` has a hypothesis with a prediction — that on codex
+  the cache lags exactly one tool result behind, because the task-state tail is rebuilt fresh every
+  request and never stored — and it does NOT explain two cache reads of exactly zero in Pilot J.
+  `7eb6ca8` fixed the mechanism the hypothesis names, so the prediction is now testable; nothing
+  offline can settle it, because the effect is a provider's cache behaviour. §5.3 designs four arms
+  at about $0.43 of list against roughly 5% of the weekly Codex allowance. Until it runs, no claim
+  about Rune's cache economics on the frontier route is more than a reading of the code — Phase 3 —
+  Claude
+- **Disk contention from a sibling project can stop a verification pass outright.** The first 3C
+  attempt lost `/` to 0 bytes mid-pass, from an unrelated build in `~/Project/Say`, after having run
+  every gate and installed the binary — so the gates were real and the manifest was missing, which
+  is the worst order for it to happen in. Two standing contributors on this machine: the installer
+  keeps **2,173.5 MB** of its own backups in `~/.rune/bin` (105 files, 27 generations; keeping the
+  newest five reclaims 1,755 MB, and `./scripts/install.sh --prune-backups` is the switch nobody has
+  thrown), and `~/.rune/rune.db`'s checkpoint table is **184 MB** with 106 MB reclaimable. Neither
+  is a defect. Both are why a pass should `df -h /` before every heavy step, which is now the rule —
+  Phase 3 — Claude
+- **`tests/eval/auto-mode-safety.ts` spends by default.** Run without `--offline` it tries a real
+  provider; on this machine it exited 1 with "Provider \"anthropic\" has no usable credential
+  (available: openrouter, google, codex)". It refused because the default provider happened to have
+  no key here — not because the script declines to spend. Every gate log that matters carries
+  `--offline`, and the flag is what makes zero spend a property rather than an accident. A safety
+  eval whose zero-cost run is opt-in has the default the wrong way round — Phase 3 — Claude
+- **`docs/program/phase-3-auto-efficiency.md` §6 describes Lane C's savings as shipped.** The
+  document was written before the lanes ran and was deliberately not rewritten afterwards, so its
+  C1 and C2 rows describe changes that were built and then withdrawn on the verifiers' evidence. The
+  manifest carries the correction; the plan does not. Anyone reading §6 alone will believe the
+  compaction call got cheaper. Either annotate the two rows or point them at
+  `verification-20260912.json` — Phase 3 — Claude

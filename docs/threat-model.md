@@ -55,10 +55,14 @@ What that does and does not buy, stated precisely:
 - **It is not "loopback only".** Seatbelt's `localhost` filter is coarse: a process that binds
   `0.0.0.0` is admitted by it, and that listener is then reachable from the local network. Verified
   on a LAN address, not assumed.
-- **The wildcard bind is refused a layer up.** `auto-containment`'s `BEYOND_LOOPBACK_RE` treats
-  `--host 0.0.0.0`, `--bind ::` and `0.0.0.0:<port>` as a mechanical breaker, so a command that asks
-  to listen on every interface does not run in the first place. The OS rule is the floor; the
-  breaker is what actually holds the line.
+- **The wildcard bind is refused a layer up.** `auto-containment`'s `BEYOND_LOOPBACK_RE`
+  (`auto-containment.ts:256`) is a mechanical breaker, so a command that asks to listen on every
+  interface does not run in the first place. It matches `0.0.0.0`, `::` or `[::]` given to any of
+  `--bind`, `--host`, `--hostname`, `--address`, `--listen`, `-b`, `-a` or `-H`, and a bare
+  `0.0.0.0:<port>` anywhere in the command. The short and `--hostname` spellings were added by
+  `80aa136` after a verification pass showed `http-server -a 0.0.0.0 /` running unstopped; read the
+  regex rather than this list if the two ever disagree. The OS rule is the floor; the breaker is
+  what actually holds the line.
 
 The residual exposure is a dev server the agent started being reachable on the LAN for as long as
 it runs, which is the same exposure as a person running `python3 -m http.server` themselves. If

@@ -653,3 +653,140 @@ durability claim holds against a scripted gateway and none against a real provid
 still never been applied; V3's **F8** (the "usable partial result" test asserts that recovery
 _completed_) and **F9** (`auto_compaction` rows at ~58 KB each) have no lane; and `command -v rune`
 still resolves the legacy `~/.alan/bin` shim.
+
+## 2026-09-11 (later still) — Phase 3 closed: what the overhead is, what four lanes moved, and what was withdrawn
+
+Phase 3 ran in three parts. **3A** measured where an Auto run's money and wall clock actually go,
+from 683 sessions of the founder's own databases, and wrote
+[`program/phase-3-auto-efficiency.md`](program/phase-3-auto-efficiency.md) with a reproducible
+script beside it. **3B** built four lanes against that measurement, then had each lane read by an
+adversarial verifier and repaired by a fix lane. **3C** — this entry — audited the gates, finished
+the test rig, re-measured five things on the binary the founder runs, and closed the phase.
+Manifest: [`evidence/verification-20260912.json`](evidence/verification-20260912.json). Raw logs:
+`.codex/audit-20260910/handoff/phase3/`. **Zero live model calls**, `~/.rune/rune.db` untouched
+(2,931 cost rows before and after, newest row unmoved).
+
+### Where each claim stands
+
+**Planned.** Nothing new. 3C proposed no work; it graded work already done and closed the phase.
+What the lanes did NOT get to is written down as backlog, not as done: the skills catalog at
+9,293 B (32.8% of the fixed prefix), `interject()` not re-running the doctrine router, and the live
+frontier pair that is the only way to settle the cache question.
+
+**Implemented.** Eighteen commits, `9279bc7` through `2f13c19`. Lane 0 put a role, a latency, a
+cache breakpoint, a prefix hash, a child's start/integrate stamps and a write verdict on rows that
+had none. Lane A stopped charging a run twice for a late citation and stopped a write that changed
+nothing from re-arming the evidence gates. Lane B took six classes of ordinary command off the
+reviewer's desk and bounded a hung review at one deadline instead of two. Lane C wrote the sentence
+a model gets when it cites a command that is not a check.
+
+**Two of the four headline savings were withdrawn on the evidence, and the manifest says so rather
+than quietly keeping the number.** Lane C's cheaper compaction bought 12,000 bytes by reading the
+new segment at merge fidelity — and the verifier proved that segment is the only read those messages
+ever get, so a 901–2,400-character tool result was losing up to 62.5% of its middle permanently. It
+is back to 21,629 bytes. Lane C's doctrine trim (−741 B) rested on the claim that a mode is only ever
+asked for on the opening turn; `interject()` folds mid-run steering into the same run, so it is
+reverted and complemented by a just-in-time section instead. **Lane C's net prompt saving is
+0 bytes and its net correctness change is two closed holes.**
+
+What did hold: Lane A's no-op write is **7 → 6 completions** with the control unmoved at 7; Lane A's
+late citation gives back **3 turns** on a 3-criterion script with the completion count flat, and
+flat is how the lane reported it; Lane B's ordinary script is **6 reviewer calls → 1**, and the
+repair did not move it because all five of its commands are exact shapes that survived; and the
+codex fold went from **313 of 836 shared prefix bytes to 835 of 836**, with the non-folding control
+unmoved at 343/886.
+
+**Tested on this source.** The four verifiers raised 40-odd findings; the four fix lanes closed the
+HIGH and MEDIUM ones in `cb1b700`, `cce7751`, `2451bc1`, `80aa136`, `6637d68`, `5671ef7`, `1625db1`,
+`7eb6ca8` and `03aaa7f`, each with a migrated test. 3C's gate audit reran ten gates and reused three:
+
+| Gate                                                      | Result                                                                                                    |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `bun test tests/unit`                                     | **4,734 pass / 0 fail / 1 skip** (377 files, 63.7 s)                                                      |
+| `bun test tests/integration`                              | **260 pass / 0 fail / 7 skip** (45 files, 112.4 s)                                                        |
+| `bun test tests/integration/lifecycle-durability.test.ts` | **45 pass / 0 fail**, alone, 26.4 s                                                                       |
+| `bun run typecheck --force` · `bun run lint --force`      | **15/15** · **7/7**, 0 cached                                                                             |
+| `prettier --check .` · `git diff --check`                 | clean                                                                                                     |
+| strict `tsc` over the Phase 3 files                       | **0 errors over 46 files** — the gate was widened to include `tests/helpers/scenario.ts`                  |
+| `bun run eval` · `bun run eval:auto-safety --offline`     | **63/63**, baseline unchanged · P 92.8 / R 89.1 / F1 90.9, supervisor shapes 100/100/100, 0 live requests |
+| `cargo test` · `cargo clippy` · `cargo fmt --check`       | reused — `crates/` has not moved since `9876957`                                                          |
+
+**3C found a real defect of its own.** P3B I2 put an origin marker on every synthetic re-prompt, and
+nothing read it. A gate, a nudge and — once `730fd97` tagged `drainHarnessNotes` — every just-in-time
+doctrine note reached the three readers that mean _what the user said_: `/rewind`'s turn list,
+session replay, and the permission check's **trusted-intent corpus**. A two-message conversation came
+back with 2 KB of house style sitting between the founder's words, filed as the founder's words. The
+trusted corpus is the one that matters beyond cosmetics, because a harness note carries connector
+notes and teammate mail that nobody typed. Fixed in `793d0ce`: one predicate, `isHarnessAuthoredTurn`,
+read at all four sites.
+
+**Installed and smoke-tested.** The binary is `v0.4.1-dev+2f13c19` (CLI `28668d09…`, native
+`c5b44f6e…`, launcher unchanged), installed from this tree with no override flag, proven to host a
+session by the installer's own `rune serve --check` before the atomic swap. `rune doctor` is not
+green and this file will not call it that: every build-facing line is `✓`, and it carries the same
+two `✗` retired-free-model lines and three `!` lines as the last entry. The prune was **DRY RUN
+only** — `would remove 428 rows, 106 MB` — and `--apply` has still never been run.
+
+Five things were then re-measured **on that binary**, driven through `tests/helpers/scenario.ts`
+against a loopback mock under a scratch `RUNE_HOME`. The rig gained a `RUNE_SCENARIO_CLI` hook to
+make that possible; it throws rather than falling back, because a measurement labelled with the
+wrong subject is worse than no measurement, and a control run with the variable pointed at a path
+that does not exist proves the suites actually read it.
+
+- **Attribution.** `costRowsWithRoleTag == costRows` (6 = 6) and `userMsgWithOriginMarker == the
+scripted re-prompt count` (2 = 2), read back by the same analysis script the 3A report used. Of
+  three `user_msg` rows, two are marked harness rows and the third is the founder's own sentence.
+- **`793d0ce`, on the installed binary.** Resuming the session, the engine renders the conversation
+  with exactly two user lines — both the founder's — and none of the four harness strings. The wire
+  conversation still carries them, and should: they were sent, and the model's next answer depends on
+  them.
+- **The finish path.** Green check → no-op write → finish is **6 completions and zero gates**; the
+  control that changed a file is **7, with `gate:execution-evidence`**. The unrecognised-check
+  receipt lands on completion 5 and is said once.
+- **The reviewer.** 6 → 1 on the ordinary script, none blocking; the dangerous probe **still
+  screens** — three containment denials, the last one `critical`.
+- **Compaction fidelity.** A criterion in the middle of a long tool result survives two compactions:
+  the second summarizer request renders the same head length per clipped body as the first.
+
+**Published.** Nothing. No push, no tag, no release. `v0.4.1` remains the last public tag.
+
+### What is still not proven
+
+**The codex fold cannot be measured on the installed binary at all**, and that is a property of the
+rig rather than a shortcut: `foldsEphemeralTail` is true only for `codex`, the codex route speaks the
+Responses API, and `tests/helpers/mock-model-server.ts` serves `/chat/completions` and nothing else.
+It was re-measured in-process instead, and the half that CAN be driven through the binary — prefix
+stability on a non-folding host — was.
+
+**Linux was not re-run, and the disk is not the excuse this time.** The Docker daemon does not
+answer: `docker version` produced one newline unsandboxed and was still blocked when a 15 s kill
+landed, and `/var/run/docker.sock` does not exist, with the CLI installed and current (29.1.3) and
+Docker Desktop's processes running. Free space was **19 GiB**, more than twice the 8 GiB floor. No
+repair was attempted. So `clippy -D warnings` has still never run green on Linux since the dead
+`has_pair` helper was removed, the Phase 2 crate fixes (`311e901`, `9876957`) have never been rerun
+there, and `probe.sh`'s `~/.local/bin -> $HOME` re-probe — V1-4's _actual_ escape — has still never
+been executed.
+
+**No before/after on a real corpus, and none is claimed.** §2.5 of the 3A document says it plainly:
+the two post-fix eras hold 42 completions between them. Every 3B number is a fixed-script
+measurement through a mock, which can show what the HARNESS spends and can never show what a model
+chooses to do once the runtime stops making something expensive. Lane A says this about its own A2
+and it is true of the phase. The **live cache question stays open** — a frontier pair costs about
+$0.43 at list against ~5% of the weekly Codex allowance, and no arm was authorised.
+
+Also unchanged: **Windows** (reasoned, never run); the pre-change arms of A3 and A1 (reproducing
+them needs `packages/` reverted); the seconds B1 gives back (the mock answers instantly, so the
+fixed script measures the call count and not the wall clock); and two of `793d0ce`'s four sites —
+`/rewind`'s list and the trusted-intent corpus — which have no surface a piped process can reach and
+are pinned at this source only.
+
+### Environment notes
+
+**The first 3C attempt was stopped by a full disk.** It ran the gates, found and fixed `793d0ce`,
+fixed two strict-tsc errors in test rigs (`2f13c19`), installed the build and ran doctor, the prune
+dry run and the tools smoke — and then `/` reached **0 bytes free**, from an unrelated build in
+`~/Project/Say` running at the same time. It did not take the re-measurements, write the manifest or
+write this entry; this pass audited its artifacts rather than assuming them, and reran every gate
+whose subject had moved since. A standing contributor: the installer reports **2,173.5 MB** of its
+own backups in `~/.rune/bin`, 105 files across 27 generations, of which keeping the newest five
+would reclaim 1,755 MB. `--prune-backups` was not passed.

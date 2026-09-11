@@ -1,0 +1,5186 @@
+{
+  "kind": "overhead-report",
+  "schema": 1,
+  "generatedAt": "2026-09-11T09:44:45.884Z",
+  "phase": "3A",
+  "script": "scripts/overhead-report.ts",
+  "source": {
+    "corpus": {
+      "db": "/Users/ritikyadav890/.rune/rune.db",
+      "readonly": true,
+      "sessions": 684,
+      "events": 26861,
+      "costRows": 2931,
+      "costRowsWithRoleTag": 437,
+      "runsWithUsage": 221,
+      "sessionsWithUsage": 87,
+      "firstEvent": "2026-05-16T15:14:29.129Z",
+      "lastEvent": "2026-09-10T19:20:44.093Z"
+    },
+    "pilots": {
+      "root": ".codex",
+      "databases": 15,
+      "note": "Per-run databases written by tests/eval/comparison. One task, one build, one arm each, and 100% role-tagged — exact attribution on controlled runs."
+    },
+    "blackbox": "/Users/ritikyadav890/.rune/blackbox.db"
+  },
+  "method": {
+    "runDefinition": "One user turn: from a user_msg with no `harness` marker to the event before the next one. Session start opens the first run. A run with no cost row is excluded — the handoff's \"every run that has usage rows\".",
+    "completionPairing": "The engine records a completion's cost on the gateway usage listener (packages/orchestrator/src/engine.ts:6289) BEFORE draining the assistant message it produced, so a cost row's window — the events between it and the next cost row — is exactly what that completion did. Verified against the event order of the busiest session.",
+    "eras": {
+      "pre-step-count-fix": "< 2026-09-10T02:36:44.000Z (before 897b192)",
+      "post-step-count-fix": ">= 2026-09-10T02:36:44.000Z (897b192: gate/nudge origins, settled-plan stand-down, recurrence detector, codex tail fold)",
+      "phase-2": ">= 2026-09-10T15:35:30.000Z (54459b0) OR the session carries a run_trace lifecycle row"
+    },
+    "autoModeDetection": "EXACT: a run is Auto when it contains any safety_decision row. Every writer of that event is an Auto path (packages/orchestrator/src/engine.ts:2241 held step, :3152 -> :3354 the in-path review, :3298 the supervisor batch, :6135 the late verdict). A run where Auto was on but no tool was reviewed reads as non-Auto; that understates Auto, never overstates it.",
+    "freeVsPaid": "CostEntry.billing. A run is paid when ANY completion was 'metered'. Rows with no billing field (pre-P12.1) count as free, which understates paid.",
+    "exactAttributions": [
+      "CostEntry.role, when present, for classifier/supervisor/summarizer/intent/memory/repair/subagent/research (packages/llm-gateway/src/types.ts:360; set at agent-loop.ts:1667, auto-mode.ts:531 and :913, context-engine.ts:974, engine.ts:2419 and :4236, subagent-result.ts:581, worker.ts:672, subagent.ts:318, research.ts:628; carried through gateway.ts:891 into cost-tracker.ts:274).",
+      "Token counts, cache reads and cache writes: the provider's own usage block.",
+      "Reviewer latency: safety_decision.timings {mechanicalMs, classifierMs, retryMs} (packages/orchestrator/src/auto-mode.ts:1842) plus durationMs, persisted at engine.ts:3367.",
+      "Provider retries and their back-off: run_trace type='retry' carrying waitMs.",
+      "Compaction: auto_compaction / compaction events with before/after tokens.",
+      "Prompt composition in BYTES: CostEntry.composition (packages/llm-gateway/src/types.ts:367).",
+      "Gate and replan firings after 897b192: run_trace type='notice', and the task spine's own log entries of kind gate/replan, which carry their own timestamps."
+    ],
+    "inferredAttributions": [
+      "supervisor_review — a safety_decision with classifierMs > 0 sits in the completion's window. Measured on the corpus: all 39 governance-tagged cost rows have one; exactly 1 primary-tagged row does. Precision 39/40.",
+      "compaction — a compaction / auto_compaction row sits in the window.",
+      "workers — no assistant message, and the nearest preceding assistant message dispatched a worker whose tool result had not returned. Measured: 12 of 12 subagent-tagged rows.",
+      "retries — the assistant message was empty, or a run_trace retry was recorded since the previous completion.",
+      "harness_followups — a user_msg with a `harness` origin marker, a re-prompting run_trace notice, or a spine gate/replan entry falls between the previous completion and this one. This is the COMPLETION a gate caused, not the gate itself.",
+      "planning — every tool call in the completion was plan bookkeeping (todo_write, todo_read, read_back, record_evidence, record_decision, note_hypothesis, narrate, update_plan, plan, set_goal, ask_user).",
+      "primary — an assistant message with work in it; or no assistant message persisted and nothing naming another caller (empty assistant messages are dropped at engine.ts:5331, so a genuinely empty completion lands here when no retry row accompanies it)."
+    ],
+    "perCompletionWallClock": "INFERRED, and the weakest number in this report. No inference latency is recorded anywhere, so a completion is charged the interval from the previous completion's cost row to its own; the first completion of a run is charged from the run's first event. It therefore charges a completion for the tool time that preceded it, and it OVERSTATES any role that runs concurrently with the agent — the out-of-band supervisor above all, whose batch review (packages/orchestrator/src/auto-mode.ts:1903) is off the tool's critical path by design. Read `byRole[].wallShare` as 'share of the run's stretches that ended in this role', never as 'share of the run's wall clock this role caused'. The EXACT wall-clock numbers are `reviewerBlockingShareOfRun` (from safety_decision.timings), `retryWaitSecondsPerRun` (from run_trace retry waitMs) and `shareOfRunAfterLastEdit`. Gap I3 closes this.",
+    "notRecorded": [
+      "Reviewer QUEUE wait. SupervisorQueue (packages/orchestrator/src/supervisor-queue.ts:44) records no enter/leave timestamp, so reviewerBlockingMs is the classifier's own latency only and the batch's queue delay is invisible.",
+      "Worker startup and integration. Zero delegation_checkpoint / delegation_lease rows exist in this corpus (V3-F1: the store was unwired until 0fc1c99), so worker timings could not be measured at all.",
+      "Which harness message caused which completion, before 897b192: the `harness` origin marker is on 1 of 1,210 user_msg rows in this corpus, and 9 synthetic user messages in agent-loop.ts still carry no origin at all.",
+      "A useful_edit marker. 'Time after the last useful edit' is inferred from the last assistant message that called an edit tool, which counts an edit later reverted.",
+      "Per-request cache reads by role before the role tag: the usage block has them, the attribution does not."
+    ],
+    "privacy": "Every field is extracted in SQL; no prompt text, tool argument, file body or provider response entered the analysis process. run_trace notice text is reduced to a label before it is counted."
+  },
+  "labelledAgreement": {
+    "rowsWithRoleTag": 437,
+    "exactRoleAgreement": 0.8375,
+    "superClassAgreement": 0.9817,
+    "byTag": {
+      "primary": {
+        "n": 382,
+        "exact": 315,
+        "superClass": 378
+      },
+      "classifier": {
+        "n": 35,
+        "exact": 35,
+        "superClass": 35
+      },
+      "supervisor": {
+        "n": 4,
+        "exact": 4,
+        "superClass": 4
+      },
+      "subagent": {
+        "n": 12,
+        "exact": 12,
+        "superClass": 12
+      },
+      "repair": {
+        "n": 3,
+        "exact": 0,
+        "superClass": 0
+      },
+      "memory": {
+        "n": 1,
+        "exact": 0,
+        "superClass": 0
+      }
+    },
+    "confusion": {
+      "primary": {
+        "primary": 315,
+        "planning": 44,
+        "harness_followups": 14,
+        "supervisor_review": 1,
+        "workers": 3,
+        "retries": 5
+      },
+      "classifier": {
+        "supervisor_review": 35
+      },
+      "supervisor": {
+        "supervisor_review": 4
+      },
+      "subagent": {
+        "workers": 12
+      },
+      "repair": {
+        "workers": 3
+      },
+      "memory": {
+        "primary": 1
+      }
+    },
+    "note": "superClassAgreement is the fair test: it asks whether the inference put the completion on the right side of the only line the tag actually draws (a separate harness model call vs the agent's own turn). exactRoleAgreement penalises the deliberate split of `primary` into primary / planning / harness_followups / retries, which nothing in the database labels."
+  },
+  "attributionRules": [
+    {
+      "rule": "an assistant message with work in it",
+      "n": 2117
+    },
+    {
+      "rule": "every tool call was plan bookkeeping",
+      "n": 445
+    },
+    {
+      "rule": "model-backed safety_decision in the window",
+      "n": 83
+    },
+    {
+      "rule": "a harness re-prompt preceded it",
+      "n": 69
+    },
+    {
+      "rule": "compaction row in the window",
+      "n": 58
+    },
+    {
+      "rule": "no assistant message persisted and nothing names another caller",
+      "n": 45
+    },
+    {
+      "rule": "every tool call dispatched a worker",
+      "n": 38
+    },
+    {
+      "rule": "CostEntry.role = \"classifier\"",
+      "n": 35
+    },
+    {
+      "rule": "CostEntry.role = \"subagent\"",
+      "n": 12
+    },
+    {
+      "rule": "a provider retry was recorded before it",
+      "n": 10
+    },
+    {
+      "rule": "no assistant message, after a harness re-prompt",
+      "n": 5
+    },
+    {
+      "rule": "CostEntry.role = \"supervisor\"",
+      "n": 4
+    },
+    {
+      "rule": "the assistant message was empty",
+      "n": 3
+    },
+    {
+      "rule": "CostEntry.role = \"repair\"",
+      "n": 3
+    },
+    {
+      "rule": "no assistant message, after a provider retry",
+      "n": 3
+    },
+    {
+      "rule": "CostEntry.role = \"memory\"",
+      "n": 1
+    }
+  ],
+  "totals": {
+    "runs": 221,
+    "completions": 2931,
+    "listCostUsd": 32.436771,
+    "paidCostUsd": 0.474275,
+    "attributedMs": 117647760,
+    "byRole": [
+      {
+        "role": "primary",
+        "completions": 2162,
+        "completionShare": 0.7376,
+        "listCostUsd": 24.121682,
+        "costShare": 0.7437,
+        "wallMs": 61836424,
+        "wallShare": 0.5256,
+        "runsTouched": 214,
+        "runShare": 0.9683
+      },
+      {
+        "role": "planning",
+        "completions": 445,
+        "completionShare": 0.1518,
+        "listCostUsd": 3.900481,
+        "costShare": 0.1202,
+        "wallMs": 13504880,
+        "wallShare": 0.1148,
+        "runsTouched": 80,
+        "runShare": 0.362
+      },
+      {
+        "role": "supervisor_review",
+        "completions": 122,
+        "completionShare": 0.0416,
+        "listCostUsd": 2.269573,
+        "costShare": 0.07,
+        "wallMs": 36064500,
+        "wallShare": 0.3065,
+        "runsTouched": 15,
+        "runShare": 0.0679
+      },
+      {
+        "role": "compaction",
+        "completions": 59,
+        "completionShare": 0.0201,
+        "listCostUsd": 1.087527,
+        "costShare": 0.0335,
+        "wallMs": 991896,
+        "wallShare": 0.0084,
+        "runsTouched": 21,
+        "runShare": 0.095
+      },
+      {
+        "role": "harness_followups",
+        "completions": 74,
+        "completionShare": 0.0252,
+        "listCostUsd": 0.721022,
+        "costShare": 0.0222,
+        "wallMs": 1552291,
+        "wallShare": 0.0132,
+        "runsTouched": 30,
+        "runShare": 0.1357
+      },
+      {
+        "role": "workers",
+        "completions": 50,
+        "completionShare": 0.0171,
+        "listCostUsd": 0.334426,
+        "costShare": 0.0103,
+        "wallMs": 2812452,
+        "wallShare": 0.0239,
+        "runsTouched": 21,
+        "runShare": 0.095
+      },
+      {
+        "role": "retries",
+        "completions": 19,
+        "completionShare": 0.0065,
+        "listCostUsd": 0.002062,
+        "costShare": 0.0001,
+        "wallMs": 885317,
+        "wallShare": 0.0075,
+        "runsTouched": 10,
+        "runShare": 0.0452
+      },
+      {
+        "role": "unattributable",
+        "completions": 0,
+        "completionShare": 0,
+        "listCostUsd": 0,
+        "costShare": 0,
+        "wallMs": 0,
+        "wallShare": 0,
+        "runsTouched": 0,
+        "runShare": 0
+      }
+    ],
+    "distributions": {
+      "completionsPerRun": {
+        "n": 221,
+        "sum": 2931,
+        "mean": 13.2624,
+        "median": 2,
+        "p90": 40,
+        "max": 82
+      },
+      "wallSecondsPerRun": {
+        "n": 221,
+        "sum": 129661.118,
+        "mean": 586.7019,
+        "median": 20.249,
+        "p90": 1185.247,
+        "max": 34796.755
+      },
+      "listUsdPerRun": {
+        "n": 221,
+        "sum": 32.4368,
+        "mean": 0.1468,
+        "median": 0,
+        "p90": 0.3572,
+        "max": 4.1108
+      },
+      "outputTokensPerRun": {
+        "n": 221,
+        "sum": 1746528,
+        "mean": 7902.8416,
+        "median": 587,
+        "p90": 20685,
+        "max": 101514
+      },
+      "freshInputTokensPerRun": {
+        "n": 221,
+        "sum": 94267346,
+        "mean": 426549.0769,
+        "median": 21675,
+        "p90": 872719,
+        "max": 7861657
+      },
+      "reviewerBlockingSecondsPerRun": {
+        "n": 221,
+        "sum": 831.728,
+        "mean": 3.7635,
+        "median": 0,
+        "p90": 0,
+        "max": 156.264
+      },
+      "reviewerDecisionsPerRun": {
+        "n": 221,
+        "sum": 1435,
+        "mean": 6.4932,
+        "median": 0,
+        "p90": 24,
+        "max": 75
+      },
+      "followupsPerRun": {
+        "n": 221,
+        "sum": 90,
+        "mean": 0.4072,
+        "median": 0,
+        "p90": 1,
+        "max": 10
+      },
+      "retriesPerRun": {
+        "n": 221,
+        "sum": 15,
+        "mean": 0.0679,
+        "median": 0,
+        "p90": 0,
+        "max": 5
+      },
+      "retryWaitSecondsPerRun": {
+        "n": 221,
+        "sum": 15,
+        "mean": 0.0679,
+        "median": 0,
+        "p90": 0,
+        "max": 5
+      },
+      "compactionsPerRun": {
+        "n": 221,
+        "sum": 58,
+        "mean": 0.2624,
+        "median": 0,
+        "p90": 0,
+        "max": 10
+      },
+      "completionsAfterPlanSettled": {
+        "n": 221,
+        "sum": 179,
+        "mean": 0.81,
+        "median": 0,
+        "p90": 0,
+        "max": 51
+      },
+      "secondsAfterLastEdit": {
+        "n": 64,
+        "sum": 13712.549,
+        "mean": 214.2586,
+        "median": 81.073,
+        "p90": 386.7548,
+        "max": 5185.55
+      },
+      "cacheHitRatio": {
+        "n": 219,
+        "sum": 92.2754,
+        "mean": 0.4213,
+        "median": 0.3378,
+        "p90": 0.9362,
+        "max": 0.9941
+      },
+      "reviewerBlockingShareOfRun": {
+        "n": 220,
+        "sum": 2.472,
+        "mean": 0.0112,
+        "median": 0,
+        "p90": 0,
+        "max": 0.4706
+      },
+      "shareOfRunAfterLastEdit": {
+        "n": 64,
+        "sum": 14.9664,
+        "mean": 0.2339,
+        "median": 0.1457,
+        "p90": 0.5798,
+        "max": 0.8556
+      },
+      "governanceCompletionShareOfRun": {
+        "n": 221,
+        "sum": 37.6251,
+        "mean": 0.1702,
+        "median": 0,
+        "p90": 0.5,
+        "max": 1
+      },
+      "completionsAfterPlanSettledShare": {
+        "n": 221,
+        "sum": 4.6097,
+        "mean": 0.0209,
+        "median": 0,
+        "p90": 0,
+        "max": 0.8182
+      }
+    },
+    "unpricedRows": 631
+  },
+  "byMode": {
+    "auto": {
+      "runs": 93,
+      "completions": 2194,
+      "listCostUsd": 28.376858,
+      "paidCostUsd": 0.466789,
+      "attributedMs": 98296351,
+      "byRole": [
+        {
+          "role": "primary",
+          "completions": 1568,
+          "completionShare": 0.7147,
+          "listCostUsd": 20.515521,
+          "costShare": 0.723,
+          "wallMs": 46088146,
+          "wallShare": 0.4689,
+          "runsTouched": 91,
+          "runShare": 0.9785
+        },
+        {
+          "role": "planning",
+          "completions": 358,
+          "completionShare": 0.1632,
+          "listCostUsd": 3.695926,
+          "costShare": 0.1302,
+          "wallMs": 11513198,
+          "wallShare": 0.1171,
+          "runsTouched": 64,
+          "runShare": 0.6882
+        },
+        {
+          "role": "supervisor_review",
+          "completions": 122,
+          "completionShare": 0.0556,
+          "listCostUsd": 2.269573,
+          "costShare": 0.08,
+          "wallMs": 36064500,
+          "wallShare": 0.3669,
+          "runsTouched": 15,
+          "runShare": 0.1613
+        },
+        {
+          "role": "compaction",
+          "completions": 54,
+          "completionShare": 0.0246,
+          "listCostUsd": 1.085255,
+          "costShare": 0.0382,
+          "wallMs": 959700,
+          "wallShare": 0.0098,
+          "runsTouched": 19,
+          "runShare": 0.2043
+        },
+        {
+          "role": "harness_followups",
+          "completions": 57,
+          "completionShare": 0.026,
+          "listCostUsd": 0.625382,
+          "costShare": 0.022,
+          "wallMs": 1113158,
+          "wallShare": 0.0113,
+          "runsTouched": 22,
+          "runShare": 0.2366
+        },
+        {
+          "role": "workers",
+          "completions": 23,
+          "completionShare": 0.0105,
+          "listCostUsd": 0.185202,
+          "costShare": 0.0065,
+          "wallMs": 1766225,
+          "wallShare": 0.018,
+          "runsTouched": 15,
+          "runShare": 0.1613
+        },
+        {
+          "role": "retries",
+          "completions": 12,
+          "completionShare": 0.0055,
+          "listCostUsd": 0,
+          "costShare": 0,
+          "wallMs": 791424,
+          "wallShare": 0.0081,
+          "runsTouched": 5,
+          "runShare": 0.0538
+        },
+        {
+          "role": "unattributable",
+          "completions": 0,
+          "completionShare": 0,
+          "listCostUsd": 0,
+          "costShare": 0,
+          "wallMs": 0,
+          "wallShare": 0,
+          "runsTouched": 0,
+          "runShare": 0
+        }
+      ],
+      "distributions": {
+        "completionsPerRun": {
+          "n": 93,
+          "sum": 2194,
+          "mean": 23.5914,
+          "median": 16,
+          "p90": 73.2,
+          "max": 82
+        },
+        "wallSecondsPerRun": {
+          "n": 93,
+          "sum": 110279.195,
+          "mean": 1185.7978,
+          "median": 335.853,
+          "p90": 3089.0638,
+          "max": 34796.755
+        },
+        "listUsdPerRun": {
+          "n": 93,
+          "sum": 28.3769,
+          "mean": 0.3051,
+          "median": 0.003,
+          "p90": 1.0951,
+          "max": 4.1108
+        },
+        "outputTokensPerRun": {
+          "n": 93,
+          "sum": 1463719,
+          "mean": 15738.914,
+          "median": 8067,
+          "p90": 42554.8,
+          "max": 101514
+        },
+        "freshInputTokensPerRun": {
+          "n": 93,
+          "sum": 66652881,
+          "mean": 716697.6452,
+          "median": 153185,
+          "p90": 2135661.8,
+          "max": 7861657
+        },
+        "reviewerBlockingSecondsPerRun": {
+          "n": 93,
+          "sum": 831.728,
+          "mean": 8.9433,
+          "median": 0,
+          "p90": 21.1588,
+          "max": 156.264
+        },
+        "reviewerDecisionsPerRun": {
+          "n": 93,
+          "sum": 1435,
+          "mean": 15.4301,
+          "median": 10,
+          "p90": 39.6,
+          "max": 75
+        },
+        "followupsPerRun": {
+          "n": 93,
+          "sum": 72,
+          "mean": 0.7742,
+          "median": 0,
+          "p90": 3,
+          "max": 10
+        },
+        "retriesPerRun": {
+          "n": 93,
+          "sum": 14,
+          "mean": 0.1505,
+          "median": 0,
+          "p90": 0,
+          "max": 5
+        },
+        "retryWaitSecondsPerRun": {
+          "n": 93,
+          "sum": 14,
+          "mean": 0.1505,
+          "median": 0,
+          "p90": 0,
+          "max": 5
+        },
+        "compactionsPerRun": {
+          "n": 93,
+          "sum": 54,
+          "mean": 0.5806,
+          "median": 0,
+          "p90": 1,
+          "max": 10
+        },
+        "completionsAfterPlanSettled": {
+          "n": 93,
+          "sum": 157,
+          "mean": 1.6882,
+          "median": 0,
+          "p90": 2.6,
+          "max": 51
+        },
+        "secondsAfterLastEdit": {
+          "n": 46,
+          "sum": 12205.961,
+          "mean": 265.347,
+          "median": 99.601,
+          "p90": 470.4465,
+          "max": 5185.55
+        },
+        "cacheHitRatio": {
+          "n": 93,
+          "sum": 58.2761,
+          "mean": 0.6266,
+          "median": 0.7983,
+          "p90": 0.9482,
+          "max": 0.9748
+        },
+        "reviewerBlockingShareOfRun": {
+          "n": 93,
+          "sum": 2.472,
+          "mean": 0.0266,
+          "median": 0,
+          "p90": 0.0724,
+          "max": 0.4706
+        },
+        "shareOfRunAfterLastEdit": {
+          "n": 46,
+          "sum": 10.2599,
+          "mean": 0.223,
+          "median": 0.1305,
+          "p90": 0.5751,
+          "max": 0.8556
+        },
+        "governanceCompletionShareOfRun": {
+          "n": 93,
+          "sum": 27.0969,
+          "mean": 0.2914,
+          "median": 0.2805,
+          "p90": 0.6077,
+          "max": 1
+        },
+        "completionsAfterPlanSettledShare": {
+          "n": 93,
+          "sum": 4.0027,
+          "mean": 0.043,
+          "median": 0,
+          "p90": 0.0474,
+          "max": 0.8182
+        }
+      },
+      "unpricedRows": 434
+    },
+    "nonAuto": {
+      "runs": 128,
+      "completions": 737,
+      "listCostUsd": 4.059913,
+      "paidCostUsd": 0.007487,
+      "attributedMs": 19351409,
+      "byRole": [
+        {
+          "role": "primary",
+          "completions": 594,
+          "completionShare": 0.806,
+          "listCostUsd": 3.60616,
+          "costShare": 0.8882,
+          "wallMs": 15748278,
+          "wallShare": 0.8138,
+          "runsTouched": 123,
+          "runShare": 0.9609
+        },
+        {
+          "role": "planning",
+          "completions": 87,
+          "completionShare": 0.118,
+          "listCostUsd": 0.204555,
+          "costShare": 0.0504,
+          "wallMs": 1991682,
+          "wallShare": 0.1029,
+          "runsTouched": 16,
+          "runShare": 0.125
+        },
+        {
+          "role": "workers",
+          "completions": 27,
+          "completionShare": 0.0366,
+          "listCostUsd": 0.149224,
+          "costShare": 0.0368,
+          "wallMs": 1046227,
+          "wallShare": 0.0541,
+          "runsTouched": 6,
+          "runShare": 0.0469
+        },
+        {
+          "role": "harness_followups",
+          "completions": 17,
+          "completionShare": 0.0231,
+          "listCostUsd": 0.09564,
+          "costShare": 0.0236,
+          "wallMs": 439133,
+          "wallShare": 0.0227,
+          "runsTouched": 8,
+          "runShare": 0.0625
+        },
+        {
+          "role": "compaction",
+          "completions": 5,
+          "completionShare": 0.0068,
+          "listCostUsd": 0.002272,
+          "costShare": 0.0006,
+          "wallMs": 32196,
+          "wallShare": 0.0017,
+          "runsTouched": 2,
+          "runShare": 0.0156
+        },
+        {
+          "role": "retries",
+          "completions": 7,
+          "completionShare": 0.0095,
+          "listCostUsd": 0.002062,
+          "costShare": 0.0005,
+          "wallMs": 93893,
+          "wallShare": 0.0049,
+          "runsTouched": 5,
+          "runShare": 0.0391
+        },
+        {
+          "role": "supervisor_review",
+          "completions": 0,
+          "completionShare": 0,
+          "listCostUsd": 0,
+          "costShare": 0,
+          "wallMs": 0,
+          "wallShare": 0,
+          "runsTouched": 0,
+          "runShare": 0
+        },
+        {
+          "role": "unattributable",
+          "completions": 0,
+          "completionShare": 0,
+          "listCostUsd": 0,
+          "costShare": 0,
+          "wallMs": 0,
+          "wallShare": 0,
+          "runsTouched": 0,
+          "runShare": 0
+        }
+      ],
+      "distributions": {
+        "completionsPerRun": {
+          "n": 128,
+          "sum": 737,
+          "mean": 5.7578,
+          "median": 1,
+          "p90": 18.2,
+          "max": 80
+        },
+        "wallSecondsPerRun": {
+          "n": 128,
+          "sum": 19381.923,
+          "mean": 151.4213,
+          "median": 7.5165,
+          "p90": 169.4738,
+          "max": 5257.583
+        },
+        "listUsdPerRun": {
+          "n": 128,
+          "sum": 4.0599,
+          "mean": 0.0317,
+          "median": 0,
+          "p90": 0.022,
+          "max": 2.0526
+        },
+        "outputTokensPerRun": {
+          "n": 128,
+          "sum": 282809,
+          "mean": 2209.4453,
+          "median": 118,
+          "p90": 8581.5,
+          "max": 36584
+        },
+        "freshInputTokensPerRun": {
+          "n": 128,
+          "sum": 27614465,
+          "mean": 215738.0078,
+          "median": 17584.5,
+          "p90": 265821.2,
+          "max": 6967529
+        },
+        "reviewerBlockingSecondsPerRun": {
+          "n": 128,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "reviewerDecisionsPerRun": {
+          "n": 128,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "followupsPerRun": {
+          "n": 128,
+          "sum": 18,
+          "mean": 0.1406,
+          "median": 0,
+          "p90": 0,
+          "max": 6
+        },
+        "retriesPerRun": {
+          "n": 128,
+          "sum": 1,
+          "mean": 0.0078,
+          "median": 0,
+          "p90": 0,
+          "max": 1
+        },
+        "retryWaitSecondsPerRun": {
+          "n": 128,
+          "sum": 1,
+          "mean": 0.0078,
+          "median": 0,
+          "p90": 0,
+          "max": 1
+        },
+        "compactionsPerRun": {
+          "n": 128,
+          "sum": 4,
+          "mean": 0.0313,
+          "median": 0,
+          "p90": 0,
+          "max": 4
+        },
+        "completionsAfterPlanSettled": {
+          "n": 128,
+          "sum": 22,
+          "mean": 0.1719,
+          "median": 0,
+          "p90": 0,
+          "max": 12
+        },
+        "secondsAfterLastEdit": {
+          "n": 18,
+          "sum": 1506.588,
+          "mean": 83.6993,
+          "median": 15.755,
+          "p90": 239.8487,
+          "max": 457.895
+        },
+        "cacheHitRatio": {
+          "n": 126,
+          "sum": 33.9993,
+          "mean": 0.2698,
+          "median": 0.0063,
+          "p90": 0.9147,
+          "max": 0.9941
+        },
+        "reviewerBlockingShareOfRun": {
+          "n": 127,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "shareOfRunAfterLastEdit": {
+          "n": 18,
+          "sum": 4.7065,
+          "mean": 0.2615,
+          "median": 0.2281,
+          "p90": 0.5951,
+          "max": 0.7909
+        },
+        "governanceCompletionShareOfRun": {
+          "n": 128,
+          "sum": 10.5281,
+          "mean": 0.0823,
+          "median": 0,
+          "p90": 0.2807,
+          "max": 1
+        },
+        "completionsAfterPlanSettledShare": {
+          "n": 128,
+          "sum": 0.6071,
+          "mean": 0.0047,
+          "median": 0,
+          "p90": 0,
+          "max": 0.2
+        }
+      },
+      "unpricedRows": 197
+    }
+  },
+  "byRoute": {
+    "free": {
+      "runs": 212,
+      "completions": 2795,
+      "listCostUsd": 32.029996,
+      "paidCostUsd": 0.067499,
+      "attributedMs": 112765139,
+      "byRole": [
+        {
+          "role": "primary",
+          "completions": 2078,
+          "completionShare": 0.7435,
+          "listCostUsd": 23.820963,
+          "costShare": 0.7437,
+          "wallMs": 60339407,
+          "wallShare": 0.5351,
+          "runsTouched": 207,
+          "runShare": 0.9764
+        },
+        {
+          "role": "planning",
+          "completions": 416,
+          "completionShare": 0.1488,
+          "listCostUsd": 3.810295,
+          "costShare": 0.119,
+          "wallMs": 10425454,
+          "wallShare": 0.0925,
+          "runsTouched": 77,
+          "runShare": 0.3632
+        },
+        {
+          "role": "supervisor_review",
+          "completions": 116,
+          "completionShare": 0.0415,
+          "listCostUsd": 2.268114,
+          "costShare": 0.0708,
+          "wallMs": 35970773,
+          "wallShare": 0.319,
+          "runsTouched": 14,
+          "runShare": 0.066
+        },
+        {
+          "role": "compaction",
+          "completions": 50,
+          "completionShare": 0.0179,
+          "listCostUsd": 1.085255,
+          "costShare": 0.0339,
+          "wallMs": 922093,
+          "wallShare": 0.0082,
+          "runsTouched": 19,
+          "runShare": 0.0896
+        },
+        {
+          "role": "harness_followups",
+          "completions": 72,
+          "completionShare": 0.0258,
+          "listCostUsd": 0.711906,
+          "costShare": 0.0222,
+          "wallMs": 1543612,
+          "wallShare": 0.0137,
+          "runsTouched": 29,
+          "runShare": 0.1368
+        },
+        {
+          "role": "workers",
+          "completions": 48,
+          "completionShare": 0.0172,
+          "listCostUsd": 0.331401,
+          "costShare": 0.0103,
+          "wallMs": 2776323,
+          "wallShare": 0.0246,
+          "runsTouched": 19,
+          "runShare": 0.0896
+        },
+        {
+          "role": "retries",
+          "completions": 15,
+          "completionShare": 0.0054,
+          "listCostUsd": 0.002062,
+          "costShare": 0.0001,
+          "wallMs": 787477,
+          "wallShare": 0.007,
+          "runsTouched": 9,
+          "runShare": 0.0425
+        },
+        {
+          "role": "unattributable",
+          "completions": 0,
+          "completionShare": 0,
+          "listCostUsd": 0,
+          "costShare": 0,
+          "wallMs": 0,
+          "wallShare": 0,
+          "runsTouched": 0,
+          "runShare": 0
+        }
+      ],
+      "distributions": {
+        "completionsPerRun": {
+          "n": 212,
+          "sum": 2795,
+          "mean": 13.184,
+          "median": 2,
+          "p90": 39.8,
+          "max": 82
+        },
+        "wallSecondsPerRun": {
+          "n": 212,
+          "sum": 124754.783,
+          "mean": 588.466,
+          "median": 20.192,
+          "p90": 1175.8359,
+          "max": 34796.755
+        },
+        "listUsdPerRun": {
+          "n": 212,
+          "sum": 32.03,
+          "mean": 0.1511,
+          "median": 0,
+          "p90": 0.4396,
+          "max": 4.1108
+        },
+        "outputTokensPerRun": {
+          "n": 212,
+          "sum": 1679748,
+          "mean": 7923.3396,
+          "median": 610.5,
+          "p90": 20549,
+          "max": 101514
+        },
+        "freshInputTokensPerRun": {
+          "n": 212,
+          "sum": 92373955,
+          "mean": 435726.2028,
+          "median": 21732.5,
+          "p90": 854087.1,
+          "max": 7861657
+        },
+        "reviewerBlockingSecondsPerRun": {
+          "n": 212,
+          "sum": 738.036,
+          "mean": 3.4813,
+          "median": 0,
+          "p90": 0,
+          "max": 156.264
+        },
+        "reviewerDecisionsPerRun": {
+          "n": 212,
+          "sum": 1399,
+          "mean": 6.5991,
+          "median": 0,
+          "p90": 25.8,
+          "max": 75
+        },
+        "followupsPerRun": {
+          "n": 212,
+          "sum": 86,
+          "mean": 0.4057,
+          "median": 0,
+          "p90": 1,
+          "max": 10
+        },
+        "retriesPerRun": {
+          "n": 212,
+          "sum": 11,
+          "mean": 0.0519,
+          "median": 0,
+          "p90": 0,
+          "max": 5
+        },
+        "retryWaitSecondsPerRun": {
+          "n": 212,
+          "sum": 11,
+          "mean": 0.0519,
+          "median": 0,
+          "p90": 0,
+          "max": 5
+        },
+        "compactionsPerRun": {
+          "n": 212,
+          "sum": 50,
+          "mean": 0.2358,
+          "median": 0,
+          "p90": 0,
+          "max": 10
+        },
+        "completionsAfterPlanSettled": {
+          "n": 212,
+          "sum": 176,
+          "mean": 0.8302,
+          "median": 0,
+          "p90": 0,
+          "max": 51
+        },
+        "secondsAfterLastEdit": {
+          "n": 61,
+          "sum": 12446.776,
+          "mean": 204.0455,
+          "median": 86.776,
+          "p90": 361.44,
+          "max": 5185.55
+        },
+        "cacheHitRatio": {
+          "n": 210,
+          "sum": 89.3087,
+          "mean": 0.4253,
+          "median": 0.3634,
+          "p90": 0.9385,
+          "max": 0.9941
+        },
+        "reviewerBlockingShareOfRun": {
+          "n": 212,
+          "sum": 2.2368,
+          "mean": 0.0106,
+          "median": 0,
+          "p90": 0,
+          "max": 0.4706
+        },
+        "shareOfRunAfterLastEdit": {
+          "n": 61,
+          "sum": 14.1872,
+          "mean": 0.2326,
+          "median": 0.1395,
+          "p90": 0.5801,
+          "max": 0.8556
+        },
+        "governanceCompletionShareOfRun": {
+          "n": 212,
+          "sum": 33.9739,
+          "mean": 0.1603,
+          "median": 0,
+          "p90": 0.5,
+          "max": 1
+        },
+        "completionsAfterPlanSettledShare": {
+          "n": 212,
+          "sum": 4.4944,
+          "mean": 0.0212,
+          "median": 0,
+          "p90": 0,
+          "max": 0.8182
+        }
+      },
+      "unpricedRows": 631
+    },
+    "paid": {
+      "runs": 9,
+      "completions": 136,
+      "listCostUsd": 0.406776,
+      "paidCostUsd": 0.406776,
+      "attributedMs": 4882621,
+      "byRole": [
+        {
+          "role": "primary",
+          "completions": 84,
+          "completionShare": 0.6176,
+          "listCostUsd": 0.300718,
+          "costShare": 0.7393,
+          "wallMs": 1497017,
+          "wallShare": 0.3066,
+          "runsTouched": 7,
+          "runShare": 0.7778
+        },
+        {
+          "role": "planning",
+          "completions": 29,
+          "completionShare": 0.2132,
+          "listCostUsd": 0.090186,
+          "costShare": 0.2217,
+          "wallMs": 3079426,
+          "wallShare": 0.6307,
+          "runsTouched": 3,
+          "runShare": 0.3333
+        },
+        {
+          "role": "harness_followups",
+          "completions": 2,
+          "completionShare": 0.0147,
+          "listCostUsd": 0.009116,
+          "costShare": 0.0224,
+          "wallMs": 8679,
+          "wallShare": 0.0018,
+          "runsTouched": 1,
+          "runShare": 0.1111
+        },
+        {
+          "role": "workers",
+          "completions": 2,
+          "completionShare": 0.0147,
+          "listCostUsd": 0.003025,
+          "costShare": 0.0074,
+          "wallMs": 36129,
+          "wallShare": 0.0074,
+          "runsTouched": 2,
+          "runShare": 0.2222
+        },
+        {
+          "role": "compaction",
+          "completions": 9,
+          "completionShare": 0.0662,
+          "listCostUsd": 0.002272,
+          "costShare": 0.0056,
+          "wallMs": 69803,
+          "wallShare": 0.0143,
+          "runsTouched": 2,
+          "runShare": 0.2222
+        },
+        {
+          "role": "supervisor_review",
+          "completions": 6,
+          "completionShare": 0.0441,
+          "listCostUsd": 0.001459,
+          "costShare": 0.0036,
+          "wallMs": 93727,
+          "wallShare": 0.0192,
+          "runsTouched": 1,
+          "runShare": 0.1111
+        },
+        {
+          "role": "retries",
+          "completions": 4,
+          "completionShare": 0.0294,
+          "listCostUsd": 0,
+          "costShare": 0,
+          "wallMs": 97840,
+          "wallShare": 0.02,
+          "runsTouched": 1,
+          "runShare": 0.1111
+        },
+        {
+          "role": "unattributable",
+          "completions": 0,
+          "completionShare": 0,
+          "listCostUsd": 0,
+          "costShare": 0,
+          "wallMs": 0,
+          "wallShare": 0,
+          "runsTouched": 0,
+          "runShare": 0
+        }
+      ],
+      "distributions": {
+        "completionsPerRun": {
+          "n": 9,
+          "sum": 136,
+          "mean": 15.1111,
+          "median": 3,
+          "p90": 36,
+          "max": 76
+        },
+        "wallSecondsPerRun": {
+          "n": 9,
+          "sum": 4906.335,
+          "mean": 545.1483,
+          "median": 22.094,
+          "p90": 1235.6686,
+          "max": 3819.095
+        },
+        "listUsdPerRun": {
+          "n": 9,
+          "sum": 0.4068,
+          "mean": 0.0452,
+          "median": 0.003,
+          "p90": 0.1628,
+          "max": 0.2068
+        },
+        "outputTokensPerRun": {
+          "n": 9,
+          "sum": 66780,
+          "mean": 7420,
+          "median": 99,
+          "p90": 25000.4,
+          "max": 28054
+        },
+        "freshInputTokensPerRun": {
+          "n": 9,
+          "sum": 1893391,
+          "mean": 210376.7778,
+          "median": 20520,
+          "p90": 408498,
+          "max": 1279142
+        },
+        "reviewerBlockingSecondsPerRun": {
+          "n": 9,
+          "sum": 93.692,
+          "mean": 10.4102,
+          "median": 0,
+          "p90": 18.7384,
+          "max": 93.692
+        },
+        "reviewerDecisionsPerRun": {
+          "n": 9,
+          "sum": 36,
+          "mean": 4,
+          "median": 1,
+          "p90": 11.6,
+          "max": 14
+        },
+        "followupsPerRun": {
+          "n": 9,
+          "sum": 4,
+          "mean": 0.4444,
+          "median": 0,
+          "p90": 2,
+          "max": 2
+        },
+        "retriesPerRun": {
+          "n": 9,
+          "sum": 4,
+          "mean": 0.4444,
+          "median": 0,
+          "p90": 0.8,
+          "max": 4
+        },
+        "retryWaitSecondsPerRun": {
+          "n": 9,
+          "sum": 4,
+          "mean": 0.4444,
+          "median": 0,
+          "p90": 0.8,
+          "max": 4
+        },
+        "compactionsPerRun": {
+          "n": 9,
+          "sum": 8,
+          "mean": 0.8889,
+          "median": 0,
+          "p90": 1.6,
+          "max": 8
+        },
+        "completionsAfterPlanSettled": {
+          "n": 9,
+          "sum": 3,
+          "mean": 0.3333,
+          "median": 0,
+          "p90": 0.6,
+          "max": 3
+        },
+        "secondsAfterLastEdit": {
+          "n": 3,
+          "sum": 1265.773,
+          "mean": 421.9243,
+          "median": 18.921,
+          "p90": 987.625,
+          "max": 1229.801
+        },
+        "cacheHitRatio": {
+          "n": 9,
+          "sum": 2.9667,
+          "mean": 0.3296,
+          "median": 0.1996,
+          "p90": 0.8098,
+          "max": 0.8558
+        },
+        "reviewerBlockingShareOfRun": {
+          "n": 8,
+          "sum": 0.2352,
+          "mean": 0.0294,
+          "median": 0,
+          "p90": 0.0706,
+          "max": 0.2352
+        },
+        "shareOfRunAfterLastEdit": {
+          "n": 3,
+          "sum": 0.7792,
+          "mean": 0.2597,
+          "median": 0.322,
+          "p90": 0.407,
+          "max": 0.4283
+        },
+        "governanceCompletionShareOfRun": {
+          "n": 9,
+          "sum": 3.6512,
+          "mean": 0.4057,
+          "median": 0.4,
+          "p90": 1,
+          "max": 1
+        },
+        "completionsAfterPlanSettledShare": {
+          "n": 9,
+          "sum": 0.1154,
+          "mean": 0.0128,
+          "median": 0,
+          "p90": 0.0231,
+          "max": 0.1154
+        }
+      },
+      "unpricedRows": 0
+    }
+  },
+  "byEra": {
+    "pre-step-count-fix": {
+      "runs": 216,
+      "completions": 2889,
+      "listCostUsd": 31.657092,
+      "paidCostUsd": 0.46968,
+      "attributedMs": 115066357,
+      "byRole": [
+        {
+          "role": "primary",
+          "completions": 2127,
+          "completionShare": 0.7362,
+          "listCostUsd": 23.470891,
+          "costShare": 0.7414,
+          "wallMs": 59430956,
+          "wallShare": 0.5165,
+          "runsTouched": 210,
+          "runShare": 0.9722
+        },
+        {
+          "role": "planning",
+          "completions": 440,
+          "completionShare": 0.1523,
+          "listCostUsd": 3.83388,
+          "costShare": 0.1211,
+          "wallMs": 13462540,
+          "wallShare": 0.117,
+          "runsTouched": 79,
+          "runShare": 0.3657
+        },
+        {
+          "role": "supervisor_review",
+          "completions": 122,
+          "completionShare": 0.0422,
+          "listCostUsd": 2.269573,
+          "costShare": 0.0717,
+          "wallMs": 36064500,
+          "wallShare": 0.3134,
+          "runsTouched": 15,
+          "runShare": 0.0694
+        },
+        {
+          "role": "compaction",
+          "completions": 58,
+          "completionShare": 0.0201,
+          "listCostUsd": 1.085255,
+          "costShare": 0.0343,
+          "wallMs": 991896,
+          "wallShare": 0.0086,
+          "runsTouched": 20,
+          "runShare": 0.0926
+        },
+        {
+          "role": "harness_followups",
+          "completions": 73,
+          "completionShare": 0.0253,
+          "listCostUsd": 0.661006,
+          "costShare": 0.0209,
+          "wallMs": 1418696,
+          "wallShare": 0.0123,
+          "runsTouched": 29,
+          "runShare": 0.1343
+        },
+        {
+          "role": "workers",
+          "completions": 50,
+          "completionShare": 0.0173,
+          "listCostUsd": 0.334426,
+          "costShare": 0.0106,
+          "wallMs": 2812452,
+          "wallShare": 0.0244,
+          "runsTouched": 21,
+          "runShare": 0.0972
+        },
+        {
+          "role": "retries",
+          "completions": 19,
+          "completionShare": 0.0066,
+          "listCostUsd": 0.002062,
+          "costShare": 0.0001,
+          "wallMs": 885317,
+          "wallShare": 0.0077,
+          "runsTouched": 10,
+          "runShare": 0.0463
+        },
+        {
+          "role": "unattributable",
+          "completions": 0,
+          "completionShare": 0,
+          "listCostUsd": 0,
+          "costShare": 0,
+          "wallMs": 0,
+          "wallShare": 0,
+          "runsTouched": 0,
+          "runShare": 0
+        }
+      ],
+      "distributions": {
+        "completionsPerRun": {
+          "n": 216,
+          "sum": 2889,
+          "mean": 13.375,
+          "median": 2,
+          "p90": 41.5,
+          "max": 82
+        },
+        "wallSecondsPerRun": {
+          "n": 216,
+          "sum": 127079.649,
+          "mean": 588.3317,
+          "median": 23.2685,
+          "p90": 1138.1915,
+          "max": 34796.755
+        },
+        "listUsdPerRun": {
+          "n": 216,
+          "sum": 31.6571,
+          "mean": 0.1466,
+          "median": 0,
+          "p90": 0.3477,
+          "max": 4.1108
+        },
+        "outputTokensPerRun": {
+          "n": 216,
+          "sum": 1734539,
+          "mean": 8030.2731,
+          "median": 659.5,
+          "p90": 21266,
+          "max": 101514
+        },
+        "freshInputTokensPerRun": {
+          "n": 216,
+          "sum": 93864401,
+          "mean": 434557.412,
+          "median": 21795.5,
+          "p90": 896822,
+          "max": 7861657
+        },
+        "reviewerBlockingSecondsPerRun": {
+          "n": 216,
+          "sum": 831.728,
+          "mean": 3.8506,
+          "median": 0,
+          "p90": 0,
+          "max": 156.264
+        },
+        "reviewerDecisionsPerRun": {
+          "n": 216,
+          "sum": 1435,
+          "mean": 6.6435,
+          "median": 0,
+          "p90": 25,
+          "max": 75
+        },
+        "followupsPerRun": {
+          "n": 216,
+          "sum": 88,
+          "mean": 0.4074,
+          "median": 0,
+          "p90": 1,
+          "max": 10
+        },
+        "retriesPerRun": {
+          "n": 216,
+          "sum": 15,
+          "mean": 0.0694,
+          "median": 0,
+          "p90": 0,
+          "max": 5
+        },
+        "retryWaitSecondsPerRun": {
+          "n": 216,
+          "sum": 15,
+          "mean": 0.0694,
+          "median": 0,
+          "p90": 0,
+          "max": 5
+        },
+        "compactionsPerRun": {
+          "n": 216,
+          "sum": 58,
+          "mean": 0.2685,
+          "median": 0,
+          "p90": 0,
+          "max": 10
+        },
+        "completionsAfterPlanSettled": {
+          "n": 216,
+          "sum": 178,
+          "mean": 0.8241,
+          "median": 0,
+          "p90": 0,
+          "max": 51
+        },
+        "secondsAfterLastEdit": {
+          "n": 64,
+          "sum": 13712.549,
+          "mean": 214.2586,
+          "median": 81.073,
+          "p90": 386.7548,
+          "max": 5185.55
+        },
+        "cacheHitRatio": {
+          "n": 214,
+          "sum": 90.5664,
+          "mean": 0.4232,
+          "median": 0.3634,
+          "p90": 0.9375,
+          "max": 0.9941
+        },
+        "reviewerBlockingShareOfRun": {
+          "n": 216,
+          "sum": 2.472,
+          "mean": 0.0114,
+          "median": 0,
+          "p90": 0,
+          "max": 0.4706
+        },
+        "shareOfRunAfterLastEdit": {
+          "n": 64,
+          "sum": 14.9664,
+          "mean": 0.2339,
+          "median": 0.1457,
+          "p90": 0.5798,
+          "max": 0.8556
+        },
+        "governanceCompletionShareOfRun": {
+          "n": 216,
+          "sum": 36.4672,
+          "mean": 0.1688,
+          "median": 0,
+          "p90": 0.5,
+          "max": 1
+        },
+        "completionsAfterPlanSettledShare": {
+          "n": 216,
+          "sum": 4.5834,
+          "mean": 0.0212,
+          "median": 0,
+          "p90": 0,
+          "max": 0.8182
+        }
+      },
+      "unpricedRows": 631
+    },
+    "post-step-count-fix": {
+      "runs": 2,
+      "completions": 2,
+      "listCostUsd": 0.004595,
+      "paidCostUsd": 0.004595,
+      "attributedMs": 16586,
+      "byRole": [
+        {
+          "role": "primary",
+          "completions": 1,
+          "completionShare": 0.5,
+          "listCostUsd": 0.002323,
+          "costShare": 0.5055,
+          "wallMs": 16586,
+          "wallShare": 1,
+          "runsTouched": 1,
+          "runShare": 0.5
+        },
+        {
+          "role": "compaction",
+          "completions": 1,
+          "completionShare": 0.5,
+          "listCostUsd": 0.002272,
+          "costShare": 0.4945,
+          "wallMs": 0,
+          "wallShare": 0,
+          "runsTouched": 1,
+          "runShare": 0.5
+        },
+        {
+          "role": "planning",
+          "completions": 0,
+          "completionShare": 0,
+          "listCostUsd": 0,
+          "costShare": 0,
+          "wallMs": 0,
+          "wallShare": 0,
+          "runsTouched": 0,
+          "runShare": 0
+        },
+        {
+          "role": "supervisor_review",
+          "completions": 0,
+          "completionShare": 0,
+          "listCostUsd": 0,
+          "costShare": 0,
+          "wallMs": 0,
+          "wallShare": 0,
+          "runsTouched": 0,
+          "runShare": 0
+        },
+        {
+          "role": "workers",
+          "completions": 0,
+          "completionShare": 0,
+          "listCostUsd": 0,
+          "costShare": 0,
+          "wallMs": 0,
+          "wallShare": 0,
+          "runsTouched": 0,
+          "runShare": 0
+        },
+        {
+          "role": "retries",
+          "completions": 0,
+          "completionShare": 0,
+          "listCostUsd": 0,
+          "costShare": 0,
+          "wallMs": 0,
+          "wallShare": 0,
+          "runsTouched": 0,
+          "runShare": 0
+        },
+        {
+          "role": "harness_followups",
+          "completions": 0,
+          "completionShare": 0,
+          "listCostUsd": 0,
+          "costShare": 0,
+          "wallMs": 0,
+          "wallShare": 0,
+          "runsTouched": 0,
+          "runShare": 0
+        },
+        {
+          "role": "unattributable",
+          "completions": 0,
+          "completionShare": 0,
+          "listCostUsd": 0,
+          "costShare": 0,
+          "wallMs": 0,
+          "wallShare": 0,
+          "runsTouched": 0,
+          "runShare": 0
+        }
+      ],
+      "distributions": {
+        "completionsPerRun": {
+          "n": 2,
+          "sum": 2,
+          "mean": 1,
+          "median": 1,
+          "p90": 1,
+          "max": 1
+        },
+        "wallSecondsPerRun": {
+          "n": 2,
+          "sum": 16.594,
+          "mean": 8.297,
+          "median": 8.297,
+          "p90": 14.9346,
+          "max": 16.594
+        },
+        "listUsdPerRun": {
+          "n": 2,
+          "sum": 0.0046,
+          "mean": 0.0023,
+          "median": 0.0023,
+          "p90": 0.0023,
+          "max": 0.0023
+        },
+        "outputTokensPerRun": {
+          "n": 2,
+          "sum": 80,
+          "mean": 40,
+          "median": 40,
+          "p90": 70.4,
+          "max": 78
+        },
+        "freshInputTokensPerRun": {
+          "n": 2,
+          "sum": 30316,
+          "mean": 15158,
+          "median": 15158,
+          "p90": 15415.6,
+          "max": 15480
+        },
+        "reviewerBlockingSecondsPerRun": {
+          "n": 2,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "reviewerDecisionsPerRun": {
+          "n": 2,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "followupsPerRun": {
+          "n": 2,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "retriesPerRun": {
+          "n": 2,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "retryWaitSecondsPerRun": {
+          "n": 2,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "compactionsPerRun": {
+          "n": 2,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "completionsAfterPlanSettled": {
+          "n": 2,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "secondsAfterLastEdit": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "cacheHitRatio": {
+          "n": 2,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "reviewerBlockingShareOfRun": {
+          "n": 1,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "shareOfRunAfterLastEdit": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "governanceCompletionShareOfRun": {
+          "n": 2,
+          "sum": 1,
+          "mean": 0.5,
+          "median": 0.5,
+          "p90": 0.9,
+          "max": 1
+        },
+        "completionsAfterPlanSettledShare": {
+          "n": 2,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        }
+      },
+      "unpricedRows": 0
+    },
+    "phase-2": {
+      "runs": 3,
+      "completions": 40,
+      "listCostUsd": 0.775084,
+      "paidCostUsd": 0,
+      "attributedMs": 2564817,
+      "byRole": [
+        {
+          "role": "primary",
+          "completions": 34,
+          "completionShare": 0.85,
+          "listCostUsd": 0.648468,
+          "costShare": 0.8366,
+          "wallMs": 2388882,
+          "wallShare": 0.9314,
+          "runsTouched": 3,
+          "runShare": 1
+        },
+        {
+          "role": "planning",
+          "completions": 5,
+          "completionShare": 0.125,
+          "listCostUsd": 0.066601,
+          "costShare": 0.0859,
+          "wallMs": 42340,
+          "wallShare": 0.0165,
+          "runsTouched": 1,
+          "runShare": 0.3333
+        },
+        {
+          "role": "harness_followups",
+          "completions": 1,
+          "completionShare": 0.025,
+          "listCostUsd": 0.060016,
+          "costShare": 0.0774,
+          "wallMs": 133595,
+          "wallShare": 0.0521,
+          "runsTouched": 1,
+          "runShare": 0.3333
+        },
+        {
+          "role": "supervisor_review",
+          "completions": 0,
+          "completionShare": 0,
+          "listCostUsd": 0,
+          "costShare": 0,
+          "wallMs": 0,
+          "wallShare": 0,
+          "runsTouched": 0,
+          "runShare": 0
+        },
+        {
+          "role": "compaction",
+          "completions": 0,
+          "completionShare": 0,
+          "listCostUsd": 0,
+          "costShare": 0,
+          "wallMs": 0,
+          "wallShare": 0,
+          "runsTouched": 0,
+          "runShare": 0
+        },
+        {
+          "role": "workers",
+          "completions": 0,
+          "completionShare": 0,
+          "listCostUsd": 0,
+          "costShare": 0,
+          "wallMs": 0,
+          "wallShare": 0,
+          "runsTouched": 0,
+          "runShare": 0
+        },
+        {
+          "role": "retries",
+          "completions": 0,
+          "completionShare": 0,
+          "listCostUsd": 0,
+          "costShare": 0,
+          "wallMs": 0,
+          "wallShare": 0,
+          "runsTouched": 0,
+          "runShare": 0
+        },
+        {
+          "role": "unattributable",
+          "completions": 0,
+          "completionShare": 0,
+          "listCostUsd": 0,
+          "costShare": 0,
+          "wallMs": 0,
+          "wallShare": 0,
+          "runsTouched": 0,
+          "runShare": 0
+        }
+      ],
+      "distributions": {
+        "completionsPerRun": {
+          "n": 3,
+          "sum": 40,
+          "mean": 13.3333,
+          "median": 1,
+          "p90": 30.6,
+          "max": 38
+        },
+        "wallSecondsPerRun": {
+          "n": 3,
+          "sum": 2564.875,
+          "mean": 854.9583,
+          "median": 4.516,
+          "p90": 2045.9552,
+          "max": 2556.315
+        },
+        "listUsdPerRun": {
+          "n": 3,
+          "sum": 0.7751,
+          "mean": 0.2584,
+          "median": 0.0119,
+          "p90": 0.6101,
+          "max": 0.7596
+        },
+        "outputTokensPerRun": {
+          "n": 3,
+          "sum": 11909,
+          "mean": 3969.6667,
+          "median": 130,
+          "p90": 9438.8,
+          "max": 11766
+        },
+        "freshInputTokensPerRun": {
+          "n": 3,
+          "sum": 372629,
+          "mean": 124209.6667,
+          "median": 9395,
+          "p90": 291711,
+          "max": 362290
+        },
+        "reviewerBlockingSecondsPerRun": {
+          "n": 3,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "reviewerDecisionsPerRun": {
+          "n": 3,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "followupsPerRun": {
+          "n": 3,
+          "sum": 2,
+          "mean": 0.6667,
+          "median": 0,
+          "p90": 1.6,
+          "max": 2
+        },
+        "retriesPerRun": {
+          "n": 3,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "retryWaitSecondsPerRun": {
+          "n": 3,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "compactionsPerRun": {
+          "n": 3,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "completionsAfterPlanSettled": {
+          "n": 3,
+          "sum": 1,
+          "mean": 0.3333,
+          "median": 0,
+          "p90": 0.8,
+          "max": 1
+        },
+        "secondsAfterLastEdit": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "cacheHitRatio": {
+          "n": 3,
+          "sum": 1.709,
+          "mean": 0.5697,
+          "median": 0.8068,
+          "p90": 0.8831,
+          "max": 0.9022
+        },
+        "reviewerBlockingShareOfRun": {
+          "n": 3,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "shareOfRunAfterLastEdit": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "governanceCompletionShareOfRun": {
+          "n": 3,
+          "sum": 0.1579,
+          "mean": 0.0526,
+          "median": 0,
+          "p90": 0.1263,
+          "max": 0.1579
+        },
+        "completionsAfterPlanSettledShare": {
+          "n": 3,
+          "sum": 0.0263,
+          "mean": 0.0088,
+          "median": 0,
+          "p90": 0.0211,
+          "max": 0.0263
+        }
+      },
+      "unpricedRows": 0
+    }
+  },
+  "byEraAuto": {
+    "pre-step-count-fix": {
+      "runs": 93,
+      "completions": 2194,
+      "listCostUsd": 28.376858,
+      "paidCostUsd": 0.466789,
+      "attributedMs": 98296351,
+      "byRole": [
+        {
+          "role": "primary",
+          "completions": 1568,
+          "completionShare": 0.7147,
+          "listCostUsd": 20.515521,
+          "costShare": 0.723,
+          "wallMs": 46088146,
+          "wallShare": 0.4689,
+          "runsTouched": 91,
+          "runShare": 0.9785
+        },
+        {
+          "role": "planning",
+          "completions": 358,
+          "completionShare": 0.1632,
+          "listCostUsd": 3.695926,
+          "costShare": 0.1302,
+          "wallMs": 11513198,
+          "wallShare": 0.1171,
+          "runsTouched": 64,
+          "runShare": 0.6882
+        },
+        {
+          "role": "supervisor_review",
+          "completions": 122,
+          "completionShare": 0.0556,
+          "listCostUsd": 2.269573,
+          "costShare": 0.08,
+          "wallMs": 36064500,
+          "wallShare": 0.3669,
+          "runsTouched": 15,
+          "runShare": 0.1613
+        },
+        {
+          "role": "compaction",
+          "completions": 54,
+          "completionShare": 0.0246,
+          "listCostUsd": 1.085255,
+          "costShare": 0.0382,
+          "wallMs": 959700,
+          "wallShare": 0.0098,
+          "runsTouched": 19,
+          "runShare": 0.2043
+        },
+        {
+          "role": "harness_followups",
+          "completions": 57,
+          "completionShare": 0.026,
+          "listCostUsd": 0.625382,
+          "costShare": 0.022,
+          "wallMs": 1113158,
+          "wallShare": 0.0113,
+          "runsTouched": 22,
+          "runShare": 0.2366
+        },
+        {
+          "role": "workers",
+          "completions": 23,
+          "completionShare": 0.0105,
+          "listCostUsd": 0.185202,
+          "costShare": 0.0065,
+          "wallMs": 1766225,
+          "wallShare": 0.018,
+          "runsTouched": 15,
+          "runShare": 0.1613
+        },
+        {
+          "role": "retries",
+          "completions": 12,
+          "completionShare": 0.0055,
+          "listCostUsd": 0,
+          "costShare": 0,
+          "wallMs": 791424,
+          "wallShare": 0.0081,
+          "runsTouched": 5,
+          "runShare": 0.0538
+        },
+        {
+          "role": "unattributable",
+          "completions": 0,
+          "completionShare": 0,
+          "listCostUsd": 0,
+          "costShare": 0,
+          "wallMs": 0,
+          "wallShare": 0,
+          "runsTouched": 0,
+          "runShare": 0
+        }
+      ],
+      "distributions": {
+        "completionsPerRun": {
+          "n": 93,
+          "sum": 2194,
+          "mean": 23.5914,
+          "median": 16,
+          "p90": 73.2,
+          "max": 82
+        },
+        "wallSecondsPerRun": {
+          "n": 93,
+          "sum": 110279.195,
+          "mean": 1185.7978,
+          "median": 335.853,
+          "p90": 3089.0638,
+          "max": 34796.755
+        },
+        "listUsdPerRun": {
+          "n": 93,
+          "sum": 28.3769,
+          "mean": 0.3051,
+          "median": 0.003,
+          "p90": 1.0951,
+          "max": 4.1108
+        },
+        "outputTokensPerRun": {
+          "n": 93,
+          "sum": 1463719,
+          "mean": 15738.914,
+          "median": 8067,
+          "p90": 42554.8,
+          "max": 101514
+        },
+        "freshInputTokensPerRun": {
+          "n": 93,
+          "sum": 66652881,
+          "mean": 716697.6452,
+          "median": 153185,
+          "p90": 2135661.8,
+          "max": 7861657
+        },
+        "reviewerBlockingSecondsPerRun": {
+          "n": 93,
+          "sum": 831.728,
+          "mean": 8.9433,
+          "median": 0,
+          "p90": 21.1588,
+          "max": 156.264
+        },
+        "reviewerDecisionsPerRun": {
+          "n": 93,
+          "sum": 1435,
+          "mean": 15.4301,
+          "median": 10,
+          "p90": 39.6,
+          "max": 75
+        },
+        "followupsPerRun": {
+          "n": 93,
+          "sum": 72,
+          "mean": 0.7742,
+          "median": 0,
+          "p90": 3,
+          "max": 10
+        },
+        "retriesPerRun": {
+          "n": 93,
+          "sum": 14,
+          "mean": 0.1505,
+          "median": 0,
+          "p90": 0,
+          "max": 5
+        },
+        "retryWaitSecondsPerRun": {
+          "n": 93,
+          "sum": 14,
+          "mean": 0.1505,
+          "median": 0,
+          "p90": 0,
+          "max": 5
+        },
+        "compactionsPerRun": {
+          "n": 93,
+          "sum": 54,
+          "mean": 0.5806,
+          "median": 0,
+          "p90": 1,
+          "max": 10
+        },
+        "completionsAfterPlanSettled": {
+          "n": 93,
+          "sum": 157,
+          "mean": 1.6882,
+          "median": 0,
+          "p90": 2.6,
+          "max": 51
+        },
+        "secondsAfterLastEdit": {
+          "n": 46,
+          "sum": 12205.961,
+          "mean": 265.347,
+          "median": 99.601,
+          "p90": 470.4465,
+          "max": 5185.55
+        },
+        "cacheHitRatio": {
+          "n": 93,
+          "sum": 58.2761,
+          "mean": 0.6266,
+          "median": 0.7983,
+          "p90": 0.9482,
+          "max": 0.9748
+        },
+        "reviewerBlockingShareOfRun": {
+          "n": 93,
+          "sum": 2.472,
+          "mean": 0.0266,
+          "median": 0,
+          "p90": 0.0724,
+          "max": 0.4706
+        },
+        "shareOfRunAfterLastEdit": {
+          "n": 46,
+          "sum": 10.2599,
+          "mean": 0.223,
+          "median": 0.1305,
+          "p90": 0.5751,
+          "max": 0.8556
+        },
+        "governanceCompletionShareOfRun": {
+          "n": 93,
+          "sum": 27.0969,
+          "mean": 0.2914,
+          "median": 0.2805,
+          "p90": 0.6077,
+          "max": 1
+        },
+        "completionsAfterPlanSettledShare": {
+          "n": 93,
+          "sum": 4.0027,
+          "mean": 0.043,
+          "median": 0,
+          "p90": 0.0474,
+          "max": 0.8182
+        }
+      },
+      "unpricedRows": 434
+    },
+    "post-step-count-fix": {
+      "runs": 0,
+      "completions": 0,
+      "listCostUsd": 0,
+      "paidCostUsd": 0,
+      "attributedMs": 0,
+      "byRole": [
+        {
+          "role": "primary",
+          "completions": 0,
+          "completionShare": null,
+          "listCostUsd": 0,
+          "costShare": null,
+          "wallMs": 0,
+          "wallShare": null,
+          "runsTouched": 0,
+          "runShare": null
+        },
+        {
+          "role": "planning",
+          "completions": 0,
+          "completionShare": null,
+          "listCostUsd": 0,
+          "costShare": null,
+          "wallMs": 0,
+          "wallShare": null,
+          "runsTouched": 0,
+          "runShare": null
+        },
+        {
+          "role": "supervisor_review",
+          "completions": 0,
+          "completionShare": null,
+          "listCostUsd": 0,
+          "costShare": null,
+          "wallMs": 0,
+          "wallShare": null,
+          "runsTouched": 0,
+          "runShare": null
+        },
+        {
+          "role": "compaction",
+          "completions": 0,
+          "completionShare": null,
+          "listCostUsd": 0,
+          "costShare": null,
+          "wallMs": 0,
+          "wallShare": null,
+          "runsTouched": 0,
+          "runShare": null
+        },
+        {
+          "role": "workers",
+          "completions": 0,
+          "completionShare": null,
+          "listCostUsd": 0,
+          "costShare": null,
+          "wallMs": 0,
+          "wallShare": null,
+          "runsTouched": 0,
+          "runShare": null
+        },
+        {
+          "role": "retries",
+          "completions": 0,
+          "completionShare": null,
+          "listCostUsd": 0,
+          "costShare": null,
+          "wallMs": 0,
+          "wallShare": null,
+          "runsTouched": 0,
+          "runShare": null
+        },
+        {
+          "role": "harness_followups",
+          "completions": 0,
+          "completionShare": null,
+          "listCostUsd": 0,
+          "costShare": null,
+          "wallMs": 0,
+          "wallShare": null,
+          "runsTouched": 0,
+          "runShare": null
+        },
+        {
+          "role": "unattributable",
+          "completions": 0,
+          "completionShare": null,
+          "listCostUsd": 0,
+          "costShare": null,
+          "wallMs": 0,
+          "wallShare": null,
+          "runsTouched": 0,
+          "runShare": null
+        }
+      ],
+      "distributions": {
+        "completionsPerRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "wallSecondsPerRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "listUsdPerRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "outputTokensPerRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "freshInputTokensPerRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "reviewerBlockingSecondsPerRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "reviewerDecisionsPerRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "followupsPerRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "retriesPerRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "retryWaitSecondsPerRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "compactionsPerRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "completionsAfterPlanSettled": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "secondsAfterLastEdit": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "cacheHitRatio": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "reviewerBlockingShareOfRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "shareOfRunAfterLastEdit": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "governanceCompletionShareOfRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "completionsAfterPlanSettledShare": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        }
+      },
+      "unpricedRows": 0
+    },
+    "phase-2": {
+      "runs": 0,
+      "completions": 0,
+      "listCostUsd": 0,
+      "paidCostUsd": 0,
+      "attributedMs": 0,
+      "byRole": [
+        {
+          "role": "primary",
+          "completions": 0,
+          "completionShare": null,
+          "listCostUsd": 0,
+          "costShare": null,
+          "wallMs": 0,
+          "wallShare": null,
+          "runsTouched": 0,
+          "runShare": null
+        },
+        {
+          "role": "planning",
+          "completions": 0,
+          "completionShare": null,
+          "listCostUsd": 0,
+          "costShare": null,
+          "wallMs": 0,
+          "wallShare": null,
+          "runsTouched": 0,
+          "runShare": null
+        },
+        {
+          "role": "supervisor_review",
+          "completions": 0,
+          "completionShare": null,
+          "listCostUsd": 0,
+          "costShare": null,
+          "wallMs": 0,
+          "wallShare": null,
+          "runsTouched": 0,
+          "runShare": null
+        },
+        {
+          "role": "compaction",
+          "completions": 0,
+          "completionShare": null,
+          "listCostUsd": 0,
+          "costShare": null,
+          "wallMs": 0,
+          "wallShare": null,
+          "runsTouched": 0,
+          "runShare": null
+        },
+        {
+          "role": "workers",
+          "completions": 0,
+          "completionShare": null,
+          "listCostUsd": 0,
+          "costShare": null,
+          "wallMs": 0,
+          "wallShare": null,
+          "runsTouched": 0,
+          "runShare": null
+        },
+        {
+          "role": "retries",
+          "completions": 0,
+          "completionShare": null,
+          "listCostUsd": 0,
+          "costShare": null,
+          "wallMs": 0,
+          "wallShare": null,
+          "runsTouched": 0,
+          "runShare": null
+        },
+        {
+          "role": "harness_followups",
+          "completions": 0,
+          "completionShare": null,
+          "listCostUsd": 0,
+          "costShare": null,
+          "wallMs": 0,
+          "wallShare": null,
+          "runsTouched": 0,
+          "runShare": null
+        },
+        {
+          "role": "unattributable",
+          "completions": 0,
+          "completionShare": null,
+          "listCostUsd": 0,
+          "costShare": null,
+          "wallMs": 0,
+          "wallShare": null,
+          "runsTouched": 0,
+          "runShare": null
+        }
+      ],
+      "distributions": {
+        "completionsPerRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "wallSecondsPerRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "listUsdPerRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "outputTokensPerRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "freshInputTokensPerRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "reviewerBlockingSecondsPerRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "reviewerDecisionsPerRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "followupsPerRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "retriesPerRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "retryWaitSecondsPerRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "compactionsPerRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "completionsAfterPlanSettled": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "secondsAfterLastEdit": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "cacheHitRatio": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "reviewerBlockingShareOfRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "shareOfRunAfterLastEdit": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "governanceCompletionShareOfRun": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "completionsAfterPlanSettledShare": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        }
+      },
+      "unpricedRows": 0
+    }
+  },
+  "cacheByRole": [
+    {
+      "role": "primary",
+      "completions": 2162,
+      "freshInputTokens": 70794616,
+      "cacheReadTokens": 116990279,
+      "cacheCreationTokens": 0,
+      "outputTokens": 1343658,
+      "cacheHitRatio": 0.623,
+      "freshTokensPerCompletion": 32745
+    },
+    {
+      "role": "planning",
+      "completions": 445,
+      "freshInputTokens": 16170213,
+      "cacheReadTokens": 16204836,
+      "cacheCreationTokens": 0,
+      "outputTokens": 186773,
+      "cacheHitRatio": 0.5005,
+      "freshTokensPerCompletion": 36337.6
+    },
+    {
+      "role": "supervisor_review",
+      "completions": 122,
+      "freshInputTokens": 1004623,
+      "cacheReadTokens": 6381127,
+      "cacheCreationTokens": 0,
+      "outputTokens": 57910,
+      "cacheHitRatio": 0.864,
+      "freshTokensPerCompletion": 8234.6
+    },
+    {
+      "role": "compaction",
+      "completions": 59,
+      "freshInputTokens": 3668541,
+      "cacheReadTokens": 3592666,
+      "cacheCreationTokens": 0,
+      "outputTokens": 46968,
+      "cacheHitRatio": 0.4948,
+      "freshTokensPerCompletion": 62178.7
+    },
+    {
+      "role": "workers",
+      "completions": 50,
+      "freshInputTokens": 1544742,
+      "cacheReadTokens": 850324,
+      "cacheCreationTokens": 0,
+      "outputTokens": 38901,
+      "cacheHitRatio": 0.355,
+      "freshTokensPerCompletion": 30894.8
+    },
+    {
+      "role": "retries",
+      "completions": 19,
+      "freshInputTokens": 117532,
+      "cacheReadTokens": 603234,
+      "cacheCreationTokens": 0,
+      "outputTokens": 21940,
+      "cacheHitRatio": 0.8369,
+      "freshTokensPerCompletion": 6185.9
+    },
+    {
+      "role": "harness_followups",
+      "completions": 74,
+      "freshInputTokens": 967079,
+      "cacheReadTokens": 4022839,
+      "cacheCreationTokens": 0,
+      "outputTokens": 50378,
+      "cacheHitRatio": 0.8062,
+      "freshTokensPerCompletion": 13068.6
+    }
+  ],
+  "promptComposition": {
+    "measuredCompletions": 394,
+    "bytes": {
+      "doctrine": 12017559,
+      "toolSchemas": 8938761,
+      "conversation": 25487926,
+      "planLedger": 254876,
+      "taskState": 6022,
+      "total": 46705144
+    },
+    "share": {
+      "doctrine": 0.2573,
+      "toolSchemas": 0.1914,
+      "conversation": 0.5457,
+      "planLedger": 0.0055,
+      "taskState": 0.0001
+    },
+    "fixedOverheadShare": 0.4487,
+    "perCompletionFixedShare": {
+      "n": 394,
+      "sum": 225.6892,
+      "mean": 0.5728,
+      "median": 0.567,
+      "p90": 0.9027,
+      "max": 0.9938
+    },
+    "bytesPerPromptToken": 4.183
+  },
+  "toolSurface": {
+    "rows": 61,
+    "note": "advertised/deferred tool counts; see tool_surface events"
+  },
+  "harnessFollowups": {
+    "noticeFirings": [
+      {
+        "label": "product-sight-gate",
+        "n": 9
+      },
+      {
+        "label": "turn-budget-wrapup",
+        "n": 8
+      },
+      {
+        "label": "provider-rate-limit-wait",
+        "n": 8
+      },
+      {
+        "label": "open-steps-gate",
+        "n": 6
+      },
+      {
+        "label": "verification-retry",
+        "n": 6
+      },
+      {
+        "label": "barren-breaker",
+        "n": 5
+      },
+      {
+        "label": "tool-loop-nudge",
+        "n": 4
+      },
+      {
+        "label": "auto-halt-report",
+        "n": 3
+      },
+      {
+        "label": "result-loop-nudge",
+        "n": 3
+      },
+      {
+        "label": "execution-evidence-gate",
+        "n": 2
+      },
+      {
+        "label": "replan-nudge",
+        "n": 2
+      },
+      {
+        "label": "fix-verified-gate",
+        "n": 1
+      }
+    ],
+    "spineGateEntries": 40,
+    "userMsgWithOriginMarker": 1,
+    "userMsgTotal": 1210
+  },
+  "reviewerLatency": {
+    "decisions": 1517,
+    "modelBackedDecisions": 137,
+    "mechanicalDecisions": 1380,
+    "blockingMsAllDecisions": {
+      "n": 1517,
+      "sum": 831728,
+      "mean": 548.2716,
+      "median": 0,
+      "p90": 0,
+      "max": 24004
+    },
+    "blockingMsModelBacked": {
+      "n": 137,
+      "sum": 831728,
+      "mean": 6071.0073,
+      "median": 4858,
+      "p90": 10556.4,
+      "max": 24004
+    },
+    "retryMsModelBacked": {
+      "n": 137,
+      "sum": 62372,
+      "mean": 455.2701,
+      "median": 0,
+      "p90": 800.8,
+      "max": 12002
+    },
+    "byDecisionSource": [
+      {
+        "source": "supervised_tier",
+        "n": 1191,
+        "sum": 1224,
+        "mean": 1.0277,
+        "median": 1,
+        "p90": 2,
+        "max": 13
+      },
+      {
+        "source": "classifier_reasoned",
+        "n": 131,
+        "sum": 1120890,
+        "mean": 8556.4122,
+        "median": 7640,
+        "p90": 14049,
+        "max": 18123
+      },
+      {
+        "source": "supervisor_screen",
+        "n": 79,
+        "sum": 326844,
+        "mean": 4137.2658,
+        "median": 3741,
+        "p90": 6529.2,
+        "max": 10693
+      },
+      {
+        "source": "safe_tier",
+        "n": 37,
+        "sum": 6,
+        "mean": 0.1622,
+        "median": 0,
+        "p90": 1,
+        "max": 1
+      },
+      {
+        "source": "containment",
+        "n": 26,
+        "sum": 289137,
+        "mean": 11120.6538,
+        "median": 10477.5,
+        "p90": 20877.5,
+        "max": 32613
+      },
+      {
+        "source": "workspace_tier",
+        "n": 15,
+        "sum": 25,
+        "mean": 1.6667,
+        "median": 1,
+        "p90": 3,
+        "max": 3
+      },
+      {
+        "source": "classifier_unavailable",
+        "n": 12,
+        "sum": 49037,
+        "mean": 4086.4167,
+        "median": 155,
+        "p90": 12005.6,
+        "max": 24006
+      },
+      {
+        "source": "supervisor_reasoned",
+        "n": 8,
+        "sum": 62742,
+        "mean": 7842.75,
+        "median": 7732,
+        "p90": 9957.9,
+        "max": 11577
+      },
+      {
+        "source": "supervisor_halt",
+        "n": 6,
+        "sum": 1,
+        "mean": 0.1667,
+        "median": 0,
+        "p90": 0.5,
+        "max": 1
+      },
+      {
+        "source": "classifier_fast",
+        "n": 4,
+        "sum": 8748,
+        "mean": 2187,
+        "median": 2107,
+        "p90": 2511.1,
+        "max": 2620
+      },
+      {
+        "source": "classifier_recall",
+        "n": 4,
+        "sum": 0,
+        "mean": 0,
+        "median": 0,
+        "p90": 0,
+        "max": 0
+      },
+      {
+        "source": "reviewer_input_limit",
+        "n": 3,
+        "sum": 10,
+        "mean": 3.3333,
+        "median": 3,
+        "p90": 3.8,
+        "max": 4
+      },
+      {
+        "source": "guardrail_circuit_breaker",
+        "n": 1,
+        "sum": 0,
+        "mean": 0,
+        "median": 0,
+        "p90": 0,
+        "max": 0
+      }
+    ]
+  },
+  "retries": {
+    "traceRetries": 15,
+    "totalBackoffMs": 15000,
+    "incidentsByClass": [
+      {
+        "class": "provider.rate_limit",
+        "n": 1417
+      },
+      {
+        "class": "tool.exec_failure",
+        "n": 379
+      },
+      {
+        "class": "provider.fallback_triggered",
+        "n": 378
+      },
+      {
+        "class": "provider.terminal",
+        "n": 186
+      },
+      {
+        "class": "crash.dirty_exit",
+        "n": 162
+      },
+      {
+        "class": "struggle.todo_unfinished",
+        "n": 59
+      },
+      {
+        "class": "provider.stream_error",
+        "n": 59
+      },
+      {
+        "class": "loop.effort_routed",
+        "n": 57
+      },
+      {
+        "class": "loop.user_abort",
+        "n": 52
+      },
+      {
+        "class": "provider.malformed_tool_json_fatal",
+        "n": 46
+      },
+      {
+        "class": "loop.effort_latched",
+        "n": 29
+      },
+      {
+        "class": "tool.sandbox_denial",
+        "n": 26
+      }
+    ]
+  },
+  "compaction": {
+    "autoCompactions": 73,
+    "beforeTokens": {
+      "n": 73,
+      "sum": 7527479,
+      "mean": 103116.1507,
+      "median": 66391,
+      "p90": 214604,
+      "max": 472626
+    },
+    "afterTokens": {
+      "n": 73,
+      "sum": 3845866,
+      "mean": 52683.0959,
+      "median": 44237,
+      "p90": 65222,
+      "max": 197542
+    },
+    "legacyCompactions": 13
+  },
+  "pricing": {
+    "rowsWithNoPricedField": 631,
+    "rowsPricedFalse": 0,
+    "rowsEstimatedRate": 1341,
+    "note": "A row with no `priced` field predates P12.1; its dollar figure is UNKNOWN, not zero. Those rows are counted in completions and tokens, so every dollar total here is a LOWER BOUND by exactly that many rows.",
+    "byBilling": [
+      {
+        "billing": "unknown",
+        "rows": 631,
+        "costUsd": 0.067499,
+        "listCostUsd": 0
+      },
+      {
+        "billing": "metered",
+        "rows": 23,
+        "costUsd": 0.406776,
+        "listCostUsd": 0.406776
+      },
+      {
+        "billing": "free",
+        "rows": 1252,
+        "costUsd": 0,
+        "listCostUsd": 0.784645
+      },
+      {
+        "billing": "subscription",
+        "rows": 1025,
+        "costUsd": 0,
+        "listCostUsd": 31.24535
+      }
+    ]
+  },
+  "pilots": [
+    {
+      "run": ".codex/audit-20260909/comparison-g/responsive-project-board-1-rune",
+      "taggedRows": 25,
+      "completions": 25,
+      "models": ["gpt-5.6-sol"],
+      "providers": ["codex"],
+      "wallSeconds": 591.523,
+      "listCostUsd": 0.640887,
+      "byRole": [
+        {
+          "role": "primary",
+          "completions": 14,
+          "completionShare": 0.56,
+          "listCostUsd": 0.420283,
+          "costShare": 0.6558,
+          "wallMs": 449268,
+          "wallShare": 0.7666,
+          "runsTouched": 1,
+          "runShare": 1
+        },
+        {
+          "role": "planning",
+          "completions": 7,
+          "completionShare": 0.28,
+          "listCostUsd": 0.155505,
+          "costShare": 0.2426,
+          "wallMs": 88556,
+          "wallShare": 0.1511,
+          "runsTouched": 1,
+          "runShare": 1
+        },
+        {
+          "role": "harness_followups",
+          "completions": 1,
+          "completionShare": 0.04,
+          "listCostUsd": 0.039881,
+          "costShare": 0.0622,
+          "wallMs": 35054,
+          "wallShare": 0.0598,
+          "runsTouched": 1,
+          "runShare": 1
+        },
+        {
+          "role": "supervisor_review",
+          "completions": 3,
+          "completionShare": 0.12,
+          "listCostUsd": 0.025219,
+          "costShare": 0.0393,
+          "wallMs": 13212,
+          "wallShare": 0.0225,
+          "runsTouched": 1,
+          "runShare": 1
+        }
+      ],
+      "cacheByRole": [
+        {
+          "role": "primary",
+          "completions": 14,
+          "freshInputTokens": 230676,
+          "cacheReadTokens": 143744,
+          "cacheCreationTokens": 0,
+          "outputTokens": 11397,
+          "cacheHitRatio": 0.3839,
+          "freshTokensPerCompletion": 16476.9
+        },
+        {
+          "role": "planning",
+          "completions": 7,
+          "freshInputTokens": 106962,
+          "cacheReadTokens": 50176,
+          "cacheCreationTokens": 0,
+          "outputTokens": 1553,
+          "cacheHitRatio": 0.3193,
+          "freshTokensPerCompletion": 15280.3
+        },
+        {
+          "role": "supervisor_review",
+          "completions": 3,
+          "freshInputTokens": 19383,
+          "cacheReadTokens": 0,
+          "cacheCreationTokens": 0,
+          "outputTokens": 99,
+          "cacheHitRatio": 0,
+          "freshTokensPerCompletion": 6461
+        },
+        {
+          "role": "harness_followups",
+          "completions": 1,
+          "freshInputTokens": 23871,
+          "cacheReadTokens": 10496,
+          "cacheCreationTokens": 0,
+          "outputTokens": 873,
+          "cacheHitRatio": 0.3054,
+          "freshTokensPerCompletion": 23871
+        }
+      ],
+      "reviewer": {
+        "decisions": 10,
+        "modelBackedDecisions": 3,
+        "mechanicalDecisions": 7,
+        "blockingMsAllDecisions": {
+          "n": 10,
+          "sum": 13175,
+          "mean": 1317.5,
+          "median": 0,
+          "p90": 5201.3,
+          "max": 6194
+        },
+        "blockingMsModelBacked": {
+          "n": 3,
+          "sum": 13175,
+          "mean": 4391.6667,
+          "median": 5091,
+          "p90": 5973.4,
+          "max": 6194
+        },
+        "retryMsModelBacked": {
+          "n": 3,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "byDecisionSource": [
+          {
+            "source": "supervised_tier",
+            "n": 7,
+            "sum": 8,
+            "mean": 1.1429,
+            "median": 1,
+            "p90": 1.8,
+            "max": 3
+          },
+          {
+            "source": "supervisor_screen",
+            "n": 2,
+            "sum": 6981,
+            "mean": 3490.5,
+            "median": 3490.5,
+            "p90": 4770.9,
+            "max": 5091
+          },
+          {
+            "source": "classifier_reasoned",
+            "n": 1,
+            "sum": 6196,
+            "mean": 6196,
+            "median": 6196,
+            "p90": 6196,
+            "max": 6196
+          }
+        ]
+      },
+      "composition": {
+        "measuredCompletions": 22,
+        "bytes": {
+          "doctrine": 485648,
+          "toolSchemas": 661144,
+          "conversation": 4671265,
+          "planLedger": 36382,
+          "taskState": 0,
+          "total": 5854439
+        },
+        "share": {
+          "doctrine": 0.083,
+          "toolSchemas": 0.1129,
+          "conversation": 0.7979,
+          "planLedger": 0.0062,
+          "taskState": 0
+        },
+        "fixedOverheadShare": 0.1959,
+        "perCompletionFixedShare": {
+          "n": 22,
+          "sum": 8.3195,
+          "mean": 0.3782,
+          "median": 0.4255,
+          "p90": 0.7439,
+          "max": 0.8562
+        },
+        "bytesPerPromptToken": 10.345
+      },
+      "followups": 1,
+      "completionsAfterPlanSettled": 0,
+      "secondsAfterLastEdit": 17.585
+    },
+    {
+      "run": ".codex/audit-20260909/comparison-h/csv-state-machine-1-rune",
+      "taggedRows": 16,
+      "completions": 16,
+      "models": ["gpt-5.6-sol"],
+      "providers": ["codex"],
+      "wallSeconds": 232.022,
+      "listCostUsd": 0.158454,
+      "byRole": [
+        {
+          "role": "primary",
+          "completions": 9,
+          "completionShare": 0.5625,
+          "listCostUsd": 0.101293,
+          "costShare": 0.6393,
+          "wallMs": 157156,
+          "wallShare": 0.6776,
+          "runsTouched": 1,
+          "runShare": 1
+        },
+        {
+          "role": "planning",
+          "completions": 4,
+          "completionShare": 0.25,
+          "listCostUsd": 0.044739,
+          "costShare": 0.2823,
+          "wallMs": 69117,
+          "wallShare": 0.298,
+          "runsTouched": 1,
+          "runShare": 1
+        },
+        {
+          "role": "supervisor_review",
+          "completions": 3,
+          "completionShare": 0.1875,
+          "listCostUsd": 0.012423,
+          "costShare": 0.0784,
+          "wallMs": 5657,
+          "wallShare": 0.0244,
+          "runsTouched": 1,
+          "runShare": 1
+        }
+      ],
+      "cacheByRole": [
+        {
+          "role": "primary",
+          "completions": 9,
+          "freshInputTokens": 43244,
+          "cacheReadTokens": 87424,
+          "cacheCreationTokens": 0,
+          "outputTokens": 3631,
+          "cacheHitRatio": 0.6691,
+          "freshTokensPerCompletion": 4804.9
+        },
+        {
+          "role": "planning",
+          "completions": 4,
+          "freshInputTokens": 16927,
+          "cacheReadTokens": 46720,
+          "cacheCreationTokens": 0,
+          "outputTokens": 1774,
+          "cacheHitRatio": 0.734,
+          "freshTokensPerCompletion": 4231.8
+        },
+        {
+          "role": "supervisor_review",
+          "completions": 3,
+          "freshInputTokens": 9818,
+          "cacheReadTokens": 0,
+          "cacheCreationTokens": 0,
+          "outputTokens": 15,
+          "cacheHitRatio": 0,
+          "freshTokensPerCompletion": 3272.7
+        }
+      ],
+      "reviewer": {
+        "decisions": 9,
+        "modelBackedDecisions": 3,
+        "mechanicalDecisions": 6,
+        "blockingMsAllDecisions": {
+          "n": 9,
+          "sum": 5608,
+          "mean": 623.1111,
+          "median": 0,
+          "p90": 1861.2,
+          "max": 1962
+        },
+        "blockingMsModelBacked": {
+          "n": 3,
+          "sum": 5608,
+          "mean": 1869.3333,
+          "median": 1836,
+          "p90": 1936.8,
+          "max": 1962
+        },
+        "retryMsModelBacked": {
+          "n": 3,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "byDecisionSource": [
+          {
+            "source": "supervised_tier",
+            "n": 6,
+            "sum": 6,
+            "mean": 1,
+            "median": 1,
+            "p90": 1.5,
+            "max": 2
+          },
+          {
+            "source": "supervisor_screen",
+            "n": 3,
+            "sum": 5608,
+            "mean": 1869.3333,
+            "median": 1836,
+            "p90": 1936.8,
+            "max": 1962
+          }
+        ]
+      },
+      "composition": {
+        "measuredCompletions": 13,
+        "bytes": {
+          "doctrine": 288943,
+          "toolSchemas": 276679,
+          "conversation": 463375,
+          "planLedger": 10080,
+          "taskState": 0,
+          "total": 1039077
+        },
+        "share": {
+          "doctrine": 0.2781,
+          "toolSchemas": 0.2663,
+          "conversation": 0.4459,
+          "planLedger": 0.0097,
+          "taskState": 0
+        },
+        "fixedOverheadShare": 0.5444,
+        "perCompletionFixedShare": {
+          "n": 13,
+          "sum": 7.5971,
+          "mean": 0.5844,
+          "median": 0.5005,
+          "p90": 0.8525,
+          "max": 0.9772
+        },
+        "bytesPerPromptToken": 5.347
+      },
+      "followups": 0,
+      "completionsAfterPlanSettled": 0,
+      "secondsAfterLastEdit": 54.695
+    },
+    {
+      "run": ".codex/audit-20260909/comparison-i/csv-state-machine-1-rune",
+      "taggedRows": 3,
+      "completions": 3,
+      "models": ["gpt-5.6-sol"],
+      "providers": ["codex"],
+      "wallSeconds": 56.118,
+      "listCostUsd": 0.030722,
+      "byRole": [
+        {
+          "role": "primary",
+          "completions": 2,
+          "completionShare": 0.6667,
+          "listCostUsd": 0.017313,
+          "costShare": 0.5635,
+          "wallMs": 10245,
+          "wallShare": 0.1852,
+          "runsTouched": 1,
+          "runShare": 1
+        },
+        {
+          "role": "planning",
+          "completions": 1,
+          "completionShare": 0.3333,
+          "listCostUsd": 0.013409,
+          "costShare": 0.4365,
+          "wallMs": 45062,
+          "wallShare": 0.8148,
+          "runsTouched": 1,
+          "runShare": 1
+        }
+      ],
+      "cacheByRole": [
+        {
+          "role": "primary",
+          "completions": 2,
+          "freshInputTokens": 11732,
+          "cacheReadTokens": 7424,
+          "cacheCreationTokens": 0,
+          "outputTokens": 172,
+          "cacheHitRatio": 0.3876,
+          "freshTokensPerCompletion": 5866
+        },
+        {
+          "role": "planning",
+          "completions": 1,
+          "freshInputTokens": 351,
+          "cacheReadTokens": 8960,
+          "cacheCreationTokens": 0,
+          "outputTokens": 1185,
+          "cacheHitRatio": 0.9623,
+          "freshTokensPerCompletion": 351
+        }
+      ],
+      "reviewer": {
+        "decisions": 1,
+        "modelBackedDecisions": 0,
+        "mechanicalDecisions": 1,
+        "blockingMsAllDecisions": {
+          "n": 1,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "blockingMsModelBacked": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "retryMsModelBacked": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "byDecisionSource": [
+          {
+            "source": "supervised_tier",
+            "n": 1,
+            "sum": 1,
+            "mean": 1,
+            "median": 1,
+            "p90": 1,
+            "max": 1
+          }
+        ]
+      },
+      "composition": {
+        "measuredCompletions": 3,
+        "bytes": {
+          "doctrine": 70553,
+          "toolSchemas": 63849,
+          "conversation": 8812,
+          "planLedger": 0,
+          "taskState": 0,
+          "total": 143214
+        },
+        "share": {
+          "doctrine": 0.4926,
+          "toolSchemas": 0.4458,
+          "conversation": 0.0615,
+          "planLedger": 0,
+          "taskState": 0
+        },
+        "fixedOverheadShare": 0.9385,
+        "perCompletionFixedShare": {
+          "n": 3,
+          "sum": 2.8135,
+          "mean": 0.9378,
+          "median": 0.9229,
+          "p90": 0.9663,
+          "max": 0.9772
+        },
+        "bytesPerPromptToken": 5.031
+      },
+      "followups": 0,
+      "completionsAfterPlanSettled": 0,
+      "secondsAfterLastEdit": 0
+    },
+    {
+      "run": ".codex/audit-20260909/verification-live",
+      "taggedRows": 6,
+      "completions": 6,
+      "models": ["gpt-5.6-sol"],
+      "providers": ["codex"],
+      "wallSeconds": 53.081,
+      "listCostUsd": 0.064698,
+      "byRole": [
+        {
+          "role": "primary",
+          "completions": 3,
+          "completionShare": 0.5,
+          "listCostUsd": 0.032396,
+          "costShare": 0.5007,
+          "wallMs": 31409,
+          "wallShare": 0.5918,
+          "runsTouched": 1,
+          "runShare": 1
+        },
+        {
+          "role": "planning",
+          "completions": 3,
+          "completionShare": 0.5,
+          "listCostUsd": 0.032302,
+          "costShare": 0.4993,
+          "wallMs": 21664,
+          "wallShare": 0.4082,
+          "runsTouched": 1,
+          "runShare": 1
+        }
+      ],
+      "cacheByRole": [
+        {
+          "role": "primary",
+          "completions": 3,
+          "freshInputTokens": 22038,
+          "cacheReadTokens": 13184,
+          "cacheCreationTokens": 0,
+          "outputTokens": 320,
+          "cacheHitRatio": 0.3743,
+          "freshTokensPerCompletion": 7346
+        },
+        {
+          "role": "planning",
+          "completions": 3,
+          "freshInputTokens": 21146,
+          "cacheReadTokens": 17920,
+          "cacheCreationTokens": 0,
+          "outputTokens": 363,
+          "cacheHitRatio": 0.4587,
+          "freshTokensPerCompletion": 7048.7
+        }
+      ],
+      "reviewer": {
+        "decisions": 1,
+        "modelBackedDecisions": 0,
+        "mechanicalDecisions": 1,
+        "blockingMsAllDecisions": {
+          "n": 1,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "blockingMsModelBacked": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "retryMsModelBacked": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "byDecisionSource": [
+          {
+            "source": "supervised_tier",
+            "n": 1,
+            "sum": 3,
+            "mean": 3,
+            "median": 3,
+            "p90": 3,
+            "max": 3
+          }
+        ]
+      },
+      "composition": {
+        "measuredCompletions": 6,
+        "bytes": {
+          "doctrine": 136628,
+          "toolSchemas": 143022,
+          "conversation": 1117112,
+          "planLedger": 6032,
+          "taskState": 0,
+          "total": 1402794
+        },
+        "share": {
+          "doctrine": 0.0974,
+          "toolSchemas": 0.102,
+          "conversation": 0.7963,
+          "planLedger": 0.0043,
+          "taskState": 0
+        },
+        "fixedOverheadShare": 0.1994,
+        "perCompletionFixedShare": {
+          "n": 6,
+          "sum": 2.9842,
+          "mean": 0.4974,
+          "median": 0.4829,
+          "p90": 0.8989,
+          "max": 0.935
+        },
+        "bytesPerPromptToken": 18.883
+      },
+      "followups": 0,
+      "completionsAfterPlanSettled": 1,
+      "secondsAfterLastEdit": 0
+    },
+    {
+      "run": ".codex/audit-20260910/claude-free-series-2/csv-state-machine-1-rune",
+      "taggedRows": 8,
+      "completions": 8,
+      "models": ["gpt-oss:120b"],
+      "providers": ["ollama-turbo"],
+      "wallSeconds": 30.635,
+      "listCostUsd": 0.002504,
+      "byRole": [
+        {
+          "role": "primary",
+          "completions": 7,
+          "completionShare": 0.875,
+          "listCostUsd": 0.002504,
+          "costShare": 1,
+          "wallMs": 25030,
+          "wallShare": 0.8172,
+          "runsTouched": 1,
+          "runShare": 1
+        },
+        {
+          "role": "harness_followups",
+          "completions": 1,
+          "completionShare": 0.125,
+          "listCostUsd": 0,
+          "costShare": 0,
+          "wallMs": 5598,
+          "wallShare": 0.1828,
+          "runsTouched": 1,
+          "runShare": 1
+        }
+      ],
+      "cacheByRole": [
+        {
+          "role": "primary",
+          "completions": 7,
+          "freshInputTokens": 14949,
+          "cacheReadTokens": 35024,
+          "cacheCreationTokens": 0,
+          "outputTokens": 1317,
+          "cacheHitRatio": 0.7009,
+          "freshTokensPerCompletion": 2135.6
+        },
+        {
+          "role": "harness_followups",
+          "completions": 1,
+          "freshInputTokens": 0,
+          "cacheReadTokens": 0,
+          "cacheCreationTokens": 0,
+          "outputTokens": 0,
+          "cacheHitRatio": null,
+          "freshTokensPerCompletion": 0
+        }
+      ],
+      "reviewer": {
+        "decisions": 0,
+        "modelBackedDecisions": 0,
+        "mechanicalDecisions": 0,
+        "blockingMsAllDecisions": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "blockingMsModelBacked": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "retryMsModelBacked": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "byDecisionSource": []
+      },
+      "composition": {
+        "measuredCompletions": 8,
+        "bytes": {
+          "doctrine": 179876,
+          "toolSchemas": 172168,
+          "conversation": 46387,
+          "planLedger": 3321,
+          "taskState": 0,
+          "total": 401752
+        },
+        "share": {
+          "doctrine": 0.4477,
+          "toolSchemas": 0.4285,
+          "conversation": 0.1155,
+          "planLedger": 0.0083,
+          "taskState": 0
+        },
+        "fixedOverheadShare": 0.8763,
+        "perCompletionFixedShare": {
+          "n": 8,
+          "sum": 7.0424,
+          "mean": 0.8803,
+          "median": 0.893,
+          "p90": 0.9731,
+          "max": 0.9773
+        },
+        "bytesPerPromptToken": 8.039
+      },
+      "followups": 1,
+      "completionsAfterPlanSettled": 0,
+      "secondsAfterLastEdit": 17.123
+    },
+    {
+      "run": ".codex/audit-20260910/claude-free-series-3/csv-state-machine-1-rune",
+      "taggedRows": 1,
+      "completions": 1,
+      "models": ["gpt-oss:120b"],
+      "providers": ["ollama-turbo"],
+      "wallSeconds": 2.268,
+      "listCostUsd": 0.001089,
+      "byRole": [
+        {
+          "role": "primary",
+          "completions": 1,
+          "completionShare": 1,
+          "listCostUsd": 0.001089,
+          "costShare": 1,
+          "wallMs": 2261,
+          "wallShare": 1,
+          "runsTouched": 1,
+          "runShare": 1
+        }
+      ],
+      "cacheByRole": [
+        {
+          "role": "primary",
+          "completions": 1,
+          "freshInputTokens": 9977,
+          "cacheReadTokens": 64,
+          "cacheCreationTokens": 0,
+          "outputTokens": 182,
+          "cacheHitRatio": 0.0064,
+          "freshTokensPerCompletion": 9977
+        }
+      ],
+      "reviewer": {
+        "decisions": 0,
+        "modelBackedDecisions": 0,
+        "mechanicalDecisions": 0,
+        "blockingMsAllDecisions": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "blockingMsModelBacked": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "retryMsModelBacked": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "byDecisionSource": []
+      },
+      "composition": {
+        "measuredCompletions": 1,
+        "bytes": {
+          "doctrine": 26891,
+          "toolSchemas": 21521,
+          "conversation": 1126,
+          "planLedger": 0,
+          "taskState": 0,
+          "total": 49538
+        },
+        "share": {
+          "doctrine": 0.5428,
+          "toolSchemas": 0.4344,
+          "conversation": 0.0227,
+          "planLedger": 0,
+          "taskState": 0
+        },
+        "fixedOverheadShare": 0.9773,
+        "perCompletionFixedShare": {
+          "n": 1,
+          "sum": 0.9773,
+          "mean": 0.9773,
+          "median": 0.9773,
+          "p90": 0.9773,
+          "max": 0.9773
+        },
+        "bytesPerPromptToken": 4.934
+      },
+      "followups": 0,
+      "completionsAfterPlanSettled": 0,
+      "secondsAfterLastEdit": 0
+    },
+    {
+      "run": ".codex/audit-20260910/claude-free-series-3/dependent-migration-1-rune",
+      "taggedRows": 13,
+      "completions": 13,
+      "models": ["gpt-oss:120b"],
+      "providers": ["ollama-turbo"],
+      "wallSeconds": 46.925,
+      "listCostUsd": 0.00528,
+      "byRole": [
+        {
+          "role": "primary",
+          "completions": 12,
+          "completionShare": 0.9231,
+          "listCostUsd": 0.005068,
+          "costShare": 0.96,
+          "wallMs": 45222,
+          "wallShare": 0.9682,
+          "runsTouched": 1,
+          "runShare": 1
+        },
+        {
+          "role": "harness_followups",
+          "completions": 1,
+          "completionShare": 0.0769,
+          "listCostUsd": 0.000211,
+          "costShare": 0.04,
+          "wallMs": 1485,
+          "wallShare": 0.0318,
+          "runsTouched": 1,
+          "runShare": 1
+        }
+      ],
+      "cacheByRole": [
+        {
+          "role": "primary",
+          "completions": 12,
+          "freshInputTokens": 9048,
+          "cacheReadTokens": 135360,
+          "cacheCreationTokens": 0,
+          "outputTokens": 5620,
+          "cacheHitRatio": 0.9373,
+          "freshTokensPerCompletion": 754
+        },
+        {
+          "role": "harness_followups",
+          "completions": 1,
+          "freshInputTokens": 71,
+          "cacheReadTokens": 14432,
+          "cacheCreationTokens": 0,
+          "outputTokens": 120,
+          "cacheHitRatio": 0.9951,
+          "freshTokensPerCompletion": 71
+        }
+      ],
+      "reviewer": {
+        "decisions": 2,
+        "modelBackedDecisions": 0,
+        "mechanicalDecisions": 2,
+        "blockingMsAllDecisions": {
+          "n": 2,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "blockingMsModelBacked": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "retryMsModelBacked": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "byDecisionSource": [
+          {
+            "source": "supervised_tier",
+            "n": 2,
+            "sum": 1,
+            "mean": 0.5,
+            "median": 0.5,
+            "p90": 0.9,
+            "max": 1
+          }
+        ]
+      },
+      "composition": {
+        "measuredCompletions": 13,
+        "bytes": {
+          "doctrine": 289177,
+          "toolSchemas": 279773,
+          "conversation": 178313,
+          "planLedger": 2228,
+          "taskState": 0,
+          "total": 749491
+        },
+        "share": {
+          "doctrine": 0.3858,
+          "toolSchemas": 0.3733,
+          "conversation": 0.2379,
+          "planLedger": 0.003,
+          "taskState": 0
+        },
+        "fixedOverheadShare": 0.7591,
+        "perCompletionFixedShare": {
+          "n": 13,
+          "sum": 10.09,
+          "mean": 0.7762,
+          "median": 0.7132,
+          "p90": 0.949,
+          "max": 0.9682
+        },
+        "bytesPerPromptToken": 4.716
+      },
+      "followups": 1,
+      "completionsAfterPlanSettled": 0,
+      "secondsAfterLastEdit": 5.361
+    },
+    {
+      "run": ".codex/audit-20260910/claude-free-series-3/working-tree-integration-1-rune",
+      "taggedRows": 15,
+      "completions": 15,
+      "models": ["gpt-oss:120b"],
+      "providers": ["ollama-turbo"],
+      "wallSeconds": 63.309,
+      "listCostUsd": 0.008102,
+      "byRole": [
+        {
+          "role": "primary",
+          "completions": 13,
+          "completionShare": 0.8667,
+          "listCostUsd": 0.007367,
+          "costShare": 0.9093,
+          "wallMs": 56495,
+          "wallShare": 0.8952,
+          "runsTouched": 1,
+          "runShare": 1
+        },
+        {
+          "role": "planning",
+          "completions": 2,
+          "completionShare": 0.1333,
+          "listCostUsd": 0.000735,
+          "costShare": 0.0907,
+          "wallMs": 6616,
+          "wallShare": 0.1048,
+          "runsTouched": 1,
+          "runShare": 1
+        }
+      ],
+      "cacheByRole": [
+        {
+          "role": "primary",
+          "completions": 13,
+          "freshInputTokens": 22060,
+          "cacheReadTokens": 128736,
+          "cacheCreationTokens": 0,
+          "outputTokens": 7747,
+          "cacheHitRatio": 0.8537,
+          "freshTokensPerCompletion": 1696.9
+        },
+        {
+          "role": "planning",
+          "completions": 2,
+          "freshInputTokens": 905,
+          "cacheReadTokens": 30960,
+          "cacheCreationTokens": 0,
+          "outputTokens": 670,
+          "cacheHitRatio": 0.9716,
+          "freshTokensPerCompletion": 452.5
+        }
+      ],
+      "reviewer": {
+        "decisions": 2,
+        "modelBackedDecisions": 0,
+        "mechanicalDecisions": 2,
+        "blockingMsAllDecisions": {
+          "n": 2,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "blockingMsModelBacked": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "retryMsModelBacked": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "byDecisionSource": [
+          {
+            "source": "supervised_tier",
+            "n": 2,
+            "sum": 2,
+            "mean": 1,
+            "median": 1,
+            "p90": 1,
+            "max": 1
+          }
+        ]
+      },
+      "composition": {
+        "measuredCompletions": 15,
+        "bytes": {
+          "doctrine": 333026,
+          "toolSchemas": 322815,
+          "conversation": 164887,
+          "planLedger": 10217,
+          "taskState": 0,
+          "total": 830945
+        },
+        "share": {
+          "doctrine": 0.4008,
+          "toolSchemas": 0.3885,
+          "conversation": 0.1984,
+          "planLedger": 0.0123,
+          "taskState": 0
+        },
+        "fixedOverheadShare": 0.7893,
+        "perCompletionFixedShare": {
+          "n": 15,
+          "sum": 12.1296,
+          "mean": 0.8086,
+          "median": 0.808,
+          "p90": 0.9462,
+          "max": 0.9659
+        },
+        "bytesPerPromptToken": 4.549
+      },
+      "followups": 0,
+      "completionsAfterPlanSettled": 1,
+      "secondsAfterLastEdit": 13.41
+    },
+    {
+      "run": ".codex/audit-20260910/claude-free-series-4-csv-state-machine/csv-state-machine-1-rune",
+      "taggedRows": 10,
+      "completions": 10,
+      "models": ["gpt-oss:120b"],
+      "providers": ["ollama-turbo"],
+      "wallSeconds": 39.809,
+      "listCostUsd": 0.00405,
+      "byRole": [
+        {
+          "role": "primary",
+          "completions": 10,
+          "completionShare": 1,
+          "listCostUsd": 0.00405,
+          "costShare": 1,
+          "wallMs": 39625,
+          "wallShare": 1,
+          "runsTouched": 1,
+          "runShare": 1
+        }
+      ],
+      "cacheByRole": [
+        {
+          "role": "primary",
+          "completions": 10,
+          "freshInputTokens": 6076,
+          "cacheReadTokens": 104144,
+          "cacheCreationTokens": 0,
+          "outputTokens": 4801,
+          "cacheHitRatio": 0.9449,
+          "freshTokensPerCompletion": 607.6
+        }
+      ],
+      "reviewer": {
+        "decisions": 1,
+        "modelBackedDecisions": 0,
+        "mechanicalDecisions": 1,
+        "blockingMsAllDecisions": {
+          "n": 1,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "blockingMsModelBacked": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "retryMsModelBacked": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "byDecisionSource": [
+          {
+            "source": "supervised_tier",
+            "n": 1,
+            "sum": 1,
+            "mean": 1,
+            "median": 1,
+            "p90": 1,
+            "max": 1
+          }
+        ]
+      },
+      "composition": {
+        "measuredCompletions": 10,
+        "bytes": {
+          "doctrine": 223766,
+          "toolSchemas": 215210,
+          "conversation": 63440,
+          "planLedger": 6668,
+          "taskState": 0,
+          "total": 509084
+        },
+        "share": {
+          "doctrine": 0.4395,
+          "toolSchemas": 0.4227,
+          "conversation": 0.1246,
+          "planLedger": 0.0131,
+          "taskState": 0
+        },
+        "fixedOverheadShare": 0.8623,
+        "perCompletionFixedShare": {
+          "n": 10,
+          "sum": 8.6605,
+          "mean": 0.866,
+          "median": 0.8419,
+          "p90": 0.9654,
+          "max": 0.9773
+        },
+        "bytesPerPromptToken": 4.619
+      },
+      "followups": 0,
+      "completionsAfterPlanSettled": 0,
+      "secondsAfterLastEdit": 4.591
+    },
+    {
+      "run": ".codex/audit-20260910/claude-free-series-4-csv-state-machine/csv-state-machine-2-rune",
+      "taggedRows": 17,
+      "completions": 17,
+      "models": ["gpt-oss:120b"],
+      "providers": ["ollama-turbo"],
+      "wallSeconds": 76.928,
+      "listCostUsd": 0.009074,
+      "byRole": [
+        {
+          "role": "primary",
+          "completions": 16,
+          "completionShare": 0.9412,
+          "listCostUsd": 0.008565,
+          "costShare": 0.9439,
+          "wallMs": 75610,
+          "wallShare": 0.9852,
+          "runsTouched": 1,
+          "runShare": 1
+        },
+        {
+          "role": "supervisor_review",
+          "completions": 1,
+          "completionShare": 0.0588,
+          "listCostUsd": 0.000509,
+          "costShare": 0.0561,
+          "wallMs": 1135,
+          "wallShare": 0.0148,
+          "runsTouched": 1,
+          "runShare": 1
+        }
+      ],
+      "cacheByRole": [
+        {
+          "role": "primary",
+          "completions": 16,
+          "freshInputTokens": 11908,
+          "cacheReadTokens": 225904,
+          "cacheCreationTokens": 0,
+          "outputTokens": 10230,
+          "cacheHitRatio": 0.9499,
+          "freshTokensPerCompletion": 744.3
+        },
+        {
+          "role": "supervisor_review",
+          "completions": 1,
+          "freshInputTokens": 4767,
+          "cacheReadTokens": 48,
+          "cacheCreationTokens": 0,
+          "outputTokens": 64,
+          "cacheHitRatio": 0.01,
+          "freshTokensPerCompletion": 4767
+        }
+      ],
+      "reviewer": {
+        "decisions": 4,
+        "modelBackedDecisions": 0,
+        "mechanicalDecisions": 4,
+        "blockingMsAllDecisions": {
+          "n": 4,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "blockingMsModelBacked": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "retryMsModelBacked": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "byDecisionSource": [
+          {
+            "source": "supervised_tier",
+            "n": 4,
+            "sum": 6,
+            "mean": 1.5,
+            "median": 1.5,
+            "p90": 2,
+            "max": 2
+          }
+        ]
+      },
+      "composition": {
+        "measuredCompletions": 16,
+        "bytes": {
+          "doctrine": 355004,
+          "toolSchemas": 344336,
+          "conversation": 278021,
+          "planLedger": 0,
+          "taskState": 0,
+          "total": 977361
+        },
+        "share": {
+          "doctrine": 0.3632,
+          "toolSchemas": 0.3523,
+          "conversation": 0.2845,
+          "planLedger": 0,
+          "taskState": 0
+        },
+        "fixedOverheadShare": 0.7155,
+        "perCompletionFixedShare": {
+          "n": 16,
+          "sum": 11.8238,
+          "mean": 0.739,
+          "median": 0.6936,
+          "p90": 0.9385,
+          "max": 0.9773
+        },
+        "bytesPerPromptToken": 4.11
+      },
+      "followups": 0,
+      "completionsAfterPlanSettled": 0,
+      "secondsAfterLastEdit": 2.783
+    },
+    {
+      "run": ".codex/audit-20260910/claude-free-series-4-dependent-migration/dependent-migration-1-rune",
+      "taggedRows": 5,
+      "completions": 5,
+      "models": ["gpt-oss:120b"],
+      "providers": ["ollama-turbo"],
+      "wallSeconds": 26.752,
+      "listCostUsd": 0.002519,
+      "byRole": [
+        {
+          "role": "primary",
+          "completions": 5,
+          "completionShare": 1,
+          "listCostUsd": 0.002519,
+          "costShare": 1,
+          "wallMs": 26582,
+          "wallShare": 1,
+          "runsTouched": 1,
+          "runShare": 1
+        }
+      ],
+      "cacheByRole": [
+        {
+          "role": "primary",
+          "completions": 5,
+          "freshInputTokens": 5510,
+          "cacheReadTokens": 52160,
+          "cacheCreationTokens": 0,
+          "outputTokens": 2892,
+          "cacheHitRatio": 0.9045,
+          "freshTokensPerCompletion": 1102
+        }
+      ],
+      "reviewer": {
+        "decisions": 1,
+        "modelBackedDecisions": 0,
+        "mechanicalDecisions": 1,
+        "blockingMsAllDecisions": {
+          "n": 1,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "blockingMsModelBacked": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "retryMsModelBacked": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "byDecisionSource": [
+          {
+            "source": "supervised_tier",
+            "n": 1,
+            "sum": 2,
+            "mean": 2,
+            "median": 2,
+            "p90": 2,
+            "max": 2
+          }
+        ]
+      },
+      "composition": {
+        "measuredCompletions": 5,
+        "bytes": {
+          "doctrine": 114421,
+          "toolSchemas": 107605,
+          "conversation": 41265,
+          "planLedger": 0,
+          "taskState": 0,
+          "total": 263291
+        },
+        "share": {
+          "doctrine": 0.4346,
+          "toolSchemas": 0.4087,
+          "conversation": 0.1567,
+          "planLedger": 0,
+          "taskState": 0
+        },
+        "fixedOverheadShare": 0.8433,
+        "perCompletionFixedShare": {
+          "n": 5,
+          "sum": 4.2544,
+          "mean": 0.8509,
+          "median": 0.8313,
+          "p90": 0.9613,
+          "max": 0.9682
+        },
+        "bytesPerPromptToken": 4.565
+      },
+      "followups": 0,
+      "completionsAfterPlanSettled": 0,
+      "secondsAfterLastEdit": 3.457
+    },
+    {
+      "run": ".codex/audit-20260910/claude-free-series-4-dependent-migration/dependent-migration-2-rune",
+      "taggedRows": 9,
+      "completions": 9,
+      "models": ["gpt-oss:120b"],
+      "providers": ["ollama-turbo"],
+      "wallSeconds": 39.082,
+      "listCostUsd": 0.004485,
+      "byRole": [
+        {
+          "role": "primary",
+          "completions": 9,
+          "completionShare": 1,
+          "listCostUsd": 0.004485,
+          "costShare": 1,
+          "wallMs": 38894,
+          "wallShare": 1,
+          "runsTouched": 1,
+          "runShare": 1
+        }
+      ],
+      "cacheByRole": [
+        {
+          "role": "primary",
+          "completions": 9,
+          "freshInputTokens": 8628,
+          "cacheReadTokens": 100608,
+          "cacheCreationTokens": 0,
+          "outputTokens": 5233,
+          "cacheHitRatio": 0.921,
+          "freshTokensPerCompletion": 958.7
+        }
+      ],
+      "reviewer": {
+        "decisions": 1,
+        "modelBackedDecisions": 0,
+        "mechanicalDecisions": 1,
+        "blockingMsAllDecisions": {
+          "n": 1,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "blockingMsModelBacked": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "retryMsModelBacked": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "byDecisionSource": [
+          {
+            "source": "supervised_tier",
+            "n": 1,
+            "sum": 2,
+            "mean": 2,
+            "median": 2,
+            "p90": 2,
+            "max": 2
+          }
+        ]
+      },
+      "composition": {
+        "measuredCompletions": 9,
+        "bytes": {
+          "doctrine": 201929,
+          "toolSchemas": 193689,
+          "conversation": 94433,
+          "planLedger": 0,
+          "taskState": 0,
+          "total": 490051
+        },
+        "share": {
+          "doctrine": 0.4121,
+          "toolSchemas": 0.3952,
+          "conversation": 0.1927,
+          "planLedger": 0,
+          "taskState": 0
+        },
+        "fixedOverheadShare": 0.8073,
+        "perCompletionFixedShare": {
+          "n": 9,
+          "sum": 7.455,
+          "mean": 0.8283,
+          "median": 0.9122,
+          "p90": 0.9566,
+          "max": 0.9682
+        },
+        "bytesPerPromptToken": 4.486
+      },
+      "followups": 0,
+      "completionsAfterPlanSettled": 0,
+      "secondsAfterLastEdit": 6.215
+    },
+    {
+      "run": ".codex/audit-20260910/claude-free-series-4-working-tree-integration/working-tree-integration-1-rune",
+      "taggedRows": 10,
+      "completions": 10,
+      "models": ["gpt-oss:120b"],
+      "providers": ["ollama-turbo"],
+      "wallSeconds": 24.307,
+      "listCostUsd": 0.003011,
+      "byRole": [
+        {
+          "role": "primary",
+          "completions": 10,
+          "completionShare": 1,
+          "listCostUsd": 0.003011,
+          "costShare": 1,
+          "wallMs": 24156,
+          "wallShare": 1,
+          "runsTouched": 1,
+          "runShare": 1
+        }
+      ],
+      "cacheByRole": [
+        {
+          "role": "primary",
+          "completions": 10,
+          "freshInputTokens": 6415,
+          "cacheReadTokens": 105184,
+          "cacheCreationTokens": 0,
+          "outputTokens": 2635,
+          "cacheHitRatio": 0.9425,
+          "freshTokensPerCompletion": 641.5
+        }
+      ],
+      "reviewer": {
+        "decisions": 1,
+        "modelBackedDecisions": 0,
+        "mechanicalDecisions": 1,
+        "blockingMsAllDecisions": {
+          "n": 1,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "blockingMsModelBacked": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "retryMsModelBacked": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "byDecisionSource": [
+          {
+            "source": "supervised_tier",
+            "n": 1,
+            "sum": 2,
+            "mean": 2,
+            "median": 2,
+            "p90": 2,
+            "max": 2
+          }
+        ]
+      },
+      "composition": {
+        "measuredCompletions": 10,
+        "bytes": {
+          "doctrine": 223946,
+          "toolSchemas": 215210,
+          "conversation": 75521,
+          "planLedger": 6692,
+          "taskState": 0,
+          "total": 521369
+        },
+        "share": {
+          "doctrine": 0.4295,
+          "toolSchemas": 0.4128,
+          "conversation": 0.1449,
+          "planLedger": 0.0128,
+          "taskState": 0
+        },
+        "fixedOverheadShare": 0.8423,
+        "perCompletionFixedShare": {
+          "n": 10,
+          "sum": 8.4795,
+          "mean": 0.8479,
+          "median": 0.8225,
+          "p90": 0.9494,
+          "max": 0.9659
+        },
+        "bytesPerPromptToken": 4.672
+      },
+      "followups": 0,
+      "completionsAfterPlanSettled": 0,
+      "secondsAfterLastEdit": 3.064
+    },
+    {
+      "run": ".codex/audit-20260910/claude-free-series-4-working-tree-integration/working-tree-integration-2-rune",
+      "taggedRows": 12,
+      "completions": 12,
+      "models": ["gpt-oss:120b"],
+      "providers": ["ollama-turbo"],
+      "wallSeconds": 49.1,
+      "listCostUsd": 0.004228,
+      "byRole": [
+        {
+          "role": "primary",
+          "completions": 11,
+          "completionShare": 0.9167,
+          "listCostUsd": 0.003761,
+          "costShare": 0.8897,
+          "wallMs": 43966,
+          "wallShare": 0.899,
+          "runsTouched": 1,
+          "runShare": 1
+        },
+        {
+          "role": "harness_followups",
+          "completions": 1,
+          "completionShare": 0.0833,
+          "listCostUsd": 0.000467,
+          "costShare": 0.1103,
+          "wallMs": 4939,
+          "wallShare": 0.101,
+          "runsTouched": 1,
+          "runShare": 1
+        }
+      ],
+      "cacheByRole": [
+        {
+          "role": "primary",
+          "completions": 11,
+          "freshInputTokens": 6723,
+          "cacheReadTokens": 109296,
+          "cacheCreationTokens": 0,
+          "outputTokens": 3992,
+          "cacheHitRatio": 0.9421,
+          "freshTokensPerCompletion": 611.2
+        },
+        {
+          "role": "harness_followups",
+          "completions": 1,
+          "freshInputTokens": 297,
+          "cacheReadTokens": 12032,
+          "cacheCreationTokens": 0,
+          "outputTokens": 633,
+          "cacheHitRatio": 0.9759,
+          "freshTokensPerCompletion": 297
+        }
+      ],
+      "reviewer": {
+        "decisions": 2,
+        "modelBackedDecisions": 0,
+        "mechanicalDecisions": 2,
+        "blockingMsAllDecisions": {
+          "n": 2,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "blockingMsModelBacked": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "retryMsModelBacked": {
+          "n": 0,
+          "sum": 0,
+          "mean": null,
+          "median": null,
+          "p90": null,
+          "max": null
+        },
+        "byDecisionSource": [
+          {
+            "source": "supervised_tier",
+            "n": 2,
+            "sum": 3,
+            "mean": 1.5,
+            "median": 1.5,
+            "p90": 1.9,
+            "max": 2
+          }
+        ]
+      },
+      "composition": {
+        "measuredCompletions": 12,
+        "bytes": {
+          "doctrine": 267728,
+          "toolSchemas": 258252,
+          "conversation": 113714,
+          "planLedger": 10054,
+          "taskState": 0,
+          "total": 649748
+        },
+        "share": {
+          "doctrine": 0.412,
+          "toolSchemas": 0.3975,
+          "conversation": 0.175,
+          "planLedger": 0.0155,
+          "taskState": 0
+        },
+        "fixedOverheadShare": 0.8095,
+        "perCompletionFixedShare": {
+          "n": 12,
+          "sum": 9.8136,
+          "mean": 0.8178,
+          "median": 0.7955,
+          "p90": 0.9466,
+          "max": 0.9659
+        },
+        "bytesPerPromptToken": 5.062
+      },
+      "followups": 1,
+      "completionsAfterPlanSettled": 0,
+      "secondsAfterLastEdit": 8.189
+    },
+    {
+      "run": ".codex/audit-20260910/comparison-j/csv-state-machine-1-rune",
+      "taggedRows": 11,
+      "completions": 11,
+      "models": ["gpt-5.6-sol"],
+      "providers": ["codex"],
+      "wallSeconds": 224.849,
+      "listCostUsd": 0.138516,
+      "byRole": [
+        {
+          "role": "primary",
+          "completions": 7,
+          "completionShare": 0.6364,
+          "listCostUsd": 0.103552,
+          "costShare": 0.7476,
+          "wallMs": 169103,
+          "wallShare": 0.8194,
+          "runsTouched": 1,
+          "runShare": 1
+        },
+        {
+          "role": "planning",
+          "completions": 3,
+          "completionShare": 0.2727,
+          "listCostUsd": 0.029441,
+          "costShare": 0.2125,
+          "wallMs": 30038,
+          "wallShare": 0.1456,
+          "runsTouched": 1,
+          "runShare": 1
+        },
+        {
+          "role": "supervisor_review",
+          "completions": 1,
+          "completionShare": 0.0909,
+          "listCostUsd": 0.005523,
+          "costShare": 0.0399,
+          "wallMs": 7223,
+          "wallShare": 0.035,
+          "runsTouched": 1,
+          "runShare": 1
+        }
+      ],
+      "cacheByRole": [
+        {
+          "role": "primary",
+          "completions": 7,
+          "freshInputTokens": 41485,
+          "cacheReadTokens": 69248,
+          "cacheCreationTokens": 0,
+          "outputTokens": 4304,
+          "cacheHitRatio": 0.6254,
+          "freshTokensPerCompletion": 5926.4
+        },
+        {
+          "role": "planning",
+          "completions": 3,
+          "freshInputTokens": 16881,
+          "cacheReadTokens": 34560,
+          "cacheCreationTokens": 0,
+          "outputTokens": 402,
+          "cacheHitRatio": 0.6718,
+          "freshTokensPerCompletion": 5627
+        },
+        {
+          "role": "supervisor_review",
+          "completions": 1,
+          "freshInputTokens": 3666,
+          "cacheReadTokens": 0,
+          "cacheCreationTokens": 0,
+          "outputTokens": 94,
+          "cacheHitRatio": 0,
+          "freshTokensPerCompletion": 3666
+        }
+      ],
+      "reviewer": {
+        "decisions": 8,
+        "modelBackedDecisions": 1,
+        "mechanicalDecisions": 7,
+        "blockingMsAllDecisions": {
+          "n": 8,
+          "sum": 7199,
+          "mean": 899.875,
+          "median": 0,
+          "p90": 2159.7,
+          "max": 7199
+        },
+        "blockingMsModelBacked": {
+          "n": 1,
+          "sum": 7199,
+          "mean": 7199,
+          "median": 7199,
+          "p90": 7199,
+          "max": 7199
+        },
+        "retryMsModelBacked": {
+          "n": 1,
+          "sum": 0,
+          "mean": 0,
+          "median": 0,
+          "p90": 0,
+          "max": 0
+        },
+        "byDecisionSource": [
+          {
+            "source": "supervised_tier",
+            "n": 7,
+            "sum": 7,
+            "mean": 1,
+            "median": 1,
+            "p90": 2,
+            "max": 2
+          },
+          {
+            "source": "supervisor_screen",
+            "n": 1,
+            "sum": 7199,
+            "mean": 7199,
+            "median": 7199,
+            "p90": 7199,
+            "max": 7199
+          }
+        ]
+      },
+      "composition": {
+        "measuredCompletions": 10,
+        "bytes": {
+          "doctrine": 223426,
+          "toolSchemas": 215210,
+          "conversation": 371820,
+          "planLedger": 0,
+          "taskState": 0,
+          "total": 810456
+        },
+        "share": {
+          "doctrine": 0.2757,
+          "toolSchemas": 0.2655,
+          "conversation": 0.4588,
+          "planLedger": 0,
+          "taskState": 0
+        },
+        "fixedOverheadShare": 0.5412,
+        "perCompletionFixedShare": {
+          "n": 10,
+          "sum": 6.0404,
+          "mean": 0.604,
+          "median": 0.5542,
+          "p90": 0.8731,
+          "max": 0.9773
+        },
+        "bytesPerPromptToken": 4.997
+      },
+      "followups": 0,
+      "completionsAfterPlanSettled": 0,
+      "secondsAfterLastEdit": 109.435
+    }
+  ]
+}
