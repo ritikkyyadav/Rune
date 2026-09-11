@@ -132,6 +132,24 @@ describe("extractDoctrineSection", () => {
   test("unknown heading returns empty", () => {
     expect(extractDoctrineSection("# No Such Section")).toBe("");
   });
+
+  /**
+   * P3B C2 moved "# Built-in modes on request" out of the working-phase prompt.
+   * It is not delivered through `jitDoctrine` — the section reads the USER'S
+   * MESSAGE, so the opening turn, where that message is read, is a better
+   * moment than any tool result, and `renderDoctrine`'s phase gate puts it
+   * exactly there. What this case holds is the primitive: the section is
+   * extractable verbatim, so a later JIT trigger (a mode tool being promoted
+   * out of the catalog mid-run) has something to inject.
+   */
+  test("the moved built-in-modes section is extractable verbatim", () => {
+    const sec = extractDoctrineSection("# Built-in modes on request");
+    expect(sec.startsWith("# Built-in modes on request")).toBe(true);
+    expect(sec).toContain("interactive_dashboard");
+    expect(sec).toContain("compact_context");
+    expect(AGENT_DOCTRINE).toContain(sec);
+    expect(new TextEncoder().encode(sec).length).toBe(739);
+  });
 });
 
 describe("jit injection in the loop", () => {

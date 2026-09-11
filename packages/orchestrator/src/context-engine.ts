@@ -877,19 +877,27 @@ export class ContextEngine {
       outer?.aborted
         ? "compaction aborted with the turn"
         : `summarizer budget of ${Math.round(budgetMs / 1000)}s exhausted`;
+    const comprehensive = opts?.comprehensive ?? false;
+    const priorState = opts?.priorState?.trim();
+
     // Per-message rendering at SUMMARY fidelity: real tool names, real paths,
     // real command output (head+tail clipped, not cut at 200/500 chars). The
     // summarizer is asked for "files touched, commands run, errors" — feeding
     // it a transcript where all three were amputated mid-string is why
     // compacted sessions used to forget what they were doing.
-    const rendered = messages.map((m) => `${m.role}: ${summaryMessageText(m)}`);
+    //
+    // An INCREMENTAL compaction — one that carries a prior state to merge into
+    // — renders the same messages at merge fidelity instead
+    // (`INCREMENTAL_TOOL_RESULT_CHARS`): the same head+tail shape on a tighter
+    // budget, because the accumulated state is already carrying the run's
+    // history and this request is an update to it, not the one read the older
+    // transcript will ever get.
+    const resultChars = priorState ? INCREMENTAL_TOOL_RESULT_CHARS : SUMMARY_TOOL_RESULT_CHARS;
+    const rendered = messages.map((m) => `${m.role}: ${summaryMessageText(m, resultChars)}`);
 
     const focus = opts?.instructions?.trim()
       ? `\n\nPay special attention to (per the user's request): ${opts.instructions.trim()}`
       : "";
-
-    const comprehensive = opts?.comprehensive ?? false;
-    const priorState = opts?.priorState?.trim();
     const system = comprehensive
       ? "You are compacting a conversation so it can continue with far less context. Preserve every detail needed to resume the work: the user's goals, decisions made, files and code touched, commands run, errors encountered, and the exact current state and next step. Prioritize CODEBASE KNOWLEDGE and EVIDENCE (real paths, real error text, what commands showed) — the harness separately maintains the live goal/todo state and re-shows it to the agent, so hard-won facts are what only this summary can carry. Use exactly the labelled sections you are asked for. Never drop the most recent task."
       : "You are a conversation summarizer. Be concise — 3-5 bullet points.";
@@ -1461,6 +1469,31 @@ function messageTokenText(msg: Message): string {
 // so a compiler error's final lines and a diff's file header both survive.
 const SUMMARY_TOOL_ARGS_CHARS = 700;
 const SUMMARY_TOOL_RESULT_CHARS = 2_400;
+/**
+ * …and what it may keep when it is UPDATING a state rather than writing one
+ * (P3B C1).
+ *
+ * The first compaction of a run has nothing but the transcript: every fact the
+ * rest of the session will ever have about the folded messages has to come out
+ * of that one read, so it gets the full 2,400. Every compaction after it is a
+ * MERGE — it is handed the accumulated state and asked to update it — and the
+ * expensive part of that request is not the state (bounded by the summarizer's
+ * 2,000-token reply ceiling) but the tool-result bodies: measured on the Lane C
+ * rig, 8 results at 2,400 chars were 19,200 of a 21,629-byte request, 89% of it.
+ *
+ * Clipping them to 900 keeps the same HEAD+TAIL shape — ~630 characters from
+ * the start and ~270 from the end — so the path, the command, the first lines
+ * of a file and the last lines of a failure all still reach the summarizer;
+ * what goes is the middle of bodies the state is being asked to summarise, not
+ * to quote. Nothing is DROPPED: every message in the segment is still rendered,
+ * with its role, its tool name and its arguments. That is the difference
+ * between this and shrinking the transcript budget, which would silently omit
+ * whole messages from the only read they will ever get.
+ *
+ * Measured effect on the rig: the incremental request falls 21,629 → 9,629
+ * bytes, 39.9% below the first (non-incremental) compaction's 16,023.
+ */
+const INCREMENTAL_TOOL_RESULT_CHARS = 900;
 
 /** Head+tail clip: keeps ~70% of the budget from the start, ~30% from the end. */
 function clipText(s: string, maxChars: number): string {
@@ -1476,15 +1509,21 @@ function clipText(s: string, maxChars: number): string {
  * generous head+tail so errors and evidence survive into the summary.
  * Thinking is excluded by POLICY (the model's private reasoning is not part
  * of the durable record), not by accident.
+ *
+ * `resultChars` is the one lever an INCREMENTAL compaction pulls — see
+ * `INCREMENTAL_TOOL_RESULT_CHARS`. Tool ARGUMENTS keep their full allowance on
+ * both paths: they are where the paths and commands live, they are small, and
+ * they are what makes the merged state's "files touched, commands run" section
+ * true.
  */
-function summaryMessageText(msg: Message): string {
+function summaryMessageText(msg: Message, resultChars = SUMMARY_TOOL_RESULT_CHARS): string {
   return msg.content
     .map((block) => {
       if (block.type === "text") return block.text;
       if (block.type === "tool_use")
         return `[tool: ${block.toolName}(${clipText(JSON.stringify(block.toolInput), SUMMARY_TOOL_ARGS_CHARS)})]`;
       if (block.type === "tool_result")
-        return `[result: ${clipText(block.toolResultContent, SUMMARY_TOOL_RESULT_CHARS)}]`;
+        return `[result: ${clipText(block.toolResultContent, resultChars)}]`;
       if (block.type === "image") return "[image attachment]";
       return "";
     })

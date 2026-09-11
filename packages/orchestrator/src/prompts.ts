@@ -319,7 +319,18 @@ const GATED_SECTIONS: Array<{ heading: string; keep: (c: DoctrineContext) => boo
   { heading: "# Delegation", keep: (c) => c.canDelegate },
   { heading: "# Greenfield builds", keep: (c) => c.greenfield && c.phase !== "working" },
   { heading: "# Building interfaces", keep: (c) => c.buildsInterfaces },
-  { heading: "# Built-in modes on request", keep: (c) => c.hasModeTools !== false },
+  // Opening-only as well as capability-gated (P3B C2). The section routes three
+  // plain-language asks — "research X", "compact the conversation", "show me a
+  // dashboard" — from the USER'S MESSAGE to three tools. That reading happens
+  // on the opening turn and nowhere else: from turn 2 the model is executing a
+  // route it already chose, and the tools it would route to are advertised in
+  // the request's own tool list whenever this section ships at all (that is
+  // exactly what `hasModeTools` tests). Measured at 740 bytes on every
+  // completion of a run where any mode tool is loaded.
+  {
+    heading: "# Built-in modes on request",
+    keep: (c) => c.hasModeTools !== false && c.phase !== "working",
+  },
   // ── Opening rituals: they govern the decision before the first tool call ──
   { heading: "# The read-back", keep: (c) => c.phase !== "working" },
   { heading: "# Ambiguity", keep: (c) => c.phase !== "working" },

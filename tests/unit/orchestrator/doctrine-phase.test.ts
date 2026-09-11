@@ -26,8 +26,19 @@ import {
 
 const ALL_ON: DoctrineContext = { ...FULL_DOCTRINE_CONTEXT };
 
-/** The rituals of the opening: they describe a decision, not an execution. */
-const OPENING_ONLY = ["# The read-back", "# Ambiguity"];
+/**
+ * The rituals of the opening: they describe a decision, not an execution.
+ *
+ * "# Built-in modes on request" joined them in P3B C2. It routes three
+ * plain-language asks in the USER'S MESSAGE — "research X", "compact the
+ * conversation", "show me a dashboard" — to three tools; that reading is done
+ * on the opening turn, and from turn 2 the model is executing the route it
+ * already chose, with the tool itself advertised in the request's tool list
+ * (which is what `hasModeTools` tests). The section is 739 bytes of text and
+ * takes 741 off the rendered prompt with its separators, on every run that
+ * loaded one of the three tools.
+ */
+const OPENING_ONLY = ["# The read-back", "# Ambiguity", "# Built-in modes on request"];
 /**
  * Looked like an opening ritual and is not. Dropping "# Plan and track" after
  * the first completion was measured on 2026-09-08 (sessions 01a08036 vs
@@ -124,6 +135,58 @@ describe("doctrine phases", () => {
     expect(renderDoctrine({ ...ALL_ON, hasModeTools: false })).not.toContain(
       "# Built-in modes on request",
     );
+  });
+
+  // ─── C2 — the per-section measurement, pinned ───
+  //
+  // `docs/program/phase-3-auto-efficiency.md` §6 Lane C asks for the doctrine's
+  // working-phase cost to be decided from bytes rather than taste. These are
+  // those bytes, in UTF-8, for the jit context the default run assembles
+  // (`canDelegate` and `buildsInterfaces` false — both sections are delivered
+  // just in time instead). The per-section table is in
+  // `.codex/audit-20260910/handoff/phase3/laneC-report.md`.
+  //
+  // A number that moves is not a failure; it is a doctrine edit asking to be
+  // re-measured, and to be justified in the report the same way this one was.
+  test("the working-phase doctrine costs what C2 measured, to the byte", () => {
+    const JIT: DoctrineContext = { ...ALL_ON, canDelegate: false, buildsInterfaces: false };
+    const utf8 = (s: string) => new TextEncoder().encode(s).length;
+    const opening = utf8(renderDoctrine({ ...JIT, phase: "opening" }));
+    const working = utf8(renderDoctrine({ ...JIT, phase: "working" }));
+    // Pinned at 730fd97 before C2: opening 24,135, working 19,099.
+    // After C2: the modes section leaves the working half only.
+    expect(opening).toBe(24_135);
+    expect(working).toBe(18_358);
+    // The switch only ever drops — a working prompt that grew would cost a
+    // second full cache write per run instead of a smaller prefix.
+    expect(working).toBeLessThan(opening);
+  });
+
+  test("C2 moved exactly one section, and left every section turn 2+ reads", () => {
+    const JIT: DoctrineContext = { ...ALL_ON, canDelegate: false, buildsInterfaces: false };
+    const working = renderDoctrine({ ...JIT, phase: "working" });
+    expect(working).not.toContain("# Built-in modes on request");
+    // Everything else the working phase had at 730fd97 is still there. This is
+    // the guard the design asks for: "keeping everything that turn 2+ relies
+    // on" is not a claim, it is this list.
+    for (const section of [
+      "# Agency",
+      "# Investigate before you act",
+      "# Tone and style",
+      "# Communication rhythm",
+      "# Plan and track",
+      "# Voice",
+      "# Mid-task steering",
+      "# Doing tasks",
+      "# Finishing a task",
+      "# Honesty",
+      "# Tool usage policy",
+      "# Coding conventions",
+      "# Git",
+      "# Proactiveness",
+    ]) {
+      expect(working, `${section} is read on a working turn`).toContain(section);
+    }
   });
 });
 
