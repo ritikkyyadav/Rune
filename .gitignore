@@ -78,3 +78,6 @@ _to_delete/
 
 # Claude Code session data (worktrees, local settings)
 .claude/
+
+# The frame-capture driver's bytecode cache
+scripts/tui-capture/__pycache__/

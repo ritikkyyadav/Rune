@@ -240,3 +240,381 @@ describe("holding the field at the bottom", () => {
     expect(holdOpenRows(6, 3, 5)).toBe(0); // no room at all: hold nothing
   });
 });
+
+// ─── The four-region frame ───
+//
+// Three zones became four regions: a full-width header, a band split into the
+// workspace and a fixed 40-cell right column, and a full-width status strip.
+// Everything below measures the split itself -- where the divider lands, what
+// each region is allowed, and what the frame does when the window is too small
+// to be told the truth in.
+
+const V = require("../../../packages/orchestrator/src/bin/ui/viewport");
+
+/** The sizes named in the design, plus the two either side of the collapse. */
+const SIZES: Array<[number, number]> = [
+  [160, 50],
+  [120, 40],
+  [100, 30],
+  [99, 30],
+  [80, 24],
+];
+
+const regionsAt = (columns: number, rows: number, composerRows?: number) =>
+  V.regions({ columns, rows, headerRows: 3, composerRows, strip: true });
+
+describe("the band", () => {
+  it("puts the divider one column left of the fixed right column", () => {
+    // 120 -> usable 119, workspace 78, divider 79, right 80..119. The last
+    // cell of the window stays empty at every width: a row that reaches it
+    // wraps, and one wrap desyncs every row below for the rest of the session.
+    const expected: Record<number, [number, number, number]> = {
+      // columns: [usable, workspace, divider]
+      160: [159, 118, 119],
+      120: [119, 78, 79],
+      100: [99, 58, 59],
+    };
+    for (const [columns, [usable, workspace, divider]] of Object.entries(expected).map(
+      ([c, v]) => [Number(c), v] as [number, [number, number, number]],
+    )) {
+      const r = regionsAt(columns, 40);
+      expect(r.usable, `usable at ${columns}`).toBe(usable);
+      expect(r.workspaceCols, `workspace at ${columns}`).toBe(workspace);
+      expect(r.dividerCol, `divider at ${columns}`).toBe(divider);
+      expect(r.panelCols, `panel at ${columns}`).toBe(40);
+      // workspace + divider + panel is the whole usable width, exactly.
+      expect(r.workspaceCols + 1 + r.panelCols).toBe(r.usable);
+    }
+  });
+
+  it("the right column is FIXED, so the workspace measure only moves with the window", () => {
+    for (const [columns] of SIZES) {
+      const r = regionsAt(columns, 40);
+      if (r.collapsed) continue;
+      expect(r.panelCols, `at ${columns}`).toBe(V.PANEL_COLS);
+    }
+  });
+
+  it("collapses below 100 columns and not at 100", () => {
+    expect(regionsAt(100, 30).collapsed).toBe(false);
+    expect(regionsAt(99, 30).collapsed).toBe(true);
+    // Collapsed: no divider, no right column, the workspace spans the window.
+    const narrow = regionsAt(80, 24);
+    expect(narrow.dividerCol).toBe(0);
+    expect(narrow.panelCols).toBe(0);
+    expect(narrow.workspaceCols).toBe(79);
+    // …and it spends exactly one row on the agents strip.
+    expect(narrow.stripRows).toBe(1);
+  });
+
+  it("the rows add up to the window, at every size", () => {
+    for (const [columns, rows] of SIZES) {
+      const r = regionsAt(columns, rows);
+      expect(r.headerRows + r.bandRows + 1, `${columns}x${rows}`).toBe(rows);
+      expect(r.bandTop).toBe(3);
+      expect(r.statusTop).toBe(rows - 1);
+      if (r.collapsed) {
+        // The strip and the composer come out of the left column.
+        expect(r.workspaceRows + r.stripRows + r.composerRows).toBe(r.bandRows);
+      } else {
+        // The workspace is the whole band; the panel and composer share the
+        // right column.
+        expect(r.workspaceRows).toBe(r.bandRows);
+        expect(r.panelRows + r.composerRows).toBe(r.bandRows);
+      }
+    }
+  });
+});
+
+describe("the composer grows into the panel, never into the workspace", () => {
+  it("takes its rows from the panel", () => {
+    const band = regionsAt(120, 40).bandRows;
+    let lastPanel = Infinity;
+    for (let want = 4; want <= 21; want++) {
+      const r = regionsAt(120, 40, want);
+      expect(r.composerRows, `want ${want}`).toBe(want);
+      // The workspace does not move. This is the whole reason the yielding
+      // order is stated: a transcript that re-lays itself while you type is
+      // what made the old footer feel like it was sliding.
+      expect(r.workspaceRows, `want ${want}`).toBe(band);
+      expect(r.panelRows).toBe(band - want);
+      expect(r.panelRows).toBeLessThan(lastPanel);
+      lastPanel = r.panelRows;
+    }
+  });
+
+  it("stops at the cap, and the panel keeps its floor", () => {
+    const r = regionsAt(120, 40, 200);
+    expect(r.composerRows).toBe(21); // floor(36 * 0.6)
+    expect(r.panelRows).toBe(15);
+    expect(r.panelRows).toBeGreaterThanOrEqual(V.PANEL_MIN_ROWS);
+    expect(regionsAt(120, 40, 0).composerRows).toBe(V.COMPOSER_MIN_ROWS);
+  });
+
+  it("never lets the workspace fall to nothing when collapsed", () => {
+    for (let want = 4; want <= 40; want++) {
+      const r = regionsAt(80, 24, want);
+      expect(r.workspaceRows, `want ${want}`).toBeGreaterThanOrEqual(1);
+      expect(r.workspaceRows + r.stripRows + r.composerRows).toBe(r.bandRows);
+    }
+  });
+});
+
+describe("the workspace split", () => {
+  it("gives the main pane 14 rows, the seam 1 and the child the rest at 120x40", () => {
+    const r = regionsAt(120, 40);
+    const panes = V.splitPanes(r.workspaceRows, true);
+    expect([panes.mainRows, panes.headerRows, panes.childRows]).toEqual([14, 1, 21]);
+    expect(panes.mainRows + panes.headerRows + panes.childRows).toBe(r.workspaceRows);
+  });
+
+  it("closed, the main pane is the whole workspace", () => {
+    const r = regionsAt(120, 40);
+    const panes = V.splitPanes(r.workspaceRows, false);
+    expect(panes.open).toBe(false);
+    expect(panes.mainRows).toBe(r.workspaceRows);
+    expect(panes.childRows).toBe(0);
+  });
+
+  it("refuses rather than showing two slivers", () => {
+    const panes = V.splitPanes(V.SPLIT_MIN_ROWS - 1, true);
+    expect(panes.open).toBe(false);
+    expect(panes.refused).toBe(true);
+    expect(panes.childRows).toBe(0);
+    expect(panes.headerRows).toBe(1); // one row saying why
+    expect(V.splitPanes(V.SPLIT_MIN_ROWS, true).open).toBe(true);
+  });
+});
+
+describe("too small to be told the truth in", () => {
+  it("refuses at 59x16 and 60x15, and draws at 60x16", () => {
+    expect(regionsAt(59, 16).refused).toBe(true);
+    expect(regionsAt(60, 15).refused).toBe(true);
+    expect(regionsAt(60, 16).refused).toBe(false);
+  });
+
+  it("says the size it needs, the size it has, and the way out", () => {
+    const block = V.refusalRows(44, 12);
+    expect(block).toHaveLength(3);
+    expect(block[0]).toBe("R U N E");
+    expect(block[1]).toContain("60x16");
+    expect(block[1]).toContain("44x12");
+    expect(block[2]).toContain("--inline");
+    // Every row fits the window it is refusing to draw in -- a refusal that
+    // overhangs is the bug it exists to avoid.
+    for (const row of block) expect(row.length).toBeLessThanOrEqual(44 - 4);
+  });
+});
+
+describe("composeBand", () => {
+  const w = (s: string) => stripAnsi(s).length;
+
+  it("pads the left column to the divider and never pads past it", () => {
+    const r = regionsAt(120, 40, 4);
+    const rows = V.composeBand({
+      regions: r,
+      left: ["  hello"],
+      right: [" AGENTS"],
+      divider: "│",
+      width: w,
+    });
+    expect(rows).toHaveLength(r.bandRows);
+    expect(rows[0]!.indexOf("│")).toBe(r.dividerCol - 1); // 0-based
+    expect(w(rows[0]!)).toBe(r.dividerCol + w(" AGENTS"));
+    // A row neither column claims is the divider and nothing else -- no
+    // trailing spaces, because the painter erases to end of line and asserting
+    // them would paint a background the terminal never asked for.
+    expect(w(rows[1]!)).toBe(r.dividerCol);
+    expect(rows[1]!.trimEnd()).toBe(rows[1]);
+  });
+
+  it("collapsed, there is no divider at all", () => {
+    const r = regionsAt(80, 24, 4);
+    const rows = V.composeBand({
+      regions: r,
+      left: ["  hello"],
+      right: [],
+      divider: "│",
+      width: w,
+    });
+    expect(rows).toHaveLength(r.bandRows);
+    expect(rows[0]).toBe("  hello");
+    expect(rows.join("")).not.toContain("│");
+  });
+
+  it("no band row overhangs the usable width", () => {
+    for (const [columns, rows] of SIZES) {
+      const r = regionsAt(columns, rows, 4);
+      const band = V.composeBand({
+        regions: r,
+        left: Array.from({ length: r.bandRows }, () => "x".repeat(r.workspaceCols)),
+        right: Array.from({ length: r.bandRows }, () => "y".repeat(r.panelCols)),
+        divider: "│",
+        width: w,
+      });
+      for (const row of band) {
+        expect(w(row), `${columns}x${rows}`).toBeLessThanOrEqual(r.usable);
+      }
+    }
+  });
+});
+
+describe("composeFrame with a band", () => {
+  const w = (s: string) => stripAnsi(s).length;
+
+  it("keeps the header on top and the status strip on the last row", () => {
+    const r = regionsAt(120, 40, 4);
+    const frame = V.composeFrame({
+      rows: 40,
+      header: ["", "  R U N E", "  ───"],
+      transcript: ["ignored"],
+      footer: ["  ◆ 1st gear"],
+      scroll: 0,
+      caretRow: 36,
+      caretCol: 82,
+      band: {
+        regions: r,
+        left: ["  first"],
+        right: [" AGENTS"],
+        divider: "│",
+        width: w,
+      },
+    });
+    expect(frame.rows).toHaveLength(40);
+    expect(frame.rows[1]).toBe("  R U N E");
+    expect(frame.rows[3]).toContain("first");
+    expect(frame.rows[39]).toBe("  ◆ 1st gear");
+    // The caret is absolute in this mode: the composer is inside the band, not
+    // in the footer, so there is no trimming for it to be measured against.
+    expect(frame.caretRow).toBe(36);
+    expect(frame.caretCol).toBe(82);
+  });
+
+  it("the three-zone path is untouched when there is no band", () => {
+    const frame = V.composeFrame({
+      rows: 10,
+      header: ["h1", "h2"],
+      transcript: ["a", "b", "c"],
+      footer: ["f1"],
+      scroll: 0,
+      caretRow: 0,
+      caretCol: 0,
+    });
+    expect(frame.rows).toHaveLength(10);
+    expect(frame.rows[0]).toBe("h1");
+    expect(frame.rows[9]).toBe("f1");
+    expect(frame.rows.slice(2)).toContain("c");
+  });
+});
+
+describe("the focus ring", () => {
+  const FRAME = require("../../../packages/orchestrator/src/bin/ui/tui-frame");
+  const INPUT = require("../../../packages/orchestrator/src/bin/ui/tui-input");
+
+  /** Enough of a controller for the frame methods, which is all they touch.
+   *  They are plain functions on an object -- the whole point of mixing them
+   *  onto the prototype rather than closing over a class. */
+  function controller(over: Record<string, unknown> = {}) {
+    const tui: any = {
+      inline: false,
+      columns: 120,
+      focus: "composer",
+      panelOverlay: false,
+      childPane: null,
+      childScroll: 0,
+      scroll: 0,
+      input: "",
+      mode: "input",
+      draws: 0,
+      scheduleDraw() {
+        this.draws++;
+      },
+      regionsNow(composerRows?: number) {
+        return V.regions({
+          columns: this.columns,
+          rows: 40,
+          headerRows: 3,
+          composerRows,
+          strip: true,
+        });
+      },
+      cycleFocus: FRAME.FRAME_METHODS.cycleFocus,
+      releaseFocus: FRAME.FRAME_METHODS.releaseFocus,
+      openChildPane: FRAME.FRAME_METHODS.openChildPane,
+      closeChildPane: FRAME.FRAME_METHODS.closeChildPane,
+      ctrlKey: INPUT.INPUT_METHODS.ctrlKey,
+      ...over,
+    };
+    return tui;
+  }
+
+  it("advances composer -> panel -> workspace -> composer with no split", () => {
+    expect(FRAME.focusRing(false)).toEqual(["composer", "panel", "workspace"]);
+    const t = controller();
+    const seen: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      t.cycleFocus();
+      seen.push(t.focus);
+    }
+    expect(seen).toEqual(["panel", "workspace", "composer", "panel"]);
+  });
+
+  it("the child joins the ring only while a split is open", () => {
+    expect(FRAME.focusRing(true)).toEqual(["composer", "panel", "workspace", "child"]);
+    const t = controller();
+    t.openChildPane({ id: "3", name: "verifier", lines: [] });
+    expect(t.focus).toBe("child"); // you opened it to read it
+    const seen: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      t.cycleFocus();
+      seen.push(t.focus);
+    }
+    expect(seen).toEqual(["composer", "panel", "workspace", "child"]);
+  });
+
+  it("ctrl+f toggles the overlay instead when the column is collapsed", () => {
+    const t = controller({ columns: 80 });
+    t.cycleFocus();
+    expect(t.panelOverlay).toBe(true);
+    expect(t.focus).toBe("panel");
+    t.cycleFocus();
+    expect(t.panelOverlay).toBe(false);
+    expect(t.focus).toBe("composer");
+  });
+
+  it("esc returns to the composer, and reports whether it consumed the key", () => {
+    const t = controller();
+    // With the composer focused it consumes nothing: there esc still clears
+    // the draft and interrupts, which is the binding people rely on.
+    expect(t.releaseFocus()).toBe(false);
+    t.cycleFocus();
+    expect(t.focus).toBe("panel");
+    expect(t.releaseFocus()).toBe(true);
+    expect(t.focus).toBe("composer");
+    // From the child pane, esc closes the split.
+    t.openChildPane({ id: "3", name: "verifier", lines: ["x"] });
+    expect(t.releaseFocus()).toBe(true);
+    expect(t.childPane).toBeNull();
+    // And it closes the overlay first, wherever focus was.
+    const narrow = controller({ columns: 80 });
+    narrow.cycleFocus();
+    expect(narrow.releaseFocus()).toBe(true);
+    expect(narrow.panelOverlay).toBe(false);
+  });
+
+  it("ctrl+w closes the split from anywhere, and ctrl+f is the ring", () => {
+    const t = controller();
+    t.openChildPane({ id: "3", name: "verifier", lines: ["x"] });
+    t.focus = "composer";
+    t.ctrlKey("w");
+    expect(t.childPane).toBeNull();
+    expect(t.childScroll).toBe(0);
+    expect(t.focus).toBe("composer");
+    // ctrl+w on a frame with no split is a no-op, not a repaint.
+    const before = t.draws;
+    t.ctrlKey("w");
+    expect(t.draws).toBe(before);
+    t.ctrlKey("f");
+    expect(t.focus).toBe("panel");
+  });
+});

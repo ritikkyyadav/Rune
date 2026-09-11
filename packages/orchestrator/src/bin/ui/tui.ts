@@ -51,6 +51,8 @@ import {
   mouseCaptureEnabled,
   MAX_TRANSCRIPT,
   FRAME_METHODS,
+  type ChildPane,
+  type FrameFocus,
   type FrameMethods,
 } from "./tui-frame";
 import { INPUT_METHODS, type InputMethods } from "./tui-input";
@@ -295,6 +297,21 @@ export class Tui {
    */
   printedRows = 0;
   scroll = 0; // fixed layout: lines scrolled up from the bottom (0 = following latest)
+  /**
+   * Which region the keys act on, and the one piece of frame state the other
+   * lanes read: the agents panel paints its selection only when `focus` is
+   * "panel", and the composer's caret is its own focus marker. `ctrl+f`
+   * advances it, `esc` returns it here.
+   */
+  focus: FrameFocus = "composer";
+  /** Collapsed widths only: the agents panel opened over the workspace. */
+  panelOverlay = false;
+  /** The child transcript in the workspace split. One at a time; lane B fills
+   *  its rows and lane A places the pane. */
+  childPane: ChildPane | null = null;
+  /** The child pane's own scroll offset. Per region, so paging one pane never
+   *  moves the other. */
+  childScroll = 0;
   /** SIGWINCH. A field, not a method, because `process.stdout.on("resize", ...)`
    *  needs a stable bound reference to add and remove; the work is in
    *  ./tui-frame.ts with the rest of the geometry. */
@@ -668,7 +685,7 @@ export class Tui {
 
   // -- input rendering --
 
-  statusStr(): string {
+  statusStr(width = this.contentCols()): string {
     let contextPercent: number | undefined;
     try {
       contextPercent = this.ctx.engine.getContextUsage().percent;
@@ -692,7 +709,7 @@ export class Tui {
             ? `${loop.count === 1 ? "loop" : `${loop.count} loops`} | ${formatLoopDue(loop.nextRunAt)}`
             : undefined,
       },
-      this.contentCols(),
+      width,
     );
   }
 

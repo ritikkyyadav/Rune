@@ -18,6 +18,7 @@ Zero model calls, by construction:
 """
 
 import atexit
+import codecs
 import fcntl
 import os
 import pty
@@ -57,7 +58,7 @@ SCRUB = (
 ).split()
 
 
-def child_env():
+def child_env(**extra):
     e = dict(os.environ)
     e.update(
         RUNE_HOME=PROFILE,
@@ -68,6 +69,7 @@ def child_env():
     )
     for k in SCRUB:
         e.pop(k, None)
+    e.update(extra)
     return e
 
 
@@ -98,16 +100,21 @@ def fresh_profile():
 
 
 class Session:
-    def __init__(self, rows=24, cols=80):
+    def __init__(self, rows=24, cols=80, **env_extra):
         self.rows, self.cols = rows, cols
         self.screen = Screen(rows, cols)
         self.stream = Stream(self.screen)
         self.plain = ""
+        self.raw = ""
+        # A 3-byte box-drawing character straddling two reads decodes as two
+        # replacement chars if each read is decoded on its own -- which shows up
+        # in a capture as a hole in a rule that is not in the product.
+        self.decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         LIVE.append(self)
         self.master, slave = pty.openpty()
         self._winsize(rows, cols)
         self.proc = subprocess.Popen(
-            ARGV, cwd=WORK, env=child_env(), stdin=slave, stdout=slave, stderr=slave,
+            ARGV, cwd=WORK, env=child_env(**env_extra), stdin=slave, stdout=slave, stderr=slave,
             start_new_session=True,
         )
         os.close(slave)
@@ -129,7 +136,8 @@ class Session:
                 return False
             if not chunk:
                 return False
-            data = chunk.decode("utf-8", errors="replace")
+            data = self.decoder.decode(chunk)
+            self.raw += data
             self.plain += ANSI.sub("", data)
             self.stream.feed(data)
         return True
@@ -184,6 +192,15 @@ class Session:
         print("  frame -> %s" % path)
         return path
 
+    def wait_exit(self, timeout=12):
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            if self.proc.poll() is not None:
+                self.pump(0.3)
+                return self.proc.returncode
+            self.pump(0.25)
+        return None
+
     def close(self):
         if self.proc.poll() is None:
             try:
@@ -217,11 +234,14 @@ ESC = b"\x1b"
 CR = b"\r"
 
 
-def start(rows, cols):
-    s = Session(rows=rows, cols=cols)
+def start(rows, cols, **env_extra):
+    s = Session(rows=rows, cols=cols, **env_extra)
     s.wait_for(["r u n e"], timeout=90)
     s.pump(1.0)
     return s
+
+
+CTRL_F = b"\x06"
 
 
 def capture_all(outdir):
@@ -240,6 +260,19 @@ def capture_all(outdir):
             s.snapshot(outdir, "%s-picker" % tag)
             s.send(ESC, settle=0.6)
             s.send(ESC, settle=0.6)
+
+            # Typed, never submitted: the field, the caret and the hint row
+            # at the composer's own width.
+            s.send("rework the first-run wizard so the provider step", settle=0.8)
+            s.snapshot(outdir, "%s-typed" % tag)
+            for _ in range(48):
+                s.send(b"\x7f", settle=0.0)
+            s.pump(0.6)
+
+            # The focus ring, and -- at a collapsed width -- the overlay.
+            s.send(CTRL_F, settle=0.8)
+            s.snapshot(outdir, "%s-ctrl-f" % tag)
+            s.send(ESC, settle=0.8)
         finally:
             s.close()
 
@@ -252,6 +285,63 @@ def capture_all(outdir):
         s.snapshot(outdir, "resize-120")
         s.resize(24, 80)
         s.snapshot(outdir, "resize-80-after")
+    finally:
+        s.close()
+
+    # The collapse threshold, from both sides, in one session so the only
+    # variable is the width.
+    s = start(30, 100)
+    try:
+        s.snapshot(outdir, "100x30-panel")
+        s.resize(30, 99)
+        s.snapshot(outdir, "99x30-collapsed")
+    finally:
+        s.close()
+
+    # Seven-bit, no colour: the layout has to carry the meaning on its own.
+    for rows, cols, tag in ((24, 80, "80x24"), (40, 120, "120x40")):
+        s = start(rows, cols, NO_COLOR="1", RUNE_ASCII="1")
+        try:
+            s.snapshot(outdir, "%s-ascii-nocolor" % tag)
+        finally:
+            s.close()
+
+    # SIGTERM mid-session, with the overlay open: the terminal must come back
+    # exactly as it was found. The restore is state-independent by
+    # construction (VIEWPORT_RESTORE on process exit), and this is the proof
+    # that it holds with the frame in its split state too.
+    s = start(24, 80)
+    try:
+        s.send(CTRL_F, settle=0.8)  # the overlay, over the workspace
+        assert "esc close" in s.screen.text(), "overlay did not open"
+        os.killpg(s.proc.pid, signal.SIGTERM)
+        s.wait_exit(10)
+        tail = s.raw[-400:]
+        receipt = [
+            "# SIGTERM with the panel overlay open, at 80x24",
+            "# exit code: %r (SIGTERM handler exits 143)" % s.proc.returncode,
+            "# alt screen left  (ESC[?1049l): %s" % ("\x1b[?1049l" in tail),
+            "# autowrap restored (ESC[?7h):   %s" % ("\x1b[?7h" in tail),
+            "# cursor shown      (ESC[?25h):  %s" % ("\x1b[?25h" in tail),
+            "# mouse off      (ESC[?1000l):   %s" % ("\x1b[?1000l" in tail),
+            "#",
+            "# the last 400 characters written, escapes made visible:",
+            repr(tail),
+        ]
+        (Path(outdir) / "sigterm-restore.txt").write_text("\n".join(receipt) + "\n")
+        print("  frame -> %s" % (Path(outdir) / "sigterm-restore.txt"))
+    finally:
+        s.close()
+
+    # The window that is too small to be told the truth in.
+    s = start(24, 80)
+    try:
+        s.resize(16, 59)
+        s.snapshot(outdir, "59x16-refused")
+        s.resize(15, 60)
+        s.snapshot(outdir, "60x15-refused")
+        s.resize(24, 80)
+        s.snapshot(outdir, "refusal-recovered")
     finally:
         s.close()
 

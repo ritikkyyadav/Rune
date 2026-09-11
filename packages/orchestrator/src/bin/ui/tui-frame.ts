@@ -15,12 +15,44 @@
 // compile time; it exists so TypeScript can check them where they are written.
 
 import type { Tui } from "./tui";
-import { composeFrame, holdHeight, zones, type Zones } from "./viewport";
+import {
+  composeFrame,
+  holdHeight,
+  PANEL_MIN_COLS,
+  refusalRows,
+  regions,
+  splitPanes,
+  zones,
+  COMPOSER_MIN_ROWS,
+  MIN_COLS,
+  MIN_ROWS,
+  PANEL_COLS,
+  PANEL_MIN_ROWS,
+  SPLIT_MIN_ROWS,
+  type Panes,
+  type Regions,
+  type Zones,
+} from "./viewport";
 import { arrowRun } from "./keys";
 import { renderBanner } from "./banner";
 import * as F from "./flow";
-import { clampVisible, setTermWidthOverride } from "./render";
-import { text, faint, withThemeBg } from "./theme";
+import { clampVisible, setTermWidthOverride, visLen } from "./render";
+import { text, faint, accent, brand, muted, withThemeBg } from "./theme";
+import { glyph } from "./glyphs";
+import { renderComposer, renderSlashPalette } from "./composer";
+
+/** Which region the keys act on. Lanes B and C read this off the controller. */
+export type FrameFocus = "composer" | "panel" | "workspace" | "child";
+
+/** One child's transcript, open in the workspace split. Lane B fills `lines`. */
+export interface ChildPane {
+  id: string;
+  /** The name on the panel card and in the pane header. */
+  name: string;
+  /** State, elapsed, tokens -- whatever the header should carry after the name. */
+  note?: string;
+  lines: string[];
+}
 // `columns`/`rows` are 0 (not undefined) on a PTY with no winsize -- `||` so a
 // zero-size terminal falls back sanely instead of clamping every line to nothing.
 export const cols = () => process.stdout.columns || 80;
@@ -61,7 +93,417 @@ export const SCROLL_STEP = 3; // lines per mouse-wheel notch
 export const LIVE_BLOCK_ROWS = 8;
 
 /** Geometry and paint, mixed onto `Tui.prototype`. */
+/**
+ * The focus ring, as one pure list.
+ *
+ * Pure because it is the part with an order to get wrong, and because a test
+ * for it should not need an Engine. The child only joins the ring while a split
+ * is open -- a ring with a dead stop in it is worse than a shorter ring.
+ */
+export function focusRing(splitOpen: boolean): FrameFocus[] {
+  const ring: FrameFocus[] = ["composer", "panel", "workspace"];
+  if (splitOpen) ring.push("child");
+  return ring;
+}
+
+/** The next region `ctrl+f` reaches from `current`. */
+export function nextFocus(current: FrameFocus, splitOpen: boolean): FrameFocus {
+  const ring = focusRing(splitOpen);
+  const at = ring.indexOf(current);
+  return ring[(at + 1) % ring.length] ?? "composer";
+}
+
+/**
+ * flow indents by its 2-cell MARK; the right column's gutter is 1.
+ *
+ * Rather than teach the grammar a second indent rung -- which ui-grammar.test
+ * forbids, and rightly -- the column renders one cell wider and drops the first
+ * cell, so its rules land exactly where the mocks put them.
+ */
+const tighten = (line: string): string => (line.startsWith(" ") ? line.slice(1) : line);
+
 export const FRAME_METHODS = {
+  /**
+   * The four regions of the current window, without building them.
+   *
+   * Called by the paint loop and by every key that needs to know how tall a
+   * page is. `composerRows` is what the composer ASKED for; `regions` decides
+   * what it gets -- the panel yields, and the workspace never does.
+   */
+  regionsNow(this: Tui, composerRows?: number): Regions {
+    return regions({
+      columns: cols(),
+      rows: rowsCount(),
+      headerRows: this.bannerLines().length,
+      composerRows,
+      strip: true,
+    });
+  },
+
+  /**
+   * Whether this frame is drawn as four regions or as the older three zones.
+   *
+   * The band is the writing surface. Every modal panel -- the picker, the
+   * permission card, sessions, keys, memory, the work review -- still claims
+   * the footer the way it always has, because moving them into the workspace is
+   * lane E's work and a half-moved panel is worse than either end of the move.
+   * This is the only line that has to change when they land.
+   */
+  bandLayout(this: Tui): boolean {
+    if (this.inline) return false;
+    return this.mode === "input" || this.mode === "turn";
+  },
+
+  /** The workspace, split between the main transcript and one child's. */
+  panesNow(this: Tui, workspaceRows: number): Panes {
+    return splitPanes(workspaceRows, this.childPane != null);
+  },
+
+  /**
+   * Advance the focus ring: composer -> panel -> workspace -> child -> composer.
+   *
+   * At collapsed widths there is no panel to focus, so the same key opens it as
+   * an overlay instead -- the keel rule that a side panel stale most of the time
+   * should be one always-current row that names the key which expands it.
+   */
+  cycleFocus(this: Tui): void {
+    if (this.regionsNow().collapsed) {
+      this.panelOverlay = !this.panelOverlay;
+      this.focus = this.panelOverlay ? "panel" : "composer";
+      this.scheduleDraw();
+      return;
+    }
+    this.focus = nextFocus(this.focus, this.childPane != null);
+    this.scheduleDraw();
+  },
+
+  /** `esc` from anywhere in the ring. Returns true when it consumed the key --
+   *  in the composer it did not, because there `esc` still interrupts. */
+  releaseFocus(this: Tui): boolean {
+    if (this.panelOverlay) {
+      this.panelOverlay = false;
+      this.focus = "composer";
+      this.scheduleDraw();
+      return true;
+    }
+    if (this.focus === "composer") return false;
+    if (this.focus === "child") {
+      this.closeChildPane();
+      return true;
+    }
+    this.focus = "composer";
+    this.scheduleDraw();
+    return true;
+  },
+
+  /** Open one child's transcript in the workspace split. Only one at a time:
+   *  opening another replaces it. Lane B supplies the rows. */
+  openChildPane(this: Tui, pane: ChildPane): void {
+    this.childPane = pane;
+    this.childScroll = 0;
+    this.focus = "child"; // you opened it to read it
+    this.scheduleDraw();
+  },
+
+  /** `ctrl+w`. The child's rows stay in its buffer, so reopening it does not
+   *  lose scrollback -- only the pane goes. */
+  closeChildPane(this: Tui): void {
+    if (!this.childPane) return;
+    this.childPane = null;
+    this.childScroll = 0;
+    this.focus = "composer";
+    this.scheduleDraw();
+  },
+
+  /**
+   * One pane's window onto its own buffer.
+   *
+   * Per-region offsets are the point: paging the child must not move the main
+   * pane, and opening a child must not move either.
+   */
+  paneRows(
+    this: Tui,
+    lines: string[],
+    rows: number,
+    scroll: number,
+    width: number,
+    marker?: (hidden: number) => string,
+  ): { rows: string[]; scroll: number; hiddenAbove: number; marked: boolean } {
+    const height = Math.max(0, rows);
+    const maxScroll = Math.max(0, lines.length - height);
+    const at = Math.max(0, Math.min(scroll, maxScroll));
+    const marked = at > 0 && marker != null && height > 1;
+    const content = marked ? height - 1 : height;
+    const end = Math.max(0, lines.length - at);
+    const start = Math.max(0, end - content);
+    const out = lines.slice(start, end).map((l) => clampVisible(this.bound(l), width));
+    const painted = marked ? [clampVisible(marker!(start), width), ...out] : out;
+    while (painted.length < height) painted.push("");
+    return { rows: painted.slice(0, height), scroll: at, hiddenAbove: start, marked };
+  },
+
+  /**
+   * The right column's agents panel -- heading, rule, body -- at 38 cells.
+   *
+   * A PLACEHOLDER that consumes exactly the rows the real panel will: lane B
+   * owns the cards, the per-child pulse and the finished section. What is real
+   * here is the live rung, which already exists, so the column is never blank
+   * while work is happening.
+   */
+  panelBlock(this: Tui, r: Regions): string[] {
+    const w = r.panelContentCols;
+    const inset = r.collapsed ? (l: string) => l : tighten;
+    const live = this.mode === "turn" ? this.atWidth(w + 2, () => this.turnStateLines()) : [];
+    const heading = live.length > 0 ? "AGENTS" : "SESSION";
+    const title = this.focus === "panel" ? accent(heading) : faint(heading);
+    const out = [
+      inset(`  ${F.row(title, r.collapsed ? faint("esc close") : "", w)}`),
+      inset(`  ${faint(glyph("rule").repeat(w))}`),
+    ];
+    if (live.length > 0) {
+      for (const line of live) out.push(inset(clampVisible(line, w + 2)));
+    } else {
+      out.push("");
+      out.push(inset(`    ${faint("no agents this session")}`));
+      out.push(inset(`    ${faint("a fan-out's cards land here, one per child")}`));
+    }
+    while (out.length < r.panelRows) out.push("");
+    return out.slice(0, r.panelRows);
+  },
+
+  /**
+   * The collapsed one-line agents strip.
+   *
+   * Below PANEL_MIN_COLS the right column is worth less than the cells it
+   * costs, so it becomes this: always current, and naming the key that opens
+   * the full panel. Lane B fills in the per-agent pulses.
+   */
+  stripRow(this: Tui, r: Regions): string {
+    const w = r.workspaceCols;
+    const live = this.mode === "turn" ? this.turnStateLines() : [];
+    const left =
+      live.length > 0
+        ? clampVisible(live[0]!.trimStart(), Math.max(8, w - 18))
+        : faint("no agents this session");
+    return clampVisible(
+      `  ${F.row(`${accent(glyph("phase"))} ${left}`, faint("ctrl+f open"), w - 2)}`,
+      w,
+    );
+  },
+
+  /**
+   * The composer region: a rule, the field, a rule, one hint row.
+   *
+   * The field itself is still ./composer.ts's -- lane C replaces it with a
+   * wrapping one. What this owns is the shape: four rows at rest, the palette
+   * above the field when a `/` is being typed, and a hint row outside the rules
+   * so it does not read as more input.
+   */
+  bandComposer(this: Tui, r: Regions): { lines: string[]; caretRow: number; caretCol: number } {
+    const wide = !r.collapsed;
+    const width = wide ? PANEL_COLS + 1 : this.contentCols();
+    return this.atWidth(wide ? PANEL_COLS + 2 : this.contentCols(), () => {
+      const base = renderComposer({
+        input: this.input,
+        caret: this.caret,
+        width,
+        status: "",
+      });
+      // renderComposer owns a blank row above the field, for a layout where the
+      // transcript runs right up to it. Here the region's own edge does that job.
+      let lines = base.lines.slice(1);
+      let caretRow = Math.max(0, base.caretRow - 1);
+      const matches = this.slashMatches();
+      if (matches.length > 0) {
+        const palette = renderSlashPalette(
+          matches,
+          this.slashSel,
+          wide ? PANEL_COLS + 1 : this.contentCols(),
+          Math.max(1, r.bandRows - PANEL_MIN_ROWS - lines.length - 1),
+          this.slashCatalog().length,
+        );
+        lines = [...palette, ...lines];
+        caretRow += palette.length;
+      }
+      lines.push(`  ${faint(this.composerHint())}`);
+      if (wide) {
+        lines = lines.map(tighten);
+      }
+      return { lines, caretRow, caretCol: base.caretCol - (wide ? 1 : 0) };
+    });
+  },
+
+  /** One quiet hint row, by the same tier ladder the status line uses. */
+  composerHint(this: Tui): string {
+    const sep = ` ${glyph("observed")} `;
+    if (this.mode === "turn") return ["enter queues", "esc interrupts"].join(sep);
+    if (this.input.length > 0) return `${this.input.length} chars   ctrl+f agents`;
+    return ["enter send", "ctrl+f agents", "? keys"].join(sep);
+  },
+
+  /** The pane header naming the open child. Drawn with rules on both sides so
+   *  it reads as a seam, not as content. */
+  childHeader(this: Tui, r: Regions, panes: Panes): string {
+    const w = r.workspaceCols - 2;
+    const pane = this.childPane;
+    if (!pane) {
+      return clampVisible(
+        `  ${faint(`the split needs ${SPLIT_MIN_ROWS} rows; this workspace has ${r.workspaceRows}`)}`,
+        r.workspaceCols,
+      );
+    }
+    const rule = glyph("rule").repeat(2);
+    const paint = this.focus === "child" ? accent : faint;
+    const parts = [pane.name, pane.note ?? "", "ctrl+w close"].filter((p) => p !== "");
+    const body = ` ${parts.join(` ${glyph("rule")}${glyph("rule")} `)} `;
+    const fill = Math.max(2, w - visLen(body) - rule.length);
+    void panes;
+    return clampVisible(
+      `  ${paint(`${rule}${body}${glyph("rule").repeat(fill)}`)}`,
+      r.workspaceCols,
+    );
+  },
+
+  /**
+   * The window that is too small to be told the truth in.
+   *
+   * At 44 columns a diff row is 38 cells after the rail -- below flow's own
+   * 40-column floor -- so every line of evidence would be shortened without
+   * saying so. Returns true when it painted, which is the caller's cue to stop.
+   */
+  renderRefusal(this: Tui): boolean {
+    if (this.inline) return false;
+    const columns = cols();
+    const rows = rowsCount();
+    if (columns >= MIN_COLS && rows >= MIN_ROWS) return false;
+    const block = refusalRows(columns, rows);
+    const top = Math.max(0, Math.floor((rows - block.length) / 2));
+    const out: string[] = [];
+    for (let i = 0; i < rows; i++) {
+      const line = block[i - top];
+      out.push(
+        line == null
+          ? ""
+          : clampVisible(
+              `  ${i - top === 0 ? brand(line) : faint(line)}`,
+              Math.max(1, columns - 1),
+            ),
+      );
+    }
+    this.lastBodyMap = null;
+    this.viewport.render(
+      { rows: out, scroll: 0, hiddenAbove: 0, caretRow: 0, caretCol: 0, zones: zones(rows, 0, 0) },
+      false,
+    );
+    return true;
+  },
+
+  /**
+   * Paint the four-region frame.
+   *
+   * Header and status strip span the window; between them the band is the
+   * workspace, one divider column and the fixed 40-cell right column. The
+   * workspace is the ONLY scrolling region, and the composer's growth is paid
+   * for by the panel -- so nothing above the divider ever moves because
+   * somebody typed.
+   */
+  renderBand(this: Tui): void {
+    const header = this.bannerLines().map((l) => withThemeBg(l));
+    // Two passes, because the composer's height decides the split and the
+    // split decides the composer's width. The width only depends on the
+    // collapse, which only depends on the columns -- so one probe is enough.
+    const probe = this.regionsNow();
+    const composer = this.bandComposer(probe);
+    const r = this.regionsNow(composer.lines.length);
+    const panes = this.panesNow(r.workspaceRows);
+
+    // Left column: the main pane, then the child's seam and rows when open.
+    const main = this.paneRows(
+      this.transcript,
+      panes.mainRows,
+      this.scroll,
+      r.workspaceCols,
+      (hidden) =>
+        `  ${faint(`${hidden} earlier line${hidden === 1 ? "" : "s"} above -- pgdn to follow the latest`)}`,
+    );
+    this.scroll = main.scroll;
+    const left = [...main.rows];
+    if (panes.headerRows > 0) left.push(this.childHeader(r, panes));
+    if (panes.open && this.childPane) {
+      const child = this.paneRows(
+        this.childPane.lines,
+        panes.childRows,
+        this.childScroll,
+        r.workspaceCols,
+      );
+      this.childScroll = child.scroll;
+      left.push(...child.rows);
+    }
+
+    // Right column: the panel on top, the composer pinned to the bottom of the
+    // band. Collapsed, both move into the left column under the strip.
+    const right: string[] = [];
+    if (r.collapsed) {
+      // `ctrl+f` at a collapsed width opens the panel OVER the workspace, the
+      // same mechanic /sessions uses, and `esc` closes it. A side panel that is
+      // stale most of the time should be one always-current row that names the
+      // key which expands it -- so the strip stays, and this is the expansion.
+      if (this.panelOverlay) {
+        left.length = 0;
+        left.push(
+          ...this.panelBlock({
+            ...r,
+            // Full width, and its rules land on the composer's: both are drawn
+            // as a 2-cell indent plus the remainder, so the overlay measures
+            // itself against the same edge the field does.
+            panelContentCols: Math.max(8, r.workspaceCols - 4),
+            panelRows: r.workspaceRows,
+          }),
+        );
+      }
+      if (r.stripRows > 0) left.push(this.stripRow(r));
+      left.push(...composer.lines.slice(-r.composerRows));
+    } else {
+      right.push(...this.panelBlock(r));
+      right.push(...composer.lines.slice(-r.composerRows));
+    }
+
+    const caretRow = r.bandTop + r.bandRows - r.composerRows + composer.caretRow;
+    const caretCol = r.collapsed ? composer.caretCol : r.dividerCol + composer.caretCol;
+
+    const frame = composeFrame({
+      rows: rowsCount(),
+      header,
+      transcript: [],
+      footer: [
+        withThemeBg(
+          this.atWidth(this.frameCols(), () =>
+            clampVisible(this.statusStr(this.frameCols()), this.frameCols()),
+          ),
+        ),
+      ],
+      scroll: 0,
+      caretRow,
+      caretCol,
+      blank: "",
+      band: {
+        regions: r,
+        left: left.map((l) => withThemeBg(l)),
+        right: right.map((l) => withThemeBg(l)),
+        divider: this.focus === "composer" ? faint(glyph("gutter")) : muted(glyph("gutter")),
+        width: visLen,
+      },
+    });
+    // The main pane's window, for the click -> transcript-row math.
+    this.lastBodyMap = {
+      bodyTop: r.bandTop,
+      bodyRows: panes.mainRows,
+      hiddenAbove: main.hiddenAbove,
+      marked: main.marked,
+    };
+    this.viewport.render(frame, !this.ownsCaret());
+  },
+
   handleResize(this: Tui): void {
     // A handler that throws once is never called again -- and an unhandled throw
     // here was almost certainly the "resize breaks it and it stops reacting to
@@ -98,7 +540,38 @@ export const FRAME_METHODS = {
   contentCols(this: Tui): number {
     const width = cols();
     if (this.inline) return width;
-    return Math.max(8, width - 1);
+    const usable = Math.max(8, width - 1);
+    // In the workspace layout the transcript lives in the LEFT column, so the
+    // measure every row is WRITTEN at is that column's, not the window's.
+    // Getting this wrong is not a cosmetic bug: rows are stored rendered, so a
+    // transcript written at 119 and clamped to 78 loses the right third of
+    // every receipt, and a resize cannot get it back.
+    //
+    // It deliberately does NOT consult the mode. A measure that changed when a
+    // picker opened would re-wrap the whole session under the user's hands.
+    if (width >= PANEL_MIN_COLS) return Math.max(8, usable - PANEL_COLS - 2);
+    return usable;
+  },
+
+  /**
+   * The window's own width, for the two regions that span it: the header and
+   * the status strip. `contentCols` is the workspace's; this is the frame's.
+   */
+  frameCols(this: Tui): number {
+    return this.inline ? cols() : Math.max(8, cols() - 1);
+  },
+
+  /** Render something at a width other than the transcript's, then put the
+   *  measure back. The override is a process global (render.ts) that flow reads
+   *  through `termWidth()`; retiring it means changing flow.ts, which is lane
+   *  D's file. Until then this is the honest way to draw two measures. */
+  atWidth<T>(this: Tui, width: number, build: () => T): T {
+    setTermWidthOverride(width);
+    try {
+      return build();
+    } finally {
+      setTermWidthOverride(this.inline ? null : this.contentCols());
+    }
   },
 
   /** Append a block to the transcript, theming each line in the *current* theme and bounding
@@ -144,7 +617,16 @@ export const FRAME_METHODS = {
    *  in the body. Clamping here (and again in composeFrame) is what stops a
    *  fast wheel from scrolling past the top into a screen of blank rows. */
   maxScroll(this: Tui): number {
+    if (this.focus === "child" && this.childPane) {
+      return Math.max(0, this.childPane.lines.length - this.childRowsNow());
+    }
     return Math.max(0, this.transcript.length - this.bodyRowsNow());
+  },
+
+  /** The open child pane's height, from the frame actually painted. */
+  childRowsNow(this: Tui): number {
+    if (!this.childPane) return 0;
+    return this.panesNow(this.regionsNow().workspaceRows).childRows;
   },
 
   /** The body height of the frame on screen. Scrolling does not change the
@@ -201,6 +683,11 @@ export const FRAME_METHODS = {
    * text actually changed.
    */
   renderViewport(this: Tui): void {
+    if (this.renderRefusal()) return;
+    if (this.bandLayout()) {
+      this.renderBand();
+      return;
+    }
     const header = this.bannerLines().map((l) => withThemeBg(l));
     const footer = this.footerBlock(header.length);
     const frame = composeFrame({
@@ -321,6 +808,13 @@ export const FRAME_METHODS = {
    *  current theme -- pinned at the top of the viewport by renderViewport(). */
   bannerLines(this: Tui): string[] {
     const { engine } = this.ctx;
+    // The header is full-width chrome in both layouts, so it is drawn at the
+    // frame's measure and bounded to it -- not to the workspace column.
+    return this.atWidth(this.frameCols(), () => this.bannerRows());
+  },
+
+  bannerRows(this: Tui): string[] {
+    const { engine } = this.ctx;
     return renderBanner({
       model: engine.getModel(),
       modelLabel: this.modelLabel(),
@@ -332,7 +826,7 @@ export const FRAME_METHODS = {
       ...this.gearScope(),
     })
       .split("\n")
-      .map((l) => this.bound(l));
+      .map((l) => clampVisible(l, Math.max(8, this.frameCols() - 1)));
   },
 
   /** Request a repaint, coalesced to at most one paint per ~16ms (60fps). Almost every input and
@@ -356,7 +850,9 @@ export const FRAME_METHODS = {
   /** Scroll the body by whole screens (PgUp/PgDn). One row of overlap, so the
    *  line you were reading at the seam is still there after the jump. */
   scrollBy(this: Tui, pages: number): void {
-    this.scrollLines(pages * Math.max(1, this.bodyRowsNow() - 1));
+    const rows =
+      this.focus === "child" && this.childPane ? this.childRowsNow() : this.bodyRowsNow();
+    this.scrollLines(pages * Math.max(1, rows - 1));
   },
 
   /**
@@ -395,6 +891,16 @@ export const FRAME_METHODS = {
 
   scrollLines(this: Tui, lines: number): void {
     if (this.inline) return;
+    // Per-region offsets: the focused pane moves, and only it. Paging a child
+    // transcript that must not disturb the main one is the whole reason the two
+    // offsets are separate fields rather than one.
+    if (this.focus === "child" && this.childPane) {
+      const next = Math.max(0, Math.min(this.maxScroll(), this.childScroll + lines));
+      if (next === this.childScroll) return;
+      this.childScroll = next;
+      this.scheduleDraw();
+      return;
+    }
     const next = Math.max(0, Math.min(this.maxScroll(), this.scroll + lines));
     if (next === this.scroll) return;
     this.scroll = next;

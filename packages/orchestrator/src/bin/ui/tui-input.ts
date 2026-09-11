@@ -492,6 +492,10 @@ export const INPUT_METHODS = {
         else this.historyNext();
         break;
       case "esc":
+        // Focus first: `esc` gains a meaning only where it had none. It never
+        // takes one away -- with the composer focused it still clears the draft
+        // and cancels a loop, which is the binding people rely on.
+        if (this.releaseFocus()) return;
         if (this.input.length === 0) {
           const cancelled = this.ctx.engine.cancelLoopTask(this.ctx.sessionId);
           if (cancelled.ok && cancelled.task) {
@@ -513,6 +517,18 @@ export const INPUT_METHODS = {
 
   ctrlKey(this: Tui, name: string): void {
     switch (name) {
+      // The focus ring. `ctrl+f` was free (tui.ts had no binding on it) and it
+      // is one key rather than the founder's shift+N, which the parser cannot
+      // see: on every terminal Rune supports shift+3 arrives as `#`, and
+      // modified keys are dropped before a handler ever runs (keys.ts).
+      case "f":
+        this.cycleFocus();
+        return;
+      // The child pane closes from anywhere, including while the composer has
+      // focus -- otherwise closing it would need two keys.
+      case "w":
+        this.closeChildPane();
+        return;
       // History, by name: the arrows read the transcript in the fixed frame
       // (arrowScrolls), so recall keeps a pair of keys that never scroll.
       case "p":
@@ -562,7 +578,9 @@ export const INPUT_METHODS = {
         this.scheduleDraw();
         break;
       case "t":
-        this.print(`  ${faint("Transcript view (ctrl+t) is coming in a later build.")}`);
+        // The transcript view this promised is `ctrl+f` to the panel, then
+        // enter on an agent. Say so rather than promising a later build again.
+        this.print(`  ${faint("Transcript view: ctrl+f to the agents panel, then enter.")}`);
         break;
     }
   },
