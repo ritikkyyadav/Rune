@@ -55,12 +55,24 @@ test("I1 — a request without a role does not compile", () => {
   expect(untagged.model).toBe("claude-sonnet-5");
 });
 
-test("I1 — a cost row cannot be recorded without saying what it was for", () => {
+test("I1 — an unattributed row is TAGGED unattributed, not dropped and not primary", () => {
+  // The enforcement is the TYPE: both calls below need a @ts-expect-error to
+  // exist at all. At runtime the money is already spent, so the row is kept —
+  // the first version of this threw, and `tests/eval/comparison/runner.ts`
+  // records inside a `catch { return false; }`, so throwing silently turned
+  // that arm's live spend cap off (V-L0 #2/#3). Kept, and labelled so the
+  // ledger does not quietly call an unexplained completion the user's work.
   const tracker = new CostTracker();
   // @ts-expect-error — the attribution argument is required, and carries `role`.
-  expect(() => tracker.record("claude-sonnet-5", "anthropic", usage)).toThrow();
+  const noAttribution = tracker.record("claude-sonnet-5", "anthropic", usage);
+  expect(noAttribution.role).toBe("unattributed");
   // @ts-expect-error — an attribution without a role is not an attribution.
-  expect(() => tracker.record("claude-sonnet-5", "anthropic", usage, {})).not.toThrow();
+  const noRole = tracker.record("claude-sonnet-5", "anthropic", usage, {});
+  expect(noRole.role).toBe("unattributed");
+  // Both rows are in the ledger, and both count toward the cap.
+  const ledger = tracker.getLedger();
+  expect(ledger.entries.length).toBe(2);
+  expect(ledger.totalListCostUsd).toBeGreaterThan(0);
 });
 
 test("I1 — every role the vocabulary names rides onto its row unchanged", async () => {

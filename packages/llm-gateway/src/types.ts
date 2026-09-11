@@ -261,7 +261,22 @@ export type CallRole =
   /** A delegated sub-agent's own turn. */
   | "subagent"
   /** Research synthesis. */
-  | "research";
+  | "research"
+  /**
+   * Nobody said. Written ONLY by `CostTracker.record`'s runtime guard, when a
+   * caller reached it with no attribution at all — which the type forbids, so
+   * in practice an untyped caller or an old compiled build.
+   *
+   * It exists because the alternatives are both worse. Throwing loses the row,
+   * and the row is what a budget cap is tested against: the first version of
+   * this did throw, and the comparison rig's OpenCode arm — whose `record` call
+   * sits inside a `catch { return false; }` — silently stopped accruing a cent,
+   * so its live spend cap could never fire. Defaulting to `primary` files the
+   * mystery as the user's own work, which is the exact misattribution requiring
+   * `role` was meant to end. So the money is counted and the row says, in one
+   * word, that it is unexplained. Seeing this in a ledger is a bug report.
+   */
+  | "unattributed";
 
 /** Every role that is Rune's overhead rather than the user's work. */
 export const GOVERNANCE_ROLES: readonly CallRole[] = [
@@ -951,9 +966,31 @@ export interface CostEntry {
   // an absent latency reads as "not measured" rather than as an instant
   // response. Every row the gateway records carries both.
 
-  /** When the request was handed to the provider. */
+  /**
+   * When the CALL was first handed to a provider — and the join key an
+   * incident's `requestStartedAt` matches (P3B I6b).
+   *
+   * Call-scoped on purpose. A retried request raises its incident on the
+   * attempt that failed and records its cost on the attempt that answered, so
+   * an attempt-scoped stamp is guaranteed NOT to appear on both — the join
+   * would resolve on every request except the rate-limited ones it exists for.
+   */
   startedAt?: Date;
-  /** `timestamp - startedAt` in milliseconds: the provider's own latency. */
+  /**
+   * When the attempt that actually answered went out, present ONLY when the
+   * call was retried or fell back — i.e. when it differs from `startedAt`.
+   * Absent means "this call went out once", so `startedAt` is also the
+   * attempt's stamp.
+   */
+  attemptStartedAt?: Date;
+  /**
+   * `timestamp - (attemptStartedAt ?? startedAt)` in milliseconds: the
+   * provider's own latency for the attempt that answered.
+   *
+   * Deliberately NOT `timestamp - startedAt` on a retried call: a request that
+   * was retried twice was not slow for the whole ladder, and charging it the
+   * back-off it waited through would hide the retry behind the provider.
+   */
   latencyMs?: number;
   timestamp: Date;
 }
@@ -1043,12 +1080,19 @@ export interface GatewayIncidentEvent {
   // The black box holds 3,284 incidents and 1,417 of them are provider rate
   // limits, against 15 recorded retries in the cost ledger: the two stores had
   // no join, so "what did this incident cost" had no answer. These two fields
-  // are the request's own identity, and with I3's `startedAt` on the cost row
-  // they name the completion exactly — no new id, no new table.
+  // are the request's own identity, and with `startedAt` on the cost row they
+  // name the completion exactly — no new id, no new table.
+  //
+  // The stamp is the CALL's, not the attempt's. The first shipped version used
+  // the attempt's and so could not resolve a single rate-limited request: the
+  // incident is raised by the attempt that failed, the cost row is written by
+  // the attempt that answered, and with real back-off the two are seconds
+  // apart. Every incident a call raises now carries the one stamp its cost row
+  // carries, whichever attempt or provider ends up serving it.
 
   /** What the request that hit this was FOR. */
   role?: CallRole;
-  /** ISO stamp of when that request went to the provider — I3's join key. */
+  /** ISO stamp of when the CALL went out — `CostEntry.startedAt`'s join key. */
   requestStartedAt?: string;
 }
 

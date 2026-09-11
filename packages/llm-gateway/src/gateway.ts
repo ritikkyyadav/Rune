@@ -270,17 +270,31 @@ export class LlmGateway {
   async infer(request: InferenceRequest): Promise<InferenceResponse> {
     const provider = this.resolveProvider(request.provider);
     let lastError: Error | undefined;
+    // The CALL's identity, taken once and shared by every attempt it makes
+    // (P3B I6b). An incident is raised by the attempt that failed and the cost
+    // row is written by the attempt that answered, so an attempt-scoped stamp
+    // can never appear on both — which is why the ledger's 1,417 rate limits
+    // had no completion to join to. This stamp does appear on both.
+    const callStartedAt = new Date();
 
     for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
       const release = this.requestGuard?.(request);
-      // Stamped per ATTEMPT, not per call: a request that was retried twice
-      // was not slow for the whole ladder, and charging it the back-off it
-      // waited through would hide the retry behind the provider (P3B I3).
-      const startedAt = new Date();
+      // Latency is stamped per ATTEMPT, not per call: a request that was
+      // retried twice was not slow for the whole ladder, and charging it the
+      // back-off it waited through would hide the retry behind the provider
+      // (P3B I3). That is what `attemptStartedAt` measures from.
+      const attemptStartedAt = new Date();
       try {
         const response = await provider.infer(request);
         release?.();
-        this.recordCost(request.model, request.provider, response.usage, request, startedAt);
+        this.recordCost(
+          request.model,
+          request.provider,
+          response.usage,
+          request,
+          callStartedAt,
+          attemptStartedAt,
+        );
         return response;
       } catch (err) {
         lastError = err as Error;
@@ -290,7 +304,14 @@ export class LlmGateway {
         if (!this.shouldRetry(err as Error, attempt)) break;
         // No stream to yield on here, but the retry is still not allowed to be
         // silent — `retryEvent` reports it to the black box on the way past.
-        this.retryEvent(request.provider, request.model, attempt, lastError, request, startedAt);
+        this.retryEvent(
+          request.provider,
+          request.model,
+          attempt,
+          lastError,
+          request,
+          callStartedAt,
+        );
         await this.backoff(lastError, attempt);
       } finally {
         release?.();
@@ -303,6 +324,11 @@ export class LlmGateway {
   async *inferStream(request: InferenceRequest, opts?: StreamOpts): AsyncGenerator<StreamEvent> {
     // Build ordered list: requested provider first, then fallbacks
     const fallbackOrder = this.getFallbackProviders(request.provider);
+    // Call-scoped, and deliberately spanning the whole fallback chain (P3B
+    // I6b): the question the join answers is "what did this incident cost",
+    // and a 429 on the provider that refused is paid for by the cost row of
+    // the provider that served. One stamp for the call keeps that answerable.
+    const callStartedAt = new Date();
 
     // The user's chosen provider is being skipped (pruned model / cooling
     // down). Say so up front — a silent per-turn model swap is worse than the
@@ -389,7 +415,7 @@ export class LlmGateway {
         const release = this.requestGuard?.(adjustedRequest);
         // Per attempt, and per PROVIDER: a request that fell back measures the
         // provider that actually served it, not the one that refused (P3B I3).
-        const startedAt = new Date();
+        const attemptStartedAt = new Date();
         try {
           const gen = provider.inferStream(adjustedRequest, opts);
           for await (const event of gen) {
@@ -400,7 +426,8 @@ export class LlmGateway {
                 providerName,
                 event.usage,
                 adjustedRequest,
-                startedAt,
+                callStartedAt,
+                attemptStartedAt,
               );
             }
             yieldedSinceReset = true;
@@ -510,7 +537,7 @@ export class LlmGateway {
               attempt,
               lastError,
               adjustedRequest,
-              startedAt,
+              callStartedAt,
             );
             await this.backoff(lastError, attempt);
             continue;
@@ -528,7 +555,7 @@ export class LlmGateway {
             attempt,
             lastError,
             adjustedRequest,
-            startedAt,
+            callStartedAt,
           );
           await this.backoff(lastError, attempt);
         } finally {
@@ -844,10 +871,13 @@ export class LlmGateway {
     model: string,
     attempt: number,
     err: Error | undefined,
-    /** The request that hit it, and when it went out — the incident's join
-     *  key back to the completion that paid for it (P3B I6b). */
+    /** The request that hit it, and when the CALL went out — the incident's
+     *  join key back to the completion that paid for it (P3B I6b). It must be
+     *  the call's stamp and not this attempt's: the cost row is written by a
+     *  LATER attempt, so an attempt-scoped stamp never matches on exactly the
+     *  retried requests this join exists for. */
     request?: Pick<InferenceRequest, "role">,
-    startedAt?: Date,
+    callStartedAt?: Date,
   ): Extract<StreamEvent, { type: "retry" }> {
     const status = (err as unknown as { status?: number } | undefined)?.status;
     const waitMs = this.retryWaitMs(err, attempt);
@@ -862,7 +892,7 @@ export class LlmGateway {
       of: this.config.maxRetries,
       waitMs,
       ...(request?.role ? { role: request.role } : {}),
-      ...(startedAt ? { requestStartedAt: startedAt.toISOString() } : {}),
+      ...(callStartedAt ? { requestStartedAt: callStartedAt.toISOString() } : {}),
     });
     return {
       type: "retry",
@@ -918,8 +948,14 @@ export class LlmGateway {
     usage: TokenUsage,
     /** The request that produced it, so the ledger can say what it was FOR. */
     request: Pick<InferenceRequest, "role" | "composition">,
-    /** When that request went to the provider (P3B I3). */
-    startedAt: Date,
+    /** When the CALL first went out — the same stamp every incident this call
+     *  raised carries, so the two stores join (P3B I6b). */
+    callStartedAt: Date,
+    /** When the attempt that actually answered went out, which is what the
+     *  provider's own latency is measured from (P3B I3). Equal to
+     *  `callStartedAt` on the overwhelming majority of calls — every one that
+     *  was not retried. */
+    attemptStartedAt: Date,
   ): void {
     try {
       const landedAt = new Date();
@@ -930,8 +966,9 @@ export class LlmGateway {
         {
           role: request.role,
           ...(request.composition ? { composition: request.composition } : {}),
-          startedAt,
-          latencyMs: Math.max(0, landedAt.getTime() - startedAt.getTime()),
+          startedAt: callStartedAt,
+          ...(attemptStartedAt.getTime() !== callStartedAt.getTime() ? { attemptStartedAt } : {}),
+          latencyMs: Math.max(0, landedAt.getTime() - attemptStartedAt.getTime()),
         },
         landedAt,
       );

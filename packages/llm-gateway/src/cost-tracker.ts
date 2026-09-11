@@ -259,11 +259,19 @@ export class CostTracker {
      * `role` has no default anywhere. The replay path — a pre-P12.1 row read
      * back out of a session log — passes `"primary"` on purpose, which is what
      * every reader already assumed of the absent field.
+     *
+     * REQUIRED, and enforced by the type rather than at runtime: a caller that
+     * somehow reaches here without it still gets its row, tagged
+     * `"unattributed"`. Dropping the row would take a budget cap's only input
+     * with it. See the guard below.
      */
     attribution: {
       role: CallRole;
       composition?: PromptComposition;
+      /** When the CALL went out — an incident's join key (P3B I6b). */
       startedAt?: Date;
+      /** When the answering attempt went out, if the call was retried. */
+      attemptStartedAt?: Date;
       latencyMs?: number;
     },
     timestamp = new Date(),
@@ -280,6 +288,15 @@ export class CostTracker {
     // competitor's invoice.
     const costUsd = billing === "metered" ? listCostUsd : 0;
 
+    // A caller that arrives with no attribution at all is a bug the type
+    // catches everywhere TypeScript looks — but this runs where it does not
+    // (an untyped call site, a stale compiled build), and there the money is
+    // already spent. Throwing would DROP the row, and the row is what a budget
+    // cap is tested against: `tests/eval/comparison/runner.ts` records inside a
+    // `catch { return false; }`, so the first version of this quietly turned
+    // that arm's live spend cap off. Count it, and say it is unexplained.
+    const role: CallRole = attribution?.role ?? "unattributed";
+
     const entry: CostEntry = {
       model,
       provider,
@@ -292,10 +309,11 @@ export class CostTracker {
       billing,
       priced,
       estimated: price?.estimated === true,
-      role: attribution.role,
-      ...(attribution.composition ? { composition: attribution.composition } : {}),
-      ...(attribution.startedAt ? { startedAt: attribution.startedAt } : {}),
-      ...(attribution.latencyMs !== undefined ? { latencyMs: attribution.latencyMs } : {}),
+      role,
+      ...(attribution?.composition ? { composition: attribution.composition } : {}),
+      ...(attribution?.startedAt ? { startedAt: attribution.startedAt } : {}),
+      ...(attribution?.attemptStartedAt ? { attemptStartedAt: attribution.attemptStartedAt } : {}),
+      ...(attribution?.latencyMs !== undefined ? { latencyMs: attribution.latencyMs } : {}),
       timestamp,
     };
     return this.recordEntry(entry);
