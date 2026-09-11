@@ -24,7 +24,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -109,6 +109,39 @@ const A2_SCRIPT: MockAction[] = [
 ];
 
 /**
+ * A1 — a citation for a command that ran and is not a check.
+ *
+ * `node demo.mjs` exits 0 and asserts nothing, so the engine logs it as
+ * `kind: "execution"` and the ledger answers `observed` with the receipt
+ * `a1-spec.md` specifies. Pilot J spent three completions and a supervisor
+ * screen rewording exactly this citation, because the old receipt did not say
+ * what was wrong with it or what to cite instead. The script here reads the
+ * reply and cites the fixture's real check on the next completion — the
+ * behaviour the sentence is for — and the run is counted against it.
+ */
+const A1_SCRIPT: MockAction[] = [
+  tools([
+    "read_back",
+    {
+      reading: "You want the version endpoint wired, and proved by something that checks it.",
+      done_when: ["the demo prints the version", "the check exits 0"],
+    },
+  ]),
+  tools(
+    ["write_file", { path: "src/api.ts", content: API_WITH_VERSION }],
+    ["write_file", { path: "src/client.ts", content: CLIENT_WITH_VERSION }],
+  ),
+  tools(["bash", { command: "node demo.mjs" }]),
+  tools(["record_evidence", { criterion: 0, command: "node demo.mjs" }]),
+  tools(["bash", { command: "node check.mjs" }]),
+  tools(["record_evidence", { criterion: 1, command: "node check.mjs" }]),
+  say("The demo prints the version and `node check.mjs` exits 0."),
+];
+
+/** The unrecognised command's own script, written beside the fixture's check. */
+const DEMO_MJS = 'console.log("version 1.0.0");\n';
+
+/**
  * Every line the run wrote to its own step log, once each.
  *
  * A `task_state` row is a full snapshot, so a line appears in every snapshot
@@ -147,6 +180,16 @@ interface Measured {
    */
   carriedForward: number;
   stopReason: string | undefined;
+  /**
+   * Lead completions whose prompt carried a `record_evidence` receipt matching
+   * a needle (1-based within the role).
+   *
+   * A1's handshake: Lane C owns the sentence, Lane A counts what it costs, and
+   * the spec names `not a recognised check` as the string this rig matches on
+   * (`a1-spec.md`, "How Lane A measures it"). Read off the mock server's own
+   * record of what was SENT, so it is the text the model actually read.
+   */
+  sawReceipt: (needle: string) => number[];
 }
 
 let dir = "";
@@ -155,10 +198,16 @@ const runs = new Map<string, Measured>();
 const logs = new Map<string, string[]>();
 const stepLogOf = (name: string): string[] => logs.get(name) ?? [];
 
-async function measure(name: string, script: MockAction[], maxTurns: number): Promise<Measured> {
+async function measure(
+  name: string,
+  script: MockAction[],
+  maxTurns: number,
+  prepare?: (fixture: S.Fixture) => void,
+): Promise<Measured> {
   const workdir = join(dir, name);
   mkdirSync(workdir, { recursive: true });
   const fixture = S.makeFixture(workdir);
+  prepare?.(fixture);
   const server = startMockModelServer({ script: { lead: script }, model: "fake-model" });
   try {
     const home = S.makeScratchHome(workdir, {
@@ -199,6 +248,10 @@ async function measure(name: string, script: MockAction[], maxTurns: number): Pr
       maxTurns: Number(budget.turnsMax ?? maxTurns),
       carriedForward: stepLog(rows).filter((e) => e.includes("carried forward")).length,
       stopReason: envelope?.stopReason,
+      sawReceipt: (needle: string) =>
+        server
+          .matching((r) => r.role === "lead" && r.text.includes(needle))
+          .map((r) => r.roleIndex),
     };
     runs.set(name, measured);
     logs.set(name, stepLog(rows));
@@ -219,6 +272,9 @@ beforeAll(async () => {
       tools(["write_file", { path: "src/extra.ts", content: "export const x = 1;\n" }]),
     ]),
     12,
+  );
+  await measure("a1-unrecognised", A1_SCRIPT, 12, (fixture) =>
+    writeFileSync(join(fixture.root, "demo.mjs"), DEMO_MJS),
   );
 }, 600_000);
 
@@ -264,6 +320,36 @@ describe("A2 — a citation that arrived one completion late", () => {
     // for exactly the scripted completions and no more.
     const m = runs.get("a2")!;
     expect(m.completions).toBeLessThanOrEqual(A2_SCRIPT.length);
+    expect(m.origins.filter((o) => o.startsWith("gate:"))).toEqual([]);
+    expect(m.turnsUsed).toBeLessThanOrEqual(m.maxTurns);
+  });
+});
+
+describe("A1 — a citation for a command that is not a check", () => {
+  /**
+   * Measured on this script, on this machine: **7 completions**, exactly the
+   * script's, no gate, and the receipt on the prompt of the completion that
+   * follows the citation.
+   *
+   * §5.2's boundary applies here as it does to A2: a fixed script cannot show a
+   * model choosing to cite a real check instead of rewording, because the script
+   * decides. What this pins is the handshake — the sentence Lane C writes
+   * reaches the model, on the turn it can act on, and costs the run nothing.
+   */
+  test("the receipt names what was wrong, on the next completion's prompt", () => {
+    const m = runs.get("a1-unrecognised")!;
+    const saw = m.sawReceipt("not a recognised check");
+    // The citation is completion 4; its reply is read by completion 5 and
+    // recurs in the transcript from there.
+    expect(saw.length).toBeGreaterThan(0);
+    expect(saw[0]).toBe(5);
+    // And it says it ONCE about that command: the run does not reword it.
+    expect(m.sawReceipt("execution receipt only")[0]).toBe(5);
+  });
+
+  test("the run costs the script and nothing more", () => {
+    const m = runs.get("a1-unrecognised")!;
+    expect(m.completions).toBe(A1_SCRIPT.length);
     expect(m.origins.filter((o) => o.startsWith("gate:"))).toEqual([]);
     expect(m.turnsUsed).toBeLessThanOrEqual(m.maxTurns);
   });
