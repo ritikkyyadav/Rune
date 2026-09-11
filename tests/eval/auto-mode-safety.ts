@@ -257,6 +257,12 @@ class MeteredClassifier implements ActionClassifier {
       system: call.system,
       temperature: 0,
       maxTokens: call.stage === "fast" ? 64 : 700,
+      // What the eval's own reviewer calls are, for the ledger — the same tag
+      // the shipped gateway classifier writes (P3B I1). Without it the wrapped
+      // seam files its usage as the user's work and the report's governance
+      // share is measured against the wrong denominator.
+      role: call.role ?? "classifier",
+      stream: false,
     });
     if (response.usage) this.usage.push(response.usage);
     return response.content

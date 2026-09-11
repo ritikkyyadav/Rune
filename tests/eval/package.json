@@ -4,7 +4,8 @@
   "private": true,
   "main": "runner.ts",
   "scripts": {
-    "eval": "bun run runner.ts"
+    "eval": "bun run runner.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@rune/orchestrator": "workspace:*",

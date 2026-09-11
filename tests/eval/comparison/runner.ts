@@ -124,6 +124,50 @@ export function checkTask(
   write(join(artifactDir, "acceptance.log"), detail);
   return { passed: result.status === 0 && protectedSource, detail: detail.slice(-1500) };
 }
+/**
+ * The OpenCode arm's LIVE spend cap.
+ *
+ * Extracted from `runPilot`'s stdout callback so it can be compiled and tested
+ * on its own. It could not be, before: the accounting sat in an inline closure
+ * inside a `catch { return false; }`, in a workspace with no typecheck, so when
+ * `CostTracker.record`'s signature changed the stale call throwing at runtime
+ * read as "this line is not a step" — the ledger stayed at zero and the cap
+ * could never fire. On a paid route that is an uncapped-spend path.
+ *
+ * `observe` never throws: a shape it does not recognise is not a step, and a
+ * benchmark's stdout is not a contract.
+ */
+export function openCodeBudgetWatcher(
+  model: string,
+  budgetUsd: number,
+): { observe(event: unknown): boolean; totalListCostUsd(): number } {
+  const monitor = new CostTracker();
+  return {
+    observe(event: unknown): boolean {
+      const row = event && typeof event === "object" ? (event as Record<string, any>) : null;
+      if (row?.type !== "step_finish") return false;
+      const t = row.part?.tokens;
+      if (!t) return false;
+      monitor.record(
+        model,
+        "openai",
+        {
+          inputTokens: t.input ?? 0,
+          outputTokens: (t.output ?? 0) + (t.reasoning ?? 0),
+          cacheReadTokens: t.cache?.read ?? 0,
+          cacheCreationTokens: t.cache?.write ?? 0,
+        },
+        // Every OpenCode step is the competitor's own turn as far as this side
+        // can tell — the same reading `opencodeCost` takes of its database.
+        // Stated rather than inherited (P3B I1).
+        { role: "primary" },
+      );
+      return monitor.getLedger().totalListCostUsd >= budgetUsd;
+    },
+    totalListCostUsd: () => monitor.getLedger().totalListCostUsd,
+  };
+}
+
 export async function runPilot(options: PilotOptions) {
   const tasks = COMPARISON_TASKS.filter(
     (task) => !options.tasks || options.tasks.includes(task.id),
@@ -216,7 +260,7 @@ export async function runPilot(options: PilotOptions) {
         write(join(dir, "prompt.txt"), prompt);
         const { command, env } = prepareHarness(arm, options, dir, root, prompt);
         console.log(`${task.id} run ${run + 1}: ${arm}`);
-        const monitor = new CostTracker();
+        const budget = openCodeBudgetWatcher(options.model, options.budgetUsd);
         let providerFailure: string | undefined;
         const sourceBefore =
           options.runeCommand.length === 1 && existsSync(options.runeCommand[0]!)
@@ -230,23 +274,19 @@ export async function runPilot(options: PilotOptions) {
           stdoutPath: join(dir, "events.jsonl"),
           stderrPath: join(dir, "stderr.log"),
           onLine(line) {
+            // The `try` covers the PARSE and nothing else. It used to wrap the
+            // accounting too, which is how a wrong-arity `record` call turned
+            // this arm's live spend cap off without a word (V-L0 #2/#3).
+            let event: unknown;
             try {
-              const event = JSON.parse(line);
-              providerFailure = providerFailureReason(event) ?? providerFailure;
-              if (arm !== "opencode") return false;
-              if (event.type !== "step_finish") return false;
-              const t = event.part?.tokens;
-              if (!t) return false;
-              monitor.record(options.model, "openai", {
-                inputTokens: t.input ?? 0,
-                outputTokens: (t.output ?? 0) + (t.reasoning ?? 0),
-                cacheReadTokens: t.cache?.read ?? 0,
-                cacheCreationTokens: t.cache?.write ?? 0,
-              });
-              return monitor.getLedger().totalListCostUsd >= options.budgetUsd;
+              event = JSON.parse(line);
             } catch {
+              // Harnesses interleave plain log lines with their event stream.
               return false;
             }
+            providerFailure = providerFailureReason(event) ?? providerFailure;
+            if (arm !== "opencode") return false;
+            return budget.observe(event);
           },
         });
         let cost: ReturnType<typeof runeCost>;

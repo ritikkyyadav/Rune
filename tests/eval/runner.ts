@@ -261,7 +261,9 @@ async function main() {
     const treatmentResults = await runSuite(tasks, {
       ...armOpts,
       arm: v.id,
-      configOverrides: variantConfig(v.id),
+      // `args.ab`, not `v.id`: `Variant.id` is a plain string on the registry's
+      // own interface, and only the argument carries `isVariantId`'s narrowing.
+      configOverrides: variantConfig(args.ab),
     });
     const treatmentReport = buildReport(
       treatmentResults,
