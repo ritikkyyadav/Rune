@@ -67,6 +67,38 @@ const WIDENED_SCRIPT: MockAction[] = [
 ];
 
 /**
+ * The shapes the widenings reached too far for, and that V-B proved unsafe.
+ *
+ * Each of these cleared mechanically at `bc8977f` — no model ever read them —
+ * and each is one token away from a shape on WIDENED_SCRIPT above: a command
+ * runner rather than a server, a preload flag rather than `--check`, a forge
+ * download rather than a view, a credential enumeration rather than a resource
+ * one. They are back under the supervisor, and this arm is what that costs.
+ *
+ * Every one is inert here. `just` and `pm2` are not on this machine's PATH,
+ * `--require` names a module that does not exist and `--version` exits before
+ * a preload would load, `gh` has no remote and no credential, and `aws` is not
+ * installed. The DECISION is taken before any of that matters.
+ *
+ * None of them may be a bare `--version` or `-h`: that is the READ-ONLY safe
+ * tier, which never reaches `isOrdinaryDevCommand` and records no decision at
+ * all — the first draft of this arm used `just --version` and measured the
+ * safe tier instead of the supervisor.
+ */
+const REVERTED_COMMANDS = [
+  "just --list",
+  "pm2 list",
+  "node --require ./rune-lane-b-no-such-preload.js --version",
+  "gh run download 999999999",
+  "aws iam list-access-keys --user-name rune-lane-b-nobody",
+] as const;
+
+const REVERTED_SCRIPT: MockAction[] = [
+  ...REVERTED_COMMANDS.map(bash),
+  { kind: "text", text: "Checked the toolchain. Done." },
+];
+
+/**
  * Work that is genuinely unusual: an outbound POST carrying a workspace file,
  * a recursive delete outside the workspace, a credential path, and a package
  * publish. None of these may clear mechanically — each must reach the reviewer
@@ -155,6 +187,7 @@ async function runArm(opts: {
 let toolsBin = "";
 let after: Arm;
 let before: Arm;
+let reverted: Arm;
 let unusual: Arm;
 let hung: Arm;
 
@@ -171,6 +204,12 @@ beforeAll(async () => {
     lead: WIDENED_SCRIPT,
     autoConfig: 'supervisor = "all"\n',
     prompt: "Check the toolchain, then look up the NCBI datasets API documentation.",
+  });
+  reverted = await runArm({
+    name: "reverted",
+    lead: REVERTED_SCRIPT,
+    autoConfig: 'supervisor = "unusual"\n',
+    prompt: "Check the toolchain versions I listed.",
   });
   unusual = await runArm({
     name: "unusual",
@@ -229,6 +268,31 @@ test("B1 — the reviewer-call count on the ordinary script: 6 before, 1 after",
   const shellDecisions = decisions(after).filter((d) => d.toolName === "bash");
   expect(shellDecisions).toHaveLength(5);
   for (const d of shellDecisions) expect(d.source).toBe("supervised_tier");
+});
+
+test("B1 — the shapes the widening reached too far for are watched again, and still run", () => {
+  // What the repair costs, measured rather than asserted. V-B proved five
+  // shapes cleared with no model reading them: a command runner, a preload
+  // flag, a forge download, a credential enumeration under a `list-` verb, and
+  // a process manager. Each is back under the supervisor.
+  //
+  // The count is strictly above the widened script's, which is the point — and
+  // it is the whole price, because every decision below is still a
+  // supervised-tier ALLOW. Oversight came back; nothing was blocked. That
+  // distinction is the one the lane got wrong: `isOrdinaryDevCommand` never
+  // gated a command, it only decided whether anything would read it.
+  const rows = decisions(reverted).filter((d) => d.toolName === "bash");
+  expect(rows).toHaveLength(REVERTED_COMMANDS.length);
+  for (const d of rows) {
+    expect(d.source).toBe("supervised_tier");
+    expect(d.verdict).toBe("allow");
+  }
+  const screens = reverted.server.countOf("utility");
+  expect(screens).toBeGreaterThan(after.server.countOf("utility"));
+  // One screen per command at worst, and the supervisor batches, so the floor
+  // is what matters: these are not silently clearing any more.
+  expect(screens).toBeGreaterThanOrEqual(2);
+  expect(screens).toBeLessThanOrEqual(REVERTED_COMMANDS.length);
 });
 
 test("B1 — after the widening nothing on the ordinary script blocks on a reviewer", () => {
@@ -307,13 +371,26 @@ test("B2 — the hung review lands as a decision and the run stays visibly alive
   expect(hung.run.envelope()?.ok).toBe(true);
 });
 
-test("B3 — a skipped background review reports how long the queue had waited", () => {
-  // The `all` arm is the only one that queues, so it is the only one that can
-  // produce a skip. When it does, the row carries the wait; when it does not,
-  // the field is still the one the audit would read.
-  const skips = decisions(before).filter((d) => d.source === "supervisor_skipped");
-  for (const d of skips) {
-    expect(typeof d.timings?.queueWaitMs).toBe("number");
+test("B3 — the queue's own wait reaches the persisted audit row", () => {
+  // This test used to loop over `decisions(before).filter(supervisor_skipped)`
+  // and assert inside the loop. That list is EMPTY on a seven-action script
+  // against a 64-deep queue, so the test asserted nothing whatsoever — V-B
+  // caught it. Forcing an overflow needs two hundred actions and a gated
+  // reviewer, which is a unit-test shape, and it lives in
+  // `tests/unit/orchestrator/supervisor-queue.test.ts` ("a slow reviewer never
+  // denies ordinary work"), where the list is checked for being non-empty
+  // first and then for being monotonic.
+  //
+  // What this arm CAN prove is the other half: that the field survives the
+  // projection into the database, on rows that really exist here. Every
+  // supervised decision the `all` arm persisted carries a timings object, and
+  // where a queue wait was recorded it is a non-negative number rather than a
+  // string or a null.
+  const rows = decisions(before).filter((d) => d.timings);
+  expect(rows.length).toBeGreaterThan(0);
+  const withWait = rows.filter((d) => d.timings.queueWaitMs !== undefined);
+  for (const d of withWait) {
+    expect(typeof d.timings.queueWaitMs).toBe("number");
     expect(Number(d.timings.queueWaitMs)).toBeGreaterThanOrEqual(0);
   }
 });

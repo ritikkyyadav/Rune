@@ -169,9 +169,14 @@ test("a slow reviewer never denies ordinary work; what went unsupervised is writ
     },
     () => ({ gateway: {} as LlmGateway, provider: "anthropic", model: "mock" }),
   );
-  const rows: Array<{ source: string; verdict: string; reason: string }> = [];
+  const rows: Array<{ source: string; verdict: string; reason: string; queueWaitMs?: number }> = [];
   controller.setDecisionObserver((review) =>
-    rows.push({ source: review.source, verdict: review.verdict, reason: review.reason }),
+    rows.push({
+      source: review.source,
+      verdict: review.verdict,
+      reason: review.reason,
+      queueWaitMs: review.timings?.queueWaitMs,
+    }),
   );
   const run = controller.startRun(["Read the whole tree."]);
   const action = (id: number) => ({
@@ -197,6 +202,24 @@ test("a slow reviewer never denies ordinary work; what went unsupervised is writ
   expect(skipped.length).toBeGreaterThan(0);
   expect(skipped.every((r) => r.verdict === "allow")).toBe(true);
   expect(skipped[0]!.reason).toMatch(/waiting on the reviewer/);
+  // B3 — the wait the skip is explained WITH, on the rows that actually
+  // exist. The integration arm this claim first shipped in produced zero
+  // skipped rows, so its `for (const d of skips)` asserted nothing at all;
+  // the overflow is forced here instead, and the list is checked for being
+  // non-empty before it is checked for being right.
+  const waits = skipped.map((r) => r.queueWaitMs);
+  expect(waits.length).toBeGreaterThan(0);
+  expect(waits.every((w) => typeof w === "number" && Number.isFinite(w) && w >= 0)).toBe(true);
+  // Monotonic: the head of the queue cannot change while the reviewer is
+  // gated, so every later skip is explained by a wait at least as long as the
+  // one before it. A wait that went backwards would mean the number described
+  // some other item.
+  const ordered = waits as number[];
+  for (let i = 1; i < ordered.length; i++)
+    expect(ordered[i]!).toBeGreaterThanOrEqual(ordered[i - 1]!);
+  // And it is the queue's own clock, not a placeholder: the reason string
+  // quotes the same number the audit row carries.
+  expect(skipped.at(-1)!.reason).toMatch(/the oldest for \d+\.\d+s/);
   release();
   await run.drainSupervisor();
   expect(calls.length).toBeGreaterThan(0);
