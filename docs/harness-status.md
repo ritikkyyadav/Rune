@@ -636,9 +636,10 @@ checkpoint table. `rune doctor prune-checkpoints` was **DRY RUN only** — it re
 ### What is still not proven
 
 **Linux was not re-run at all.** The containment image was not rebuilt: the Docker daemon does not
-answer (sandboxed, the socket refuses; unsandboxed, `docker version` produces nothing and is still
-blocked when a 15 s kill lands), and free space was 6.6 GiB against an 8 GiB floor. No attempt was
-made to repair Docker. Three things therefore remain open, all named by F1: `clippy -D warnings`
+answer — sandboxed the socket refuses, and unsandboxed `docker version` produces nothing and is
+still blocked when a 15 s kill lands. It was probed twice, twenty minutes apart, the second time with
+10 GiB free, so the disk (6.6 GiB when the pass began, under its 8 GiB floor) is not what stopped it.
+No attempt was made to repair Docker. Three things therefore remain open, all named by F1: `clippy -D warnings`
 has **never run green on Linux** since the dead `has_pair` helper was removed; the Linux `bun`
 integration step has never loaded with `process-identity.ts` present; and `probe.sh`'s
 `~/.local/bin -> $HOME` re-probe — V1-4's **actual** escape — has never been executed. V1-4's four

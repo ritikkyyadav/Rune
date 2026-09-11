@@ -770,12 +770,12 @@
       "ran": false,
       "result": "LINUX IMAGE NOT RERUN.",
       "reasons": [
-        "The Docker daemon does not answer. Sandboxed, `docker version` is refused at unix:///Users/ritikyadav890/.docker/run/docker.sock (permission denied). UNSANDBOXED, the same command produces no output at all and is still blocked on the socket when a 15 s kill lands. Docker Desktop's UI processes are alive; its Linux VM / API is not.",
-        "Free space was 6.6 GiB, below the 8 GiB floor this pass was given for a docker rebuild."
+        "The Docker daemon does not answer. Sandboxed, `docker version` is refused at unix:///Users/ritikyadav890/.docker/run/docker.sock (permission denied). UNSANDBOXED, the same command produces no output at all and is still blocked on the socket when a 15 s kill lands. Docker Desktop's UI processes are alive; its Linux VM / API is not. Probed twice, unsandboxed, 20 minutes apart — the second time with 10 GiB free — with the same result.",
+        "Free space was 6.6 GiB when the pass began, below the 8 GiB floor it was given for a docker rebuild. This reason NO LONGER APPLIES: the pass's own work freed space to 10 GiB and the re-probe above was taken there. The daemon is the reason the image was not rerun."
       ],
       "repairAttempted": false,
       "log": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/v4b-docker.log",
-      "logSha256": "50f59b6f3a12a81a534187b23d1b31f3a67e6ce08ac9106294104ebacabd7e21",
+      "logSha256": "e8c98f37a4beedb04c61de1ceaea5abf3d84b7de384809a924b0804900f0fa55",
       "f1PartialLinuxFacts": {
         "note": "What F1 DID get from Linux before the machine ran out of disk, at a source snapshot differing from 9876957 only by the removal of the dead `has_pair` helper (F1's own handoff plus matching test names; `source-f1.tar` was not kept, so this is an inference, not a diff).",
         "cargoTest": "cargo test --locked -p rune-sandbox on Linux: 29 passed / 0 failed, naming all five new linux::tests and spawn::tests::a_network_plugin_with_no_hosts_is_told_why_nothing_connects and the three child_ledger identity tests by name",
