@@ -1181,6 +1181,14 @@ export class AgentLoop {
    *
    * Bounded: oldest-first eviction at `CONTENT_HASH_MEMORY`, because a long
    * run touches a lot of files and this is bookkeeping, not state.
+   *
+   * What it cannot see is a file changed by something that is not a tool call —
+   * a `bash` command that rewrites it. A rewrite back to the hash the run last
+   * SAW would then read as "changed nothing" when the shell had moved it in
+   * between. The narrow direction, and the shapes that matter are covered
+   * elsewhere: `multi_edit` and `apply_patch` compare against the file they
+   * just read, so this memory is only ever the answer for `write_file` and
+   * `edit_file`.
    */
   private readonly contentHashes = new Map<string, string>();
 
