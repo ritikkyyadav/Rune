@@ -537,3 +537,44 @@ One more, from the same pass, that is a defect rather than a scope note:
   `verification-20260910b.json` note that excused the over-width lines as "entirely Bengali script"
   was measured on a 3-session render and is corrected in that file's `corrections[0]`; this row is
   the real one — Phase 2C — Claude
+
+## Recorded by the 2026-09-11 (later) re-verification (V4b), not fixed
+
+Found while grading the twelve findings above on `33cea48` and on the installed binary. Manifest:
+[`../evidence/verification-20260911b.json`](../evidence/verification-20260911b.json).
+
+- **`tests/integration/lifecycle-durability.test.ts` + `tests/helpers/scenario.ts` — the integration
+  gate is flaky when `RUNE_TEST_PLAYWRIGHT` is set, and one flake costs 120 s and fourteen red
+  tests.** Two runs of the identical command: **215 pass / 5 skip / 14 fail** then **229 / 5 / 0**.
+  All fourteen were scenario A, which is 45/0 alone and 47/0 beside the browser suite; with the
+  variable unset the directory is 227/0/7 twice over. The driver's message is
+  `waited 120000ms for the long-running bash call; saw lifecycle, task_kind, error, error, error,
+error, turn_complete, lifecycle, lifecycle` — the run under test had already ended, four consecutive
+  errors having exhausted its retries, and the thirteen downstream assertions then failed in
+  fractions of a millisecond each. Two separable problems, and the second is the cheap one:
+  `Run.waitForEvent` (`scenario.ts:548-573`) rejects only on its own deadline, so make it also reject
+  when the child exits or emits `turn_complete`, and the suite fails in seconds naming the real
+  reason instead of two minutes later naming the wrong one. The first problem — why the engine's
+  fetch to its own loopback mock failed four times under whole-directory load — was not reproduced
+  and is unexplained — Phase 2 re-verification — Claude
+- **`packages/orchestrator/src/engine.ts:6438-6447` — a spared reap is invisible.**
+  `reapOrphanedToolChildren` files a `crash.dirty_exit` incident for every `killed` row and nothing
+  at all for a `kept` or `gone` one. So the founder whose leftover row was spared with
+  `identity mismatch: pid N started at …, not …` — the entire point of the reaper's identity check —
+  has no way to learn it happened, and the installed-binary proof for that finding had to read the
+  reason string back from source rather than from the running binary. One `debug`-severity incident
+  for a `kept` row with a reason would close it — Phase 2 re-verification — Claude
+- **`crates/rune-sandbox/src/linux.rs` — `cargo clippy -D warnings` has never run green on Linux.**
+  F1's only Linux run was red with `error: function has_pair is never used`; the helper was removed
+  afterwards and the symbol is confirmed gone from the committed file, but the gate has not been
+  re-run because Docker's daemon has not answered since. The same run never loaded the Linux `bun`
+  integration step (`Cannot find module './tools/process-identity'` — the tarball predated the file
+  being tracked), and `probe.sh`'s `~/.local/bin -> $HOME` re-probe — **V1-4's actual escape**, as
+  opposed to the unit test that models it — has never been executed at all. Three things, one image
+  rebuild — Phase 2 re-verification — Claude
+- **`.codex/audit-20260910/linux/run-suite.sh` — the Linux suite's credential step is fail-open and
+  its `bun` step is skip-blind.** `case "$out" in *SYNTHETIC-CREDENTIAL*) fail ;; *) echo ok` reports
+  `ok` whenever the marker is absent, including when the command failed for an unrelated reason; and
+  `bun test` exits 0 on an all-skipped run, so that step's contribution to "ALL STEPS PASSED" depends
+  on a human reading the counts. Raised by V1 (finding 8), repeated by F1, still unfixed, and it
+  gates every Linux claim any manifest makes — Phase 2 re-verification — Claude

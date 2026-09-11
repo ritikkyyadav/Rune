@@ -6,20 +6,28 @@ The combined tree has now completed fresh validation and is committed and instal
 at the end of this file for what that does and does not cover. Dated evidence files preserve the
 source and artifacts that each earlier result actually tested.
 
-**The overall goal is not yet achieved.** Phases 0 and 1 of the handoff are done: one reconciled
-build, honestly gated, installed and smoke-tested. Phases 2–7 are not. An overall OpenCode
-capability score, equal task cost, dependable long-running self-improvement, and a claim to be the
-world's best harness are not established.
+**The overall goal is not yet achieved.** Phases 0, 1 and 2 of the handoff are done — one reconciled
+build, honestly gated, installed and smoke-tested, and one durable task lifecycle — and all three
+have since been re-read by adversarial verifiers, whose twelve findings were fixed and re-verified.
+Phases 3–7 are not done. An overall OpenCode capability score, equal task cost, dependable
+long-running self-improvement, and a claim to be the world's best harness are not established.
 
 ## Installed and reviewable
 
-Latest installation: **Rune v0.4.1-dev+c053ca4**, built from commit `c053ca4` on
-`gear/phase-0-stabilize` and certified by [the Phase 1 manifest](evidence/verification-20260910b.json).
-Source is still marked dirty because the docs in this commit were written after the build.
+Latest installation: **Rune v0.4.1-dev+33cea48**, built from commit `33cea48` on
+`gear/phase-0-stabilize` from a clean tree (`RUNE_SOURCE_DIRTY=0`) and certified by
+[the re-verification manifest](evidence/verification-20260911b.json).
 
-- Current CLI SHA-256: `78239eb482d93198b59bb8cff882605b731cd2504fe5574583bb7feddf246407`
-- Current native SHA-256: `f849020a257b10c26eb6f72ad97c7c49960be48170e5e1faf5259031996633c2`
-  (unchanged by that install — the previous build already carried this same `crates/` source)
+- Current CLI SHA-256: `a58f592060542f95522202ebe31fadb0b6b5d4fbcc7680a9db21e426aa347f29`
+- Current native SHA-256: `c5b44f6e3620aae0cf82941a9e155fb95097815b1cd673eb9c98aa1347a28416`
+- The `rune` launcher shim is unchanged across every install in this series:
+  `5a22d1513ef3a12596add9c53f2591f1f46a8938a3ef9f8cd7db0c3f6edfc2f5`
+
+Two earlier installations this file used to name as "latest" — `v0.4.1-dev+c053ca4` (CLI
+`78239eb4…`, native `f849020a…`) from Phase 1, and `v0.4.1-dev+b1b1262` (CLI `d0f03687…`, native
+`01d8600b…`) from Phase 2 — are superseded. V3's evidence sub-audit found the first of those still
+sitting here after the second had shipped; the fix is this block, and the rule is that the "latest
+installation" is re-stated in the same commit that installs it.
 
 The last complete validation recorded by this session was **Rune v0.4.1-dev+0946e42**, built from commit
 `0946e42cc17fa3ef25da2937abbce5133fdaac4b` plus the completed-plan correction described below.
@@ -414,8 +422,18 @@ Logs and hashes under `.codex/audit-20260910/handoff/gates-phase2/`.
 **Installed.** `bash scripts/install.sh`, no override flag, no guard triggered.
 `rune-compiled` `78239eb4…6407` → `d0f03687…a9c2`; `rune-tools` `f849020a…33f2` → `01d8600b…ee48`;
 the `rune` launcher shim is byte-identical. `rune --version` → `Rune v0.4.1-dev+b1b1262`.
-`rune doctor` and `rune tools-smoke` green. `rune doctor prune-checkpoints` **DRY RUN only** —
-`--apply` was never passed and the founder's database was not modified.
+`rune tools-smoke` green; `rune doctor` reported ✓ on every build-facing line and carried a `✗` and
+two `!` about the founder's accounts and database, which the sentence originally here called "green"
+and which V3 corrected. `rune doctor prune-checkpoints` **DRY RUN only** — `--apply` was never
+passed and the founder's database was not modified.
+
+> **Superseded 2026-09-11 (later).** The two hashes and the version in this paragraph are no longer
+> what is installed. Twelve findings against the work above were fixed and the tree was rebuilt:
+> the installed build is now **`Rune v0.4.1-dev+33cea48`**, CLI `a58f5920…a29f`, native
+> `c5b44f6e…8416`, from a clean `33cea48` (`RUNE_SOURCE_DIRTY=0`). See
+> [the 2026-09-11 (later) entry](#2026-09-11-later--the-twelve-findings-re-verified-and-the-fixes-graded-on-the-installed-binary)
+> and [its manifest](evidence/verification-20260911b.json). The lines above are left standing
+> rather than rewritten so that what was claimed and what superseded it can both be read.
 
 **The orphan proof, on the installed binary.** The scenario's own fixture, scratch `RUNE_HOME` and
 loopback mock, driving `~/.rune/bin/rune` rather than `bun rune-cli.ts`. Before the kill: `node
@@ -530,3 +548,107 @@ file_ did not hold:
 
 The lines above are left standing rather than rewritten, so that what was claimed and what was found
 can both be read.
+
+## 2026-09-11 (later) — the twelve findings re-verified, and the fixes graded on the installed binary
+
+A fourth pass (V4b) re-ran the work of the three verifiers and the three fix lanes from the entry
+above, against `33cea48` on a clean tree, and graded the fixes on the binary the founder runs rather
+than only on the source. It wrote nothing to `~/.rune/rune.db`, made **zero live model calls**, and
+started from the position that every prior claim was unproven until reproduced. Manifest:
+[`evidence/verification-20260911b.json`](evidence/verification-20260911b.json). Raw logs:
+`.codex/audit-20260910/handoff/verify/v4/`.
+
+### Where each claim stands
+
+**Planned.** Nothing new. This pass proposed no work; it graded work already done.
+
+**Implemented.** All twelve HIGH/MEDIUM findings and five of V2's six defect areas have a fix in the
+tree, across `ca92940`, `0fc1c99`, `db09279`, `08b2439`, `311e901`, `9876957` and `5220b05`. The
+sixth — a `report`-shaped plan waiving the settled-plan gate — is deliberately **not** fixed; it is
+pinned by a characterisation test and left as the founder's decision.
+
+**Tested on this source.** Every fix has a named test that passes at `33cea48`. All twenty proving
+and migrated test files together: **204 pass / 0 fail**. Full gates:
+
+| Gate                                                                     | Result                                                                                              |
+| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `bun test tests/unit`                                                    | **4,579 pass / 0 fail / 1 skip** (364 files)                                                        |
+| `bun test tests/integration`                                             | **227 pass / 0 fail / 7 skip** (40 files) — see the flake below                                     |
+| `bun test tests/integration/lifecycle-durability.test.ts`                | **45 pass / 0 fail**, alone, 24.5 s                                                                 |
+| `cargo test --locked --workspace`                                        | **109 pass / 0 fail** (rune-index 15, rune-sandbox 36, rune-tools 58)                               |
+| `cargo clippy --all-targets --all-features -- -D warnings`               | 0 warnings, every crate re-checked (the sources were touched first, so not a cache hit)             |
+| `cargo fmt --all -- --check` · `git diff --check` · `prettier --check .` | clean, each with its own log recording command and exit                                             |
+| `bun run typecheck --force` · `bun run lint --force`                     | 14/14 · 7/7, 0 cached                                                                               |
+| `bun run eval` · `bun run eval:auto-safety --offline`                    | **63/63**, baseline unchanged · 227 scenarios, P 90.0 / R 89.1 / F1 89.6, 0 live requests           |
+| strict scratch `tsc` over the 21 test files changed since `5775166`      | **0 errors in any test file**; 21 pre-existing unused-symbol errors in `packages/`, hence `exit: 2` |
+
+Six of the fixes carry a **mutation proof** — the fix reverted, the test watched to go red on its
+exact assertion, the revert undone, the test watched to go green — covering all five HIGH findings:
+the reaper's identity check, the unwired delegation store, the worker-id collision (two tests),
+`apply_patch` reaching the spine, and the unpersisted rung demotion.
+
+**Installed and smoke-tested.** The binary is `v0.4.1-dev+33cea48` (CLI `a58f5920…`, native
+`c5b44f6e…`), installed from a clean tree with no override flag; all three artifacts were re-hashed
+at the start of this pass and are byte-identical to the install record. Three proofs were run
+against `~/.rune/bin/rune` itself, each through the scenario rig's fixture under a scratch
+`RUNE_HOME` whose only route is a loopback mock:
+
+- **Orphans.** Engine SIGKILLed mid-`bash` with `node long.mjs` running under a real `rune-tools`:
+  exit 137, and **0.32 s** of polled `ps` later nothing survived.
+- **Delegation.** One dispatch wrote **2 `delegation_lease`** and **3 `delegation_checkpoint`** rows,
+  and a **second process** resumed the `task_id` — `success: true`, not "Unknown task_id". V3
+  measured 0 and 0 for these on the shipped engine, including on the founder's own database.
+- **Pid reuse.** Two hand-written ledger rows, both with a dead owner, neither with a `pgid`. The row
+  whose start time was a lie left its live `sleep` **alive**; the row whose start time was true had
+  its `sleep` **reaped** — in the same pass, by the installed engine's own startup reap. The second
+  row is the control: without it, "the stranger survived" could mean the reaper never ran.
+
+`rune doctor` is **not green** and this file will not call it that again: every build-facing line is
+`✓` (build current at `33cea48d`, `rune-tools` ok, mcp ok, recorder clean), and it carries one `✗`
+pair and three `!` lines about retired free models, a stale provider-health entry and the 184 MB
+checkpoint table. `rune doctor prune-checkpoints` was **DRY RUN only** — it reports
+`would remove 428 rows, 106 MB — nothing was deleted`, and `--apply` has still never been run.
+`~/.rune/rune.db` `cost` rows were 2,931 before and after, newest row unmoved.
+
+**Published.** Nothing. No push, no tag, no release. `v0.4.1` remains the last public tag.
+
+### What this pass found that the earlier ones did not
+
+- **A shipped example was graded against a rule it no longer met.** F1's macOS host-enforcement fix
+  made `bun test tests/integration` red: the example plugin declares `example.com:443`, which
+  Seatbelt can only widen to `*:443`, so it is now refused — and `plugin-examples.test.ts` is the one
+  gate that runs the example **as shipped**, while `plugin-tools-sandbox.test.ts` rewrites the hosts
+  to loopback first and stayed green. Fixed in `33cea48`, which also asserts that the refusal reaches
+  `drainMcpNotices` naming the tool and the flag, rather than the tool vanishing without a word.
+- **The integration gate is flaky with Playwright enabled.** With `RUNE_TEST_PLAYWRIGHT` set, one run
+  of `bun test tests/integration` gave **215 / 5 skip / 14 fail** and the next gave **229 / 5 / 0**.
+  All fourteen were scenario A of `lifecycle-durability`, which is 45/0 alone and 47/0 beside the
+  browser suite. The run under test had already ended — four consecutive errors exhausted its retries
+  and the turn completed — but `Run.waitForEvent` rejects only on its own 120 s deadline, so the
+  driver waited the full two minutes and thirteen downstream assertions then failed in fractions of a
+  millisecond each. Two separable problems: an unexplained loopback failure under load, and a rig
+  that turns one flake into 120 s and fourteen red tests. Neither is fixed; both are in the backlog.
+- **A spared reap is invisible.** `reapOrphanedToolChildren` files an incident for every `killed` row
+  and nothing for a `kept` one, so the founder whose process was spared for `identity mismatch: …` —
+  the entire point of the reaper fix — cannot see that it happened. Proof (c) had to read the string
+  back from source rather than from the running binary.
+
+### What is still not proven
+
+**Linux was not re-run at all.** The containment image was not rebuilt: the Docker daemon does not
+answer (sandboxed, the socket refuses; unsandboxed, `docker version` produces nothing and is still
+blocked when a 15 s kill lands), and free space was 6.6 GiB against an 8 GiB floor. No attempt was
+made to repair Docker. Three things therefore remain open, all named by F1: `clippy -D warnings`
+has **never run green on Linux** since the dead `has_pair` helper was removed; the Linux `bun`
+integration step has never loaded with `process-identity.ts` present; and `probe.sh`'s
+`~/.local/bin -> $HOME` re-probe — V1-4's **actual** escape — has never been executed. V1-4's four
+`linux::tests` are `#[cfg(target_os = "linux")]` and ran **zero** times on this host; `cargo test`
+here confirms it (no test path beginning `linux::` appears in the log). What macOS could check was
+checked: `linux.rs` parses and is formatted, and the symbol Linux clippy called dead is gone.
+
+Also unchanged: **Windows** (the watchdog is `#[cfg(unix)]`; the reaper falls back to killing on
+liveness alone there and says so — reasoned, never run); **no live model call anywhere**, so every
+durability claim holds against a scripted gateway and none against a real provider; the prune has
+still never been applied; V3's **F8** (the "usable partial result" test asserts that recovery
+_completed_) and **F9** (`auto_compaction` rows at ~58 KB each) have no lane; and `command -v rune`
+still resolves the legacy `~/.alan/bin` shim.

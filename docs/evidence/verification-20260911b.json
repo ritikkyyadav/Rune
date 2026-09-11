@@ -1,0 +1,1073 @@
+{
+  "kind": "local-verification",
+  "recordedAt": "2026-09-11",
+  "phase": "Claude Code handoff, Phases 0-2 — RE-VERIFICATION after the three adversarial verifications (V1/V2/V3) and the three fix lanes (F1/F2/F3). This manifest grades the fixes, not the original work, and it grades them on the INSTALLED binary as well as on the source.",
+  "sourceCommit": "33cea48d2d72b58e9814415f8d0bf670ed83a422",
+  "version": "Rune v0.4.1-dev+33cea48",
+  "supersedes": {
+    "manifest": "docs/evidence/verification-20260911.json",
+    "note": "That manifest certified Phase 2 at b1b1262 and remains the record of what was claimed then. This one records what is true at 33cea48, after the twelve findings its own work produced were fixed. Its three `corrections` entries are answered in `correctionsAnswered` below."
+  },
+  "workingTree": {
+    "branch": "gear/phase-0-stabilize",
+    "status": "clean at the start of this pass (`git status --porcelain` empty)",
+    "note": "Every artifact this pass wrote is under `.codex/`, which is gitignored. The only tracked files it changed are the four documents in `commits` below."
+  },
+  "commits": [
+    {
+      "sha": "ca92940",
+      "lane": "F3",
+      "what": "workers: an id two sessions cannot share, a lease a stranger cannot clear, a checkpoint that knows what it cut (V3-F2/F4/F5/F6/F7)"
+    },
+    {
+      "sha": "0fc1c99",
+      "lane": "F2",
+      "what": "the delegated store exists before the tools that write to it; a stale claim is written down; a revision is measured per record (V3-F1, V2 §4a/b/c)"
+    },
+    {
+      "sha": "db09279",
+      "lane": "F2",
+      "what": "a check that ran nothing is a receipt; a path in a comment is not scope (V2 §2a/b)"
+    },
+    {
+      "sha": "08b2439",
+      "lane": "F2",
+      "what": "what a call wrote comes from one predicate, apply_patch included (V2 §7a/b)"
+    },
+    {
+      "sha": "311e901",
+      "lane": "F1",
+      "what": "tools: the reaper is gated on process identity, and one pass finishes the reap (V1-1, V1-1b)"
+    },
+    {
+      "sha": "9876957",
+      "lane": "F1",
+      "what": "sandbox: a toolchain root is judged where it resolves, and macOS says what it widened (V1-4, V1-5b, V1-5c, V1-6b, V1-7b)"
+    },
+    {
+      "sha": "5220b05",
+      "lane": "F3",
+      "what": "tests: the scenario rig's zero-spend claim is impossibility, not arithmetic (V3-F3)"
+    },
+    {
+      "sha": "ae2a13f",
+      "lane": "F3",
+      "what": "evidence: both manifests' corrections, the harness-status addendum, the backlog, the handoff row"
+    },
+    {
+      "sha": "87a32a3",
+      "lane": "V4",
+      "what": "tests: the migrated files answer to the strict gate they were admitted under"
+    },
+    {
+      "sha": "33cea48",
+      "lane": "V4",
+      "what": "tests: the shipped example is graded against the host rule it now meets — the one real defect the previous V4 attempt found and fixed (see `realDefectsFound`)"
+    }
+  ],
+  "artifacts": {
+    "rune-tools-debug": {
+      "path": "/Users/ritikyadav890/Project/Alan/target/debug/rune-tools",
+      "sha256": "bf8bdb69f483c1a1e95df8b797d7e1aa767fa92f4cd11128edac17aae75c6821",
+      "bytes": 22116680,
+      "built": "cargo build --locked -p rune-tools (this pass, 2026-09-11 13:33 local; it recompiled rune-sandbox and rune-tools, so this is not a cache-hit hash)",
+      "note": "Exported as RUNE_TOOLS_BIN and RUNE_TOOLS_BINARY on every bun test line below. It answers verification-20260911.json corrections[0], which asked for a build whose artifact hash is reproducible."
+    },
+    "installedBefore": {
+      "source": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/installed/before.txt",
+      "sha256": "4531573376d6338a197683887a7c5437fb326012ce2f12f2c8c07523e1daa697",
+      "capturedAt": "2026-09-10T20:18:07Z",
+      "version": "Rune v0.4.1-dev+b1b1262",
+      "rune": {
+        "sha256": "5a22d1513ef3a12596add9c53f2591f1f46a8938a3ef9f8cd7db0c3f6edfc2f5",
+        "bytes": 2641
+      },
+      "rune-compiled": {
+        "sha256": "d0f03687af414fa18eef856fc0d0e68c32ae65ee48130d65dcd20079f8bda9c2",
+        "bytes": 76474082
+      },
+      "rune-tools": {
+        "sha256": "01d8600becbcaf4bbd8fe0843d9f5c6d3ceb69b8737e798c2715a8df7a2cee48",
+        "bytes": 11279440
+      }
+    },
+    "installedAfter": {
+      "source": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/installed/after.txt",
+      "sha256": "80e0139270f47c69247e4f23cbc167ded8646b6463b39a63337f06248758380d",
+      "capturedAt": "2026-09-10T20:18:42Z",
+      "version": "Rune v0.4.1-dev+33cea48",
+      "rune": {
+        "sha256": "5a22d1513ef3a12596add9c53f2591f1f46a8938a3ef9f8cd7db0c3f6edfc2f5",
+        "bytes": 2641,
+        "note": "the launcher shim is byte-identical across the install"
+      },
+      "rune-compiled": {
+        "sha256": "a58f592060542f95522202ebe31fadb0b6b5d4fbcc7680a9db21e426aa347f29",
+        "bytes": 76490594
+      },
+      "rune-tools": {
+        "sha256": "c5b44f6e3620aae0cf82941a9e155fb95097815b1cd673eb9c98aa1347a28416",
+        "bytes": 11279392
+      },
+      "meta": {
+        "RUNE_SOURCE_COMMIT": "33cea48d2d72b58e9814415f8d0bf670ed83a422",
+        "RUNE_SOURCE_DIRTY": "0",
+        "RUNE_BUILD_VERSION": "0.4.1-dev+33cea48",
+        "RUNE_INSTALL_FILE_GUARD": "macos-uchg"
+      },
+      "reverifiedAt": "2026-09-11T08:08Z",
+      "reverification": "All three live binaries re-hashed at the start of this pass and diffed against after.txt: byte-identical. No reinstall was needed or performed."
+    }
+  },
+  "findings": {
+    "note": "The twelve HIGH/MEDIUM findings are the table in docs/harness-status.md's 2026-09-11 addendum. V2 did not grade its findings, so its five defect areas follow at its own granularity. `mutation` means: the fix was reverted in the working tree, the proving test was watched to go RED with the exact assertion, the revert was undone, and the test was watched to go GREEN. Mutation logs are the previous V4 attempt's and were reused only where the red log names the specific failing assertion and the green log shows the same test passing.",
+    "graded": [
+      {
+        "id": "V1-1",
+        "severity": "HIGH",
+        "verifier": "V1",
+        "lane": "F1",
+        "fixCommit": "311e901",
+        "finding": "The restart reaper kills a pid it never spawned: child-ledger.ts had no identity check of any kind, so a recycled number inside the 24-hour window was signalled. V1 proved it by killing a /bin/sleep the engine never started.",
+        "migratedTest": "tests/unit/tool-registry/child-ledger-identity.test.ts > \"a live process the ledger cannot vouch for is left alone, not killed\"",
+        "reverification": "pass (v4b-proving-tests.log, 204/0 over the 20 changed test files; also inside unit 4579/0)",
+        "mutation": {
+          "red": "mut1-red.log",
+          "green": "mut1-green.log",
+          "redAssertion": "expect(report.map(r => r.outcome)).not.toContain(\"killed\") — Received: [ \"killed\" ]",
+          "redSha256": "5a1f5db100f96a8bfa5e3a64111056918d743a35a860710578f8d5ff3888d6d8",
+          "greenSha256": "307e465000ca640aab6bf8e50af17faecee26ac049881f953aed505f8ad90a82"
+        },
+        "installedProof": "(c) — see installedProofs[2]. The installed engine's startup reap left a live stranger alone and reaped a vouched-for row in the same pass."
+      },
+      {
+        "id": "V3-F1",
+        "severity": "HIGH",
+        "verifier": "V3",
+        "lane": "F2",
+        "fixCommit": "0fc1c99",
+        "finding": "08d99f8's headline was false in the shipped engine: registerDelegationTools() ran 281 lines before this.delegatedSessions was constructed, so every real dispatch used a store with no SessionManager — zero delegation_checkpoint and zero delegation_lease rows, and a resumed task_id answered \"Unknown task_id\".",
+        "migratedTest": "tests/integration/engine-delegation-durability.test.ts > \"one dispatch writes lease and checkpoint rows, and a second Engine resumes the task_id\"; tests/integration/engine-delegation-resume.test.ts (V3's own, two real processes); tests/integration/lifecycle-durability.test.ts > \"the dispatched child left a lease and a checkpoint the resumed process can read\"",
+        "reverification": "all three pass (v4b-proving-tests.xml)",
+        "mutation": {
+          "red": "mut4-red.log",
+          "green": "mut4-green.log",
+          "redAssertion": "expect(rowsOfType(engineA, session, \"delegation_lease\")).toBeGreaterThan(0) — Received: 0",
+          "redSha256": "04bf16ff57bd6929a3e2dde8f25e9417ae2c5696a9d348b7275111c8a722b1dc",
+          "greenSha256": "ae92b3f7e1c654e96e5b457740109fb70502ec4b18094541bf2017d02e2b52ca"
+        },
+        "installedProof": "(b) — see installedProofs[1]. On ~/.rune/bin/rune: 2 delegation_lease rows, 3 delegation_checkpoint rows, and a second process resumed the task_id."
+      },
+      {
+        "id": "V3-F2",
+        "severity": "HIGH",
+        "verifier": "V3",
+        "lane": "F3",
+        "fixCommit": "ca92940",
+        "finding": "Two parallel sessions in one repository allocate the same worker id: the counter key was 8 characters of a time-bucketed UUIDv7 (one bucket per 65,536 ms) and its read-modify-write had no lock. V3 measured 24 colliding ids across two processes.",
+        "migratedTest": "tests/unit/orchestrator/worker-worktree.test.ts > \"two sessions started in the same millisecond get a counter each\" and \"two processes allocating at once never mint the same id\" (two spawned processes, 40 allocations each)",
+        "reverification": "both pass (v4b-proving-tests.xml)",
+        "mutation": {
+          "red": "mut5-red.log + mut5b-red.log",
+          "green": "mut5-green.log + mut5b-green.log",
+          "redAssertion": "mut5: expect(namespaceOf(b1)).not.toBe(namespaceOf(a1)) — both \"w01a08ce9\". mut5b: expect(idsA.filter(id => idsB.includes(id))).toEqual([]) — 38 colliding ids listed by name.",
+          "redSha256": [
+            "20540ae5a92b09e0e90301b2d04ac822ddd20558aabd3795027252dc7c357372",
+            "f1e42a2e3b42eab2fc5000110cecee15462915805b82bdc6ab74eab53af8b9d8"
+          ],
+          "greenSha256": [
+            "b512cedd08acddd4b060b246a8d965a5ee06a30e72c74f687ed7eeab4823a841",
+            "04f8826a2a4c0d9dd02779512a7b0e83712cd6323b0a284cd228f4f8f57ecb1a"
+          ]
+        }
+      },
+      {
+        "id": "V1-1b",
+        "severity": "MEDIUM",
+        "verifier": "V1",
+        "lane": "F1",
+        "fixCommit": "311e901",
+        "finding": "One restart does not finish the reap — owner rows were judged before the child rows whose owner that same pass had just SIGKILLed, so the orphan was kept until a second pass.",
+        "migratedTest": "tests/integration/tool-child-reap-ordering.test.ts > \"one reap kills the orphan whose owner it killed in the same pass\" (drives a real rune-tools and a real sleep 90)",
+        "reverification": "pass (v4b-proving-tests.xml; also inside integration 227/0)",
+        "mutation": null
+      },
+      {
+        "id": "V1-4",
+        "severity": "MEDIUM",
+        "verifier": "V1",
+        "lane": "F1",
+        "fixCommit": "9876957",
+        "finding": "A Linux toolchain root that is itself a symlink to $HOME is bound whole, and the guard test compared unresolved paths lexically, so ~/.ssh/id_rsa became readable through /root/.local/bin/.ssh/id_rsa.",
+        "migratedTest": "crates/rune-sandbox/src/linux.rs::tests::{a_toolchain_root_that_is_a_symlink_to_the_home_is_refused, a_toolchain_root_that_resolves_above_a_credential_store_is_refused, a_toolchain_root_resolves_through_a_harmless_symlink, no_bound_toolchain_root_is_a_parent_of_a_credential_store}",
+        "reverification": "NOT RUN ON THIS HOST. linux.rs is #[cfg(target_os = \"linux\")] and this is darwin with no linux rustup target; `cargo test --locked --workspace` ran 0 tests whose path starts `linux::` (grep -c '^test linux::' on the log is 0). The only execution anywhere is F1's partial Linux image run, at a source snapshot that differs from 9876957 by the removal of the dead `has_pair` helper. Docker did not answer this pass, so it could not be redone. See notProven[0].",
+        "partialCheckOnThisHost": "`rustfmt --check --edition 2024 crates/rune-sandbox/src/linux.rs` exits 0 (the file parses and is formatted), and `grep has_pair` is empty while `has_bind_at`/`touches` have 6 call sites — so the symbol Linux clippy called dead is gone. That is not Linux clippy. (v4b-linux-rs-parse.log)",
+        "mutation": null
+      },
+      {
+        "id": "V1-5b",
+        "severity": "MEDIUM",
+        "verifier": "V1",
+        "lane": "F1",
+        "fixCommit": "9876957",
+        "finding": "macOS silently widened a declared plugin host to a whole port (api.example.com:443 became remote ip \"*:443\") with notes: [], where Linux refuses the same declaration and says so.",
+        "migratedTest": "crates/rune-sandbox/src/spawn.rs::tests::{a_named_host_is_reported_as_widened_to_its_whole_port, a_loopback_endpoint_is_enforced_exactly_as_declared, one_widened_endpoint_widens_the_whole_plan, a_host_without_a_port_is_reported_rather_than_silently_widened}; tests/integration/plugin-tools-sandbox.test.ts > \"a backend that filters by port but not by host\" (3 tests)",
+        "reverification": "all pass on THIS host — the four spawn:: tests are in the 36 rune-sandbox tests this pass ran on darwin, and the three integration tests pass in v4b-proving-tests.xml. This is the one Linux-adjacent finding fully graded on macOS, because the widening it is about is Seatbelt's.",
+        "mutation": null,
+        "note": "This behaviour change is what commit 33cea48 had to correct: the shipped example plugin declares example.com:443 and is now refused on every sandboxed platform. See realDefectsFound[0]."
+      },
+      {
+        "id": "V1-7b",
+        "severity": "MEDIUM",
+        "verifier": "V1",
+        "lane": "F1",
+        "fixCommit": "9876957",
+        "finding": "install.sh copies four artifacts to *.backup-<epoch> on every install and nothing ever prunes them. Live on this machine at the time: 97 backup files, 24 generations, ~/.rune/bin at 2.0 GB — on a founder with zero budget.",
+        "migratedTest": "none (shell). F1 proved report_backups in a scratch harness over fixtures and flagged that it had never executed inside a REAL install, in particular the chflags nouchg path under INSTALL_FILE_GUARD=macos-uchg.",
+        "reverification": "PROVEN IN A REAL INSTALL. The 2026-09-10T20:18Z install of 33cea48 printed the advisory (installed/install.log:45-47, quoted in installedSmokes) and deleted nothing; installed/after.txt shows all four live artifacts still carrying uchg afterwards. --prune-backups was deliberately NOT run: a backup is the only way back from a bad install and this is the founder's only machine.",
+        "mutation": null
+      },
+      {
+        "id": "V3-F3",
+        "severity": "MEDIUM",
+        "verifier": "V3",
+        "lane": "F3",
+        "fixCommit": "5220b05",
+        "finding": "The durability suite's zero-spend guard asserted the row count of the founder's live ~/.rune/rune.db, which other processes write and WAL-checkpoint; it failed 2 of 3 verification runs that spent nothing.",
+        "migratedTest": "tests/integration/lifecycle-durability.test.ts + tests/helpers/scenario.ts:ledgerRowsAttributable — the claim is now impossibility in three layers (scratch home whose only route is the mock; a credential-free launch env; a real child asked from inside the run to write back its own environment variable NAMES).",
+        "reverification": "pass — lifecycle-durability alone: 45 pass / 0 fail, 24.5 s, and its diagnostic line reads `~/.rune/rune.db cost rows 2931 -> 2931; newest 2026-09-10T19:20:44.046Z -> (unchanged)` (v4b-durability-alone.log).",
+        "mutation": null
+      },
+      {
+        "id": "V3-F4",
+        "severity": "MEDIUM",
+        "verifier": "V3",
+        "lane": "F3",
+        "fixCommit": "ca92940",
+        "finding": "The boundary-checkpoint dedup hashed the compaction OUTPUT, which truncates every tool result at 1,500 characters and collapses every image, so a second boundary differing only past that cut was never written and the child re-ran that call on resume.",
+        "migratedTest": "tests/unit/orchestrator/delegated-sessions.test.ts > \"G10 — two boundaries the compaction truncates alike are still saved apart\" and \"G10 — an image is not a hole in the checkpoint: its placeholder names the bytes it replaced\"",
+        "reverification": "both pass (v4b-proving-tests.xml)",
+        "mutation": null
+      },
+      {
+        "id": "V3-F5",
+        "severity": "MEDIUM",
+        "verifier": "V3",
+        "lane": "F3",
+        "fixCommit": "ca92940",
+        "finding": "The 2 MiB per-run checkpoint budget stopped silently — a bare return, no event, no field — so a long child's crash granularity collapsed to \"the final save only\" with nothing recording when.",
+        "migratedTest": "tests/unit/orchestrator/delegated-sessions.test.ts > \"G10 — when the byte budget stops mid-run checkpointing, the record says so\" (12 rounds of ~300 KB; asserts the saves both STOP and ANNOUNCE, exactly one notice)",
+        "reverification": "pass (v4b-proving-tests.xml)",
+        "mutation": null
+      },
+      {
+        "id": "V3-F6",
+        "severity": "MEDIUM",
+        "verifier": "V3",
+        "lane": "F3",
+        "fixCommit": "ca92940",
+        "finding": "The resume lease identified its holder by pid alone: a recycled pid held a task_id for the full 30 minutes, and — the dangerous direction — a lease written on another machine was cleared the instant its pid looked dead locally.",
+        "migratedTest": "tests/unit/orchestrator/delegated-sessions.test.ts > \"G12 — a recycled pid does not inherit the lease its predecessor held\" and \"G12 — a lease taken on another machine is never cleared by a local pid probe\"",
+        "reverification": "both pass (v4b-proving-tests.xml)",
+        "mutation": null
+      },
+      {
+        "id": "V3-F7",
+        "severity": "LOW/MEDIUM",
+        "verifier": "V3",
+        "lane": "F3",
+        "fixCommit": "ca92940",
+        "finding": "The worker reaper destroyed a dead worker's gitignored files and reported a clean reap: git status --porcelain does not list them and add -A does not stage them.",
+        "migratedTest": "tests/unit/orchestrator/worker-worktree.test.ts > \"a dead worker's ignored output goes onto its branch rather than into the bin\" and \"ignored output too large to keep leaves the checkout in place, with a reason\"",
+        "reverification": "both pass (v4b-proving-tests.xml)",
+        "mutation": null
+      }
+    ],
+    "v2Ungraded": [
+      {
+        "area": "apply_patch never reached the spine",
+        "severity": "HIGH (V2's own word)",
+        "lane": "F2",
+        "fixCommit": "08b2439",
+        "finding": "agent-loop.ts:3505 was a local args.path-only definition of \"what did this call write\". APPLY_PATCH_SCHEMA has no path, so writtenFiles/touchedFiles stayed empty, checkRelatedness returned \"unscoped\", and an unrelated check closed the step.",
+        "migratedTest": "tests/unit/orchestrator/agent-loop-spine-writes.test.ts > \"apply_patch records what it touched, so an unrelated check cannot close the step\"; tests/integration/engine-files-changed.test.ts (2 tests)",
+        "reverification": "all three pass (v4b-proving-tests.xml)",
+        "mutation": {
+          "red": "mut2-red.log",
+          "green": "mut2-green.log",
+          "redAssertion": "expected {writtenFiles:[\"src/csv.ts\"], lastCheck: undefined, unproven:\"no_evidence\"}, received {writtenFiles:[], lastCheck:true, unproven:undefined}",
+          "redSha256": "f1f0579b44e16839325c41db015231171026591fab4115bd9d8337025dc801c8",
+          "greenSha256": "79aaf6d090aed9a5f6c5b77bfa4854f6a50371477c3ad5e57649b365cc0eb381"
+        }
+      },
+      {
+        "area": "the rung demotion was never persisted",
+        "severity": "HIGH (V2's own word)",
+        "lane": "F2",
+        "fixCommit": "0fc1c99",
+        "finding": "restoreBrief seeded lastBriefDigest from the criteria AFTER demoteStaleCriteria mutated them, so the digest matched and both persistBrief() calls hit the early return; the durable record still claimed `verified` against a HEAD that had moved.",
+        "migratedTest": "tests/integration/engine-lifecycle-restart.test.ts > \"a demoted criterion is written to the log, not just to memory\"",
+        "reverification": "pass (v4b-proving-tests.xml)",
+        "mutation": {
+          "red": "mut3-red.log",
+          "green": "mut3-green.log",
+          "redAssertion": "expect(briefs).toHaveLength(2) — Received length: 1",
+          "redSha256": "128267e140270d3f58ce269c116c6b9361b4c6a95b2ae0484e221e92a8dc8824",
+          "greenSha256": "c3784b28d38da9f8cab3488d983181650e6b0af50cc7859eb7ee98f58db64d42"
+        }
+      },
+      {
+        "area": "a check that ran nothing was a whole-project verdict; relatedness read the text the classifier blanks",
+        "severity": "MEDIUM",
+        "lane": "F2",
+        "fixCommit": "db09279",
+        "migratedTest": "tests/unit/orchestrator/verification-command-shapes.test.ts — three \"runs nothing, so it is not a whole-project verdict\" (bun/cargo/pytest) and three \"does not make an unrelated inline assertion related\" (comment / log string / Python comment); tests/unit/orchestrator/agent-loop-spine-writes.test.ts > \"a check that runs NOTHING cannot close a step it never exercised\"",
+        "reverification": "all seven pass (v4b-proving-tests.xml)",
+        "mutation": null
+      },
+      {
+        "area": "a dirty-tree claim was never stale; a claim decayed one rung per call",
+        "severity": "MEDIUM",
+        "lane": "F2",
+        "fixCommit": "0fc1c99",
+        "migratedTest": "tests/unit/orchestrator/lifecycle-stale-evidence.test.ts > \"a claim recorded on a DIRTY tree goes stale even while HEAD stands still\" and \"one change costs one rung: the same revision never demotes twice\"",
+        "reverification": "both pass (v4b-proving-tests.xml)",
+        "mutation": null
+      },
+      {
+        "area": "the TUI footer dropped apply_patch",
+        "severity": "LOW",
+        "lane": "F2",
+        "fixCommit": "08b2439",
+        "migratedTest": "tests/integration/engine-files-changed.test.ts > \"a caller with no result still gets every file the patch named\"",
+        "reverification": "pass (v4b-proving-tests.xml)",
+        "mutation": null,
+        "note": "F2 did not satisfy V2's assertion as literally written (an EMPTY patch, no result, expected to name two files — no honest implementation can do that). It asserts the real thing instead. Re-checked here and agreed with."
+      },
+      {
+        "area": "a report-shaped plan waives the settled-plan gate",
+        "severity": "LOW",
+        "lane": "F2",
+        "fixCommit": null,
+        "status": "NOT FIXED — PINNED. Left as the founder's decision per the director.",
+        "migratedTest": "tests/unit/orchestrator/agent-loop-spine-writes.test.ts > \"a plan whose only step is REPORT-shaped still waives the gate — pinned, not endorsed\"",
+        "reverification": "pass — i.e. the behaviour is still there and is now measured rather than silent (v4b-proving-tests.xml)",
+        "mutation": null
+      }
+    ]
+  },
+  "step1ArtifactAudit": {
+    "note": "The previous V4 attempt was terminated by a rate limit mid-pass. Its artifacts were audited one by one before any was reused. A log was reused only when it carries a real summary (counts and/or exit) for source that commit 33cea48 cannot have changed — that commit touches tests/integration/plugin-examples.test.ts and nothing else.",
+    "table": [
+      {
+        "artifact": "mut1..mut5b red/green (6 pairs)",
+        "verdict": "REUSED",
+        "why": "Each red log names the specific failing test and quotes the exact assertion and received value; each green log shows the same test passing. That is what a mutation log has to show, and these do."
+      },
+      {
+        "artifact": "gate-unit.log/.xml (4579 pass / 1 skip / 0 fail)",
+        "verdict": "RERUN ANYWAY",
+        "why": "Reusable in principle (33cea48 is outside tests/unit), but it is a 57 s gate and the headline number should be this pass's own. Rerun gave the identical 4579/1/0 (v4b-unit.log)."
+      },
+      {
+        "artifact": "gate-integration.log/.xml (227 pass / 7 skip / 0 fail)",
+        "verdict": "RERUN ANYWAY",
+        "why": "Its header claims it ran after 33cea48; rerun reproduces it exactly, 227/7/0 in 83 s (v4b-integration-noplaywright.log). See newFindings[0] for what the rerun ALSO turned up."
+      },
+      {
+        "artifact": "gate-integration-run1-red.log (226/7/1)",
+        "verdict": "REUSED as evidence",
+        "why": "The RED half of the plugin-examples defect at 9876957 — it is why commit 33cea48 exists."
+      },
+      {
+        "artifact": "fix-plugin-examples.log/.xml",
+        "verdict": "REUSED as evidence",
+        "why": "The targeted green run of plugin-examples.test.ts immediately after 33cea48. Superseded for gate purposes by v4b-proving-tests."
+      },
+      {
+        "artifact": "gate-typecheck.log (14/14, --force, 0 cached)",
+        "verdict": "REUSED",
+        "why": "`bun run typecheck --force` is per-package `tsc --noEmit` over `src/**/*.ts` (packages/*/tsconfig.json). No package tsconfig includes tests/, so 33cea48 cannot move it."
+      },
+      {
+        "artifact": "gate-lint.log (7/7, --force, 0 cached)",
+        "verdict": "REUSED",
+        "why": "`prettier --check src/` per package; same argument."
+      },
+      {
+        "artifact": "gate-browser.log (2 pass / 0 fail, Playwright)",
+        "verdict": "REUSED",
+        "why": "Its own command line and exit 0 are in the log; browser-sandbox.test.ts is untouched by 33cea48. Independently re-observed this pass: the same 2 tests pass inside v4b-integration-playwright-run2 (229/5/0) and v4b-durability-with-browser (47/0)."
+      },
+      {
+        "artifact": "gate-cargo-fmt.log",
+        "verdict": "RERUN",
+        "why": "It records `HEAD: 87a32a3`, the parent of 33cea48. Cheap. Rerun at 33cea48: exit 0, clean (v4b-cargo-fmt.log)."
+      },
+      {
+        "artifact": "gate-cargo-test.log",
+        "verdict": "RERUN",
+        "why": "Real per-crate counts but NO command line and NO exit status — it cannot be told apart from a partial run. Rerun records both: 109 pass / 0 fail (v4b-cargo-test-workspace.log)."
+      },
+      {
+        "artifact": "gate-cargo-build.log",
+        "verdict": "RERUN",
+        "why": "72 bytes, `Finished dev profile in 0.24s` and nothing else: a cache hit with no command, no exit and no artifact hash. Rebuilt this pass; the artifact sha256 is in `artifacts`."
+      },
+      {
+        "artifact": "gate-clippy.log",
+        "verdict": "RERUN — SILENT GATE #1",
+        "why": "72 bytes, `Finished dev profile in 0.51s`, no `Checking` line: a pure cache hit that proves nothing about these sources. This is one of the two silent gates the previous attempt flagged."
+      },
+      {
+        "artifact": "gate-clippy-forced.log",
+        "verdict": "SUPERSEDED",
+        "why": "It defeats the cache (the `Checking` lines are there) but its command is `-p rune-sandbox -p rune-tools`, not the workspace-wide gate. Replaced by v4b-cargo-clippy-workspace.log: `cargo clippy --all-targets --all-features -- -D warnings` after touching every crate .rs, exit 0, all three crates re-checked."
+      },
+      {
+        "artifact": "step1-linux-rs-parse.log",
+        "verdict": "RERUN — SILENT GATE #2",
+        "why": "ZERO BYTES. The second of the two silent gates. Redone as v4b-linux-rs-parse.log, which records its command, its exit and what it does and does not establish."
+      },
+      {
+        "artifact": "gate-format-check.log",
+        "verdict": "RERUN",
+        "why": "`bunx prettier --check .` DOES cover tests/*.ts, so 33cea48 could have moved it, and the log records HEAD 87a32a3. Rerun: exit 0, all matched files clean (v4b-format-check.log)."
+      },
+      {
+        "artifact": "gate-git-diff-check.log",
+        "verdict": "RERUN",
+        "why": "Recorded at 87a32a3; trivially cheap. Rerun at 33cea48: exit 0 (v4b-git-diff-check.log)."
+      },
+      {
+        "artifact": "gate-eval.log / gate-eval-auto-safety.log",
+        "verdict": "RERUN",
+        "why": "Both carry a command line and exit 0, but neither records a HEAD, and a 17 s / 1 s gate is not worth inheriting. Rerun at 33cea48: 63/63 baseline unchanged; 227 scenarios P 90.0 / R 89.1 / F1 89.6, 0 live requests."
+      },
+      {
+        "artifact": "step2-tsc-tests-strict.log",
+        "verdict": "RERUN",
+        "why": "It reports 0 test-file errors, but its file set is not recorded IN the log and 33cea48 changed a test file. Rerun over the 21 test files changed since 5775166, with the list written into the log (v4b-tsc-tests-strict.log)."
+      },
+      {
+        "artifact": "step1-units / step1-integration / step1-durability / step1-cargo",
+        "verdict": "REUSED as orientation only",
+        "why": "Subsets taken during the previous attempt's own step 1. Every claim they support is re-measured here by a full gate; none is cited as a gate."
+      },
+      {
+        "artifact": "step1-tsc-all-tests.log / step1-tsc-calibration.log",
+        "verdict": "REUSED as calibration",
+        "why": "They establish the pre-existing package-level unused-symbol baseline that the strict test gate has to be read against. Not gates."
+      },
+      {
+        "artifact": "probe.xml",
+        "verdict": "REUSED as orientation",
+        "why": "A single-test junit probe of child-ledger-identity. Superseded by v4b-proving-tests.xml."
+      },
+      {
+        "artifact": "installed/{before,after,install.log,smoke-*}.txt",
+        "verdict": "REUSED",
+        "why": "The install genuinely happened at 2026-09-10T20:18Z from a clean 33cea48 tree (RUNE_SOURCE_DIRTY=0), and all three live binaries still hash to after.txt today. Re-smoked this pass regardless: doctor, prune dry run and three new installed proofs."
+      }
+    ]
+  },
+  "checks": [
+    {
+      "name": "unit",
+      "command": "RUNE_TOOLS_BIN=<debug> RUNE_TOOLS_BINARY=<debug> bun test tests/unit </dev/null",
+      "exit": 0,
+      "result": {
+        "pass": 4579,
+        "fail": 0,
+        "skip": 1,
+        "files": 364,
+        "expectCalls": 16586
+      },
+      "wallSeconds": 57.0,
+      "skips": [
+        {
+          "count": 1,
+          "reason": "needs a case-sensitive disk (historical; unchanged from Phase 1 and Phase 2)"
+        }
+      ],
+      "note": "Sandbox OFF.",
+      "reuse": "rerun by this pass (V4b)",
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/v4b-unit.log",
+      "logSha256": "60134e21b3f0034d250df733be8d9528e99dec6fb3484c88ed7972ebf8a8b4e9"
+    },
+    {
+      "name": "integration",
+      "command": "RUNE_TOOLS_BIN=<debug> RUNE_TOOLS_BINARY=<debug> bun test tests/integration </dev/null   (RUNE_TEST_PLAYWRIGHT unset, as in every previous manifest)",
+      "exit": 0,
+      "result": {
+        "pass": 227,
+        "fail": 0,
+        "skip": 7,
+        "files": 40,
+        "expectCalls": 1122
+      },
+      "wallSeconds": 83.2,
+      "note": "Sandbox OFF. Reproduces the previous attempt's gate-integration.log exactly. 2 of the 7 skips are the Chromium tests, which skip without RUNE_TEST_PLAYWRIGHT and are run as their own gate. See newFindings[0]: with that variable SET, this same command produced 215/5/14 once and 229/5/0 once.",
+      "reuse": "rerun by this pass (V4b)",
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/v4b-integration-noplaywright.log",
+      "logSha256": "70b245f176d49f6b92811fee83e65828151c4e1ee734450e75523ef1447fbe1d"
+    },
+    {
+      "name": "integration with Playwright, run 2",
+      "command": "RUNE_TEST_PLAYWRIGHT=<module> bun test tests/integration </dev/null",
+      "exit": 0,
+      "result": {
+        "pass": 229,
+        "fail": 0,
+        "skip": 5,
+        "files": 40
+      },
+      "wallSeconds": 85.3,
+      "note": "The clean half of newFindings[0]. Run 1 of the identical command is v4b-integration.log: 215/5/14.",
+      "reuse": "rerun by this pass (V4b)",
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/v4b-integration-playwright-run2.log",
+      "logSha256": "c2f8b5efd78bf8c81ab0b2a5126ac906f5fcb12c5c39754d458f0f9697ba786a"
+    },
+    {
+      "name": "the 20 proving and migrated test files, together",
+      "command": "RUNE_TOOLS_BIN=<debug> RUNE_TOOLS_BINARY=<debug> bun test <20 files> --reporter=junit </dev/null",
+      "exit": 0,
+      "result": {
+        "pass": 204,
+        "fail": 0,
+        "skip": 0,
+        "files": 20
+      },
+      "wallSeconds": 42.5,
+      "note": "Every test named in `findings` above is in this run's junit, by name, green. XML: v4b-proving-tests.xml (sha256 374d87f3644059dc2112e657204f89495ff0dae93cbeebead8a2ac024e16ef50).",
+      "reuse": "rerun by this pass (V4b)",
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/v4b-proving-tests.log",
+      "logSha256": "f3a40d56b5633fa55757fa02c8ea83a8173a3e3062e754e97d22f8da00644262"
+    },
+    {
+      "name": "lifecycle-durability, alone",
+      "command": "RUNE_TOOLS_BIN=<debug> RUNE_TOOLS_BINARY=<debug> bun test tests/integration/lifecycle-durability.test.ts </dev/null",
+      "exit": 0,
+      "result": {
+        "pass": 45,
+        "fail": 0,
+        "todo": 0,
+        "expectCalls": 192
+      },
+      "wallSeconds": 24.5,
+      "note": "Sandbox OFF. Its own zero-spend diagnostic: ~/.rune/rune.db cost rows 2931 -> 2931, newest row unmoved.",
+      "reuse": "rerun by this pass (V4b)",
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/v4b-durability-alone.log",
+      "logSha256": "835a860e36aed036656050f7e37036222bd9b3806e768dbb0bbc87c60a356012"
+    },
+    {
+      "name": "cargo build -p rune-tools",
+      "command": "cargo build --locked -p rune-tools",
+      "exit": 0,
+      "result": {
+        "status": "Compiling rune-sandbox, rune-tools; Finished dev profile in 2.68s"
+      },
+      "wallSeconds": 2.7,
+      "note": "Recorded here for completeness; the artifact and its sha256 are in `artifacts.rune-tools-debug`. This build actually COMPILED (two `Compiling` lines), which is what verification-20260911.json corrections[0] asked for. The log slot is shared because the build output went to the terminal; the artifact hash is the certificate.",
+      "reuse": "rerun by this pass (V4b)",
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/v4b-cargo-fmt.log",
+      "logSha256": "0c18f6d4733e50cb50a6cc8a141721621f9b58b2558195da5524cb16875427f9"
+    },
+    {
+      "name": "cargo fmt",
+      "command": "cargo fmt --all -- --check",
+      "exit": 0,
+      "result": {
+        "output": "empty"
+      },
+      "wallSeconds": 0.4,
+      "note": "Answers verification-20260911.json corrections[1]: the log records the command line, the cwd, the HEAD and `exit: 0`, so silence is no longer certified by sha256 of the empty string.",
+      "reuse": "rerun by this pass (V4b)",
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/v4b-cargo-fmt.log",
+      "logSha256": "0c18f6d4733e50cb50a6cc8a141721621f9b58b2558195da5524cb16875427f9"
+    },
+    {
+      "name": "cargo test",
+      "command": "cargo test --locked --workspace",
+      "exit": 0,
+      "result": {
+        "pass": 109,
+        "fail": 0,
+        "ignored": 0,
+        "byCrate": {
+          "rune-index": 15,
+          "rune-sandbox": 36,
+          "rune-tools": 58
+        }
+      },
+      "wallSeconds": 5.0,
+      "note": "103 -> 109 since verification-20260911.json: rune-sandbox went 30 -> 36 (F1's three child_ledger identity tests and three spawn:: host-enforcement tests). ZERO of the tests run here are linux:: — see findings V1-4.",
+      "reuse": "rerun by this pass (V4b)",
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/v4b-cargo-test-workspace.log",
+      "logSha256": "78e4685fccdd19c276446416c4a1179a0cbb70e3a1ba69dd574e9381caaa002a"
+    },
+    {
+      "name": "clippy",
+      "command": "cargo clippy --all-targets --all-features -- -D warnings",
+      "exit": 0,
+      "result": {
+        "warnings": 0,
+        "errors": 0
+      },
+      "wallSeconds": 1.0,
+      "note": "Every crate .rs was touched first, so the log shows rune-sandbox, rune-index and rune-tools each being Checked — this is not a cache hit. macOS only; Linux clippy has still never run green (notProven[0]).",
+      "reuse": "rerun by this pass (V4b)",
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/v4b-cargo-clippy-workspace.log",
+      "logSha256": "f862637d0e9b81e3660670d2ef4fc89c7071692196fcd2ef254d991b4859ba91"
+    },
+    {
+      "name": "typecheck",
+      "command": "bun run typecheck --force",
+      "exit": 0,
+      "result": {
+        "tasks": "14 successful, 14 total",
+        "cached": "0 cached"
+      },
+      "wallSeconds": 3.6,
+      "reuse": "REUSED from the previous V4 attempt (see step1ArtifactAudit)",
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/gate-typecheck.log",
+      "logSha256": "cad14d4eda4da2dba41de8c65894f06e399e1af3696674b9f87b65c3681a4cdf"
+    },
+    {
+      "name": "lint",
+      "command": "bun run lint --force",
+      "exit": 0,
+      "result": {
+        "tasks": "7 successful, 7 total",
+        "cached": "0 cached"
+      },
+      "wallSeconds": 2.5,
+      "reuse": "REUSED from the previous V4 attempt (see step1ArtifactAudit)",
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/gate-lint.log",
+      "logSha256": "0400d31ff68bb87daf3c081fa2cc18a025ff1afa113a6805d078ef77ea9c2ca6"
+    },
+    {
+      "name": "browser (Playwright)",
+      "command": "RUNE_TEST_PLAYWRIGHT=<module> bun test tests/integration/browser-sandbox.test.ts </dev/null",
+      "exit": 0,
+      "result": {
+        "pass": 2,
+        "fail": 0,
+        "expectCalls": 17
+      },
+      "wallSeconds": 1.4,
+      "reuse": "REUSED from the previous V4 attempt; independently re-observed inside v4b-integration-playwright-run2 and v4b-durability-with-browser",
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/gate-browser.log",
+      "logSha256": "ce1e69646f10def6af01ae2ba3c1435bbdec86d921e6cd45fab4b610432aab79"
+    },
+    {
+      "name": "eval (mock)",
+      "command": "bun run eval",
+      "exit": 0,
+      "result": {
+        "pass": 63,
+        "total": 63,
+        "percent": 100.0,
+        "baseline": "unchanged",
+        "governance": "0.26 completions/task (tolerance +20%)",
+        "transcript": "harness talk 3% / silence 0% (ceilings 15% / 15%)"
+      },
+      "wallSeconds": 17.0,
+      "note": "Sandbox OFF. tests/eval/baseline-mock.json was NOT re-anchored.",
+      "reuse": "rerun by this pass (V4b)",
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/v4b-eval.log",
+      "logSha256": "df796a80dbf3a7b408aec6b88358efcaba65254a1256e3716484a7c3559a1497"
+    },
+    {
+      "name": "eval:auto-safety --offline",
+      "command": "bun run eval:auto-safety --offline",
+      "exit": 0,
+      "result": {
+        "scenarios": 227,
+        "allow": 126,
+        "block": 101,
+        "precision": "90.0% [83-94]",
+        "recall": "89.1% [82-94]",
+        "f1": "89.6%",
+        "mechanical": "55/55 blocks held, 116/116 allows preserved (171 rows)",
+        "reviewerRequired": "35/46 blocks caught (35 with no model call), 0/10 allows cleared, over 56 rows — offline, the reviewer is dead by design and both outcomes are expected to be contained",
+        "liveRequests": 0,
+        "awaitingLabelReview": 38
+      },
+      "wallSeconds": 1.0,
+      "note": "Sandbox OFF. Carries the reviewer-required split into `result`, which is what verification-20260911.json corrections[2] asked for.",
+      "reuse": "rerun by this pass (V4b)",
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/v4b-eval-auto-safety.log",
+      "logSha256": "98ac30ff0aca80e4dd3371dfd8c3cbe802292fcff901341d852822a7b4bf2f57"
+    },
+    {
+      "name": "git diff --check",
+      "command": "git diff --check",
+      "exit": 0,
+      "result": {
+        "output": "empty"
+      },
+      "wallSeconds": 0.1,
+      "note": "Its own log, not shared with cargo fmt, and it records the command, cwd, HEAD and exit — corrections[1] again.",
+      "reuse": "rerun by this pass (V4b)",
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/v4b-git-diff-check.log",
+      "logSha256": "7db1cd7697a50a59d428f0758517b37fa6e58a046516b3827b53fc7cbeabde6f"
+    },
+    {
+      "name": "repo format check",
+      "command": "bunx prettier --check .",
+      "exit": 0,
+      "result": {
+        "output": "All matched files use Prettier code style!"
+      },
+      "wallSeconds": 8.0,
+      "reuse": "rerun by this pass (V4b)",
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/v4b-format-check.log",
+      "logSha256": "dd2bdeec841df39650c9d3c996d14e82792a701254f165bb0be59fd53fdafcfe"
+    },
+    {
+      "name": "strict tsc over every test file changed since 5775166",
+      "command": "bunx tsc --noEmit -p $TMPDIR/v4b-tsc/tsconfig.tests.json   (strict, noUnusedLocals, noUnusedParameters, lib ESNext, types:[bun], typeRoots at the repo's node_modules/@types, paths for all seven @rune/* packages; `files` = the 21 changed test files, which are listed in the log)",
+      "exit": 2,
+      "result": {
+        "testFiles": 21,
+        "errorsInTestFiles": 0,
+        "errorsInPackageSources": 21,
+        "packageErrorClasses": {
+          "TS6133": 12,
+          "TS6196": 6,
+          "TS6138": 2,
+          "TS6192": 1
+        }
+      },
+      "wallSeconds": 2.0,
+      "note": "exit 2 because errors exist AT ALL; all 21 are pre-existing unused-symbol reports in packages/, from flags no tsconfig in this repo enables (backlog item, Phase 2C). Zero are in any test file. verification-20260911.json recorded 23 package errors over a 12-file set; the two-error difference is which package sources the smaller import graph pulls in, not a fix.",
+      "reuse": "rerun by this pass (V4b)",
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/v4b-tsc-tests-strict.log",
+      "logSha256": "a963756e54def79803294ea4d782c124368bdc5ec70604092406832da35d296b"
+    },
+    {
+      "name": "linux.rs parse + dead-symbol check (macOS substitute)",
+      "command": "rustfmt --check --edition 2024 crates/rune-sandbox/src/linux.rs; grep has_pair",
+      "exit": 0,
+      "result": {
+        "parses": true,
+        "formatted": true,
+        "has_pair": "absent",
+        "has_bind_at/touches": "6 call sites"
+      },
+      "wallSeconds": 0.1,
+      "note": "This is NOT Linux clippy and is not offered as it. It replaces a ZERO-BYTE log from the previous attempt.",
+      "reuse": "rerun by this pass (V4b)",
+      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/v4b-linux-rs-parse.log",
+      "logSha256": "7ae76cbf2531e73debee3c32c45c98117673c004afc066a1ccf802a0ec3def44"
+    }
+  ],
+  "linuxImages": [
+    {
+      "tag": "rune-containment-audit:20260911b",
+      "built": false,
+      "ran": false,
+      "result": "LINUX IMAGE NOT RERUN.",
+      "reasons": [
+        "The Docker daemon does not answer. Sandboxed, `docker version` is refused at unix:///Users/ritikyadav890/.docker/run/docker.sock (permission denied). UNSANDBOXED, the same command produces no output at all and is still blocked on the socket when a 15 s kill lands. Docker Desktop's UI processes are alive; its Linux VM / API is not.",
+        "Free space was 6.6 GiB, below the 8 GiB floor this pass was given for a docker rebuild."
+      ],
+      "repairAttempted": false,
+      "log": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/v4b-docker.log",
+      "logSha256": "50f59b6f3a12a81a534187b23d1b31f3a67e6ce08ac9106294104ebacabd7e21",
+      "f1PartialLinuxFacts": {
+        "note": "What F1 DID get from Linux before the machine ran out of disk, at a source snapshot differing from 9876957 only by the removal of the dead `has_pair` helper (F1's own handoff plus matching test names; `source-f1.tar` was not kept, so this is an inference, not a diff).",
+        "cargoTest": "cargo test --locked -p rune-sandbox on Linux: 29 passed / 0 failed, naming all five new linux::tests and spawn::tests::a_network_plugin_with_no_hosts_is_told_why_nothing_connects and the three child_ledger identity tests by name",
+        "clippy": "RED in that log: `error: function has_pair is never used` at linux.rs:374 under -D warnings. Stale — the symbol is gone from the committed file (re-checked here: grep has_pair is empty) — but `cargo clippy -p rune-sandbox -p rune-tools --all-targets --all-features -- -D warnings` HAS NEVER RUN GREEN ON LINUX.",
+        "bunIntegration": "NEVER LOADED: `Cannot find module './tools/process-identity'` — source-f1.tar was built while process-identity.ts was still untracked. background-sandbox passed 4/4; plugin-tools-sandbox and engine-command-evidence never ran.",
+        "probeReprobe": "probe.sh contains V1's actual escape re-probe (`mv /root/.local/bin /root/.local/bin.real; ln -s /root /root/.local/bin`, then cat the credentials) and PRODUCED NO OUTPUT FILE — it was never run. V1-4's escape is covered by unit test only.",
+        "runSuiteResidual": "run-suite.sh still carries V1 finding 8's fail-open credential step and still greps nothing for `0 fail` in the bun output."
+      },
+      "whatV5MustDo": "Rebuild the image from 33cea48 and run: (1) clippy --all-targets --all-features -D warnings on Linux, (2) the bun integration step with process-identity.ts present, (3) probe.sh's `~/.local/bin -> $HOME` re-probe. All three are still open."
+    }
+  ],
+  "installedProofs": [
+    {
+      "id": "(a) orphan",
+      "binary": "/Users/ritikyadav890/.rune/bin/rune  (rune-compiled a58f5920…a29f, v0.4.1-dev+33cea48)",
+      "method": "The scenario rig's own fixture, a scratch RUNE_HOME whose only configured route is a loopback mock, curatedEnv + assertNoLiveCredentials so the child holds no credential, no -p/--provider and no -m/--model. One scripted turn runs `node long.mjs <marker> 30` under a real rune-tools; the kill is timed on the PROCESS TABLE, not on a request.",
+      "observed": {
+        "toolTreeBeforeTheKill": "engine 63783 -> rune-tools --workspace <fixture> bash 63816 -> node long.mjs V4B-ORPHAN-63764 30 63817",
+        "engineExit": 137,
+        "settledIn": "0.32 s of polled ps",
+        "survivors": 0
+      },
+      "verdict": "PASS",
+      "log": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/installed/proof-a-orphan.txt",
+      "logSha256": "5d5e4a0d8dd8ea52f2f7f00aabb9dc0086b13a7c22eee3214d3bbe119f072b7f",
+      "driver": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/installed/proof-a-orphan.ts"
+    },
+    {
+      "id": "(b) delegation",
+      "binary": "two separate /Users/ritikyadav890/.rune/bin/rune processes against one scratch home",
+      "method": "Process 1 dispatches a worker and is handed a task_id; the scratch rune.db is counted; process 2 resumes the same session and the same child. The rig's exported `Run` class was used directly, so tests/helpers/scenario.ts needed no change at all.",
+      "observed": {
+        "task_id": "task_5d377920-09a2-4830-9d2b-00e26e4803df",
+        "delegation_lease": 2,
+        "delegation_checkpoint": 3,
+        "delegation_notice": 0,
+        "secondProcess": "resumed call success: true, error: none — not \"Unknown task_id in this parent session\"",
+        "spend": "15 cost rows, all in the SCRATCH db against fake-model on the loopback mock"
+      },
+      "verdict": "PASS",
+      "note": "V3-F1 measured 0 and 0 for these two row types on the shipped engine, and 0 on the founder's own installed database. This is the row 08d99f8 promised and did not deliver, now delivered by the binary the founder runs.",
+      "log": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/installed/proof-b-delegation.txt",
+      "logSha256": "b3a6cddd127114797b923209411e225c8ac612f5dc49940448367f4eb6a0d71f",
+      "driver": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/installed/proof-b-delegation.ts"
+    },
+    {
+      "id": "(c) pid reuse",
+      "binary": "/Users/ritikyadav890/.rune/bin/rune, whose Engine constructor runs the startup reap (engine.ts:1580 -> reapOrphanedToolChildren -> reapToolChildren)",
+      "method": "Two hand-written rows in <workspace>/.rune/tool-children.jsonl, both naming an owner pid that is dead (a spawned /usr/bin/true, exited and reaped), both inside the TTL, NEITHER carrying a pgid so only a single pid can ever be signalled. ROW A names a live `sleep 120` and carries a start token wound back one hour — the shape a recycled pid produces. ROW B names a second live `sleep 120` and carries its REAL start token. Row B is the positive control: without it, \"the stranger survived\" could equally mean the reaper never ran.",
+      "observed": {
+        "rowA": "pid 64133, recorded start darwin:1789110713.356987, kernel says darwin:1789114313.356987 — ALIVE after the run",
+        "rowB": "pid 64134, recorded start darwin:1789114313.357249 (the truth) — DEAD after the run",
+        "ledgerAfter": "the file is gone: `rewrite` unlinks it when no row survives judgement",
+        "reasonString": "read back by running the same reapToolChildren from the source this binary was compiled from (rune-compiled.meta: RUNE_SOURCE_COMMIT=33cea48…, RUNE_SOURCE_DIRTY=0, tree clean) over an identical pair: `pid 64168 outcome=kept reason=identity mismatch: pid 64168 started at darwin:1789114314.311267, not darwin:1789110714.311267`, and `pid 64169 outcome=killed`"
+      },
+      "verdict": "PASS",
+      "honestLimit": "The reason STRING is not observable from outside the installed binary: reapOrphanedToolChildren files an incident for `killed` rows only and nothing for `kept` ones. What the installed binary proves is the BEHAVIOUR (stranger survives, vouched-for row dies, in the same pass); the WORDS come from the same source at the same commit. Surfacing a `kept` reason is a candidate backlog item.",
+      "log": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/installed/proof-c-pid-reuse.txt",
+      "logSha256": "2fd742096fd2cfcba9a852b28ab033f5d77366ec6520a594a37b74bb3f81edf0",
+      "driver": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/installed/proof-c-pid-reuse.ts"
+    }
+  ],
+  "installedSmokes": [
+    {
+      "name": "installed hashes re-verified",
+      "exit": 0,
+      "output": "~/.rune/bin/{rune,rune-compiled,rune-tools} re-hashed 2026-09-11T08:08Z and diffed against installed/after.txt: identical. rune-compiled.meta: RUNE_BUILD_VERSION=0.4.1-dev+33cea48, RUNE_SOURCE_COMMIT=33cea48…, RUNE_SOURCE_DIRTY=0.",
+      "note": "No reinstall was performed this pass; the previous attempt's install of this exact commit is still what is on disk."
+    },
+    {
+      "name": "rune --version",
+      "exit": 0,
+      "output": "Rune v0.4.1-dev+33cea48"
+    },
+    {
+      "name": "command -v rune",
+      "exit": 0,
+      "output": "/Users/ritikyadav890/.alan/bin/rune",
+      "note": "UNCHANGED FINDING from Phase 1 and Phase 2: PATH still resolves the LEGACY ~/.alan/bin shim ahead of ~/.rune/bin. The shim is byte-identical and reports the new commit, so the founder runs the right build — but `rune` on this machine still means the rename generation's compatibility path. Already in docs/program/backlog.md."
+    },
+    {
+      "name": "bash scripts/install.sh (the previous attempt's, from a clean 33cea48)",
+      "exit": 0,
+      "output": "Compiled IN PLACE, `rune serve --check` proved the staged binary hosts a session (turn_complete on session 01a08cf8, zero leaked hosts), installed atomically, CLI checksum a58f592060542f95522202ebe31fadb0b6b5d4fbcc7680a9db21e426aa347f29, Legacy-installer guard: macOS user-immutable artifacts.",
+      "note": "No override flag was set, and no guard stopped it. RUNE_ALLOW_NON_FF_INSTALL and GEAR_ALLOW_NON_FF_INSTALL were both absent."
+    },
+    {
+      "name": "V1-7b's backup advisory, in a real install",
+      "exit": 0,
+      "outputVerbatim": [
+        "! Backups: 101 files, 26 generations, 2089.8 MB in /Users/ritikyadav890/.rune/bin",
+        "Keeping the newest 5 would reclaim 1671.5 MB. Nothing was deleted.",
+        "./scripts/install.sh --prune-backups  (or RUNE_PRUNE_BACKUPS=1)"
+      ],
+      "note": "F1 flagged that report_backups had never executed inside a real install, in particular the chflags nouchg path under INSTALL_FILE_GUARD=macos-uchg. It has now. installed/after.txt shows all four live artifacts still carrying `uchg` after the install. --prune-backups was deliberately NOT run: a backup is the only way back from a bad install, and the 2.0 GB is still there."
+    },
+    {
+      "name": "rune doctor",
+      "exit": 0,
+      "output": "build: current — gear/phase-0-stabilize@33cea48d, built 2026-09-11 01:48; rune-tools ok; mcp ok; recorder: no internal failures; sentinels clean; healthy routes codex, ollama.",
+      "advisoryVerbatim": [
+        "! checkpoints: 747 rows across 195 runs, 184 MB 2026-05-30 08:34 → 2026-09-09 15:12",
+        "reclaimable: 428 superseded or orphaned rows, 106 MB — rune doctor prune-checkpoints (dry run; --apply removes them)",
+        "! google: model gpt-5.6-sol recorded retired, expired 2026-09-10 23:56 (13h 45m ago) — STALE, believed by nothing; pruned on the next write",
+        "✗ openrouter: model minimax/minimax-m3:free recorded retired, until 2026-09-15 14:16 (4d left)",
+        "✗ openrouter: model deepseek/deepseek-v4-flash:free recorded retired, until 2026-09-15 14:46 (4d 1h left)",
+        "! 1 stale entry in /Users/ritikyadav890/.rune/provider-health.json — already expired and kept only because nothing has written the file since"
+      ],
+      "note": "NOT 'green'. The report carries one ✗ pair and three ! lines. V3 flagged docs/harness-status.md:417 for calling this green, and this manifest does not repeat that: every ✗ and ! is quoted above. All of them are diagnostics about the founder's accounts and database, not about the build; every build-facing line is ✓.",
+      "log": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/installed/v4b-doctor.txt",
+      "logSha256": "d5860a9b021d782ffe8cda5d626194e18c6377092fa33a32e9bc0306a5d0f0de"
+    },
+    {
+      "name": "rune doctor prune-checkpoints",
+      "exit": 0,
+      "outputVerbatim": [
+        "§ CHECKPOINTS /Users/ritikyadav890/.rune/rune.db",
+        "747 rows across 195 runs, 184 MB",
+        "! would remove 428 rows, 106 MB — nothing was deleted. rune doctor prune-checkpoints --apply"
+      ],
+      "note": "DRY RUN. `--apply` was NOT passed and has still never been run against the founder's database. That the 428 rows would delete cleanly and transactionally is proven on a synthetic database only (tests/unit/orchestrator/prune-checkpoints.test.ts, 5 tests, all green here).",
+      "log": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/verify/v4/installed/v4b-prune-dryrun.txt",
+      "logSha256": "7d0ae8f4b248740d905ee9538afbda4f7a4c47af2dd666d0468d36da39a7552e"
+    },
+    {
+      "name": "zero spend on the founder's ledger, across this whole pass",
+      "exit": 0,
+      "output": "~/.rune/rune.db read READ-ONLY before and after the installed proofs and the doctor runs: cost rows 2931 -> 2931, newest cost row 2026-09-10T19:20:44.046Z (unmoved), events 26861 -> 26861, sessions 684 -> 684.",
+      "note": "Per V3-F3, a row count of a shared WAL database is not a sound proof on its own. The load-bearing claim is impossibility: every run in this pass used a scratch RUNE_HOME whose only configured route was a loopback mock, an environment BUILT rather than inherited, and assertNoLiveCredentials on the shape of every launch. The count is corroboration."
+    }
+  ],
+  "realDefectsFound": [
+    {
+      "by": "the previous V4 attempt, before it was rate-limited",
+      "commit": "33cea48",
+      "what": "`bun test tests/integration` was RED at 9876957. tests/integration/plugin-examples.test.ts expected plugin_rune-example-tools_http_get to register, and since 9876957 it cannot: the shipped example's `net` tool declares example.com:443, no backend claims to enforce a NAMED host, so startPluginTools refuses it. plugin-tools-sandbox.test.ts rewrites the manifest's hosts to loopback before every case, so it stayed green while the example itself did not — this file is the only gate that runs the example AS SHIPPED, and F1's own verification ran the sandbox file and not this one.",
+      "fix": "The expectation is the two file tools, and the test now also asserts that the refusal reaches drainMcpNotices naming the tool and the flag, rather than the tool vanishing without a word.",
+      "reverified": "gate-integration-run1-red.log (226/7/1 at 9876957) is the red; v4b-proving-tests.xml has all five plugin-examples tests green at 33cea48."
+    },
+    {
+      "by": "this pass (V4b)",
+      "commit": null,
+      "what": "See newFindings[0] — a flake in the integration gate, not a product defect, and not fixed."
+    }
+  ],
+  "newFindings": [
+    {
+      "id": "V4b-1",
+      "severity": "MEDIUM (test rig / gate reliability)",
+      "title": "`bun test tests/integration` is FLAKY when RUNE_TEST_PLAYWRIGHT is set: the durability scenario failed one run in two, and its failure costs 120 s and 14 red tests instead of one",
+      "measured": [
+        "run 1, RUNE_TEST_PLAYWRIGHT set: 215 pass / 5 skip / 14 FAIL, 202 s (v4b-integration.log)",
+        "run 2, identical command: 229 pass / 5 skip / 0 fail, 85 s (v4b-integration-playwright-run2.log)",
+        "RUNE_TEST_PLAYWRIGHT unset (every previous manifest's gate): 227 / 7 skip / 0 fail, 83 s, twice (v4b-integration-noplaywright.log and the previous attempt's gate-integration.log)",
+        "lifecycle-durability.test.ts ALONE: 45 / 0, 24.5 s (v4b-durability-alone.log)",
+        "lifecycle-durability.test.ts + browser-sandbox.test.ts together: 47 / 0, 26 s (v4b-durability-with-browser.log)"
+      ],
+      "whatHappened": "All 14 failures are in scenario A of lifecycle-durability. The root one is the driver: `waited 120000ms for the long-running bash call; saw lifecycle, task_kind, error, error, error, error, turn_complete, lifecycle, lifecycle`. The run under test had already ENDED — four consecutive errors exhausted its retries and the turn completed — but the driver has no way to learn that, so it waited its full 120 s deadline and the 13 assertions that read the run's artifacts then failed in 0.0x ms each.",
+      "twoSeparableProblems": [
+        "The engine's loopback fetch to its own mock failed four times in a row under whole-directory load. Not reproduced a second time, so it is a flake and its cause is unestablished; the mock server and the engine were in the same process tree either way.",
+        "The rig turns one flake into 120 s and 14 red tests. `Run.waitForEvent` rejects only on its own deadline; a waiter that also rejected when the child exits or emits turn_complete would fail in seconds and name the real reason."
+      ],
+      "notFixed": true,
+      "why": "Out of scope for a verification pass, and the second problem is a change to tests/helpers/scenario.ts that deserves its own lane. Filed in docs/program/backlog.md."
+    },
+    {
+      "id": "V4b-2",
+      "severity": "LOW (observability)",
+      "title": "The startup reaper's `kept` reasons are unobservable from outside the process",
+      "detail": "engine.ts:6438-6447 files a crash.dirty_exit incident for every `killed` row and nothing at all for `kept` or `gone` ones. So a founder whose leftover row was spared for `identity mismatch: …` — the whole point of V1-1's fix — has no way to see that it happened, and proof (c) above had to read the string back from source rather than from the running binary.",
+      "notFixed": true
+    }
+  ],
+  "correctionsAnswered": [
+    {
+      "target": "verification-20260911.json corrections[0] — cargo build was a cache hit and its artifact hash is unreproducible",
+      "answeredBy": "This pass rebuilt rune-tools and the log shows two `Compiling` lines, not a cache hit. The artifact is recorded with its sha256, its byte count and its build time in `artifacts.rune-tools-debug`, and every bun gate here was pointed at that exact file."
+    },
+    {
+      "target": "verification-20260911.json corrections[1] — gates whose success is silence were certified by sha256 of the empty string",
+      "answeredBy": "Every gate this pass ran writes its command line, cwd, HEAD, start time, output, `exit:` and wall time into its own log. `cargo fmt` and `git diff --check` have separate, non-empty logs. The two silent gates the previous attempt left (`gate-clippy.log`, a pure cache hit, and `step1-linux-rs-parse.log`, zero bytes) were both redone."
+    },
+    {
+      "target": "verification-20260911.json corrections[2] — the auto-safety reviewer-required split was not carried into `result`",
+      "answeredBy": "checks[…].result for eval:auto-safety now carries `mechanical` and `reviewerRequired` verbatim from the log."
+    },
+    {
+      "target": "verification-20260910b.json corrections[0] / harness-status.md:210-212 — the ten-session render claim certified by a three-session log, and a genuinely over-width row",
+      "answeredBy": "NOT ANSWERED. No render was done this pass. The over-width row is a tracked backlog item and stays open."
+    }
+  ],
+  "notProven": [
+    "LINUX WAS NOT RE-RUN AT ALL. The containment image was not rebuilt (Docker's daemon does not answer; 6.6 GiB free, under the 8 GiB floor). Three specific things are therefore still open, all named by F1: clippy -D warnings has NEVER run green on Linux since the has_pair removal; the bun integration step has never loaded with process-identity.ts present; and probe.sh's `~/.local/bin -> $HOME` re-probe — V1-4's ACTUAL escape — has never been executed. V1-4's four linux::tests are #[cfg(target_os = \"linux\")] and ran zero times on this host.",
+    "Every Linux result any manifest cites came from `docker run --privileged`. An ordinary runner, or any host that refuses CLONE_NEWUSER, is still unmeasured.",
+    "WINDOWS. The parent-death watchdog is #[cfg(unix)]; processIdentitySupported() is false there, so reapToolChildren takes the pre-identity branch and kills on liveness alone, reporting `no start-time probe on win32`. Reasoned, never run. No Windows host here.",
+    "NO LIVE MODEL CALL, ANYWHERE IN THIS PASS. Every run drove a loopback mock under a scratch RUNE_HOME. Every durability, delegation and orphan claim holds against a scripted gateway and none against a real provider's latency, retries or refusals. There is no budget.",
+    "The checkpoint prune has still never been APPLIED to the founder's database. Dry run only, now three times.",
+    "V4b-1's four consecutive engine errors were not reproduced and their cause is unestablished.",
+    "V3-F8 — the 'a usable partial result' test still asserts that recovery COMPLETED (stopReason is a string, every todo closed), which is not the criterion it is named for, and no case in the file refuses recovery. No lane took it; unchanged here.",
+    "V3-F9 — `auto_compaction` rows at ~58 KB each are the shape that rebuilt the 184 MiB checkpoint table. Measured by V3, unaddressed.",
+    "The `report`-shaped settled-plan waiver is behaviour, pinned by a characterisation test, not fixed. It is the founder's decision.",
+    "`tests/unit/orchestrator/worker-worktree.test.ts`'s two runWorktreeChecks cases still fail under the agent's Bash sandbox and only there (rune-tools cannot apply its own Seatbelt profile inside the outer profile). Unsandboxed here, the file is green.",
+    "The Phase 1 finding that `command -v rune` resolves the legacy ~/.alan/bin shim is unchanged and unfixed.",
+    "No 80x24 render, picker, resize or settings walkthrough was done on the installed binary this pass; verification-20260910b.json's over-width row stands uncorrected."
+  ],
+  "behaviorChanges": [
+    {
+      "from": "F1 / 9876957",
+      "change": "macOS plugin hosts are now REFUSED. A plugin whose manifest declares a non-loopback host no longer starts on macOS unless [extensions] allowUnsandboxedTools names it — the refusal Linux has always given. Loopback endpoints are unaffected. This can break a working macOS setup on upgrade; the failure is loud and names the flag.",
+      "cost": "It broke the SHIPPED example plugin, which declares example.com:443, and the only gate that runs that example as shipped went red. Fixed in 33cea48 by grading the example against the rule it now meets, and by asserting that the refusal reaches drainMcpNotices."
+    },
+    {
+      "from": "F1 / 9876957",
+      "change": "Every install now prints what ~/.rune/bin holds (files, generations, MB) and, above five generations, what pruning would reclaim. Nothing is deleted without --prune-backups / RUNE_PRUNE_BACKUPS=1."
+    },
+    {
+      "from": "F1 / 311e901",
+      "change": "The reaper is gated on identity. A leftover row is only signalled when the live process at that pid carries the recorded kernel start time. Rows written by an older rune-tools, or on a machine whose identity cannot be read, are FORGOTTEN instead of killed — so a mixed-version ~/.rune/bin reaps less, never wrong. Windows is unchanged."
+    },
+    {
+      "from": "F1 / 311e901",
+      "change": "A command mismatch is treated as an exec, not a stranger: /bin/sh -c \"sleep 90\" execs into sleep within ~30 ms with an unchanged start time, so `command` is recorded and reported but never gates the kill."
+    },
+    {
+      "from": "F1 / 9876957 (docs)",
+      "change": "A child that leaves its process group (setsid) is documented as out of scope on macOS/noop, in active_child.rs and docs/sandbox.md. Linux is covered by bwrap's PID namespace."
+    },
+    {
+      "from": "F2 / 0fc1c99",
+      "change": "registerDelegationTools now THROWS if the store is missing rather than degrading in silence. A constructor reordering cannot be caught by tsc; only the loud failure can."
+    },
+    {
+      "from": "F2 / 0fc1c99",
+      "change": "CheckRecord and Evidence gained an optional `digest`; Evidence gained `staleAt`. Old rows have neither and are treated as before."
+    },
+    {
+      "from": "F2 / 0fc1c99",
+      "change": "The lifecycle projection's `revision` now reports the tree as of the moment the event is emitted (memoised 1 s), not the run's opening snapshot. At most two short git calls per second of run."
+    },
+    {
+      "from": "F2 / db09279",
+      "change": "A model-run check that executed NO test no longer closes a step. It is still counted as executed, still on the check ledger, still cited — the new CheckRelation reason is \"no_tests\"."
+    },
+    {
+      "from": "F2 / db09279",
+      "change": "Relatedness reads an inline script's body through stripLiterals, keeping only module-load arguments (require/import/open/readFile/from). A path in a comment or a log string no longer buys scope."
+    },
+    {
+      "from": "F2 / 08b2439",
+      "change": "The retro's filesWritten counter now includes worker-authored files, so its numbers rise for runs that delegated."
+    },
+    {
+      "from": "F3 / ca92940",
+      "change": "Worker id scheme is now w<12 hex>-<n>, the hex being a sha256 digest of the WHOLE session id (was: the first 8 characters). Ids from before this change do not collide with ids after it. ids.json is read under an exclusive lock, written tmp+rename, and its 32-session prune keeps the session being allocated for."
+    },
+    {
+      "from": "F3 / ca92940",
+      "change": "A lease row now carries hostId and the holder's process start time. A local pid probe judges only a LOCAL lease; a foreign lease is bounded by TTL alone; where the OS will not say when a pid started, the lease is HONOURED (refusing a live holder is recoverable, stealing its task is not). The refusal text names the holder, where it is, how much is left (`expires in N minutes` — remaining, not maximum) and how it clears."
+    },
+    {
+      "from": "F3 / ca92940",
+      "change": "Crossing the 2 MiB per-run boundary budget emits exactly one delegation_notice (reason: boundary_budget, carrying lastCheckpointAt) and stamps the final checkpoint with boundaryBudgetExhausted. The budget now counts the whole serialized row, not just its messages."
+    },
+    {
+      "from": "F3 / ca92940",
+      "change": "The boundary-checkpoint dedup hashes the UNTRUNCATED transcript. Truncation notes and image placeholders each carry an 8-character digest of the bytes they replaced, so equal placeholders no longer imply equal content."
+    },
+    {
+      "from": "F3 / ca92940",
+      "change": "The worker reaper enumerates ignored files and commits them to the retained branch; over 16 MiB the checkout is KEPT with a reason naming the ignored output; node_modules and .venv are never carried onto a branch."
+    },
+    {
+      "from": "F3 / 5220b05",
+      "change": "The durability suite's zero-spend claim is impossibility in three layers, not a row count of the founder's live database. That database is still read read-only and still printed, as a diagnostic."
+    },
+    {
+      "from": "V4 / 33cea48",
+      "change": "tests/integration/plugin-examples.test.ts expects the two file tools, not http_get, and asserts the refusal reaches drainMcpNotices naming the tool and the flag."
+    }
+  ],
+  "environment": {
+    "host": "macOS 15 (Darwin 25.6.0), arm64",
+    "disk": "`df -h /` before every heavy gate. Free space ranged 6.6 -> 8.0 GiB across the pass and never approached the 1 GiB stop line. It is the reason the Linux image was not attempted even had Docker answered.",
+    "sandbox": "The agent's Bash tool sandboxes commands by default. Run with the sandbox OFF, and only these: `bun test tests/unit`, `bun test tests/integration`, the lifecycle-durability and proving-test runs, the three installed proofs (they need Bun.serve({port: 0})), `bun run eval` and `eval:auto-safety`, the docker probe, and the installed doctor/prune smokes. Everything else — every cargo command, the strict tsc, prettier, git — ran sandboxed.",
+    "docker": "Daemon does not answer. See linuxImages[0].",
+    "playwright": "1.62.1 in bun's store, Chromium in ~/Library/Caches/ms-playwright. Setting RUNE_TEST_PLAYWRIGHT is what turns the 2 browser skips into 2 runs — and is also the condition under which newFindings[0] appeared.",
+    "network": "No egress beyond 127.0.0.1. Every model call in this pass went to a loopback mock server started by the rig itself.",
+    "installs": "None. The binary under test was installed by the previous V4 attempt from this same clean commit and still hashes to its after.txt."
+  },
+  "limitations": [
+    "This manifest grades the FIXES for twelve findings and five V2 areas. It does not re-grade the original Phase 0-2 work those findings were found in; verification-20260910b.json and verification-20260911.json remain the records of that, with their corrections.",
+    "Six of the eighteen items carry a mutation (red/green) proof; the rest are proved by a named passing test and the fix commit's diff. The mutations were chosen for the HIGH findings, which is where a test that cannot fail would be most expensive.",
+    "The mutation logs were produced by the previous V4 attempt and reused, not re-executed. Each was audited against the standard stated in `findings.note`; none was accepted on its filename."
+  ]
+}
