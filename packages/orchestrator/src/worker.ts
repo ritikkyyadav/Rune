@@ -740,6 +740,13 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
           let servedBy: { provider: string; model: string } | null = null;
           let fallbackReason: string | undefined;
 
+          // When the child's own loop began (P3B I4). A worker's dispatch-to-
+          // result covers three separable costs — provisioning its worktree,
+          // doing the work, and merging back — and `start` is a monotonic
+          // reading that can only give the sum. This stamp and `integratedAt`
+          // below cut it into the two boundaries the lead cannot see.
+          const childStartedAt = new Date();
+
           // Propagate the abort signal: without it Ctrl-C/Esc could not
           // interrupt a running worker — the turn blocked until it finished.
           // `workRoot` (P6B.1), not `input.workspaceRoot`: a worker given its own
@@ -879,6 +886,11 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
                     integration: "retained",
                     conflicts: [],
                     branch: worktree.branch,
+                    startedAt: childStartedAt,
+                    // Nothing was merged, so "integrated" is the moment the
+                    // decision to retain was made. The interval is still the
+                    // truth about how long the lead waited after the work.
+                    integratedAt: new Date(),
                   }),
                 },
                 durationMs: Math.round(performance.now() - start),
@@ -1015,6 +1027,9 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
                 integration,
                 conflicts: mergeConflicts,
                 branch: keepBranch && worktree ? worktree.branch : undefined,
+                startedAt: childStartedAt,
+                // After the merge, so the stamp means what it says.
+                integratedAt: new Date(),
               }),
             },
             durationMs: Math.round(performance.now() - start),

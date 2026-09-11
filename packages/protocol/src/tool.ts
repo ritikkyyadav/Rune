@@ -43,4 +43,20 @@ export interface ToolCallOutput {
    * field of it instead of parsing prose back out of a paragraph.
    */
   structured?: Record<string, unknown>;
+  /**
+   * This call was a write, and it changed something (P3B I6).
+   *
+   * The verdict of the one write predicate the harness already has — the same
+   * `filesChangedFrom` the headless envelope, the auto-commit scope and both
+   * TUI surfaces read, plus the worker's own `filesChanged` report. `true`
+   * means the call named at least one path it changed; `false` means a write
+   * tool succeeded and named none (a worker whose branch was retained, a patch
+   * that applied to nothing); absent means the call was not a write at all.
+   *
+   * It exists because "time after the last useful edit" was inferred from the
+   * last assistant message that CALLED an edit tool, which counts an edit that
+   * changed nothing and an edit later reverted. Recorded where the loop already
+   * computes it, so the tail of a run is a fact rather than a reconstruction.
+   */
+  usefulEdit?: boolean;
 }

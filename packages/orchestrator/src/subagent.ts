@@ -390,6 +390,14 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
           // into the parent's context.
           const trail: string[] = [];
 
+          // When the child's own loop began, as a wall clock the parent can
+          // join against (P3B I4). `start` above is a monotonic reading with no
+          // epoch, so it can measure this call's duration and nothing else;
+          // dispatch-to-result could never be split into startup, work and
+          // integration. Stamped HERE — after resolution, budget and permission
+          // setup — so the interval before it is the startup the lead paid for.
+          const childStartedAt = new Date();
+
           // Propagate the abort signal: without it Ctrl-C/Esc could not
           // interrupt a running sub-agent — the turn blocked until it finished.
           for await (const event of loop.run(
@@ -556,7 +564,11 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
               }),
               structured: {
                 ...(partial as unknown as Record<string, unknown>),
-                child: buildChildSummary({ stopReason }),
+                child: buildChildSummary({
+                  stopReason,
+                  startedAt: childStartedAt,
+                  integratedAt: new Date(),
+                }),
               },
               durationMs: Math.round(performance.now() - start),
             };
@@ -626,7 +638,11 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
             }),
             structured: {
               ...(result as unknown as Record<string, unknown>),
-              child: buildChildSummary({ stopReason }),
+              child: buildChildSummary({
+                stopReason,
+                startedAt: childStartedAt,
+                integratedAt: new Date(),
+              }),
             },
             durationMs: Math.round(performance.now() - start),
           };

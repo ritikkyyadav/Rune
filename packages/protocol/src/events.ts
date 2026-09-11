@@ -69,6 +69,21 @@ export interface TaskLifecycleChild {
   integration?: "merged" | "retained" | "shared";
   /** Paths the merge refused, so a conflict is a field and not prose. */
   conflicts?: string[];
+
+  // ─── When the child was actually running (P3B I4) ───
+  //
+  // The lead's own clock measures dispatch-to-result, which includes the
+  // child's whole run: startup, its work, and the integration of its writes
+  // back into the lead's tree. Those are three different costs and only the
+  // middle one is the work. The child is the only party that knows the first
+  // and the last, so it reports them here — on the row it already sends home.
+  // Both ISO-8601, both optional: a child from an older build reports neither,
+  // and an absent stamp reads as "not measured" rather than as zero.
+
+  /** When the child's own loop began, as the child observed it. */
+  startedAt?: string;
+  /** When its result was complete and its writes (if any) were integrated. */
+  integratedAt?: string;
 }
 
 /** What the TUI, the persisted session and a headless caller must agree on. */

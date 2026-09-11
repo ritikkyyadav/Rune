@@ -153,6 +153,10 @@ export function buildChildSummary(observed: {
   integration?: "merged" | "retained" | "shared";
   conflicts?: string[];
   branch?: string;
+  /** When the child's own loop began (P3B I4). */
+  startedAt?: Date;
+  /** When its result was complete and its writes were integrated (P3B I4). */
+  integratedAt?: Date;
 }): ChildSummary {
   return {
     status: toChildStatus(observed.stopReason),
@@ -161,6 +165,8 @@ export function buildChildSummary(observed: {
     // can read "no conflicts" rather than "the field is missing".
     ...(observed.integration ? { conflicts: observed.conflicts ?? [] } : {}),
     ...(observed.branch ? { branch: observed.branch } : {}),
+    ...(observed.startedAt ? { startedAt: observed.startedAt.toISOString() } : {}),
+    ...(observed.integratedAt ? { integratedAt: observed.integratedAt.toISOString() } : {}),
   };
 }
 

@@ -30,7 +30,12 @@ import { UsageProvider, usageRequest } from "../../helpers/usage-provider";
 const usage = { inputTokens: 10, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0 };
 
 function gatewayWith(provider: UsageProvider): LlmGateway {
-  const gateway = new LlmGateway({ providers: {}, defaultProvider: "anthropic", maxRetries: 0, retryBaseMs: 0 });
+  const gateway = new LlmGateway({
+    providers: {},
+    defaultProvider: "anthropic",
+    maxRetries: 0,
+    retryBaseMs: 0,
+  });
   gateway.registerProvider(provider);
   return gateway;
 }

@@ -959,6 +959,21 @@ export class AgentLoop {
   }
 
   /**
+   * Which of this run's write calls actually changed something (P3B I6).
+   *
+   * Keyed by `callId`, the same key the persisted `tool_result` row carries, so
+   * the engine can stamp the verdict onto that row without the loop knowing
+   * anything about persistence — exactly how `messageOrigins` works for the
+   * synthetic user messages. A non-write call is absent, not `false`.
+   */
+  private readonly usefulEdits = new Map<string, boolean>();
+
+  /** Whether one tool call of this run wrote something. Absent = not a write. */
+  usefulEditOf(callId: string): boolean | undefined {
+    return this.usefulEdits.get(callId);
+  }
+
+  /**
    * Close function-call pairs when Rune stops after the provider has already
    * emitted tool calls but before those tools execute. Persisting a bare
    * assistant tool_use poisons resume: strict providers (notably Codex's
@@ -1030,10 +1045,15 @@ export class AgentLoop {
   private drainHarnessNotes(): { replanReason: string | null } | null {
     if (this.harnessNotes.length === 0) return null;
     const notes = this.harnessNotes.splice(0);
-    this.appendMessage({
-      role: "user",
-      content: [{ type: "text", text: notes.map((n) => `[Harness note] ${n.text}`).join("\n\n") }],
-    });
+    this.appendMessage(
+      {
+        role: "user",
+        content: [
+          { type: "text", text: notes.map((n) => `[Harness note] ${n.text}`).join("\n\n") },
+        ],
+      },
+      "nudge:harness-notes",
+    );
     return { replanReason: notes.find((n) => n.replanReason)?.replanReason ?? null };
   }
 
@@ -1451,25 +1471,28 @@ export class AgentLoop {
           "wrapUp",
           `turn ${turn} of ${this.config.maxTurns} with open todos — injected the wrap-up protocol`,
         );
-        this.appendMessage({
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text:
-                `[Harness note] Budget reserve: turn ${turn} of ${this.config.maxTurns}.` +
-                (quotaWallSighted
-                  ? " The provider has already thrown one rate/quota wall this run, so the window may close well before the turn ceiling."
-                  : "") +
-                " From here the remaining turns belong to FINISHING, not widening: take on " +
-                "nothing new, close the open todos in priority order (rewrite the list now " +
-                "if some no longer matter), run verification, and end with the honest " +
-                "completion report — what works (with evidence), what is cut, what is " +
-                "untested. A run that ends finished-but-smaller beats one that dies " +
-                "mid-flight; if the budget runs out anyway, the handoff carries your state.",
-            },
-          ],
-        });
+        this.appendMessage(
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text:
+                  `[Harness note] Budget reserve: turn ${turn} of ${this.config.maxTurns}.` +
+                  (quotaWallSighted
+                    ? " The provider has already thrown one rate/quota wall this run, so the window may close well before the turn ceiling."
+                    : "") +
+                  " From here the remaining turns belong to FINISHING, not widening: take on " +
+                  "nothing new, close the open todos in priority order (rewrite the list now " +
+                  "if some no longer matter), run verification, and end with the honest " +
+                  "completion report — what works (with evidence), what is cut, what is " +
+                  "untested. A run that ends finished-but-smaller beats one that dies " +
+                  "mid-flight; if the budget runs out anyway, the handoff carries your state.",
+              },
+            ],
+          },
+          "wrapup:budget-reserve",
+        );
         yield {
           type: "notice",
           message: "Turn budget nearly spent — directed the agent to close out and verify.",
@@ -2171,17 +2194,20 @@ export class AgentLoop {
               })),
             });
           } else {
-            this.appendMessage({
-              role: "user",
-              content: [
-                {
-                  type: "text",
-                  text:
-                    "Your last response was cut off by the output-token limit. " +
-                    "Continue exactly where you left off — do not repeat what you already said.",
-                },
-              ],
-            });
+            this.appendMessage(
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text:
+                      "Your last response was cut off by the output-token limit. " +
+                      "Continue exactly where you left off — do not repeat what you already said.",
+                  },
+                ],
+              },
+              "nudge:oversized-output",
+            );
           }
           yield {
             type: "notice",
@@ -2254,17 +2280,20 @@ export class AgentLoop {
                 "verify",
                 `project checks failed after edits (attempt ${verifyAttempts}): ${result.report.slice(0, 300)}`,
               );
-              this.appendMessage({
-                role: "user",
-                content: [
-                  {
-                    type: "text",
-                    text:
-                      "Automated verification failed after your changes. Fix the " +
-                      `problems below, then finish.\n\n${result.report}`,
-                  },
-                ],
-              });
+              this.appendMessage(
+                {
+                  role: "user",
+                  content: [
+                    {
+                      type: "text",
+                      text:
+                        "Automated verification failed after your changes. Fix the " +
+                        `problems below, then finish.\n\n${result.report}`,
+                    },
+                  ],
+                },
+                "gate:verification-failed",
+              );
               yield {
                 type: "notice",
                 message: "Verification failed — asking the agent to fix it.",
@@ -2291,19 +2320,22 @@ export class AgentLoop {
               reason: "checks still failing after repeated fixes",
               trigger: "verification",
             };
-            this.appendMessage({
-              role: "user",
-              content: [
-                {
-                  type: "text",
-                  text:
-                    "Automated checks are still failing after repeated fix attempts on the same " +
-                    "approach. Stop patching. Re-read the failing output, rewrite your todo list " +
-                    "with a genuinely different approach via todo_write (one line on why the old " +
-                    "approach failed), then implement it.",
-                },
-              ],
-            });
+            this.appendMessage(
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text:
+                      "Automated checks are still failing after repeated fix attempts on the same " +
+                      "approach. Stop patching. Re-read the failing output, rewrite your todo list " +
+                      "with a genuinely different approach via todo_write (one line on why the old " +
+                      "approach failed), then implement it.",
+                  },
+                ],
+              },
+              "nudge:replan-verification",
+            );
             yield {
               type: "notice",
               message: "Repeated fixes failed — asking the agent to re-plan.",
@@ -3566,10 +3598,28 @@ export class AgentLoop {
           // report on disk, a dashboard someone can open. "What changed" in
           // the Decision Record is only as good as this list, and a run whose
           // whole output was a report would otherwise show an empty one.
+          //
+          // (The `useful_edit` verdict is stamped below, outside this block: it
+          // is a fact about the call, not about the plan, and a run with no
+          // task state still has a last edit.)
           for (const artifact of artifactsFromResult(p.tc.toolName, output.result)) {
             const recorded = ts.recordArtifact(artifact.kind, artifact.ref);
             if (recorded) yield { type: "artifact", artifact: recorded };
           }
+        }
+
+        // ── Did this call actually change anything? (P3B I6) ──
+        //
+        // "Time after the last useful edit" was inferred from the last
+        // assistant message that CALLED an edit tool, which counts a call that
+        // succeeded and wrote nothing — a retained worker, a patch that hit no
+        // file. The predicate for "what did this write" already exists and is
+        // already unified; this stamps its verdict onto the call so the tail of
+        // a run is read rather than reconstructed. Absent on a non-write.
+        if (p.isWrite || isFileChangingTool(p.tc.toolName)) {
+          output.usefulEdit =
+            output.success && writtenBy(p.tc.toolName, p.parsedArgs, output).length > 0;
+          this.usefulEdits.set(p.tc.callId, output.usefulEdit);
         }
 
         // Worker output IS written code: it must count as writes for the
@@ -4014,39 +4064,45 @@ export class AgentLoop {
           // decides whether they came from the workspace's current preview.
           // A reference image is still useful input, but does not prove the
           // agent reviewed its own current UI. The browser receipts do that.
-          this.appendMessage({
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text:
-                  `[Attached from your last tool call: ${labels}]\n` +
-                  "These are the real pixels. Describe only what you can actually see in them.",
-              },
-              ...attached.map((a): ContentBlock => ({
-                type: "image",
-                mediaType: a.mediaType,
-                data: a.data,
-              })),
-            ],
-          });
+          this.appendMessage(
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text:
+                    `[Attached from your last tool call: ${labels}]\n` +
+                    "These are the real pixels. Describe only what you can actually see in them.",
+                },
+                ...attached.map((a): ContentBlock => ({
+                  type: "image",
+                  mediaType: a.mediaType,
+                  data: a.data,
+                })),
+              ],
+            },
+            "image:delivered",
+          );
         } else {
           // The transport would drop the block on the floor, and a silently
           // dropped screenshot is worse than none: the agent believes it
           // looked, and describes an interface it never saw. Say so instead.
-          this.appendMessage({
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text:
-                  `[NOT attached: ${labels}. This session's provider ` +
-                  `(${this.config.provider}) cannot carry images, so you have NOT seen this ` +
-                  "file. Do not describe its contents — say you could not view it, and either " +
-                  "work from something you can read or ask the user to look.]",
-              },
-            ],
-          });
+          this.appendMessage(
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text:
+                    `[NOT attached: ${labels}. This session's provider ` +
+                    `(${this.config.provider}) cannot carry images, so you have NOT seen this ` +
+                    "file. Do not describe its contents — say you could not view it, and either " +
+                    "work from something you can read or ask the user to look.]",
+                },
+              ],
+            },
+            "image:refused",
+          );
         }
       }
 
@@ -4068,23 +4124,26 @@ export class AgentLoop {
       // what a halted run must not do.
       if (haltNotice) {
         this.report("loop.auto_halt", "error", "autoHalt", haltNotice);
-        this.appendMessage({
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text:
-                `The run has been HALTED by the safety broker: ${haltNotice}\n\n` +
-                "No tools are available to you now and none will be. This is your last " +
-                "message of the run. Write it as a report, briefly and plainly:\n" +
-                "1. What you were doing and why.\n" +
-                "2. What you had just read or run immediately before the halt.\n" +
-                "3. What is finished and verified, and what you did NOT finish.\n" +
-                "Do not argue with the halt, do not propose a workaround, and do not " +
-                "promise to continue. State the position honestly and stop.",
-            },
-          ],
-        });
+        this.appendMessage(
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text:
+                  `The run has been HALTED by the safety broker: ${haltNotice}\n\n` +
+                  "No tools are available to you now and none will be. This is your last " +
+                  "message of the run. Write it as a report, briefly and plainly:\n" +
+                  "1. What you were doing and why.\n" +
+                  "2. What you had just read or run immediately before the halt.\n" +
+                  "3. What is finished and verified, and what you did NOT finish.\n" +
+                  "Do not argue with the halt, do not propose a workaround, and do not " +
+                  "promise to continue. State the position honestly and stop.",
+              },
+            ],
+          },
+          "halt:final-report",
+        );
         haltReportPending = true;
         haltNotice = null;
         yield {
@@ -4129,20 +4188,23 @@ export class AgentLoop {
           "barrenBreaker",
           "two consecutive turns fully refused — nudged for a different approach",
         );
-        this.appendMessage({
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text:
-                "Every tool call in your last two turns was refused before it ran. Nothing " +
-                "has executed and nothing has changed, so repeating or rephrasing these calls " +
-                "cannot work. Do one of two things now: take a genuinely different approach " +
-                "that does not need the refused action, or stop and report plainly what you " +
-                "were blocked from doing and what remains unfinished.",
-            },
-          ],
-        });
+        this.appendMessage(
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text:
+                  "Every tool call in your last two turns was refused before it ran. Nothing " +
+                  "has executed and nothing has changed, so repeating or rephrasing these calls " +
+                  "cannot work. Do one of two things now: take a genuinely different approach " +
+                  "that does not need the refused action, or stop and report plainly what you " +
+                  "were blocked from doing and what remains unfinished.",
+              },
+            ],
+          },
+          "nudge:barren-breaker",
+        );
         yield {
           type: "notice",
           message: "Two turns fully refused — asking the agent to change approach or stop.",

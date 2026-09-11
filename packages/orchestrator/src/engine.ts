@@ -529,6 +529,10 @@ export function replayEvents(
               // "instant", which is a claim; the field is required, so it is
               // reported as 0 and the UI treats an absent duration as unknown.
               durationMs: num(p.durationMs),
+              // The write verdict, when the row carries one (P3B I6). Rows
+              // written before it have none, and absent means "not a write" —
+              // so a replayed old row is silent rather than claiming `false`.
+              ...(typeof p.usefulEdit === "boolean" ? { usefulEdit: p.usefulEdit } : {}),
             },
           },
         });
@@ -5288,6 +5292,7 @@ export class Engine {
       getMessages: () => loop.getMessages(),
       takePendingPersist: () => loop.takePendingPersist(),
       originOf: (m: Message) => loop.originOf(m),
+      usefulEditOf: (callId: string) => loop.usefulEditOf(callId),
     };
     // Expose the live loop so interject() can steer this run mid-flight.
     this.liveLoop = loop;
@@ -5334,7 +5339,15 @@ export class Engine {
         }
       } else if (m.role === "tool") {
         for (const r of messageToToolResultPayloads(m)) {
-          this.sessions.appendEvent(sessionId, { type: "tool_result", payload: r });
+          // Whether this call CHANGED anything, from the loop's own write
+          // predicate (P3B I6). Same seam as the message origins above: the
+          // loop knows the verdict and nothing about persistence, and the row
+          // it rides on already exists. Absent on a call that was not a write.
+          const usefulEdit = runner.usefulEditOf(r.callId);
+          this.sessions.appendEvent(sessionId, {
+            type: "tool_result",
+            payload: usefulEdit === undefined ? r : { ...r, usefulEdit },
+          });
         }
       } else if (m.role === "user") {
         const first = m.content.find((b) => b.type === "text");
@@ -5515,7 +5528,10 @@ export class Engine {
               component: `tool:${out.toolName}`,
               where: "engine#toolCallEnd",
               message: out.error ?? "tool failed without an error message",
-              context: { tool: out.toolName, argsHash: hashArgs(event.args) },
+              // `callId` joins the incident to the assistant message that
+              // issued the call, and through it to the completion that paid
+              // for it (P3B I6b). The recorder already stamps the turn.
+              context: { tool: out.toolName, argsHash: hashArgs(event.args), callId: event.callId },
             });
           }
         }
@@ -6376,6 +6392,8 @@ export class Engine {
       status?: unknown;
       integration?: unknown;
       conflicts?: unknown;
+      startedAt?: unknown;
+      integratedAt?: unknown;
     };
     const declaredId = structured.task_id ?? structured.taskId;
     const id = typeof declaredId === "string" && declaredId ? declaredId : event.callId;
@@ -6398,12 +6416,20 @@ export class Engine {
     const conflicts = Array.isArray(child.conflicts)
       ? (child.conflicts as unknown[]).filter((c): c is string => typeof c === "string")
       : undefined;
+    // The child's own clock (P3B I4). Carried through verbatim when it is a
+    // string and dropped otherwise — a child from an older build reports
+    // neither, and the projection says "not measured" rather than inventing a
+    // boundary the parent cannot actually see.
+    const startedAt = typeof child.startedAt === "string" ? child.startedAt : undefined;
+    const integratedAt = typeof child.integratedAt === "string" ? child.integratedAt : undefined;
     this.liveChildren.set(id, {
       id,
       kind,
       status,
       ...(integration ? { integration } : {}),
       ...(conflicts && conflicts.length > 0 ? { conflicts } : {}),
+      ...(startedAt ? { startedAt } : {}),
+      ...(integratedAt ? { integratedAt } : {}),
     });
   }
 
@@ -6943,7 +6969,18 @@ export class Engine {
             gi.kind === "fallback"
               ? `${gi.provider}/${gi.model ?? "?"} → ${gi.fallbackTo}: ${gi.message}`
               : gi.message,
-          context: { provider: gi.provider, model: gi.model, status: gi.status },
+          context: {
+            provider: gi.provider,
+            model: gi.model,
+            status: gi.status,
+            // Which completion paid for this (P3B I6b). The black box holds
+            // 1,417 rate-limit incidents against 15 recorded retries and the
+            // two stores had no join at all. `requestStartedAt` is I3's stamp
+            // on the cost row, so the pair names the completion exactly — no
+            // new id, no new table.
+            ...(gi.role ? { role: gi.role } : {}),
+            ...(gi.requestStartedAt ? { requestStartedAt: gi.requestStartedAt } : {}),
+          },
         });
       },
     };
