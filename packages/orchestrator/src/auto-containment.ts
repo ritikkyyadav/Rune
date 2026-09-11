@@ -247,9 +247,14 @@ const PATTERN_KILL_RE = /\b(?:pkill|killall)\b|\bxargs\s+(?:-\S+\s+)*kill\b/i;
  * Binding a listener to every interface. The user asked for a preview, which
  * loopback gives them; `0.0.0.0` additionally hands the workspace to the
  * network the machine happens to be on.
+ *
+ * The spelling matters as much as the address. This knew `--bind`, `--host`,
+ * `--address`, `--listen` and `-b`, which is four of the flags in use: it did
+ * not know `-a` (`http-server -a 0.0.0.0 /`), `-H`, or `--hostname`, so those
+ * three shapes bound to every interface with nothing to say about it.
  */
 const BEYOND_LOOPBACK_RE =
-  /(?:--bind|--host|--address|--listen|-b)[=\s]+(?:0\.0\.0\.0|::|\[::\])\b|\b0\.0\.0\.0:\d+/i;
+  /(?:--bind|--host|--hostname|--address|--listen|-b|-a|-H)[=\s]+(?:0\.0\.0\.0|::|\[::\])\b|\b0\.0\.0\.0:\d+/i;
 
 /** Persistence by PATH rather than by command: profiles, agents, trusted keys. */
 const PERSISTENCE_PATH_RE =

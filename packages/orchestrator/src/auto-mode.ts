@@ -1957,7 +1957,11 @@ export class AutoModeRun {
     try {
       prompt = this.buildPrompt(risk);
     } catch {
-      return { reason: "the reviewer prompt could not be built", record: true };
+      return {
+        reason: "the reviewer prompt could not be built",
+        record: true,
+        queueWaitMs: this.supervisor.oldestWaitMs(),
+      };
     }
     if (prompt.length > MAX_CLASSIFIER_PROMPT_CHARS - 26_000)
       return {
@@ -2561,8 +2565,31 @@ const PIPE_TO_INTERPRETER_RE =
  * `{data: …}`, `{payload: {…}}`, `"contents of src/secrets.ts"`, and the
  * cloud instance-metadata path `/latest/meta-data/` (a hyphen is a word
  * boundary). Corpus rows pin all five.
+ *
+ * The boundary is on LETTERS, not on `\w`, and the humps are separated first
+ * — because `\b` does not fire between a letter and `_`, and fires nowhere at
+ * all inside `requestBody`. Rune's own network tools have no payload key, so
+ * `\b` cost nothing there; an MCP connector tool is `category: "network"`
+ * whenever it is neither read-only nor destructive (`mcp/client.ts`), its
+ * argument names are whatever the remote server declares, and snake_case is
+ * the prevailing MCP convention. `request_body`, `file_content`, `post_data`,
+ * `requestBody` and `postData` are the same key as `body`, `content`, `data`
+ * — and each of them silently dropped to medium.
  */
-const OUTBOUND_PAYLOAD_RE = /\b(?:bod(?:y|ies)|data|payloads?|contents?|uploads?|post)\b/i;
+const OUTBOUND_PAYLOAD_RE =
+  /(?<![A-Za-z])(?:bod(?:y|ies)|data|payloads?|contents?|uploads?|post)(?![A-Za-z])/i;
+
+/**
+ * True when the serialized arguments name an outbound payload.
+ *
+ * A camelCase hump is a word break that no regex boundary sees, so it is made
+ * into one before the words are looked for: `requestBody` → `request Body`.
+ * `datasets` and `postmortem` have no hump and stay one word, which is what
+ * keeps a documentation search out of the reasoned reviewer.
+ */
+function carriesOutboundPayload(args: Record<string, unknown>): boolean {
+  return OUTBOUND_PAYLOAD_RE.test(JSON.stringify(args).replace(/([a-z0-9])([A-Z])/g, "$1 $2"));
+}
 
 export function assessActionRisk(
   action: AutoModeAction,
@@ -2608,7 +2635,7 @@ export function assessActionRisk(
   }
   if (action.toolName === "task") return "medium";
   if (action.schema.category === "network") {
-    return OUTBOUND_PAYLOAD_RE.test(JSON.stringify(action.args)) ? "high" : "medium";
+    return carriesOutboundPayload(action.args) ? "high" : "medium";
   }
   if (action.schema.category === "write") return tier === "workspace" ? "low" : "high";
   if (action.schema.category === "execute") return "medium";
