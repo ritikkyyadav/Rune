@@ -380,6 +380,13 @@ export function buildLifecycle(input: LifecycleInput): TaskLifecycle {
       checks: input.checks.slice(-LIFECYCLE_BOUNDS.checks),
       verifiedCriteria: input.verifiedCriteria,
     },
+    // Rebuilt field by field rather than spread, so a live child's private
+    // bookkeeping never leaks onto the wire. The cost of that is that a field
+    // added to `TaskLifecycleChild` and set by `Engine.recordChild` is dropped
+    // here unless it is named — which is exactly what happened to P3B I4's
+    // stamps: `recordChild` set them and this map deleted them one call later,
+    // so `integratedAt` appeared zero times in a real session log. Anything
+    // added to the child row must be added here too.
     children: input.children.slice(-LIFECYCLE_BOUNDS.children).map((child) => ({
       id: child.id,
       kind: child.kind,
@@ -388,6 +395,10 @@ export function buildLifecycle(input: LifecycleInput): TaskLifecycle {
       ...(child.conflicts && child.conflicts.length > 0
         ? { conflicts: child.conflicts.slice(0, LIFECYCLE_BOUNDS.conflicts) }
         : {}),
+      // When the child's own loop began and when its result was integrated
+      // (P3B I4). Both optional: a child from an older build reports neither.
+      ...(child.startedAt ? { startedAt: child.startedAt } : {}),
+      ...(child.integratedAt ? { integratedAt: child.integratedAt } : {}),
     })),
   };
 }

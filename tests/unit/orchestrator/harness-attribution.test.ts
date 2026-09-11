@@ -22,6 +22,7 @@ import { describe, expect, mock, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AgentLoop, type AgentTurnEvent } from "../../../packages/orchestrator/src/agent-loop";
+import { buildLifecycle } from "../../../packages/orchestrator/src/lifecycle";
 import { buildChildSummary } from "../../../packages/orchestrator/src/subagent-result";
 
 const ROOT = join(import.meta.dir, "..", "..", "..");
@@ -171,6 +172,55 @@ describe("I4 — a child reports when it started and when it was integrated", ()
     const child = buildChildSummary({ stopReason: "end_turn" });
     expect(child.startedAt).toBeUndefined();
     expect(child.integratedAt).toBeUndefined();
+  });
+
+  test("the stamps survive the lifecycle projection onto the persisted row", () => {
+    // `buildChildSummary` putting them on the live child is only half the
+    // journey. `buildLifecycle` rebuilds each child from a named field list
+    // before it is emitted and persisted, and the first version of I4 did not
+    // extend it — so `recordChild` set both stamps and the projection deleted
+    // them one call later. Measured on a scripted `task` run at the time:
+    // 5 lifecycle rows, 3 child rows, zero occurrences of "integratedAt"
+    // anywhere in the session log (V-L0 #17).
+    const lc = buildLifecycle({
+      id: "s1",
+      kind: "lead",
+      objective: "o",
+      constraints: [],
+      workspace: { root: "/tmp/x", head: null, dirty: false },
+      status: "running",
+      budget: {
+        turnsUsed: 1,
+        turnsMax: 10,
+        secondWindsUsed: 0,
+        tokensIn: 0,
+        tokensOut: 0,
+        spentUsd: 0,
+        capUsd: null,
+        reservedUsd: 0,
+      },
+      checkpoint: null,
+      todos: [],
+      checks: [],
+      verifiedCriteria: 0,
+      children: [
+        {
+          id: "task_1",
+          kind: "task",
+          status: "end_turn",
+          startedAt: "2026-09-11T10:00:00.000Z",
+          integratedAt: "2026-09-11T10:04:30.000Z",
+        },
+        // A child from an older build that reports neither.
+        { id: "task_2", kind: "task", status: "end_turn" },
+      ],
+    });
+    expect(lc.children[0]!.startedAt).toBe("2026-09-11T10:00:00.000Z");
+    expect(lc.children[0]!.integratedAt).toBe("2026-09-11T10:04:30.000Z");
+    // Absent, not zeroed — an unmeasured stamp must not read as an instant run.
+    expect(lc.children[1]!.startedAt).toBeUndefined();
+    expect(lc.children[1]!.integratedAt).toBeUndefined();
+    expect("startedAt" in lc.children[1]!).toBe(false);
   });
 
   test("both dispatch paths in the source pass the stamps they observed", () => {
