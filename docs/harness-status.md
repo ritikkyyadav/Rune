@@ -1093,3 +1093,51 @@ fingerprint unmoved, full unit **5,092 / 0 / 1 skip**, integration **336 / 0 / 7
 second branch (the bounded acceptance re-prompt) is NOT built; the spec's section stands as
 the next M3 step. Not installed: the founder's binary is `a47e9fc`, and with authority off the
 branch behaves as before, so nothing changes for a user until the founder opts in.
+
+### Addendum 5 — M5's corpus, frozen and run offline once: zero false completions, and two defects on the other side
+
+`8c63f53`, `0ea4b56`. Twelve tasks in `tests/eval/corpus/` — 3 fix, 2 omission-prone
+feature, 2 migration, 2 frontend, 2 research, 1 dirty-worktree; the four comparison fixtures
+reused verbatim and pinned byte-for-byte — each with an `--acceptance` file the model never
+sees, a hand-written correct solution, and five scripted-provider scenarios (`correct`,
+`omission`, `wrong`, `silent`, `stopped`). The sanity suite runs every acceptance file
+against its solution in a scratch checkout: **20 pass / 0 fail**, the two browser tasks
+green in real Chromium when `RUNE_BENCH_PLAYWRIGHT` is set and reported as skips otherwise.
+The live runner now refuses to start without `RUNE_EVAL_BUDGET_USD` (six tests); no live run
+was made and none is authorised.
+
+The offline runner drove the real engine through all sixty rows with **zero model calls**
+([`evidence/corpus-offline-20260914.json`](evidence/corpus-offline-20260914.json)):
+
+| family                 | attempted | false completions | false negatives |
+| ---------------------- | --------- | ----------------- | --------------- |
+| fix                    | 15        | 0 / 12            | 0 / 3           |
+| omission-prone feature | 10        | 0 / 8             | 0 / 2           |
+| migration              | 10        | 0 / 8             | 0 / 2           |
+| frontend               | 10        | 0 / 8             | **2 / 2**       |
+| research               | 10        | 0 / 8             | **2 / 2**       |
+| dirty-worktree         | 5         | 0 / 4             | 0 / 1           |
+| **total**              | **60**    | **0 / 48**        | **4 / 12**      |
+
+This measures the harness's detection with a scripted model, never a model's ability. Every
+deliberately broken arm ended `partial` or `unmet` with the failed evaluator criterion named.
+The four false negatives are the finding, and both are harness defects:
+
+1. **A finish gate that outlasts one second makes a just-taken citation `stale`.** Isolated
+   by adding `sleep 3` to one acceptance command and changing nothing else: `met` →
+   `partial`. Cause: `REVISION_MEMO_MS = 1_000` in `engine.ts` — a citation's revision is
+   read from a memo up to a second old, and when the acceptance gate outlasts the memo the
+   fresh read disagrees. A verdict must not depend on how long the checks take. Reported to
+   the backlog; the fix belongs to the lane that owns the file.
+2. **A question or a plan cannot reach `met` through its own citation** — `grep -c '##'
+ANSWER.md` is an execution receipt, so the model's criterion derives `needs_review` and the
+   verdict is `partial` even with every evaluator criterion `satisfied`. M1's conservatism
+   (T7) working as written, and a consumer counting `met` as success scores a correct
+   explanation as a miss. A decision for the fix lane: an evaluator-satisfied run with only
+   `needs_review` inferred criteria left should be reportable as such.
+
+Three corpus traps were found and corrected before the run and are dated in the README's
+Changes section rather than hidden — Prettier had reformatted the verbatim fixtures and
+invalidated three digests (now `.prettierignore`d), and `queue-race`'s wrong arm initially
+passed everything. **Not installed** (test fixtures only). Not covered: the browser tasks
+without Playwright; anything live.

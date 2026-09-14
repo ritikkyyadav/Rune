@@ -739,3 +739,13 @@ Reports: `.codex/audit-20260910/handoff/m0/{m1,p4,p4-restart}-report.md`.
   ask mode; no founder mocks exist for `/config`, `/sandbox`, `/model`, `/keys`, `/help`,
   `/status` (frames in `.codex/audit-20260910/handoff/m0/p4b-frames/` are the only reference).
   — Phase 4 remainder — Claude
+- **`engine.ts` `REVISION_MEMO_MS = 1_000`: a citation taken from a memo up to a second old
+  reads `stale` when the finish gate outlasts the memo** — both frontend `correct` rows of
+  the corpus and a `sleep 3` control flip `met` → `partial` with nothing moved. Record the
+  revision un-memoised at citation time, or compare digests only. Found by the M5 offline
+  run. — M5 — Claude
+- **A question or plan task cannot reach `met` through its own citation** (an execution
+  receipt derives `needs_review`), so a run whose evaluator criteria are all `satisfied` still
+  reads `partial`. Either let the verdict report "all evaluator criteria satisfied; inferred
+  criteria need review" as its own kind, or let a `question`/`plan`-shaped criterion be
+  satisfied by an evaluator pass. Found by the M5 offline run. — M5 — Claude
