@@ -10,7 +10,13 @@ Zero model calls, by construction:
     prompt, i.e. none of the flags that can reach a provider;
   * `RUNE_HOME` is a scratch profile with no credentials index, so there is no
     keychain lookup and no key to find;
-  * every provider key in the parent environment is scrubbed from the child;
+  * every provider key in the parent environment is scrubbed from the child --
+    by SHAPE, not by a hand-written roster (see SCRUB below);
+  * the child's cwd is the scratch workspace, never the checkout, so the
+    repo-level `.env` that `bun` auto-loads from its CURRENT DIRECTORY is not
+    loaded into the child. (Measured, not assumed: the same entrypoint run with
+    cwd inside the checkout does get `GOOGLE_API_KEY`/`OPENROUTER_API_KEY` from
+    that file, and run from anywhere else does not. `WORK` is under $TMPDIR.)
   * the only bytes ever written are local slash commands, picker navigation and
     Escape -- nothing is typed into the composer and submitted.
 
@@ -51,11 +57,28 @@ WORK = os.path.join(SCRATCH, "workspace")
 ENTRY = str(REPO / "packages" / "orchestrator" / "src" / "bin" / "rune-cli.ts")
 ARGV = ["bun", ENTRY, "--new", "--no-browser", "--pristine"]
 
-SCRUB = (
-    "COLUMNS LINES RUNE_CONFIG_PATH RUNE_DB_PATH GEAR_HOME RUNE_MODEL RUNE_PROVIDER "
-    "OPENROUTER_API_KEY GOOGLE_API_KEY ANTHROPIC_API_KEY OPENAI_API_KEY GROQ_API_KEY "
-    "XAI_API_KEY MISTRAL_API_KEY DEEPSEEK_API_KEY TOGETHER_API_KEY CEREBRAS_API_KEY"
-).split()
+# Variables that steer the child without being secrets: a terminal size the pty
+# already owns, and the profile/model overrides that would make a frame a
+# picture of this machine rather than of the product.
+SCRUB = "COLUMNS LINES RUNE_CONFIG_PATH RUNE_DB_PATH GEAR_HOME RUNE_MODEL RUNE_PROVIDER".split()
+
+# Credentials are scrubbed by SHAPE. A hand-written roster is a roster that goes
+# stale: the one this replaced named ten providers and missed OLLAMA_API_KEY,
+# GEMINI_API_KEY and BRAVE_API_KEY, so the docstring's "every provider key" was
+# not true of the machine it was running on. `_API_KEY` and `_TOKEN` are the two
+# suffixes every provider in the registry uses.
+SECRET_SUFFIXES = ("_API_KEY", "_TOKEN")
+
+# What the rig itself puts in the child. Named so the shape rule can never eat
+# one of them, even if a future variable of the rig's own ends in a suffix.
+RIG_SET = {"RUNE_HOME", "TERM", "LANG", "RUNE_TOOLS_BIN", "RUNE_TOOLS_BINARY"}
+
+
+def secret_names(env):
+    """Every credential-shaped name in `env`, minus the rig's own variables."""
+    return sorted(
+        k for k in env if k.endswith(SECRET_SUFFIXES) and k not in RIG_SET
+    )
 
 
 def child_env(**extra):
@@ -67,9 +90,14 @@ def child_env(**extra):
         RUNE_TOOLS_BIN=str(REPO / "target" / "debug" / "rune-tools"),
         RUNE_TOOLS_BINARY=str(REPO / "target" / "debug" / "rune-tools"),
     )
-    for k in SCRUB:
+    for k in SCRUB + secret_names(e):
         e.pop(k, None)
     e.update(extra)
+    # The claim, checked rather than asserted in prose. A caller that passes a
+    # credential in `extra` means it (no capture does today); anything else
+    # credential-shaped surviving this function is a key the child can spend.
+    leaked = [k for k in secret_names(e) if k not in extra]
+    assert not leaked, "credential-shaped variables reached the child: %s" % leaked
     return e
 
 
