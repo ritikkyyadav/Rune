@@ -729,3 +729,13 @@ Reports: `.codex/audit-20260910/handoff/m0/{m1,p4,p4-restart}-report.md`.
 - **`ledgerRow` spends the note's room before the value's** (fixed for the wizard's panel by
   dropping the per-step `restart required` note; the row primitive still has the bias).
   — Phase 4 — Claude
+- **Two credential stores that describe themselves differently.** `/setup`'s key step stores
+  in the OS keychain and its receipt says "stored in macOS Keychain, not in config.toml";
+  `/keys` writes the raw value to `~/.rune/secrets.json` and its header says so. Both are
+  honest, and a user who used both has keys in two places with two masking rules (band field
+  whole-masked, footer editor last-four). One store, one rule. — Phase 4 remainder — Claude
+- **§2.8 still lacks**: the `◇`/`~` narration rows between setup receipts; the collapsed
+  ledger behind ctrl+f below 100 columns; `/config`'s number editor still in the footer's
+  ask mode; no founder mocks exist for `/config`, `/sandbox`, `/model`, `/keys`, `/help`,
+  `/status` (frames in `.codex/audit-20260910/handoff/m0/p4b-frames/` are the only reference).
+  — Phase 4 remainder — Claude

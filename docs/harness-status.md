@@ -1002,3 +1002,24 @@ The original Phase 4 acceptance now holds for the walked steps: setup without ed
 config file, precedence explained in the panel, the key nowhere in transcript or logs,
 controls persisting, and restart-required changes taking effect on restart. What the
 walkthrough did not exercise is listed under "What is still not proven" above.
+
+### Addendum 2 — the rest of §2.8, and what the frames found
+
+`564ef36`, `3ae51ee`, `48caa0c`. `/config`, `/sandbox` and `/model` were already in the
+workspace (all three resolve to the band picker Lane E built) and are now pinned by test;
+`/keys` splits as §2.8 says — the roster in the workspace, the masked field in the composer,
+the caret following it; `/help` and `/status` were already committed to the transcript and
+`/status` already the idle panel. Drawing them found two `/help` defects: it measured width and
+height against the window rather than the workspace, so at 120×40 half its rows were written
+past the 78-cell pane and clipped, and a 36-row workspace could outgrow its compact form. Both
+now read the workspace. The capture rig scrubs credentials **by shape** (`*_API_KEY`,
+`*_TOKEN`) instead of a ten-name roster that missed three, and asserts nothing
+credential-shaped survives; the repo-level `.env` is confirmed not to reach the child (bun
+loads it from cwd only, and the child's cwd is the scratch workspace). Twenty-two frames at
+120×40 and 80×24 in `p4b-frames/`; `rune.db` has no events after each walk. Gate suite
+**767 / 0** (was 751); full unit **5,068 / 0 / 1 skip** on a tree that also held the M2
+lane's in-flight work. Two deviations, stated: the band key field masks the whole value while
+typing (the footer editor keeps last-four, frozen by §2.2), and `/keys` writes the raw key to
+`secrets.json` because that is the store the command exists for. Still missing from §2.8: the
+setup narration rows, the collapsed ledger behind ctrl+f, `/config`'s number editor in the
+footer's ask mode, and mocks for these six surfaces.
