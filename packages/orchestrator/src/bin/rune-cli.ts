@@ -20,7 +20,6 @@ import {
   setLocalEndpoint as persistLocalEndpoint,
   getPreset,
   PROVIDER_PRESETS,
-  AUTO_PROVIDER_PRIORITY,
   normalizeFallbackOrder,
   normalizeModelIntegrity,
   normalizeSubagentEffort,
@@ -50,6 +49,7 @@ import {
 } from "@rune/shared";
 import type { ProviderName, ResolvedCredential } from "@rune/llm-gateway";
 import { configModeToPermissionMode, resolveStartupPermissionFlags } from "../permissions";
+import { modelForProvider, resolveStartupSelection } from "../startup-selection";
 import { runTeamCommand } from "../team/command";
 import { resolveProviderCredentials } from "../provider-registry";
 import { buildSavedKeys, readAuthOverrides } from "./byop-cli-shared";
@@ -499,54 +499,10 @@ if (command === "models") {
   process.exit(process.exitCode ?? 0);
 }
 
-type CliProvider = "anthropic" | "openai" | "openrouter" | "google" | "ollama-turbo" | "ollama";
-
-const DEFAULT_MODELS: Record<CliProvider, string> = {
-  anthropic: "claude-sonnet-4-6",
-  openai: "gpt-4o",
-  // qwen/qwen3-coder:free and qwen3-coder:480b were retired 2026-07-15, and
-  // deepseek-v4-flash:free was withdrawn from the free tier 2026-08-26;
-  // these mirror the gateway's refreshed, live-verified defaults.
-  openrouter: "minimax/minimax-m3:free",
-  google: "gemini-2.5-flash",
-  "ollama-turbo": "gpt-oss:120b",
-  ollama: "llama3.1",
-};
-
-/** Local runtimes that need no API key — reached by base URL on this machine. */
-const LOCAL_PROVIDERS: ReadonlySet<string> = new Set(["ollama"]);
-
-function isCliProvider(provider: string): provider is CliProvider {
-  return (
-    provider === "anthropic" ||
-    provider === "openai" ||
-    provider === "openrouter" ||
-    provider === "google" ||
-    provider === "ollama-turbo" ||
-    provider === "ollama"
-  );
-}
-
-function configuredModelForProvider(
-  config: ReturnType<typeof loadConfig>,
-  provider: CliProvider,
-): string | undefined {
-  switch (provider) {
-    case "anthropic":
-      return config.llm.anthropic?.model;
-    case "openai":
-      return config.llm.openai?.model;
-    case "openrouter":
-      return config.llm.openrouter?.model;
-    case "google":
-      return config.llm.google?.model;
-    case "ollama":
-      return config.llm.ollama?.model;
-    case "ollama-turbo":
-      // No dedicated config.llm section; fall back to DEFAULT_MODELS / --model.
-      return undefined;
-  }
-}
+// The startup provider/model ladder — CLI flags → sticky → config → auto-detect
+// — used to live here, gated on a hand-written list of six provider ids that
+// rotted twice. It is now ../startup-selection: pure, injected with this
+// machine's state, and unit-tested one rung at a time.
 
 /** Merge local-runtime base URLs from config.toml + the secrets sidecar (secrets win). */
 function resolveLocalBaseUrls(
@@ -854,108 +810,25 @@ async function main() {
   // The TUI paints its own background edge-to-edge in the alternate screen, so OSC terminal
   // recolouring is applied only on the classic readline path (set up after the TUI branch).
 
-  // ─── Smart Provider Detection ───
-  // Priority: CLI arg > config > auto-detect from available API keys
-  function detectBestProvider(): CliProvider {
-    // Prefer reliable/funded capacity when several keys exist. Explicit CLI,
-    // config, and the user's sticky /model choice have already won above.
-    const envVars: Record<(typeof AUTO_PROVIDER_PRIORITY)[number], string> = {
-      anthropic: "ANTHROPIC_API_KEY",
-      openai: "OPENAI_API_KEY",
-      google: "GOOGLE_API_KEY",
-      openrouter: "OPENROUTER_API_KEY",
-    };
-    for (const provider of AUTO_PROVIDER_PRIORITY) {
-      const cfgSection = config.llm[provider] as { apiKey?: string } | undefined;
-      const envVar = envVars[provider];
-      if (process.env[envVar] || cfgSection?.apiKey) return provider;
-    }
-    // Keyed hosts without an [llm.*] config section: a saved /keys secret (or
-    // env var) is a working credential too. Without this, a user whose ONLY
-    // key was ollama-turbo auto-detected into a keyless openrouter boot.
-    if (process.env.OLLAMA_API_KEY || secrets.keys["ollama-turbo"]) return "ollama-turbo";
-    return "openrouter"; // last resort
-  }
-
+  // ─── Which provider and model this process opens on ───
+  // CLI flags → the sticky `/model` pick → `[llm] defaultProvider` → auto-detect.
+  // The rule itself lives in ../startup-selection (pure, unit-tested); this file
+  // only supplies the machine's state: config, secrets, the credential store and
+  // the provider registry.
   const cliProvider = values.provider as string | undefined;
-  const configProvider = config.llm.defaultProvider;
-
-  // Does a provider have working credentials — an env var, an [llm.*].apiKey, or a /keys secret?
-  // ollama-turbo carries no [llm.*] section (its key lives in secrets.json / OLLAMA_API_KEY).
-  const providerEnvVar: Partial<Record<CliProvider, string>> = {
-    google: "GOOGLE_API_KEY",
-    anthropic: "ANTHROPIC_API_KEY",
-    openai: "OPENAI_API_KEY",
-    openrouter: "OPENROUTER_API_KEY",
-    "ollama-turbo": "OLLAMA_API_KEY",
-  };
-  const hasCreds = (p: CliProvider): boolean => {
-    // Local runtimes are keyless — always "available"; reachability of the
-    // localhost server is surfaced at call time, not gated here.
-    if (LOCAL_PROVIDERS.has(p)) return true;
-    const envVar = providerEnvVar[p];
-    return (
-      !!(envVar && process.env[envVar]) ||
-      !!(config.llm[p as keyof typeof config.llm] as { apiKey?: string } | undefined)?.apiKey ||
-      !!secrets.keys[p]
-    );
-  };
-
-  // The model you last used IS the model you get. It loses only to an explicit
-  // --model/--provider on this run; nothing else outranks it, and there is no
-  // separate "default" to keep in sync.
-  //
-  // This used to be gated on `isCliProvider`, a hand-written list of seven ids
-  // that was never updated when the subscription providers were added — so a
-  // sticky `codex` model failed the gate and every new session silently opened
-  // on an auto-detected google/gemini-2.5-flash instead of the GPT-5.6 the user
-  // had chosen. `hasCreds` was the second half of the same bug: it knew env
-  // vars, [llm.*].apiKey and the legacy secrets file, none of which a
-  // subscription provider uses. Both are now asked of the provider registry and
-  // the credential store, so adding a provider cannot break stickiness again.
-  const lastUsed = !cliProvider && !values.model ? loadLastModel() : null;
-  // `custom` has no preset by design — it IS the escape hatch for a provider
-  // the catalogue does not know — so the preset gate would reject it forever.
-  // `/model` already accepts it; without this the pick was lost at the next
-  // start, which is how P8.6's replacement for `lmstudio` (`/keys custom …`)
-  // was reached but never kept.
-  const customUsable = !!(
-    secrets.custom?.baseUrl &&
-    (secrets.custom?.key || hasStoredCredential(CUSTOM_PROVIDER_ID))
-  );
-  const stickyUsable = (p: string): boolean =>
-    p === CUSTOM_PROVIDER_ID
-      ? customUsable
-      : getPreset(p) !== undefined &&
-        (LOCAL_PROVIDERS.has(p) || hasStoredCredential(p) || (isCliProvider(p) && hasCreds(p)));
-  const sticky = lastUsed && stickyUsable(lastUsed.provider) ? lastUsed : null;
-
-  let provider: ProviderName;
-  let model: string;
-  if (sticky) {
-    provider = sticky.provider as ProviderName;
-    model = sticky.model;
-  } else {
-    // CLI arg first, then config (only if that provider has a key), then auto-detect.
-    // `--provider` names ANY preset, not only the six the CLI knew by hand: the
-    // roster is thirty-odd hosts now, and `rune --provider mistral` silently
-    // booting into openrouter is the same rot the sticky-model gate had.
-    if (
-      cliProvider &&
-      (isCliProvider(cliProvider) || getPreset(cliProvider) || cliProvider === CUSTOM_PROVIDER_ID)
-    )
-      provider = cliProvider as ProviderName;
-    else if (configProvider && isCliProvider(configProvider) && hasCreds(configProvider))
-      provider = configProvider;
-    else provider = detectBestProvider();
-    model =
-      (values.model as string | undefined) ??
-      (isCliProvider(provider) ? configuredModelForProvider(config, provider) : undefined) ??
-      (isCliProvider(provider) ? DEFAULT_MODELS[provider] : undefined) ??
-      getPreset(provider)?.defaultModel ??
-      secrets.custom?.model ??
-      "";
-  }
+  const selection = resolveStartupSelection({
+    cliProvider,
+    cliModel: values.model as string | undefined,
+    config,
+    secrets,
+    // Reading the sticky pick is I/O; skip it when a flag has already won.
+    lastUsed: !cliProvider && !values.model ? loadLastModel() : null,
+    env: process.env,
+    hasStoredCredential,
+    getPreset,
+  });
+  const provider = selection.provider as ProviderName;
+  const model = selection.model;
 
   // Explicit CLI rune flags win over the persisted rune.
   const gearFlag = values.gear !== undefined ? String(values.gear) : undefined;
@@ -1313,7 +1186,15 @@ async function main() {
     process.stdout.write(
       `  ${brass("⚠")} ${dim(`${provider} has no API key, using`)} ${green(fallback)} ${dim("instead")}\n`,
     );
-    engine.switchModel(DEFAULT_MODELS[fallback as CliProvider] ?? DEFAULT_MODELS.google, fallback);
+    // The model has to be the FALLBACK provider's, not a literal: this line read
+    // `DEFAULT_MODELS[fallback] ?? DEFAULT_MODELS.google`, so every provider
+    // outside the six the CLI knew by hand — `custom` above all — was moved to
+    // gemini-2.5-flash, a model it does not serve. That is where the setup
+    // wizard's saved custom/mock-small became google/gemini on the next launch.
+    engine.switchModel(
+      modelForProvider(fallback, { config, secrets, getPreset }) || model,
+      fallback,
+    );
   }
 
   // ─── Composer mode decision (needed before session resolution) ───
