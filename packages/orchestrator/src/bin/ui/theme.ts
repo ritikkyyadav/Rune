@@ -39,7 +39,14 @@ import {
 } from "./themes";
 
 const RESET = "\x1b[0m";
-const ANSI_PATTERN = /\x1b\[[0-?]*[ -/]*[@-~]/g;
+// CSI (`ESC [ ... final`), OSC (`ESC ] ... BEL|ST`) and the VT100 "nF"
+// charset-designator family (`ESC` + one-or-more 0x20-0x2F intermediates + one
+// 0x30-0x7E final byte -- e.g. `ESC ( B`, xterm's own `sgr0` idiom). Mirrors
+// render.ts's `escapeAt`: this is the NO_COLOR/piped "plain" sanitizer, and a
+// non-CSI escape it does not know about survives as raw control bytes in
+// exactly the surface that promises none.
+const ANSI_PATTERN =
+  /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b[\x20-\x2f]+[\x30-\x7e]/g;
 
 function noColor(): boolean {
   return (

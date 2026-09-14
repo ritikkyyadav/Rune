@@ -109,6 +109,8 @@ export const COMPOSER_MIN_ROWS = 4;
 export const PANEL_MIN_ROWS = 8;
 /** Under this many workspace rows a split would be two unreadable slivers. */
 export const SPLIT_MIN_ROWS = 14;
+/** The workspace keeps at least this many rows, however tall the composer draws. */
+export const WORKSPACE_MIN_ROWS = 3;
 
 export interface Regions {
   /** True when the window is under MIN_COLS x MIN_ROWS. Nothing else is valid. */
@@ -178,10 +180,23 @@ export function regions(input: RegionInput): Regions {
   // The composer's ceiling: never more than three fifths of the band, and never
   // so much that the panel falls under its floor. Both clamps, and the lower of
   // the two wins -- at a 36-row band that is 21 rows, leaving the panel 15.
-  const cap = Math.max(
-    COMPOSER_MIN_ROWS,
-    Math.min(bandRows - (collapsed ? stripRows + 1 : PANEL_MIN_ROWS), Math.floor(bandRows * 0.6)),
-  );
+  //
+  // Collapsed is different in kind, not degree: there is no panel for growth to
+  // come out of (the strip replaces it), so a request for more rows has nowhere
+  // to take them from except the workspace -- which is exactly the "the whole
+  // window slides while you type" defect the fixed frame exists to remove. The
+  // ceiling is therefore the resting height, full stop, regardless of how many
+  // rows were asked for: `workspaceRows` below is then a function of `bandRows`
+  // and `stripRows` alone, never of composer height, which is what makes it
+  // invariant under typing. A field that wants more than this scrolls inside
+  // itself (composer.ts's own grow-then-scroll path), never by resizing the
+  // region around it.
+  const cap = collapsed
+    ? COMPOSER_MIN_ROWS
+    : Math.max(
+        COMPOSER_MIN_ROWS,
+        Math.min(bandRows - PANEL_MIN_ROWS, Math.floor(bandRows * 0.6)),
+      );
   const composerRows = Math.max(
     COMPOSER_MIN_ROWS,
     Math.min(cap, Math.floor(input.composerRows ?? COMPOSER_MIN_ROWS)),
@@ -213,6 +228,54 @@ export function regions(input: RegionInput): Regions {
     composerRows,
     composerTop: headerRows + bandRows - composerRows,
   };
+}
+
+/**
+ * How many rows the composer block may PAINT, which is not the same number as
+ * the region it is accounted against.
+ *
+ * `regions()` reports the composer's RESTING height once the panel is gone, and
+ * that is deliberate: `workspaceRows` has to be a function of the band alone,
+ * or the transcript re-lays itself every time somebody types a word. But the
+ * block still has to be able to show a three-line draft and the `/` palette
+ * above it, and capping what it DRAWS at the resting height would leave a
+ * one-row field and no palette at all at the most common terminal size.
+ *
+ * So at a collapsed width the extra rows are taken by COVERING the workspace's
+ * bottom rows rather than by shrinking the region -- the same mechanic the
+ * panel overlay uses a few lines away in `renderBand`. Nothing above the
+ * covered rows moves, the covered rows are still there, and they come back the
+ * moment the field does. With a panel there is a region to take the rows from,
+ * so `regions()`'s own number is already the answer and this returns it.
+ */
+export function composerPaintRows(r: Regions, want: number): number {
+  if (!r.collapsed) return r.composerRows;
+  const ceiling = Math.max(
+    COMPOSER_MIN_ROWS,
+    Math.min(Math.floor(r.bandRows * 0.6), r.bandRows - r.stripRows - WORKSPACE_MIN_ROWS),
+  );
+  return Math.max(r.composerRows, Math.min(Math.floor(want), ceiling));
+}
+
+/**
+ * The screen row the caret lands on, once the composer block is painted.
+ *
+ * The block is bottom-aligned in the band and keeps its TAIL when it does not
+ * fit, exactly the way `composeFrame`'s footer does. Two numbers therefore
+ * decide the caret's row and neither is `regions().composerRows`: how many rows
+ * are actually PAINTED (`composerPaintRows`), and how many were cut off the
+ * FRONT to make it fit. Dividing by the region instead of the paint put the
+ * caret on a rule below the field at 80x24 with the `/` palette open -- the
+ * blinking cursor sat on dashes while the typed text was a row above it.
+ */
+export function composerCaretRow(
+  r: Regions,
+  blockRows: number,
+  caretRow: number,
+  paintRows: number,
+): number {
+  const drop = Math.max(0, blockRows - paintRows);
+  return r.bandTop + r.bandRows - paintRows + Math.max(0, caretRow - drop);
 }
 
 export interface Panes {

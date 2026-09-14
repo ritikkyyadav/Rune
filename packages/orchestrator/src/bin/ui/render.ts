@@ -43,6 +43,14 @@ function escapeAt(value: string, index: number): string | null {
   // OSC: terminal title / foreground / background. Ends in BEL or ST.
   const osc = /^\x1b\][^\x07]*(?:\x07|\x1b\\)/.exec(rest);
   if (osc) return osc[0];
+  // VT100 "nF" charset designator: ESC, one or more intermediate bytes
+  // (0x20-0x2F), one final byte (0x30-0x7E) -- `ESC ( B` is this family, and it
+  // is xterm's own `sgr0` idiom (seen verbatim in real `cargo`/`console`-crate
+  // output). Zero width: it selects a character set, it prints nothing. Without
+  // this branch only the lone ESC was consumed, leaving the two payload bytes
+  // to be counted and rendered as if they were two ordinary characters.
+  const nf = /^\x1b[\x20-\x2f]+[\x30-\x7e]/.exec(rest);
+  if (nf) return nf[0];
   // Other two-byte escape sequences.
   const short = /^\x1b[@-_]/.exec(rest);
   return short?.[0] ?? "\x1b";
@@ -122,8 +130,39 @@ export function visLen(value: string): number {
   return cellTokens(value).reduce((sum, token) => sum + token.width, 0);
 }
 
+export interface GraphemeSpan {
+  /** UTF-16 index into the ORIGINAL string, inclusive. */
+  start: number;
+  /** UTF-16 index into the ORIGINAL string, exclusive -- always the end of a
+   *  whole grapheme cluster, so it is never inside a surrogate pair or
+   *  between a base character and its combining marks. */
+  end: number;
+  /** Terminal cells this one grapheme occupies (0, 1, or 2). */
+  width: number;
+}
+
+/**
+ * Segment a PLAIN (unstyled) string into graphemes with their buffer-index
+ * span and terminal-cell width.
+ *
+ * For raw text buffers -- a composer's typed input, not yet rendered -- where
+ * indices must stay meaningful as offsets into the original string (a caret
+ * position, a wrap-row boundary). Unlike `cellTokens`, nothing here is treated
+ * as an escape sequence, because a plain buffer has none to preserve; a caller
+ * with styled terminal output wants `cellTokens`/`visLen` instead.
+ */
+export function graphemeSpans(value: string): GraphemeSpan[] {
+  const out: GraphemeSpan[] = [];
+  for (const part of graphemes.segment(value)) {
+    const start = part.index;
+    const end = start + part.segment.length;
+    out.push({ start, end, width: graphemeWidth(part.segment) });
+  }
+  return out;
+}
+
 /** Take the longest grapheme-safe prefix that fits in `max` terminal cells. */
-function prefixByWidth(value: string, max: number): string {
+export function prefixByWidth(value: string, max: number): string {
   if (max <= 0) return "";
   let width = 0;
   let out = "";

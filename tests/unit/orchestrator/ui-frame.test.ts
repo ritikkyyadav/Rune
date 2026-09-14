@@ -13,7 +13,11 @@
 
 import { afterEach, describe, expect, it } from "bun:test";
 import { renderBanner } from "../../../packages/orchestrator/src/bin/ui/banner";
-import { renderComposer, statusLine } from "../../../packages/orchestrator/src/bin/ui/composer";
+import {
+  renderComposer,
+  statusLine,
+  composerTextWidth,
+} from "../../../packages/orchestrator/src/bin/ui/composer";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
 import { setTermWidthOverride } from "../../../packages/orchestrator/src/bin/ui/render";
 import * as os from "os";
@@ -392,6 +396,139 @@ describe("the composer grows into the panel, never into the workspace", () => {
       expect(r.workspaceRows + r.stripRows + r.composerRows).toBe(r.bandRows);
     }
   });
+
+  // Promoted from tests/verification/v4-laneA-collapsed-composer-eats-workspace.test.ts
+  // (V-4 Lane A). Below PANEL_MIN_COLS there is no panel for growth to come out
+  // of -- the strip takes its place -- so a composer asking for more rows had
+  // nowhere to take them from but the workspace, which is exactly the "the
+  // whole window slides while you type" defect the fixed frame exists to
+  // remove. Confirmed end to end with a real pty capture at 80x24: typing an
+  // ordinary multi-sentence message visibly pushed the composer's top rule
+  // from row 20 to row 12 as the field grew.
+  it("collapsed, the composer never grows past its resting height -- the workspace stays put", () => {
+    const seen = new Set<number>();
+    for (let want = V.COMPOSER_MIN_ROWS; want <= 16; want++) {
+      const r = regionsAt(80, 24, want);
+      expect(r.collapsed, `want ${want}`).toBe(true);
+      seen.add(r.workspaceRows);
+    }
+    expect(seen.size).toBe(1);
+  });
+
+  it("a typed draft growing from 4 to 12 rows at 80x24 does not take even one row from the workspace", () => {
+    const atRest = regionsAt(80, 24, V.COMPOSER_MIN_ROWS);
+    const grown = regionsAt(80, 24, 12);
+    expect(grown.workspaceRows).toBe(atRest.workspaceRows);
+    expect(grown.composerRows).toBe(atRest.composerRows);
+  });
+
+  it("the same collapse holds at every narrow width, not just 80 columns", () => {
+    for (const columns of [99, 61, 60]) {
+      const rows = columns === 60 ? 16 : 24;
+      const atRest = regionsAt(columns, rows, V.COMPOSER_MIN_ROWS);
+      const grown = regionsAt(columns, rows, 999);
+      expect(atRest.collapsed, `${columns}`).toBe(true);
+      expect(grown.workspaceRows, `${columns}`).toBe(atRest.workspaceRows);
+    }
+  });
+
+  // The other half of the same trade. Holding the REGION at its resting height
+  // is what keeps the workspace still; it must not also be what the composer is
+  // allowed to DRAW, or a collapsed window gets a one-row field and no `/`
+  // palette at all -- the first attempt at the fix above did exactly that, and
+  // a real 80x24 pty capture showed a three-line draft rendered as its last
+  // line only. The extra rows are taken by covering the workspace's bottom
+  // rows, which moves nothing above them.
+  it("collapsed, the composer may still PAINT a draft and a palette", () => {
+    const r = regionsAt(80, 24, V.COMPOSER_MIN_ROWS);
+    expect(r.collapsed).toBe(true);
+    // At rest it paints exactly its region, so nothing is covered.
+    expect(V.composerPaintRows(r, V.COMPOSER_MIN_ROWS)).toBe(r.composerRows);
+    // A 12-row block (an 8-row palette over the field's four chrome rows) is
+    // painted whole: the ceiling at this size is well above the resting height.
+    expect(V.composerPaintRows(r, 12)).toBe(12);
+    // And it is bounded: the workspace keeps rows, whatever is asked for.
+    const most = V.composerPaintRows(r, 999);
+    expect(most).toBeLessThanOrEqual(r.bandRows - r.stripRows - V.WORKSPACE_MIN_ROWS);
+    expect(most).toBeGreaterThanOrEqual(V.COMPOSER_MIN_ROWS + 6);
+  });
+
+  it("with a panel there is nothing to cover: the paint is the region", () => {
+    for (let want = 4; want <= 40; want++) {
+      const r = regionsAt(120, 40, want);
+      expect(V.composerPaintRows(r, want), `want ${want}`).toBe(r.composerRows);
+    }
+  });
+});
+
+// Promoted from tests/verification/v4-laneA-caret-off-composer-with-palette.test.ts
+// (V-4 Lane A, A12). At 80x24 with the `/` palette open, the hardware caret sat
+// on the blank rule BELOW the field while the typed `› /` was one row above it
+// -- read from a real terminal emulator's own cursor state, and independently
+// recorded by an earlier verification pass at commit b5aef39, so it had
+// survived every Phase 4 lane unnoticed.
+//
+// The cause was not the palette's height, as that audit guessed. The composer
+// block is bottom-aligned and keeps its TAIL when it does not fit, but the
+// caret's row was divided by `regions().composerRows` -- the region -- instead
+// of by the rows actually painted, and with a clip it was not moved up by the
+// rows cut off the front either. The pty probe that found it is kept as a rig
+// script (`scripts/tui-capture/caret-probe.py`); what it measures is this
+// arithmetic, which is pinned here where it costs no process.
+describe("the caret is on the row that holds the field", () => {
+  it("a block painted whole puts the caret on its own row, not the region's", () => {
+    const r = regionsAt(80, 24, V.COMPOSER_MIN_ROWS);
+    const block = 12; // an 8-row palette above the field's four chrome rows
+    const caretInBlock = block - 3; // the field row: palette, rule, FIELD, rule, hint
+    const paint = V.composerPaintRows(r, block);
+    expect(paint).toBe(block); // nothing clipped, so nothing to compensate
+
+    // Bottom-aligned: the block's last row is the band's last row.
+    const fieldRow = r.bandTop + r.bandRows - block + caretInBlock;
+    expect(V.composerCaretRow(r, block, caretInBlock, paint)).toBe(fieldRow);
+    // The bug, stated: dividing by the region put the caret three rows lower,
+    // on a rule with nothing of the user's on it.
+    expect(r.bandTop + r.bandRows - r.composerRows + caretInBlock).not.toBe(fieldRow);
+  });
+
+  it("a block too tall for the band keeps its tail, and the caret follows the clip", () => {
+    const r = regionsAt(80, 24, V.COMPOSER_MIN_ROWS);
+    const block = 40; // far past anything this window can paint
+    const paint = V.composerPaintRows(r, block);
+    expect(paint).toBeLessThan(block);
+    const drop = block - paint;
+    // A caret on the block's last row stays on the band's last row.
+    expect(V.composerCaretRow(r, block, block - 1, paint)).toBe(r.bandTop + r.bandRows - 1);
+    // A caret on a row that was cut off the front clamps to the top of what is
+    // painted rather than pointing above the band.
+    expect(V.composerCaretRow(r, block, drop - 1, paint)).toBe(r.bandTop + r.bandRows - paint);
+  });
+});
+
+describe("bandComposer's collapsed text width keeps the wide branch's own margin", () => {
+  // No pre-existing DEFECT test pinned this one (V-4 Lane C, item C1): the
+  // verifier found it by direct execution, not by a written repro. bandComposer
+  // (tui-frame.ts) sets two widths for the same composer -- an outer "surface"
+  // measure (what F.surfaceWidth() reads, via atWidth) and an inner field
+  // `width` (composerTextWidth's own argument) -- and the wide branch always
+  // keeps the outer one cell WIDER than the inner (`PANEL_COLS + 2` vs
+  // `PANEL_COLS + 1`), because `surfaceWidth()` itself subtracts `MARK.length`.
+  // The collapsed branch fed `atWidth` the exact same number as the field
+  // width, so `composerTextWidth` came out 73 at 80 columns instead of 74 --
+  // undercounted by the one cell the margin expects, at every narrow size.
+  afterEach(() => setTermWidthOverride(null));
+
+  it("at 80 columns (contentCols 79), the field gets 74 text columns, not 73", () => {
+    const contentCols = 79; // Tui.contentCols() at 80 real terminal columns
+    setTermWidthOverride(contentCols + 1); // bandComposer's collapsed atWidth call
+    expect(composerTextWidth(contentCols)).toBe(74);
+  });
+
+  it("documents the bug this fixed: outer === inner undercounts by exactly one column", () => {
+    const contentCols = 79;
+    setTermWidthOverride(contentCols); // the pre-fix collapsed atWidth call
+    expect(composerTextWidth(contentCols)).toBe(73);
+  });
 });
 
 describe("the workspace split", () => {
@@ -650,5 +787,83 @@ describe("the focus ring", () => {
     expect(t.draws).toBe(before);
     t.ctrlKey("f");
     expect(t.focus).toBe("panel");
+  });
+});
+
+// Promoted from tests/verification/v4-laneA-stale-child-header-on-shrink.test.ts
+// (V-4 Lane A). `splitPanes`' own doc comment promises "one row saying why
+// beats two slivers that can hold nothing" whenever the workspace cannot fit a
+// split -- but `childHeader` used to branch on `this.childPane` being
+// non-null rather than on the CURRENT geometry (`panes.open`/`panes.refused`),
+// so once a child pane had ever been opened, shrinking the window below
+// SPLIT_MIN_ROWS left its stale header -- name, note, "ctrl+w close" -- on
+// screen with zero body rows under it, and no refusal message at all.
+describe("the split's refusal survives a stale child pane", () => {
+  const FRAME = require("../../../packages/orchestrator/src/bin/ui/tui-frame");
+
+  function controller(over: Record<string, unknown> = {}) {
+    const tui: any = {
+      inline: false,
+      columns: 120,
+      rows: 40,
+      focus: "composer",
+      panelOverlay: false,
+      childPane: null,
+      childScroll: 0,
+      scroll: 0,
+      input: "",
+      mode: "input",
+      draws: 0,
+      scheduleDraw() {
+        this.draws++;
+      },
+      regionsNow(composerRows?: number) {
+        return V.regions({
+          columns: this.columns,
+          rows: this.rows,
+          headerRows: 3,
+          composerRows,
+          strip: true,
+        });
+      },
+      openChildPane: FRAME.FRAME_METHODS.openChildPane,
+      closeChildPane: FRAME.FRAME_METHODS.closeChildPane,
+      panesNow: FRAME.FRAME_METHODS.panesNow,
+      childHeader: FRAME.FRAME_METHODS.childHeader,
+      ...over,
+    };
+    return tui;
+  }
+
+  it("shrinking below SPLIT_MIN_ROWS shows the refusal row, not the old child's header", () => {
+    const t = controller();
+    t.openChildPane({ id: "3", name: "verifier", lines: ["x"], note: "running 48s" });
+
+    // Shrink to a window whose workspace cannot hold a split.
+    t.columns = 80;
+    t.rows = 16;
+    const r = t.regionsNow(4);
+    const panes = t.panesNow(r.workspaceRows);
+
+    expect(panes.open).toBe(false);
+    expect(panes.refused).toBe(true);
+    expect(panes.childRows).toBe(0);
+
+    const header = t.childHeader(r, panes);
+    expect(header).toContain(`needs ${V.SPLIT_MIN_ROWS} rows`);
+    expect(header).not.toContain("verifier");
+    expect(header).not.toContain("ctrl+w close");
+  });
+
+  it("a real split still shows the child's own header once the workspace can hold it", () => {
+    const t = controller();
+    t.openChildPane({ id: "3", name: "verifier", lines: ["x"], note: "running 48s" });
+    const r = t.regionsNow(4);
+    const panes = t.panesNow(r.workspaceRows);
+
+    expect(panes.open).toBe(true);
+    const header = t.childHeader(r, panes);
+    expect(header).toContain("verifier");
+    expect(header).toContain("ctrl+w close");
   });
 });

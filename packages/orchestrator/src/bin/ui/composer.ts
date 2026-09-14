@@ -33,7 +33,16 @@ import {
 } from "./theme";
 import { fmtTokens } from "./events";
 import { glyph } from "./glyphs";
-import { clampVisible, truncate, rule, visLen, wrap, railCard } from "./render";
+import {
+  clampVisible,
+  truncate,
+  rule,
+  visLen,
+  wrap,
+  railCard,
+  graphemeSpans,
+  prefixByWidth,
+} from "./render";
 import * as F from "./flow";
 import { RUNE_MARK } from "./banner";
 import { pasteChipSpans } from "./paste";
@@ -605,29 +614,67 @@ function wrapSegment(
   breakable: boolean,
   keepTail: boolean,
 ): void {
-  let i = from;
+  // Measured in terminal CELLS, not JS string units, so a double-width
+  // character (CJK, fullwidth forms, ...) spends two of the row's budget
+  // instead of one -- `render.ts`'s own stated policy, which this path did
+  // not follow even though the file already imports `visLen` for everything
+  // else. `graphemeSpans` also makes a hard break safe: a surrogate pair or a
+  // base+combining-mark cluster is one indivisible unit with its own index
+  // span, so a break can never land inside one.
+  const spans = graphemeSpans(input.slice(from, to)).map((s) => ({
+    start: s.start + from,
+    end: s.end + from,
+    width: s.width,
+  }));
+  // Cells remaining from spans[m..] onward, suffix-summed once so the "does
+  // the rest fit on one row" check below stays O(1) per row rather than
+  // O(rows) -- this runs on every keystroke (wrapComposer's own doc comment).
+  const suffixCells = new Array<number>(spans.length + 1).fill(0);
+  for (let m = spans.length - 1; m >= 0; m--) suffixCells[m] = suffixCells[m + 1]! + spans[m]!.width;
+
+  let i = from; // buffer index the row under construction starts at
+  let k = 0; // spans[k..] is what still needs to go on a row
   for (;;) {
-    if (to - i < textW) {
+    if (suffixCells[k]! < textW) {
       if (i === to && !keepTail) return;
       rows.push({ start: i, end: to });
       return;
     }
-    let brk = -1;
+    // Grow the row grapheme by grapheme while it still fits in `textW` cells.
+    // `lastInsideLimit` is the last span index that ends STRICTLY before the
+    // window's final cell -- never ON it -- the same "never break at the
+    // window's last column" rule as before, generalised from code units to
+    // cells so the eaten space still leaves the caret a column to land on.
+    let cells = 0;
+    let end = k;
+    let lastInsideLimit = k;
+    while (end < spans.length && cells + spans[end]!.width <= textW) {
+      cells += spans[end]!.width;
+      end++;
+      if (cells < textW) lastInsideLimit = end;
+    }
+    let brk = -1; // spans index of a break space
     if (breakable) {
-      const limit = Math.min(i + textW - 1, to - 1);
-      for (let j = limit; j > i; j--) {
-        if (input[j] === " ") {
-          brk = j;
+      for (let m = lastInsideLimit; m > k; m--) {
+        if (input.slice(spans[m - 1]!.start, spans[m - 1]!.end) === " ") {
+          brk = m - 1;
           break;
         }
       }
     }
-    if (brk > i) {
-      rows.push({ start: i, end: brk });
-      i = brk + 1; // the space is this row's last column; the next row starts after it
+    if (brk >= k) {
+      rows.push({ start: i, end: spans[brk]!.start });
+      i = spans[brk]!.end; // the space is this row's last column
+      k = brk + 1;
     } else {
-      rows.push({ start: i, end: i + textW }); // one word longer than the field: hard break
-      i += textW;
+      // One glyph cluster wider than the field, or nothing breakable: hard
+      // break after the last grapheme that fit. `cut` is always > k, so a row
+      // always makes progress -- even a single wide glyph that alone exceeds
+      // `textW` gets a row of its own rather than being split across two.
+      const cut = Math.max(k + 1, Math.min(end, spans.length));
+      rows.push({ start: i, end: spans[cut - 1]!.end });
+      i = spans[cut - 1]!.end;
+      k = cut;
     }
   }
 }
@@ -890,11 +937,18 @@ export function renderComposer(state: ComposerState): RenderedBlock {
   // written through: one of them is one desynced row, and every row below it
   // lands in the wrong column. Newlines never reach here -- they are structure,
   // and wrapComposer has already spent them ending rows.
-  const cell = (s: string): string =>
-    s
-      .replace(/[\x00-\x1f\x7f]/g, " ")
-      .padEnd(textW, " ")
-      .slice(0, textW);
+  //
+  // Padded and (defensively) truncated by terminal CELL width, not JS string
+  // length: a row of double-width characters has fewer characters than cells,
+  // and padEnd/slice by length there padded it back out past the pane's own
+  // edge -- up to 2x over budget for an all-wide-character row. wrapSegment
+  // already bounds `s` to `textW` cells for every row it produces, so the
+  // truncation branch here is a backstop, not the common path.
+  const cell = (s: string): string => {
+    const safe = s.replace(/[\x00-\x1f\x7f]/g, " ");
+    const fit = visLen(safe) > textW ? prefixByWidth(safe, textW) : safe;
+    return fit + " ".repeat(Math.max(0, textW - visLen(fit)));
+  };
 
   const grid = wrapComposer(state.input, textW);
   const pos = composerCaret(grid, Math.max(0, Math.min(state.caret, state.input.length)));

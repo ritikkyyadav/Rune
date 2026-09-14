@@ -23,7 +23,7 @@ import {
   composerTextWidth,
   composerHintRow,
 } from "../../../packages/orchestrator/src/bin/ui/composer";
-import { setTermWidthOverride } from "../../../packages/orchestrator/src/bin/ui/render";
+import { setTermWidthOverride, visLen } from "../../../packages/orchestrator/src/bin/ui/render";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
 import { glyph } from "../../../packages/orchestrator/src/bin/ui/glyphs";
 import { pasteChip, expandPastes } from "../../../packages/orchestrator/src/bin/ui/paste";
@@ -1078,5 +1078,54 @@ describe("ui/composer — the hint row", () => {
     expect(composerHintRow({ streaming: true, counts: { lines: 3, chars: 9 }, max: 36 })).toBe(
       ["enter queues", "esc interrupts"].join(sep),
     );
+  });
+});
+
+// Promoted from tests/verification/v4-laneC-wide-char-overflow.test.ts (V-4
+// Lane C, C6). The wrap path measured in JS string units -- `.length` and
+// `.slice` -- in a file that already imported `visLen` for everything else, so
+// a row of double-width characters was a row of double-width CELLS: 36 CJK
+// characters at the panel's 36-column field rendered 76 cells wide and bled
+// across the divider into the panel. A hard break could also land between an
+// astral emoji's two UTF-16 units and corrupt that glyph on screen.
+describe("ui/composer — the field is measured in terminal cells, not string units", () => {
+  it("a row of double-width characters stays inside the pane's cell budget", () => {
+    setTermWidthOverride(COLUMN_WIDTH + 1);
+    try {
+      const textW = composerTextWidth(COLUMN_WIDTH);
+      expect(textW).toBe(36); // the panel's known text width, so this tracks reality
+      const cjk = "字".repeat(40); // one UTF-16 unit each, two display cells each
+      const r = renderComposer({ input: cjk, caret: 0, width: COLUMN_WIDTH, status: "" });
+      const paneBudget = COLUMN_WIDTH - 1; // the measure the rule and the edge are drawn at
+      for (const row of fieldRows(r.lines)) {
+        expect(visLen(row)).toBeLessThanOrEqual(paneBudget);
+      }
+    } finally {
+      setTermWidthOverride(null);
+    }
+  });
+
+  it("a hard break never lands inside a surrogate pair", () => {
+    const emoji = "\u{1F600}".repeat(20); // no spaces, so every break is a hard one
+    for (const textW of [3, 5, 7]) {
+      for (const row of wrapComposer(emoji, textW)) {
+        const piece = emoji.slice(row.start, row.end);
+        if (!piece) continue;
+        const first = piece.charCodeAt(0);
+        const last = piece.charCodeAt(piece.length - 1);
+        expect(last >= 0xd800 && last <= 0xdbff, `textW ${textW}`).toBe(false);
+        expect(first >= 0xdc00 && first <= 0xdfff, `textW ${textW}`).toBe(false);
+      }
+    }
+  });
+
+  it("a glyph wider than the field gets a row of its own instead of being split", () => {
+    // textW 1 cannot fit a 2-cell glyph at all. Progress still has to be made,
+    // or the wrap loops forever -- the row overruns by one cell, visibly, which
+    // is the honest failure for a field too narrow for one character.
+    const grid = wrapComposer("字字字", 1);
+    const filled = grid.filter((row) => row.end > row.start);
+    expect(filled).toHaveLength(3); // one glyph per row, and the caret's tail row
+    for (const row of filled) expect(row.end - row.start).toBe(1);
   });
 });

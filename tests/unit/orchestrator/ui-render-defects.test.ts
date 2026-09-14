@@ -397,3 +397,34 @@ describe("D6 -- an edit with no recorded diff still says what it did", () => {
     expect(row).toContain("hunk");
   });
 });
+
+// Promoted from tests/verification/v4-laneD-esc-charset-designator.test.ts (V-4
+// Lane D). `ESC ( B` is the VT100 "nF" charset designator and it is xterm's own
+// `sgr0` idiom -- any tool whose colour library resets through terminfo emits
+// it, and it appears verbatim in a stored session's `cargo fmt --check` box.
+// `escapeAt` knew CSI, OSC and one two-byte family but not this one, so it
+// consumed the lone ESC and counted `(B` as two ordinary characters: every box
+// containing such output was two cells narrower on a real terminal than the
+// product's own arithmetic believed. `stripAnsi` -- the NO_COLOR/piped "plain"
+// sanitizer, a CSI-only regex -- left the raw ESC byte in the one surface that
+// promises none.
+describe("a VT100 charset designator is an escape, not two characters", () => {
+  it("visLen counts ESC ( B as zero cells", () => {
+    expect(visLen("\x1b(B\x1b[mhello")).toBe(visLen("hello"));
+  });
+
+  it("a box body does not leak the designator's payload as text", () => {
+    setTermWidthOverride(80);
+    // The real row's shape: cargo's reset-then-colour prefix on a `+` line.
+    const cargoReset = "\x1b(B\x1b[m\x1b[32m+        return Err(Error::Invalid(\x1b[0m";
+    expect(stripAnsi(F.boxRow(cargoReset))).not.toContain("(B");
+  });
+
+  it("stripAnsi leaves no raw ESC byte behind, for any escape family", () => {
+    // ui-glyphs.test.ts holds exactly this bar for the product's other
+    // seven-bit surfaces. A CSI-only sanitizer met it only by luck.
+    for (const raw of ["\x1b(B\x1b[mhello", "\x1b]0;title\x07hello", "\x1b[31mhello\x1b[0m"]) {
+      expect(stripAnsi(raw), JSON.stringify(raw)).not.toContain("\x1b");
+    }
+  });
+});

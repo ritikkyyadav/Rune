@@ -29,6 +29,8 @@ import {
   PANEL_COLS,
   PANEL_MIN_ROWS,
   SPLIT_MIN_ROWS,
+  composerCaretRow,
+  composerPaintRows,
   type Panes,
   type Regions,
   type Zones,
@@ -420,14 +422,25 @@ export const FRAME_METHODS = {
   bandComposer(this: Tui, r: Regions): { lines: string[]; caretRow: number; caretCol: number } {
     const wide = !r.collapsed;
     const width = wide ? PANEL_COLS + 1 : this.contentCols();
-    // What the field may grow to. `regions()` clamps a request for the whole
-    // band down to the region's own ceiling, so asking it for the band is how
-    // to read that ceiling back without restating the formula -- and it is what
-    // makes the growth paid for by the PANEL, which is the only thing regions()
-    // will give the rows up. The 3 is this region's chrome: two rules and the
-    // hint row. (Lane C, over lane A's seam.)
-    const maxRows = Math.max(1, this.regionsNow(r.bandRows).composerRows - 3);
-    return this.atWidth(wide ? PANEL_COLS + 2 : this.contentCols(), () => {
+    // What the field may grow to. `composerPaintRows` is that ceiling, asked
+    // for the whole band so the answer is the ceiling itself rather than a
+    // restatement of the formula: with a panel it is `regions()`'s own clamp
+    // (the growth is paid for by the PANEL, which is the only region that will
+    // give the rows up), and collapsed it is what the block may paint OVER the
+    // workspace, since there is no panel to take it from. The 3 is this
+    // region's chrome: two rules and the hint row. (Lane C, over lane A's seam.)
+    const maxRows = Math.max(
+      1,
+      composerPaintRows(this.regionsNow(r.bandRows), r.bandRows) - 3,
+    );
+    // The outer measure (what `F.surfaceWidth()` sees) is always one cell
+    // WIDER than the field's own `width` above -- the wide branch already
+    // keeps that one-cell split (`PANEL_COLS + 2` outer vs `PANEL_COLS + 1`
+    // field); the collapsed branch fed `atWidth` the SAME number as `width`,
+    // which shorted `composerTextWidth` by the one cell `surfaceWidth`'s own
+    // `- MARK.length` margin expects, undercounting the field by a column at
+    // every narrow size.
+    return this.atWidth(wide ? PANEL_COLS + 2 : this.contentCols() + 1, () => {
       const base = renderComposer({
         input: this.input,
         caret: this.caret,
@@ -482,7 +495,14 @@ export const FRAME_METHODS = {
   childHeader(this: Tui, r: Regions, panes: Panes): string {
     const w = r.workspaceCols - 2;
     const pane = this.childPane;
-    if (!pane) {
+    // `panes.open` (not `!pane`) is the gate: a child pane that was opened at a
+    // taller window and never explicitly closed stays set on `this.childPane`
+    // even after a shrink makes the split unaffordable, and `panesNow` reports
+    // exactly that as `refused`. Branching on the stale pane instead of the
+    // CURRENT geometry left the old header -- name, note, "ctrl+w close" -- on
+    // screen with zero body rows under it, which is the one case splitPanes'
+    // own doc comment says this row exists to prevent.
+    if (!panes.open || !pane) {
       return clampVisible(
         `  ${faint(`the split needs ${SPLIT_MIN_ROWS} rows; this workspace has ${r.workspaceRows}`)}`,
         r.workspaceCols,
@@ -552,6 +572,13 @@ export const FRAME_METHODS = {
     const composer = this.bandComposer(probe);
     const r = this.regionsNow(composer.lines.length);
     const panes = this.panesNow(r.workspaceRows);
+    // How many rows the block actually paints, which is not `r.composerRows`
+    // when the window is collapsed: there the region stays at its resting
+    // height (so the workspace's own arithmetic never depends on what is being
+    // typed) and the extra rows are painted OVER the workspace's bottom rows
+    // instead. `cover` is how many rows that is.
+    const paintRows = composerPaintRows(r, composer.lines.length);
+    const cover = Math.max(0, paintRows - r.composerRows);
 
     // A picker opens INSIDE the workspace, at the workspace's own measure --
     // `contentCols()` already reports the left column, so the block needs no
@@ -607,16 +634,21 @@ export const FRAME_METHODS = {
           }),
         );
       }
+      // The rows a grown field or an open palette needs, taken by covering the
+      // BOTTOM of the workspace rather than by shrinking it: every row above
+      // stays exactly where it was painted, which is the whole of "nothing
+      // moves because somebody typed" once there is no panel to yield them.
+      if (cover > 0) left.length = Math.max(0, left.length - cover);
       if (r.stripRows > 0) left.push(this.stripRow(r));
-      left.push(...composer.lines.slice(-r.composerRows));
+      left.push(...composer.lines.slice(-paintRows));
     } else {
       right.push(...this.panelBlock(r));
-      right.push(...composer.lines.slice(-r.composerRows));
+      right.push(...composer.lines.slice(-paintRows));
     }
 
     const caretRow = modal
       ? r.bandTop + Math.min(modal.caretRow, Math.max(0, panes.mainRows - 1))
-      : r.bandTop + r.bandRows - r.composerRows + composer.caretRow;
+      : composerCaretRow(r, composer.lines.length, composer.caretRow, paintRows);
     const caretCol = modal
       ? modal.caretCol
       : r.collapsed
@@ -653,7 +685,10 @@ export const FRAME_METHODS = {
       ? null
       : {
           bodyTop: r.bandTop,
-          bodyRows: panes.mainRows,
+          // Rows a pointer can actually land on: the covered ones are behind
+          // the composer, and naming a transcript row under them would map a
+          // click to a line the user cannot see.
+          bodyRows: Math.max(0, panes.mainRows - cover),
           hiddenAbove: main.hiddenAbove,
           marked: main.marked,
         };
