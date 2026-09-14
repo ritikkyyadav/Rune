@@ -228,14 +228,83 @@ bun run corpus:offline            # from tests/eval/, or:
 bun run tests/eval/corpus/run-offline.ts --out docs/evidence/corpus-offline-<date>.json
 ```
 
+## What the first offline run found
+
+[`docs/evidence/corpus-offline-20260914.json`](../../../docs/evidence/corpus-offline-20260914.json),
+60 rows, 0 skipped, 0 model calls.
+
+| family                 | attempted | false completions | false negatives | cut off | detected |
+| ---------------------- | --------- | ----------------- | --------------- | ------- | -------- |
+| fix                    | 15        | 0 / 12            | 0 / 3           | 3       | 12       |
+| omission-prone feature | 10        | 0 / 8             | 0 / 2           | 2       | 8        |
+| migration              | 10        | 0 / 8             | 0 / 2           | 2       | 8        |
+| frontend               | 10        | 0 / 8             | 2 / 2           | 2       | 6        |
+| research               | 10        | 0 / 8             | 2 / 2           | 2       | 6        |
+| dirty-worktree         | 5         | 0 / 4             | 0 / 1           | 1       | 4        |
+| **total**              | **60**    | **0 / 48**        | **4 / 12**      | **12**  | **44**   |
+
+**No false completions.** Every omission, wrong change, silent run and cut-off
+run reached `partial` or `unmet` with the failed evaluator criterion named. On
+this set, the acceptance oracle does the job it was built for.
+
+Two defects on the other side, both found by `correct` arms that should have
+reached `met`:
+
+1. **A slow finish gate makes a fresh citation `stale`** (both frontend rows).
+   The two browser tasks' acceptance takes seconds; the model's own criterion
+   comes back `stale — the workspace moved since the evidence was taken`, with
+   nothing in the tree having moved. Isolated by adding `sleep 3` to one of
+   `csv-state-machine`'s acceptance commands and changing nothing else: that
+   run flipped from `met` to `partial` with the same `stale` gap. The cause is
+   `REVISION_MEMO_MS = 1_000` in `engine.ts` — a citation's `dirty` flag is
+   read from a memo up to a second old (it recorded `dirty: false` for a tree
+   that was already modified), and when the acceptance gate outlasts the memo
+   the refreshed revision disagrees with the recorded one, so `criterionStatus`
+   derives `stale`. **A run's verdict should not depend on how long its checks
+   take.** Not fixed here: `engine.ts` belongs to another lane.
+2. **A question or a plan cannot reach `met` through its own citation** (both
+   research rows). Asked to write `ANSWER.md` or `PLAN.md` and change no code,
+   the run has no recognised check to cite: `grep -c '##' ANSWER.md` is read as
+   `execution receipt only — ran, exit 0, not a recognised check`, so the
+   model's criterion derives `needs_review` and the verdict is `partial` even
+   with every evaluator criterion `satisfied`. That may be the intended
+   conservatism (M1's T7 says an explanation ends with its limits named), but
+   it means the **evaluator agreeing completely is not enough**, and any
+   consumer counting `met` as success will score a correct explanation as a
+   miss.
+
+Both are false negatives, not false completions: the harness is currently
+biased toward under-claiming, which is the safer direction and still a defect.
+
+Also observed, not a defect: 232 harness re-prompts across 60 rows (2 to 6 per
+run — the finish gate and the loop nudges), and a 209-second total wall time
+for the whole corpus.
+
 ## Changes
 
 Every change to the frozen set goes here, dated, with the reason.
 
-- **2026-09-14** — the corpus is created and frozen at twelve tasks. No offline
-  run has happened yet; nothing below this line is a change to a frozen set.
-- **2026-09-14** — before the first run: `queue-race`'s `once` criterion was
-  given uneven worker durations because the `wrong` arm passed all three
-  criteria with even ones, and `signup-form-states`'s `keyboard` criterion was
-  changed to fill the form first because a disabled submit button is not
-  tabbable. Both are recorded here rather than silently fixed.
+- **2026-09-14** — the corpus is created and frozen at twelve tasks.
+- **2026-09-14, before the first run** — `queue-race`'s `once` criterion was
+  given uneven worker durations, because the `wrong` arm passed all three
+  criteria when every task took the same time; and `signup-form-states`'s
+  `keyboard` criterion now fills the form first, because a disabled submit
+  button is not tabbable and the empty form could never show the tab order.
+- **2026-09-14, before the first run** — Prettier reformatted the fixture and
+  `untracked` trees on the first formatting pass, which broke both the
+  byte-for-byte reuse of the four comparison fixtures and the digests baked
+  into three acceptance checks. The trees were regenerated from
+  `tests/eval/comparison/tasks.ts`, the digests recomputed, and
+  `tests/eval/corpus/*/{fixture,untracked,solution,variants,checks}/` added to
+  `.prettierignore`: task data keeps its own bytes.
+- **2026-09-14, before the first run** — three `correct` arms
+  (`note-field-and-exporter`, `dependent-migration`, `working-tree-integration`)
+  cited `bun test <one file>` and had their own criterion set aside by the
+  relatedness gate, which is that gate working as designed: a criterion naming
+  a file is settled only by a check that reads it. They now cite a project-wide
+  `bun test`, which is what a real run cites anyway. The behaviour is recorded
+  here because it is a real trap for anyone writing a transcript.
+- **2026-09-14, before the first run** — the two browser checks write their
+  screenshots into `.rune-acceptance/` rather than the workspace root. This did
+  NOT fix the `stale` finding above (it was tested and ruled out), but an
+  evaluator's artifacts do not belong in the tree it is judging.

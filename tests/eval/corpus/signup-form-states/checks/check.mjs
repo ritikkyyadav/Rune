@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { report, withPage } from "./browser.mjs";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const here = dirname(fileURLToPath(import.meta.url));
+const root = join(here, "..");
 const which = process.argv[2];
 
 const checks = {
@@ -89,7 +90,7 @@ const checks = {
         await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
         "mobile horizontal overflow",
       );
-      await page.screenshot({ path: join(root, "acceptance-mobile.png"), fullPage: true });
+      await page.screenshot({ path: join(here, "acceptance-mobile.png"), fullPage: true });
       assert.deepEqual(errors, [], "browser errors");
     });
   },

@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { report, withPage } from "./browser.mjs";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const here = dirname(fileURLToPath(import.meta.url));
+const root = join(here, "..");
 const which = process.argv[2];
 
 const checks = {
@@ -30,7 +31,7 @@ const checks = {
         "desktop needs multiple card columns",
       );
       assert.ok(boxes.every((box) => box.w >= 180 && box.h >= 70));
-      await page.screenshot({ path: join(root, "acceptance-desktop.png"), fullPage: true });
+      await page.screenshot({ path: join(here, "acceptance-desktop.png"), fullPage: true });
     });
   },
   // The favorite toggle: reachable by keyboard, announced by aria-pressed, and
@@ -83,7 +84,7 @@ const checks = {
       await search.fill("");
       await page.waitForTimeout(350);
       await page.setViewportSize({ width: 390, height: 844 });
-      await page.screenshot({ path: join(root, "acceptance-mobile.png"), fullPage: true });
+      await page.screenshot({ path: join(here, "acceptance-mobile.png"), fullPage: true });
       assert.equal(await cards.count(), 6);
       assert.ok(
         await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),

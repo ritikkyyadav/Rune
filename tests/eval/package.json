@@ -5,7 +5,9 @@
   "main": "runner.ts",
   "scripts": {
     "eval": "bun run runner.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "corpus:offline": "bun run corpus/run-offline.ts",
+    "corpus:sanity": "bun test corpus/sanity.test.ts"
   },
   "dependencies": {
     "@rune/orchestrator": "workspace:*",

@@ -35,7 +35,7 @@
       {
         "tool": "bash",
         "input": {
-          "command": "bun test mine.test.ts"
+          "command": "bun test"
         }
       }
     ],
@@ -44,7 +44,7 @@
         "tool": "record_evidence",
         "input": {
           "claim": "orders are summarized in minor units without touching the money API",
-          "command": "bun test mine.test.ts"
+          "command": "bun test"
         }
       }
     ],

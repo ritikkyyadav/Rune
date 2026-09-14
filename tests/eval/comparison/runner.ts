@@ -20,6 +20,53 @@ export interface PilotOptions {
   tasks?: string[];
   runeCommand: string[];
   opencodeCommand: string[];
+  /** Read the tasks from a frozen corpus directory instead of COMPARISON_TASKS. */
+  corpus?: string;
+}
+
+/**
+ * The frozen corpus as live comparison tasks.
+ *
+ * Same fixtures, same prompts, and the SAME acceptance files the offline
+ * runner uses — each task's `acceptance.json` becomes the grader, so an offline
+ * row and a live row are answering one question. The acceptance scripts are
+ * copied beside the workspace at check time, exactly as the offline side does,
+ * and the model never sees them.
+ */
+export function corpusTasks(dir: string): ComparisonTask[] {
+  const root = resolve(dir);
+  const ids = JSON.parse(readFileSync(join(root, "tasks.json"), "utf8")) as string[];
+  return ids.map((id) => {
+    const taskDir = join(root, id);
+    const meta = JSON.parse(readFileSync(join(taskDir, "task.json"), "utf8")) as {
+      prompt: string;
+      files: string[];
+      untracked?: string[];
+      browser?: boolean;
+    };
+    const acceptance = JSON.parse(readFileSync(join(taskDir, "acceptance.json"), "utf8")) as Array<{
+      id?: string;
+      text: string;
+      command?: string;
+    }>;
+    const read = (kind: string, path: string) => readFileSync(join(taskDir, kind, path), "utf8");
+    return {
+      id,
+      prompt: meta.prompt,
+      files: Object.fromEntries(meta.files.map((path) => [path, read("fixture", path)])),
+      ...(meta.untracked
+        ? { untracked: Object.fromEntries(meta.untracked.map((p) => [p, read("untracked", p)])) }
+        : {}),
+      ...(meta.browser ? { browser: true } : {}),
+      // The grader copies the evaluator's own scripts in, then runs each
+      // acceptance command in the workspace and fails on the first non-zero.
+      checks: `cpSync(${JSON.stringify(join(taskDir, "checks"))}, join(root, ".rune-acceptance"), {recursive:true});
+        for (const step of ${JSON.stringify(acceptance.map((c) => ({ id: c.id, command: c.command })))}) {
+          const run = spawnSync(step.command, {cwd: root, shell: true, encoding: "utf8", timeout: 240000});
+          assert.equal(run.status, 0, step.id + ": " + ((run.stdout ?? "") + (run.stderr ?? "")).trim().slice(-400));
+        }`,
+    };
+  });
 }
 
 /** Only terminal provider errors affect scoring. Tool failures and prose that
@@ -102,7 +149,7 @@ export function checkTask(
   write(
     grader,
     `import assert from "node:assert/strict"; import {join} from "node:path"; import {pathToFileURL} from "node:url";
-    import {mkdtempSync,readFileSync,writeFileSync,rmSync} from "node:fs"; import {tmpdir} from "node:os"; import {spawnSync} from "node:child_process";
+    import {cpSync,mkdtempSync,readFileSync,writeFileSync,rmSync} from "node:fs"; import {tmpdir} from "node:os"; import {spawnSync} from "node:child_process";
     const root = ${JSON.stringify(root)};\n${task.checks}\nconsole.log("acceptance passed");`,
   );
   const result = spawnSync(process.execPath, [grader], {
@@ -168,10 +215,41 @@ export function openCodeBudgetWatcher(
   };
 }
 
+/**
+ * The LIVE spend authorisation.
+ *
+ * A live arm costs real money on the founder's account, and the corpus's whole
+ * point is that its offline half costs nothing — which makes it exactly the
+ * kind of runner somebody points at a live route "just to see". So the live
+ * pilot refuses to start unless `RUNE_EVAL_BUDGET_USD` names a positive number
+ * of dollars that somebody decided to spend. `--budget-usd` is a PER-TASK
+ * ceiling the runner enforces on the way; this is the authorisation for the
+ * run existing at all, and an unset variable is a no, not a default.
+ *
+ * Returns the authorised ceiling; throws with the reason otherwise.
+ */
+export function authorisedBudgetUsd(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.RUNE_EVAL_BUDGET_USD;
+  if (raw === undefined || raw.trim() === "")
+    throw new Error(
+      "Live evaluation spends real money and is not authorised here. Set RUNE_EVAL_BUDGET_USD " +
+        "to the number of dollars you have decided to spend on this run. The offline corpus " +
+        "(tests/eval/corpus/run-offline.ts) needs no budget and makes no model calls.",
+    );
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0)
+    throw new Error(`RUNE_EVAL_BUDGET_USD must be a positive number of dollars, not ${raw}.`);
+  return value;
+}
+
 export async function runPilot(options: PilotOptions) {
-  const tasks = COMPARISON_TASKS.filter(
-    (task) => !options.tasks || options.tasks.includes(task.id),
-  );
+  const authorised = authorisedBudgetUsd();
+  const catalogue = options.corpus ? corpusTasks(options.corpus) : COMPARISON_TASKS;
+  const tasks = catalogue.filter((task) => !options.tasks || options.tasks.includes(task.id));
+  if (options.budgetUsd > authorised)
+    throw new Error(
+      `--budget-usd ${options.budgetUsd} is above the authorised RUNE_EVAL_BUDGET_USD ${authorised}.`,
+    );
   if (
     !tasks.length ||
     options.runs < 1 ||
@@ -349,7 +427,10 @@ if (import.meta.main) {
   };
   if (!args.includes("--real")) {
     console.log(
-      "Live comparison requires --real --model <id> --out <fresh-dir> [--tasks id,id] [--runs 1] [--budget-usd 2] [--timeout-seconds 300]. Uses existing credentials; runs both harnesses on identical isolated fixtures.",
+      "Live comparison requires --real --model <id> --out <fresh-dir> [--tasks id,id] [--runs 1] [--budget-usd 2] [--timeout-seconds 300] [--corpus tests/eval/corpus]. Uses existing credentials; runs both harnesses on identical isolated fixtures.",
+    );
+    console.log(
+      "It also requires RUNE_EVAL_BUDGET_USD: live evaluation spends real money and an unset variable is a refusal, not a default. The offline corpus needs no budget.",
     );
     console.log(COMPARISON_TASKS.map((task) => task.id).join("\n"));
   } else {
@@ -365,6 +446,7 @@ if (import.meta.main) {
       timeoutMs: Number(get("timeout-seconds") ?? 300) * 1000,
       runs: Number(get("runs") ?? 1),
       tasks: get("tasks")?.split(","),
+      ...(get("corpus") ? { corpus: get("corpus")! } : {}),
       runeCommand: get("rune-bin")
         ? [get("rune-bin")!]
         : [process.execPath, join(repo, "packages/orchestrator/src/bin/rune-cli.ts")],

@@ -14,3 +14,13 @@ Cargo.lock
 .codex/
 .gear/
 .alan/
+# The frozen corpus's task DATA keeps its own bytes: four fixtures are reused
+# verbatim from the comparison rig and pinned byte-for-byte, several acceptance
+# checks compare a recorded digest, and the deliberately-broken trees are the
+# fixture. The corpus's own code (corpus.ts, run-offline.ts, sanity.test.ts,
+# README.md, task.json, acceptance.json) is formatted as usual.
+tests/eval/corpus/*/fixture/
+tests/eval/corpus/*/untracked/
+tests/eval/corpus/*/solution/
+tests/eval/corpus/*/variants/
+tests/eval/corpus/*/checks/

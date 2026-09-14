@@ -57,6 +57,32 @@ launch profiles, while denied reads, outside writes and environment secrets rema
 Set `RUNE_TOOLS_BINARY` to test a specific installed native binary. Without the runtime opt-in
 or on another OS these two checks are skipped, not reported as browser verification.
 
+## The frozen diagnostic corpus
+
+[`../corpus`](../corpus/README.md) holds twelve pinned tasks with acceptance files the model
+never sees, and an offline runner that drives the real engine through five scripted scenarios
+per task with **zero model calls**. Four of its fixtures — `csv-state-machine`,
+`working-tree-integration`, `dependent-migration` and `responsive-project-board` — are this
+directory's, reused verbatim and pinned byte-for-byte by the corpus's sanity check, so the two
+sides describe the same task. The offline report measures the harness's detection of an
+unfinished run; it measures no model and states no comparison.
+
+```sh
+bun run tests/eval/corpus/run-offline.ts --out docs/evidence/corpus-offline-<date>.json
+```
+
+The live runner can take the corpus's tasks and the corpus's own acceptance files:
+
+```sh
+RUNE_EVAL_BUDGET_USD=4 bun run tests/eval/comparison/runner.ts --real --model MODEL \
+  --corpus tests/eval/corpus --out /tmp/rune-corpus-live --budget-usd 2
+```
+
+`runPilot` now refuses to start unless `RUNE_EVAL_BUDGET_USD` names a positive number of
+dollars, and refuses a `--budget-usd` above it. An unset variable is a refusal, not a default:
+live evaluation spends real money and needs someone to have decided to. No live corpus series
+has been run.
+
 ## SWE-bench predictions
 
 Export the official dataset as JSONL, retaining `instance_id`, `repo`, `base_commit` and `problem_statement`. Provision one clean disposable checkout per pinned instance under `REPOS/INSTANCE_ID`, with its original Git remote and exact base commit. The adapter refuses missing IDs, dirty checkouts and wrong repository origins before inference. It does not provision Python dependencies or benchmark containers.

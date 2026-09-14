@@ -68,6 +68,12 @@ describe("the corpus is twelve well-formed tasks", () => {
     expect(TASK_IDS.length).toBe(12);
     for (const id of TASK_IDS)
       expect(existsSync(join(import.meta.dir, id, "task.json"))).toBe(true);
+    // `tasks.json` is the same list as data, for the live runner's `--corpus`,
+    // which reads the corpus without importing it. Two lists that can disagree
+    // are one list and one bug.
+    expect(JSON.parse(readFileSync(join(import.meta.dir, "tasks.json"), "utf8"))).toEqual([
+      ...TASK_IDS,
+    ]);
   });
 
   test("each task declares a family, a prompt, fixture files and five scenarios", () => {
