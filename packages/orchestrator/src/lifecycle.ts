@@ -201,6 +201,40 @@ export function workspaceDigest(
 
 const RUNGS: readonly ClaimRung[] = ["suspected", "observed", "reproduced", "verified"];
 
+/** What a stamp on one piece of evidence says about the tree it was taken on. */
+export interface EvidenceStamp {
+  head?: string;
+  dirty?: boolean;
+  digest?: string;
+}
+
+/**
+ * Did the tree move under this claim? The ONE test, for both readers.
+ *
+ * `demoteStaleCriteria` drops a rung with it; `criterionStatus` (contract.ts)
+ * derives `stale` with it. They must agree — a criterion reported `satisfied`
+ * by one rule and demoted by the other describes the run two ways — so the
+ * predicate lives here once rather than being copied into the derivation.
+ *
+ * The three original clauses are unchanged. The fourth — two digests that
+ * differ — is what makes the test work outside git at all: with no commit to
+ * move and no dirty flag to flip, the content of the files the claim is about
+ * is the only thing that can say it moved. Inside a repository it adds
+ * nothing (a clean tree whose content changed has a different HEAD, which the
+ * first clause already caught).
+ */
+export function treeMovedUnder(evidence: EvidenceStamp, now: StampedRevision): boolean {
+  const headMoved = now.head !== null && evidence.head != null && evidence.head !== now.head;
+  const wentDirty = evidence.dirty === false && now.dirty;
+  const stayedDirty =
+    evidence.dirty === true &&
+    now.dirty &&
+    !(evidence.digest !== undefined && evidence.digest === now.digest);
+  const digestMoved =
+    evidence.digest !== undefined && now.digest !== undefined && evidence.digest !== now.digest;
+  return headMoved || wentDirty || stayedDirty || digestMoved;
+}
+
 /**
  * Demote any claim that was proven against a DIFFERENT workspace revision.
  *
@@ -252,13 +286,7 @@ export function demoteStaleCriteria(
     if (index <= 1) continue; // suspected/observed cannot go stale
     // This revision has already cost this criterion its rung.
     if (evidence.staleAt === key) continue;
-    const headMoved = now.head !== null && evidence.head !== now.head;
-    const wentDirty = evidence.dirty === false && now.dirty;
-    const stayedDirty =
-      evidence.dirty === true &&
-      now.dirty &&
-      !(evidence.digest !== undefined && evidence.digest === now.digest);
-    if (!headMoved && !wentDirty && !stayedDirty) continue;
+    if (!treeMovedUnder(evidence, now)) continue;
     const to = RUNGS[index - 1]!;
     criterion.rung = to;
     evidence.staleAt = key;

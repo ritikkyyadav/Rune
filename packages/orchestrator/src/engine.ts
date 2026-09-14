@@ -212,6 +212,7 @@ import {
   computeVerdict,
   contractDigest,
   createContract,
+  uncoveredCriteria,
   type CompletionVerdict,
   type TaskContract,
 } from "./contract";
@@ -5372,6 +5373,11 @@ export class Engine {
                 checks: this.checkLog.all,
                 shape: this.contract.shape,
                 wrote: taskState.writtenFiles.length > 0,
+                // Taken at the moment the verdict is, and scoped to the same
+                // files the evidence was stamped against — otherwise the two
+                // digests are of different file sets and every claim reads
+                // stale.
+                revision: this.runRevision(this.brief?.touch),
               }
             : null,
         jitDoctrine: (section) => this.takeJitDoctrine(sessionId, section),
@@ -5997,7 +6003,14 @@ export class Engine {
               stopReason: this.liveStatus,
               shape: this.contract.shape,
               wrote: taskState.writtenFiles.length > 0,
+              revision: this.runRevision(this.brief?.touch),
             });
+          // What was never measured at all, on the contract rather than only
+          // inside the verdict's prose: a required criterion with no bound
+          // evidence is the one shortfall a count of accepted criteria hides,
+          // because it looks identical to a criterion that was checked and
+          // failed. Written before the contract row below is re-taken.
+          this.contract.uncovered = uncoveredCriteria(verdict);
           this.sessions.appendEvent(sessionId, {
             type: "verdict",
             payload: { version: 1, verdict, contractDigest: contractDigest(this.contract) },

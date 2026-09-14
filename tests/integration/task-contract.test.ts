@@ -204,7 +204,10 @@ describe("the audit's example: green checks, a criterion never verified", () => 
     expect(terminal.verdict?.kind).toBe("partial");
     const gaps = terminal.verdict?.kind === "partial" ? terminal.verdict.gaps : [];
     expect(gaps).toEqual([
-      { criterion: "the CSV header is unchanged", why: "no evidence recorded" },
+      // M1: `no check bound` rather than `no evidence recorded` — the fact a
+      // reader needs is that nothing was ever measured against this
+      // criterion, which is the one shortfall an accepted-count hides.
+      { criterion: "the CSV header is unchanged", why: "no check bound" },
     ]);
     // The green checks are NOT a gap — that is the half the run got right.
     expect(gaps.some((g) => g.criterion === "the checks")).toBe(false);
@@ -244,7 +247,9 @@ describe("the audit's example: green checks, a criterion never verified", () => 
 
     // `rune -P "…"` writes `result.text` verbatim to stdout.
     const lines = result.text.trimEnd().split("\n");
-    expect(lines.at(-1)).toStartWith("[verdict] partial — 1 of 2 criteria verified");
+    // M1: the count is of ACCEPTED criteria; the regression attribution is
+    // reported beside it instead of being the acceptance policy.
+    expect(lines.at(-1)).toStartWith("[verdict] partial — 1 of 2 accepted");
     expect(lines.at(-1)).toContain("the CSV header is unchanged");
     expect(result.verdict?.kind).toBe("partial");
     // `--json` / `--stream-json`: the envelope is the last line and carries it.

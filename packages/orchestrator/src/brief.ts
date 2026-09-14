@@ -441,6 +441,32 @@ export interface CheckRun {
    */
   exitCode?: number;
   durationMs?: number;
+  /**
+   * This RUN's stable identity (`chk-<n>`), assigned by `CheckLog.record`.
+   *
+   * A command string is not an execution. The same command runs many times in
+   * a session, so evidence that names only the command is a claim about a
+   * string: a criterion settled by a green run still read as settled after a
+   * later run of the same command went red. Never set by a caller — `record`
+   * overwrites whatever arrives, so there is no path from a model-authored
+   * value to an execution id.
+   */
+  executionId?: string;
+}
+
+/**
+ * The toolchain a claim was taken on, in one short string.
+ *
+ * What the review means by "relevant environment/config fingerprint", and
+ * deliberately no more than that: a runtime, its version and the platform.
+ * Enough to tell a claim taken under Bun 1.1 on darwin from the same claim
+ * taken under node 20 in CI; not a dependency graph, which is a different
+ * project and would cost a subprocess per record.
+ */
+export function envFingerprint(): string {
+  const bun = (globalThis as { Bun?: { version?: string } }).Bun?.version;
+  const runtime = bun ? `bun ${bun}` : `node ${process.versions?.node ?? "?"}`;
+  return `${runtime} ${process.platform}/${process.arch}`;
 }
 
 /**
@@ -464,9 +490,28 @@ export interface ParentRun {
 export class CheckLog {
   private readonly runs: CheckRun[] = [];
   private readonly parents: ParentRun[] = [];
+  private seq = 0;
 
-  record(run: CheckRun): void {
-    this.runs.push(run);
+  /**
+   * Record one execution, and give it an id.
+   *
+   * The id is assigned HERE and overwrites anything the caller supplied: the
+   * whole value of an execution id is that it names a run the runtime itself
+   * saw, and a caller-settable one would be a model-reachable field wearing a
+   * measurement's name.
+   */
+  record(run: CheckRun): CheckRun {
+    const recorded: CheckRun = { ...run, executionId: `chk-${++this.seq}` };
+    this.runs.push(recorded);
+    return recorded;
+  }
+
+  /** The run one execution id names, if the log still holds it. */
+  execution(executionId: string): CheckRun | undefined {
+    for (let i = this.runs.length - 1; i >= 0; i--) {
+      if (this.runs[i]!.executionId === executionId) return this.runs[i];
+    }
+    return undefined;
   }
 
   /**
@@ -531,9 +576,18 @@ export function rungForCommand(log: CheckLog, command: string): RungVerdict {
         `A criterion cannot be settled by a check that is failing.`,
     };
   }
+  // Every receipt this function writes names the EXECUTION it was priced from,
+  // says who assessed it and at what version, records what the verifier saw,
+  // and stamps the toolchain. Before M1 the evidence carried a command string
+  // and a summary, so "which run of `bun test` was this" and "did anyone
+  // record a failure" were both unanswerable from the record itself.
   const base: Evidence = {
     source: normalizeCommand(command),
     detail: last.summary,
+    ...(last.executionId ? { executionId: last.executionId } : {}),
+    verifier: "check-log@1",
+    result: "passed",
+    env: envFingerprint(),
   };
   if (last.kind === "execution") {
     return {
@@ -581,6 +635,11 @@ export function rungForCommand(log: CheckLog, command: string): RungVerdict {
       rung: "verified",
       evidence: {
         ...base,
+        // The measurement that produced THIS rung is the parent probe, not the
+        // log read: `check-log@1` says the command passes now, and only
+        // `parent-probe@1` says the change is why. The pass is still on the
+        // record as `result: "passed"`.
+        verifier: "parent-probe@1",
         parentCommitFailed: true,
         ...(parent.commit ? { parentCommit: parent.commit } : {}),
         detail: joinDetail(

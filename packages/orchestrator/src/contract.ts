@@ -26,14 +26,21 @@ import type {
   CompletionVerdict,
   Criterion,
   CriterionOutcome,
+  CriterionStatus,
   DeclaredGap,
 } from "@rune/protocol";
 
 import type { CheckRun } from "./brief";
+import { statusFromStopReason, treeMovedUnder, type StampedRevision } from "./lifecycle";
 import { GOAL_CAP } from "./task-state";
 import { normalizeCommand } from "./verification-command";
 
-export type { CompletionVerdict, CriterionOutcome, DeclaredGap } from "@rune/protocol";
+export type {
+  CompletionVerdict,
+  CriterionOutcome,
+  CriterionStatus,
+  DeclaredGap,
+} from "@rune/protocol";
 
 /**
  * What shape of deliverable was asked for.
@@ -166,14 +173,37 @@ export function contractShape(intent: string, fixShaped: boolean): TaskShape {
   return "unknown";
 }
 
+/** One recorded change to the contract's criteria, and who made it. */
+export interface ContractAmendment {
+  /** The contract revision this amendment produced. */
+  revision: number;
+  at: string;
+  /**
+   * `model` is a read-back; `user` is a person editing the brief or stating
+   * acceptance; `runtime` is the harness loading evaluator criteria or
+   * carrying an interrupted run's contract forward. Only `user` may remove.
+   */
+  origin: "model" | "user" | "runtime";
+  added: string[];
+  /**
+   * The `user`/`evaluator` criteria this amendment OMITTED and the runtime
+   * retained anyway. The whole point of recording an amendment: a model that
+   * quietly drops a requirement it did not meet is the failure mode, and
+   * `kept` is where it shows up as a fact rather than as a missing line.
+   */
+  kept: string[];
+  /** Removed for real — reachable only from `user` origin. */
+  removed: string[];
+}
+
 /**
  * What the run is FOR, as the runtime recorded it at intake.
  *
- * Every criterion is required. There is deliberately no `required` flag: the
- * `done_when` list is 1–6 model-authored strings with no structure, so a
- * per-criterion strength would put the model back inside the ladder it is kept
- * out of everywhere else. `partial` with a declared gap is the normal honest
- * shape of a successful run, and that is the setting this decision makes.
+ * Criteria are required BY DEFAULT and only a `user`-sourced one can be made
+ * optional: the `done_when` list is 1–6 model-authored strings with no
+ * structure, and a per-criterion strength the MODEL could set would put it
+ * back inside the ladder it is kept out of everywhere else. `partial` with a
+ * declared gap is still the normal honest shape of a successful run.
  */
 export interface TaskContract {
   version: 1;
@@ -199,6 +229,26 @@ export interface TaskContract {
    * the drift is a fact about the run, not a correction to the intent.
    */
   drift?: string;
+  /**
+   * 1 at intake, +1 on every amendment that changes the digest. What makes
+   * "the contract the verdict was taken against" nameable rather than implied.
+   */
+  revision: number;
+  /**
+   * The `leave` list plus every `user`-sourced constraint. Carried forward by
+   * `carryForward` and never dropped by a model amendment: a constraint the
+   * person stated is not the model's to forget between turns.
+   */
+  constraints: string[];
+  /** Every change to the criteria, with its origin. Newest last, bounded. */
+  amendments: ContractAmendment[];
+  /**
+   * Required criteria with no bound evidence at verdict time. Written by
+   * `computeVerdict`'s caller from the verdict it returns; named in the gaps
+   * as `no check bound`, which is the fact a reader needs and the one a
+   * "0 of 2 verified" count hides.
+   */
+  uncovered: string[];
 }
 
 export interface CreateContractInput {
@@ -228,6 +278,21 @@ export function createContract(input: CreateContractInput): TaskContract {
     },
     stop: { onHalt: true, onSpendCap: true, onCriteriaMet: false },
     createdAt: new Date(input.now?.() ?? Date.now()).toISOString(),
+    revision: 1,
+    constraints: [],
+    amendments: [],
+    uncovered: [],
+  };
+}
+
+/** The M1 fields, defaulted — a contract read back off an older session row. */
+export function normalizeContract(contract: TaskContract): TaskContract {
+  return {
+    ...contract,
+    revision: typeof contract.revision === "number" ? contract.revision : 1,
+    constraints: Array.isArray(contract.constraints) ? contract.constraints : [],
+    amendments: Array.isArray(contract.amendments) ? contract.amendments : [],
+    uncovered: Array.isArray(contract.uncovered) ? contract.uncovered : [],
   };
 }
 
@@ -299,9 +364,24 @@ export function contractDigest(contract: TaskContract): string {
     contract.shape,
     contract.scope.touch,
     contract.scope.leave,
-    contract.criteria.map((c) => [c.text, c.rung, c.evidence?.source ?? null]),
+    contract.criteria.map((c) => [
+      c.text,
+      c.rung,
+      c.evidence?.source ?? null,
+      // The M1 facts a reader would act on: who stated it, whether it has to
+      // hold, and which execution settled it. A criterion whose SOURCE changed
+      // is a different contract even when its text did not.
+      c.id ?? null,
+      c.source ?? null,
+      c.required ?? null,
+      c.evidence?.executionId ?? null,
+      c.evidence?.result ?? null,
+    ]),
     contract.budget,
     contract.drift ?? null,
+    contract.revision ?? 1,
+    contract.constraints ?? [],
+    contract.uncovered ?? [],
   ]);
 }
 
@@ -330,6 +410,13 @@ export interface VerdictInputs {
   shape?: TaskShape;
   /** Whether this task wrote any file at all — `taskState.writtenFiles`. */
   wrote?: boolean;
+  /**
+   * The workspace revision the verdict is being taken AT, scoped to the same
+   * files the evidence was stamped against. Absent means the caller holds no
+   * revision, and then nothing can be shown to have moved — a claim is never
+   * called stale on a measurement that was not taken.
+   */
+  revision?: StampedRevision | null;
 }
 
 /**
@@ -348,6 +435,8 @@ export interface ContractRecord {
   shape?: TaskShape;
   /** Whether the task has written any file this run. */
   wrote?: boolean;
+  /** The revision to date the evidence against, taken at verdict time. */
+  revision?: StampedRevision | null;
 }
 
 /**
@@ -388,13 +477,155 @@ const NO_DELIVERABLE_REASON: Partial<Record<TaskShape, string>> = {
   chat: "nothing was asked for: no acceptance criteria were stated and no file was written",
 };
 
-/** The ladder, weakest first — `verified` is the only rung that is done. */
-function outcomeOf(criterion: Criterion): CriterionOutcome {
+// ─── Is a criterion ACCEPTED? ───
+//
+// The one idea of M1. Until here a single fact — the rung — answered three
+// questions: did a check pass, is this change why it passes, and is the
+// criterion accepted. So `verified` (which requires a failure on the parent
+// commit) was the acceptance policy, and a legitimate new feature could never
+// be `met`: there is nothing to fail on a parent commit that never had the
+// feature. The facts are stored separately now and acceptance is DERIVED.
+
+/**
+ * The run of the check this evidence is bound to, latest first.
+ *
+ * By `executionId` when the evidence carries one — an execution, not a string
+ * — and by the command's normalised identity otherwise, which is the same
+ * identity `rungForCommand` and `failingChecks` use, so the three cannot
+ * disagree about what ran.
+ */
+function boundRun(
+  criterion: Criterion,
+  checks: readonly CheckRun[],
+): { command: string; latest: CheckRun } | null {
+  const evidence = criterion.evidence;
+  if (!evidence) return null;
+  let command: string | undefined;
+  if (evidence.executionId) {
+    for (let i = checks.length - 1; i >= 0; i--) {
+      if (checks[i]!.executionId === evidence.executionId) {
+        command = checks[i]!.command;
+        break;
+      }
+    }
+  }
+  command ??= evidence.source;
+  if (!command) return null;
+  const key = normalizeCommand(command);
+  let latest: CheckRun | undefined;
+  for (const run of checks) if (normalizeCommand(run.command) === key) latest = run;
+  return latest ? { command: key, latest } : null;
+}
+
+/** True when this evidence predates M1 — no execution id and no result. */
+function legacyEvidence(criterion: Criterion): boolean {
+  const e = criterion.evidence;
+  return !!e && !e.executionId && !e.result;
+}
+
+/**
+ * Whether a criterion holds, from the runtime's own records and nothing else.
+ *
+ * Read top to bottom; the first line that answers wins, and every line is a
+ * fact the runtime saw:
+ *
+ *   review method                      → needs_review  (only a person settles it)
+ *   no evidence                        → unassessed
+ *   the citation was SET ASIDE         → unassessed    (an unrelated check moves nothing)
+ *   the verifier recorded a failure    → failed
+ *   the bound check's LATEST run failed→ failed        (a green run superseded by a red one)
+ *   the tree moved under the evidence  → stale
+ *   the evidence cannot be dated       → needs_review
+ *   a legacy row                       → mapped conservatively, never upgraded
+ *   otherwise                          → satisfied
+ *
+ * `now` is the revision the verdict is being taken AT, scoped to the same
+ * files the evidence was stamped against. Null means the caller holds no
+ * revision — a unit call site, an embedder outside git — and then nothing can
+ * be shown to have moved, which is the reading that keeps an honest claim.
+ *
+ * The legacy map is the review's "map conservatively; do not silently upgrade
+ * saved sessions": a stored `verified`/`reproduced` still means the check
+ * passed and is therefore `satisfied`, but a stored `observed` might be an
+ * execution receipt rather than a check, and there is no way left to tell —
+ * so it is `needs_review`, not `satisfied`.
+ */
+export function criterionStatus(
+  criterion: Criterion,
+  checks: readonly CheckRun[] = [],
+  now: StampedRevision | null = null,
+): CriterionStatus {
+  if (criterion.method?.kind === "review") return "needs_review";
+  const evidence = criterion.evidence;
+  if (!evidence) return "unassessed";
+  if (evidence.unrelated) return "unassessed";
+  if (evidence.result === "failed") return "failed";
+  const bound = boundRun(criterion, checks);
+  if (bound && !bound.latest.passed) return "failed";
+  const dated = evidence.head != null || evidence.digest != null;
+  if (now && dated && treeMovedUnder(evidence, now)) return "stale";
+  if (!dated) return "needs_review";
+  if (legacyEvidence(criterion)) {
+    if (criterion.rung === "verified" || criterion.rung === "reproduced") return "satisfied";
+    if (criterion.rung === "observed") return "needs_review";
+    return "unassessed";
+  }
+  return "satisfied";
+}
+
+/**
+ * Whether a criterion counts toward `met`.
+ *
+ * An optional criterion is accepted whatever happened to it — that is what
+ * optional means — and only a `user`-sourced criterion can be optional, which
+ * is enforced where amendments are applied, not here.
+ */
+export function accepted(criterion: Criterion, status: CriterionStatus): boolean {
+  return criterion.required === false || status === "satisfied";
+}
+
+/** Reported beside the status, gating nothing: is this change WHY it passes? */
+function attributionOf(criterion: Criterion): "regression" | "none" {
+  return criterion.evidence?.parentCommitFailed ? "regression" : "none";
+}
+
+/** The criterion as the run left it, with the derived status beside the rung. */
+function outcomeOf(
+  criterion: Criterion,
+  checks: readonly CheckRun[],
+  now: StampedRevision | null,
+): CriterionOutcome {
+  const status = criterionStatus(criterion, checks, now);
   return {
     text: criterion.text,
     rung: criterion.rung ?? null,
     ...(criterion.evidence?.source ? { evidence: criterion.evidence.source } : {}),
+    status,
+    source: criterion.source ?? "inferred",
+    required: criterion.required !== false,
+    attribution: attributionOf(criterion),
+    ...(criterion.evidence?.verifier ? { verifier: criterion.evidence.verifier } : {}),
+    ...(criterion.evidence?.executionId ? { executionId: criterion.evidence.executionId } : {}),
   };
+}
+
+/** Why a criterion that is not accepted is not accepted, in one clause. */
+function gapWhy(criterion: Criterion, status: CriterionStatus): string {
+  const detail = criterion.evidence?.detail?.replace(/\s+/g, " ").trim();
+  switch (status) {
+    case "failed":
+      return `failed: ${detail || "the bound check did not pass"}`;
+    case "stale":
+      return "stale: the workspace moved since the evidence was taken";
+    case "needs_review":
+      return criterion.method?.kind === "review"
+        ? "needs_review: only a person can settle this"
+        : `needs_review: ${detail || "the evidence cannot be dated to this tree"}`;
+    default:
+      return criterion.evidence?.unrelated
+        ? `no check bound: \`${criterion.evidence.source}\` was set aside — ${criterion.evidence.unrelated}`
+        : "no check bound";
+  }
 }
 
 /**
@@ -421,37 +652,51 @@ function outcomeOf(criterion: Criterion): CriterionOutcome {
  * written file sends the same run back to `unmet`.
  */
 export function computeVerdict(input: VerdictInputs): CompletionVerdict {
-  const criteria = input.criteria.map(outcomeOf);
+  const now = input.revision ?? null;
+  const criteria = input.criteria.map((c) => outcomeOf(c, input.checks, now));
+  // How the PROCESS ended, on every kind and never folded into `kind`. A run
+  // that hit its turn ceiling with one criterion satisfied is `partial` AND
+  // `budget`, and a consumer that sees only the first scores it as a task that
+  // fell a little short rather than a run that was cut off.
+  const execution = {
+    stopReason: input.stopReason,
+    status: statusFromStopReason(input.stopReason),
+  };
 
   // Nothing was ever stated to be true. The audit's silent case: tests green,
   // typecheck green, and no statement anywhere of what the work was for.
   if (criteria.length === 0) {
     const asked = NO_DELIVERABLE_REASON[input.shape ?? "unknown"];
-    if (asked && !input.wrote) return { kind: "none", criteria, reason: asked };
-    return { kind: "unmet", criteria, missing: ["no criteria stated"] };
+    if (asked && !input.wrote) return { kind: "none", criteria, reason: asked, execution };
+    return { kind: "unmet", criteria, missing: ["no criteria stated"], execution };
   }
 
-  const verified = criteria.filter((c) => c.rung === "verified");
-  const moved = criteria.filter((c) => c.rung !== null);
   const stepsOpen = input.openSteps > 0;
   const red = failingChecks(input.checks);
+  const statusOf = new Map(input.criteria.map((c, i) => [i, criteria[i]!.status!] as const));
+  const short = input.criteria
+    .map((c, i) => ({ criterion: c, status: statusOf.get(i)! }))
+    .filter(({ criterion, status }) => !accepted(criterion, status));
 
-  if (verified.length === criteria.length && !stepsOpen && red.length === 0) {
-    return { kind: "met", criteria };
+  // `met` — every REQUIRED criterion satisfied, no red check, no open step.
+  // The rung is not consulted: a criterion settled by a bound, fresh, passing
+  // check is accepted whether or not anything failed on the parent commit,
+  // and the attribution rides the outcome for the reader instead of gating it.
+  if (short.length === 0 && !stepsOpen && red.length === 0) {
+    return { kind: "met", criteria, execution };
   }
 
-  // Not one criterion has a rung, and nothing else is open to declare: there
-  // is nothing to name a gap AGAINST.
-  if (moved.length === 0 && !stepsOpen && red.length === 0) {
-    return { kind: "unmet", criteria, missing: criteria.map((c) => c.text) };
+  // Not one criterion was ever assessed, and nothing else is open to declare:
+  // there is nothing to name a gap AGAINST.
+  const assessed = criteria.filter((c) => c.status !== "unassessed");
+  if (assessed.length === 0 && !stepsOpen && red.length === 0) {
+    return { kind: "unmet", criteria, missing: criteria.map((c) => c.text), execution };
   }
 
-  const gaps: DeclaredGap[] = criteria
-    .filter((c) => c.rung !== "verified")
-    .map((c) => ({
-      criterion: c.text,
-      why: c.rung ? `reached ${c.rung}, not verified` : "no evidence recorded",
-    }));
+  const gaps: DeclaredGap[] = short.map(({ criterion, status }) => ({
+    criterion: criterion.text,
+    why: gapWhy(criterion, status),
+  }));
   if (stepsOpen) {
     gaps.push({
       criterion: "the plan",
@@ -461,7 +706,20 @@ export function computeVerdict(input: VerdictInputs): CompletionVerdict {
   for (const command of red) {
     gaps.push({ criterion: "the checks", why: `\`${command}\` last failed` });
   }
-  return { kind: "partial", criteria, gaps };
+  return { kind: "partial", criteria, gaps, execution };
+}
+
+/**
+ * Required criteria with no bound evidence — the contract's `uncovered` list.
+ *
+ * Kept separate from the gaps because it answers a different question: not
+ * "what fell short" but "what was never measured at all", which is the half a
+ * count of verified criteria has never been able to say.
+ */
+export function uncoveredCriteria(verdict: CompletionVerdict): string[] {
+  return verdict.criteria
+    .filter((c) => c.required !== false && c.status === "unassessed")
+    .map((c) => c.text);
 }
 
 /**
@@ -473,18 +731,27 @@ export function computeVerdict(input: VerdictInputs): CompletionVerdict {
  */
 export function verdictLine(verdict: CompletionVerdict): string {
   const total = verdict.criteria.length;
-  const met = verdict.criteria.filter((c) => c.rung === "verified").length;
-  const count = total === 0 ? "no criteria stated" : `${met} of ${total} criteria verified`;
+  // ACCEPTED, not verified. The count used to be "N of M criteria verified",
+  // which named the rung — and the rung is the regression measurement, not the
+  // acceptance one. A run whose every criterion was settled by a bound, fresh,
+  // passing check and whose feature is new read "0 of 3 criteria verified"
+  // beside `[verdict] met`, so the headline and its count disagreed.
+  const met = verdict.criteria.filter(
+    (c) => c.required === false || c.status === "satisfied",
+  ).length;
+  const regressions = verdict.criteria.filter((c) => c.attribution === "regression").length;
+  const count = total === 0 ? "no criteria stated" : `${met} of ${total} accepted`;
+  const attributed = regressions > 0 ? ` (${regressions} regression-attributed)` : "";
   // `none` says WHY there was nothing to verify. The count would read "no
   // criteria stated" on every one of them, which is the fact the reader
   // already has and not the one they need.
   if (verdict.kind === "none") return `[verdict] none — ${verdict.reason}`;
-  if (verdict.kind === "met") return `[verdict] met — ${count}`;
+  if (verdict.kind === "met") return `[verdict] met — ${count}${attributed}`;
   if (verdict.kind === "partial") {
     const first = verdict.gaps[0];
     const rest = verdict.gaps.length - 1;
     const gap = first ? `; gap: ${first.criterion} (${first.why})` : "";
-    return `[verdict] partial — ${count}${gap}${rest > 0 ? ` +${rest} more` : ""}`;
+    return `[verdict] partial — ${count}${attributed}${gap}${rest > 0 ? ` +${rest} more` : ""}`;
   }
   return `[verdict] unmet — ${count}`;
 }

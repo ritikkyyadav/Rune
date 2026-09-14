@@ -20,7 +20,7 @@ import { formatCacheRate } from "../cost-report";
 import { getContextLimit, UNKNOWN_MODEL_CONTEXT_LIMIT } from "../tokenizer";
 import { MODEL_PRICING } from "@rune/llm-gateway";
 import type { CompletionVerdict, DecisionRecord } from "@rune/protocol";
-import { verdictLine, type TaskContract } from "../contract";
+import { criterionStatus, verdictLine, type TaskContract } from "../contract";
 import { buildDecisionRecord, hasRecord, renderDecisionRecordMarkdown } from "../decision-record";
 
 type Row = { seq: number; event: SessionEvent };
@@ -404,11 +404,41 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
           `    ${warn("read back as")} ${dim(contract.drift.replace(/\s+/g, " ").slice(0, 120))}`,
         );
       }
+      // One row per criterion: what it is, who stated it, whether it holds,
+      // and the receipt's coordinates. The STATUS leads and the rung follows
+      // it, because the rung answers "how strong is the receipt" and the
+      // status answers "is this criterion accepted" — the reader wants the
+      // second first, and for two years the first was standing in for it.
       for (const c of contract.criteria.slice(0, 12)) {
-        const mark = c.rung === "verified" ? ok("✓") : c.rung ? warn(c.rung) : dim("—");
+        // No check log is reconstructed from a saved session, so the status is
+        // derived from the evidence alone — which is what the evidence is FOR.
+        const status = criterionStatus(c, [], null);
+        const mark =
+          status === "satisfied"
+            ? ok("satisfied")
+            : status === "failed"
+              ? danger("failed")
+              : status === "unassessed"
+                ? dim("unassessed")
+                : warn(status);
+        const facts = [
+          c.id,
+          c.source ?? "inferred",
+          c.required === false ? "optional" : null,
+          c.rung ?? null,
+          c.evidence?.parentCommitFailed ? "regression" : null,
+          c.evidence?.verifier,
+          c.evidence?.executionId,
+        ].filter(Boolean) as string[];
+        say(`    ${mark} ${c.text.slice(0, 100)}`);
         say(
-          `    ${mark} ${c.text.slice(0, 100)}${c.evidence?.source ? dim(`  ${c.evidence.source.slice(0, 60)}`) : ""}`,
+          `      ${dim(facts.join(" · "))}${c.evidence?.source ? dim(`  ${c.evidence.source.slice(0, 60)}`) : ""}`,
         );
+      }
+      if (contract.uncovered && contract.uncovered.length > 0) {
+        for (const u of contract.uncovered.slice(0, 6)) {
+          say(`    ${warn("uncovered")}${dim(":")} ${u.slice(0, 100)}`);
+        }
       }
     }
     if (verdict) {

@@ -138,8 +138,20 @@ describe("the ledger — what it takes to move a criterion", () => {
     // an equivalence — the verdict may not be looser than the ledger, and it
     // may not be `met` on a plan the run walked away from.
     const b = brief();
-    const l = new BriefLedger(b);
-    const ev = { source: "bun test", parentCommitFailed: true, parentCommit: "4a91c2e" };
+    // M1: the ledger is given the revision function the Engine always gives
+    // it. Evidence that cannot be dated to any tree derives `needs_review`,
+    // never `satisfied` — which is the T5 rule, tested on its own in
+    // `contract.test.ts`, and not what this equivalence is about.
+    const at = { head: "4a91c2ee", dirty: false, digest: "d16e57a10c9b2f40" };
+    const l = new BriefLedger(b, () => at);
+    const ev = {
+      source: "bun test",
+      parentCommitFailed: true,
+      parentCommit: "4a91c2e",
+      executionId: "chk-1",
+      verifier: "check-log@1",
+      result: "passed" as const,
+    };
     const verdict = (openSteps = 0) =>
       computeVerdict({
         criteria: l.criteria,
@@ -147,6 +159,7 @@ describe("the ledger — what it takes to move a criterion", () => {
         openSteps,
         totalSteps: openSteps === 0 ? 0 : openSteps + 1,
         stopReason: "end_turn",
+        revision: at,
       });
 
     expect(l.complete).toBe(false);

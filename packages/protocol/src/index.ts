@@ -61,6 +61,7 @@ export type {
 export { RESEARCH_EVENT_TYPES, RESEARCH_ONLY_EVENT_TYPES, isClarification } from "./research";
 
 export type {
+  AcceptanceMethod,
   AutoApprovalNotice,
   Brief,
   BriefDecision,
@@ -69,8 +70,11 @@ export type {
   ContainmentKind,
   Criterion,
   CriterionOutcome,
+  CriterionSource,
+  CriterionStatus,
   DeclaredGap,
   Evidence,
+  VerdictExecution,
   HeldStep,
   HeldStepRunResult,
   PermissionDecisionKind,

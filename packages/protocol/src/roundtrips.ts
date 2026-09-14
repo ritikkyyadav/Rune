@@ -74,6 +74,41 @@ export interface Evidence {
   /** A short quotable excerpt of what came back. */
   detail?: string;
   /**
+   * The `CheckRun` this evidence was priced from (`chk-<n>` in the check log).
+   *
+   * A command string is not an execution: the same command runs many times in
+   * a session, and "the check passed" is a claim about ONE of those runs. With
+   * only the command on the evidence, a criterion settled by a run that later
+   * went red still read as settled, because the only thing that could be
+   * re-checked was a string. The id is assigned by `CheckLog.record`, so it
+   * exists for every run the runtime saw and for none that it did not.
+   *
+   * Its absence is also what marks a LEGACY row — evidence written before M1 —
+   * which the status derivation maps conservatively rather than upgrading.
+   */
+  executionId?: string;
+  /**
+   * Who assessed it, and at what version. `check-log@1` is a command the model
+   * ran, read back off the runtime's own log; `parent-probe@1` is the
+   * attribution measurement; `acceptance-command@1` is the runtime running an
+   * evaluator criterion's own command itself.
+   *
+   * Producer output and verifier assessment are separate records: the check's
+   * summary stays on the `CheckRun`, and this is the assessment of it.
+   */
+  verifier?: string;
+  /**
+   * What the verifier saw. Until M1 evidence existed only for a pass, so a
+   * failure had no receipt and `failed` could not be told from "never ran".
+   */
+  result?: "passed" | "failed";
+  /**
+   * A short toolchain fingerprint (runtime + version + platform) taken when
+   * the assessment was made, so a claim can be told from a claim taken on a
+   * different toolchain. Deliberately cheap — this is not a dependency graph.
+   */
+  env?: string;
+  /**
    * Required for `verified`: the same check was run on the parent commit and
    * FAILED there. Without this a green test proves only that it is green now,
    * not that this change is why.
@@ -120,12 +155,61 @@ export interface Evidence {
   staleAt?: string;
 }
 
+/**
+ * WHO stated a criterion — the fact that decides what a model amendment may
+ * do to it.
+ *
+ * `inferred` is the read-back's own reading, which the model may reword and
+ * drop. `user` is a criterion the person stated (an edited brief, or an
+ * `--acceptance` entry marked `user`). `evaluator` is an independent
+ * acceptance check the model never sees and cannot cite. Absent means
+ * `inferred`: every criterion that existed before M1 came from a read-back.
+ */
+export type CriterionSource = "user" | "inferred" | "evaluator";
+
+/**
+ * How a criterion is settled, when something other than a citation settles it.
+ *
+ * `command` is an evaluator criterion the RUNTIME runs itself at the finish
+ * gate. `review` marks a criterion only a person can settle — it derives
+ * `needs_review` and is never `satisfied` by the runtime, which is the honest
+ * answer for "the copy reads well" rather than a rung nobody measured.
+ */
+export type AcceptanceMethod = { kind: "command"; command: string } | { kind: "review" };
+
+/**
+ * Whether a criterion is ACCEPTED, derived from the facts rather than asserted.
+ *
+ * Separate from `ClaimRung`, which keeps its own meaning: the rung says how
+ * strong a receipt is (`verified` = it failed on the parent commit), and the
+ * status says whether the criterion holds. Conflating them made a legitimate
+ * new feature unable to reach `met` — nothing failed on the parent, because
+ * the feature was never there — while an unrelated green command could.
+ */
+export type CriterionStatus = "unassessed" | "satisfied" | "failed" | "stale" | "needs_review";
+
 export interface Criterion {
   /** What must be true, in the person's own frame. Set once, never rewritten. */
   text: string;
   /** null until an event moves it. The model can never set this directly. */
   rung: ClaimRung | null;
   evidence?: Evidence;
+  /**
+   * Stable across amendments (`c1`, `c2`, … within a contract). Assigned by the
+   * runtime at promotion; an amendment that keeps a criterion's text keeps its
+   * id, which is what lets "the model dropped a requirement" be a fact rather
+   * than a diff of two prose lists.
+   */
+  id?: string;
+  /** Who stated it. Absent means `inferred`. */
+  source?: CriterionSource;
+  /**
+   * Absent means `true`. Only a `user`-sourced criterion can be optional: the
+   * `read_back` schema has no such field, so the model has no way to reach it.
+   */
+  required?: boolean;
+  /** For an evaluator criterion, the command the runtime runs itself. */
+  method?: AcceptanceMethod;
 }
 
 export interface Brief {
@@ -173,6 +257,26 @@ export interface CriterionOutcome {
   rung: ClaimRung | null;
   /** The command that moved it, verbatim. Absent when nothing did. */
   evidence?: string;
+  /**
+   * Whether it is ACCEPTED, derived by `criterionStatus`. Absent only on a
+   * verdict written before M1.
+   */
+  status?: CriterionStatus;
+  /** Who stated it, and whether it has to hold for the run to be `met`. */
+  source?: CriterionSource;
+  required?: boolean;
+  /**
+   * Whether this change is demonstrably WHY the check passes: `regression`
+   * when the same check was run on the parent commit and failed there.
+   *
+   * Reported, never required. It was the acceptance policy until M1, which is
+   * why a new feature — nothing to fail on the parent, because the feature was
+   * not there — could not be accepted at all.
+   */
+  attribution?: "regression" | "none";
+  /** The verifier that assessed it, and the run it was priced from. */
+  verifier?: string;
+  executionId?: string;
 }
 
 /** Something the run did not do, named — the honest half of `partial`. */
@@ -200,10 +304,26 @@ export interface DeclaredGap {
  *   the word — the one failure this vocabulary cannot afford.
  */
 export type CompletionVerdict =
-  | { kind: "met"; criteria: CriterionOutcome[] }
-  | { kind: "partial"; criteria: CriterionOutcome[]; gaps: DeclaredGap[] }
-  | { kind: "unmet"; criteria: CriterionOutcome[]; missing: string[] }
-  | { kind: "none"; criteria: CriterionOutcome[]; reason: string };
+  | { kind: "met"; criteria: CriterionOutcome[]; execution?: VerdictExecution }
+  | { kind: "partial"; criteria: CriterionOutcome[]; gaps: DeclaredGap[]; execution?: VerdictExecution }
+  | { kind: "unmet"; criteria: CriterionOutcome[]; missing: string[]; execution?: VerdictExecution }
+  | { kind: "none"; criteria: CriterionOutcome[]; reason: string; execution?: VerdictExecution };
+
+/**
+ * How the RUN ended, beside what it achieved — and never folded into it.
+ *
+ * `kind` answers "was the task done"; this answers "did the process finish".
+ * They are different questions, and a run that hit its turn ceiling with one
+ * criterion satisfied must not enter a success metric merely because it
+ * emitted a final answer. Optional on the wire so a verdict row written before
+ * M1 still parses; every verdict `computeVerdict` produces carries it.
+ */
+export interface VerdictExecution {
+  /** The loop's own terminal vocabulary, verbatim. */
+  stopReason: string;
+  /** The same thing in the lifecycle vocabulary (`statusFromStopReason`). */
+  status: import("./events").TaskLifecycleStatus;
+}
 
 // ─── 4. Auto-mode approval notice (push, not a question) ───
 

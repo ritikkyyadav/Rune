@@ -20,10 +20,13 @@ import {
   amendContract,
   briefDrift,
   carryForward,
+  accepted,
   computeVerdict,
   contractDigest,
   contractShape,
   createContract,
+  criterionStatus,
+  uncoveredCriteria,
   verdictLine,
   type TaskContract,
   type TaskShape,
@@ -36,13 +39,40 @@ function contract(intent = INTENT, fixShaped = true): TaskContract {
   return createContract({ intent, fixShaped, turns: 80, secondWinds: 2 });
 }
 
+/**
+ * A criterion with the evidence `BriefLedger.record` would have stamped on it.
+ *
+ * M1: evidence carries the EXECUTION it was priced from, what the verifier
+ * saw, and the revision it was taken at. All three are what `criterionStatus`
+ * reads, and a hand-built receipt that carries none of them is — correctly —
+ * `needs_review`, which is its own test below rather than the shape every
+ * other test in this file is written in.
+ */
 function criterion(text: string, rung: Criterion["rung"] = null, source?: string): Criterion {
   return {
     text,
     rung,
-    ...(source ? { evidence: { source, parentCommitFailed: true } } : {}),
+    ...(source
+      ? {
+          evidence: {
+            source,
+            parentCommitFailed: true,
+            executionId: `chk-${source.length}`,
+            verifier: "check-log@1",
+            result: "passed" as const,
+            head: HEAD,
+            dirty: false,
+            digest: DIGEST,
+          },
+        }
+      : {}),
   };
 }
+
+/** The tree every stamped receipt in this file was taken against. */
+const HEAD = "4a91c2ee0000000000000000000000000000beef";
+const DIGEST = "d16e57a10c9b2f40";
+const NOW = { head: HEAD, dirty: false, digest: DIGEST };
 
 function brief(over: Partial<Brief> = {}): Brief {
   return {
@@ -64,6 +94,8 @@ function verdictOf(
     totalSteps?: number;
     shape?: TaskShape;
     wrote?: boolean;
+    revision?: { head: string | null; dirty: boolean; digest?: string } | null;
+    stopReason?: string;
   } = {},
 ) {
   return computeVerdict({
@@ -71,9 +103,10 @@ function verdictOf(
     checks: over.checks ?? [],
     openSteps: over.openSteps ?? 0,
     totalSteps: over.totalSteps ?? 0,
-    stopReason: "end_turn",
+    stopReason: over.stopReason ?? "end_turn",
     ...(over.shape ? { shape: over.shape } : {}),
     ...(over.wrote === undefined ? {} : { wrote: over.wrote }),
+    revision: over.revision === undefined ? NOW : over.revision,
   });
 }
 
@@ -199,14 +232,18 @@ describe("the verdict", () => {
     ]);
     expect(v.kind).toBe("met");
     expect(v.criteria.map((c) => c.evidence)).toEqual(["bun test a.test.ts", "bunx tsc --noEmit"]);
-    expect(verdictLine(v)).toBe("[verdict] met — 2 of 2 criteria verified");
+    // M1: the count is of ACCEPTED criteria, not of `verified` rungs, and the
+    // regression attribution rides beside it instead of being the policy.
+    expect(verdictLine(v)).toBe("[verdict] met — 2 of 2 accepted (2 regression-attributed)");
   });
 
-  test("THE AUDIT'S EXAMPLE: green checks, one criterion short → `partial`, named", () => {
+  test("THE AUDIT'S EXAMPLE: green checks, one criterion never settled → `partial`, named", () => {
     const v = verdictOf(
       [
         criterion("the exporter writes every row", "verified", "bun test export.test.ts"),
-        criterion("the CSV header is unchanged", "observed", "bun test export.test.ts"),
+        // Never cited: the audit's silent case. Green project checks, and
+        // nothing anywhere saying this criterion was ever measured.
+        criterion("the CSV header is unchanged"),
       ],
       {
         checks: [
@@ -217,9 +254,9 @@ describe("the verdict", () => {
     );
     expect(v.kind).toBe("partial");
     expect(v.kind === "partial" && v.gaps).toEqual([
-      { criterion: "the CSV header is unchanged", why: "reached observed, not verified" },
+      { criterion: "the CSV header is unchanged", why: "no check bound" },
     ]);
-    expect(verdictLine(v)).toContain("1 of 2 criteria verified");
+    expect(verdictLine(v)).toContain("1 of 2 accepted");
     expect(verdictLine(v)).toContain("the CSV header is unchanged");
   });
 
@@ -404,5 +441,243 @@ describe("the verdict on a run that stated no criteria", () => {
     expect(verdictOf([criterion("the answer is written down")], { shape: "question" }).kind).toBe(
       "unmet",
     );
+  });
+});
+
+// ─── M1: acceptance is DERIVED, and the rung is not the policy ───
+//
+// The defect this closes (`guarantees-plan-review-20260914.md` §3): one fact —
+// the rung — answered three questions at once, so `verified` (which requires a
+// FAILURE on the parent commit) was the acceptance policy. A legitimate new
+// feature could never be `met`, because there is nothing to fail on a parent
+// commit that never had the feature; and an unrelated green command could be.
+//
+// Every status below is derived from a fact the runtime recorded: an execution
+// id off its own check log, what the verifier saw, and the revision the claim
+// was taken at. Nothing the model wrote reaches any of them.
+
+/** Evidence as `BriefLedger.record` stamps it after M1: dated and identified. */
+function stamped(over: Partial<NonNullable<Criterion["evidence"]>> = {}) {
+  return {
+    source: "bun test export.test.ts",
+    executionId: "chk-1",
+    verifier: "check-log@1",
+    result: "passed" as const,
+    head: HEAD,
+    dirty: false,
+    digest: DIGEST,
+    ...over,
+  };
+}
+
+describe("criterionStatus — the derivation, line by line", () => {
+  test("no evidence at all is `unassessed`, and it is not a failure", () => {
+    expect(criterionStatus({ text: "a", rung: null }, [], NOW)).toBe("unassessed");
+  });
+
+  test("T3: a citation the runtime SET ASIDE moves nothing — `unassessed`", () => {
+    // F-5B's gate records the refusal on the criterion rather than dropping
+    // it. A status derivation that read the receipt and ignored the refusal
+    // would hand the forged citation back the acceptance the gate took away.
+    const c: Criterion = {
+      text: "the CSV header is unchanged",
+      rung: null,
+      evidence: stamped({ unrelated: "it never reads header.csv" }),
+    };
+    expect(criterionStatus(c, [], NOW)).toBe("unassessed");
+  });
+
+  test("a verifier that recorded a failure is `failed`, with its receipt", () => {
+    const c: Criterion = {
+      text: "the CSV header is unchanged",
+      rung: null,
+      evidence: stamped({ result: "failed", verifier: "acceptance-command@1", detail: "exit 1" }),
+    };
+    expect(criterionStatus(c, [], NOW)).toBe("failed");
+  });
+
+  test("a green run superseded by a red one is `failed` — by execution id", () => {
+    // The evidence names an EXECUTION, so the log can be asked what that same
+    // command did afterwards. With only a command string on the receipt this
+    // criterion read `satisfied` while its own check was red.
+    const checks: CheckRun[] = [
+      { command: "bun test export.test.ts", passed: true, at: 1, kind: "check", executionId: "chk-1" },
+      { command: "bun test export.test.ts", passed: false, at: 2, kind: "check", executionId: "chk-2" },
+    ];
+    const c: Criterion = { text: "a", rung: "observed", evidence: stamped() };
+    expect(criterionStatus(c, checks, NOW)).toBe("failed");
+  });
+
+  test("T5: the tree moved under the claim → `stale`", () => {
+    const c: Criterion = { text: "a", rung: "verified", evidence: stamped() };
+    expect(criterionStatus(c, [], { head: HEAD, dirty: false, digest: "0000000000000000" })).toBe(
+      "stale",
+    );
+    // A different HEAD says the same thing, and so does a clean tree gone dirty.
+    expect(criterionStatus(c, [], { head: "beef0000", dirty: false, digest: DIGEST })).toBe("stale");
+    expect(criterionStatus(c, [], { head: HEAD, dirty: true, digest: DIGEST })).toBe("stale");
+  });
+
+  test("T5: evidence that cannot be dated at all → `needs_review`", () => {
+    // No head AND no digest: the receipt is about some tree, and there is no
+    // way left to say which. "Probably still true" is exactly the sentence the
+    // rung ladder exists to make unwritable.
+    const c: Criterion = {
+      text: "a",
+      rung: "verified",
+      evidence: { source: "bun test", executionId: "chk-1", result: "passed" },
+    };
+    expect(criterionStatus(c, [], NOW)).toBe("needs_review");
+  });
+
+  test("a `review` method is never satisfied by the runtime", () => {
+    const c: Criterion = {
+      text: "the copy reads well",
+      rung: "verified",
+      method: { kind: "review" },
+      evidence: stamped(),
+    };
+    expect(criterionStatus(c, [], NOW)).toBe("needs_review");
+  });
+
+  test("no revision in hand: nothing can be shown to have moved", () => {
+    const c: Criterion = { text: "a", rung: "observed", evidence: stamped() };
+    expect(criterionStatus(c, [], null)).toBe("satisfied");
+  });
+
+  test("T2: a bound, fresh, passing check settles it whatever the rung says", () => {
+    // `observed` — one passing run, the parent probe not applicable, which is
+    // every new feature. Accepted, and the outcome says the attribution is
+    // `none` rather than pretending a regression was measured.
+    const c: Criterion = { text: "version() is exported", rung: "observed", evidence: stamped() };
+    expect(criterionStatus(c, [], NOW)).toBe("satisfied");
+    expect(accepted(c, "satisfied")).toBe(true);
+  });
+});
+
+describe("legacy rows are mapped conservatively, never upgraded", () => {
+  /** Evidence as a session saved BEFORE M1 holds it: dated, but nothing else. */
+  const old = (over: Record<string, unknown> = {}) => ({
+    source: "bun test export.test.ts",
+    head: HEAD,
+    dirty: false,
+    digest: DIGEST,
+    ...over,
+  });
+
+  test("`verified` and `reproduced` still mean the check passed → `satisfied`", () => {
+    expect(criterionStatus({ text: "a", rung: "verified", evidence: old() }, [], NOW)).toBe(
+      "satisfied",
+    );
+    expect(criterionStatus({ text: "a", rung: "reproduced", evidence: old() }, [], NOW)).toBe(
+      "satisfied",
+    );
+  });
+
+  test("`observed` might be an execution receipt → `needs_review`, not `satisfied`", () => {
+    // A1 caps a bare shell execution at `observed`, so a saved `observed` row
+    // is either a check that ran once or a command that merely exited 0 — and
+    // the row does not say which. The review's rule is to map conservatively.
+    expect(criterionStatus({ text: "a", rung: "observed", evidence: old() }, [], NOW)).toBe(
+      "needs_review",
+    );
+  });
+
+  test("`suspected` and an unmoved criterion are `unassessed`", () => {
+    expect(criterionStatus({ text: "a", rung: "suspected", evidence: old() }, [], NOW)).toBe(
+      "unassessed",
+    );
+    expect(criterionStatus({ text: "a", rung: null, evidence: old() }, [], NOW)).toBe("unassessed");
+  });
+
+  test("a legacy row whose tree moved is `stale` before it is anything else", () => {
+    expect(
+      criterionStatus({ text: "a", rung: "verified", evidence: old() }, [], {
+        head: "beef0000",
+        dirty: false,
+      }),
+    ).toBe("stale");
+  });
+});
+
+describe("the verdict reads the status, not the rung", () => {
+  test("T2: a new feature reaches `met` with no failing parent anywhere", () => {
+    const c: Criterion = {
+      text: "version() is exported",
+      rung: "observed",
+      evidence: stamped({ detail: "1 pass, 0 fail" }),
+    };
+    const v = verdictOf([c]);
+    expect(v.kind).toBe("met");
+    expect(v.criteria[0]!.status).toBe("satisfied");
+    expect(v.criteria[0]!.attribution).toBe("none");
+    expect(verdictLine(v)).toBe("[verdict] met — 1 of 1 accepted");
+  });
+
+  test("an optional criterion cannot hold a run back", () => {
+    const required: Criterion = { text: "it ships", rung: "observed", evidence: stamped() };
+    const optional: Criterion = { text: "it is pretty", rung: null, required: false, source: "user" };
+    const v = verdictOf([required, optional]);
+    expect(v.kind).toBe("met");
+    expect(v.criteria[1]!.required).toBe(false);
+    expect(verdictLine(v)).toBe("[verdict] met — 2 of 2 accepted");
+  });
+
+  test("a failed criterion names its receipt in the gap", () => {
+    const failing: Criterion = {
+      text: "the CSV header is unchanged",
+      rung: null,
+      source: "evaluator",
+      method: { kind: "command", command: "node check-header.mjs" },
+      evidence: stamped({
+        source: "node check-header.mjs",
+        verifier: "acceptance-command@1",
+        result: "failed",
+        detail: "exit 1",
+      }),
+    };
+    const v = verdictOf([criterion("the exporter writes every row", "verified", "bun test"), failing]);
+    expect(v.kind).toBe("partial");
+    expect(v.kind === "partial" && v.gaps[0]).toEqual({
+      criterion: "the CSV header is unchanged",
+      why: "failed: exit 1",
+    });
+    expect(verdictLine(v)).toBe(
+      "[verdict] partial — 1 of 2 accepted (1 regression-attributed); " +
+        "gap: the CSV header is unchanged (failed: exit 1)",
+    );
+  });
+
+  test("a set-aside citation is uncovered, and the gap says which command was refused", () => {
+    const c: Criterion = {
+      text: "the CSV header is unchanged",
+      rung: null,
+      evidence: stamped({ source: "node check.mjs", unrelated: "it never reads header.csv" }),
+    };
+    const v = verdictOf([criterion("the exporter writes every row", "verified", "bun test"), c]);
+    expect(v.kind).toBe("partial");
+    expect(v.kind === "partial" && v.gaps[0]!.why).toContain("no check bound");
+    expect(v.kind === "partial" && v.gaps[0]!.why).toContain("node check.mjs");
+    expect(uncoveredCriteria(v)).toEqual(["the CSV header is unchanged"]);
+  });
+
+  test("execution rides every verdict, separate from what was achieved", () => {
+    // A run cut off at its turn ceiling with one criterion satisfied is
+    // `partial` AND `max_turns`. A consumer given only the first scores it as
+    // a task that fell a little short rather than a run that was stopped.
+    const v = verdictOf([criterion("a", "verified", "bun test"), criterion("b")], {
+      stopReason: "max_turns",
+    });
+    expect(v.execution).toEqual({ stopReason: "max_turns", status: "max_turns" });
+    expect(verdictOf([]).execution).toEqual({ stopReason: "end_turn", status: "end_turn" });
+  });
+
+  test("`uncovered` names only REQUIRED criteria nothing measured", () => {
+    const v = verdictOf([
+      criterion("a", "verified", "bun test"),
+      { text: "b", rung: null },
+      { text: "c", rung: null, required: false, source: "user" },
+    ]);
+    expect(uncoveredCriteria(v)).toEqual(["b"]);
   });
 });

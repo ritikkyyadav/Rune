@@ -1391,6 +1391,9 @@ export class AgentLoop {
       // from "nothing was verified".
       ...(record.shape ? { shape: record.shape } : {}),
       wrote: record.wrote ?? (this.config.taskState?.writtenFiles.length ?? 0) > 0,
+      // The revision the verdict is taken AT, so evidence proven against a
+      // tree that has since moved derives `stale` rather than `satisfied`.
+      revision: record.revision ?? null,
     });
   }
 
