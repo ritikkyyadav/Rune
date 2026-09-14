@@ -134,10 +134,16 @@ describe("a picker opens inside the frame, not instead of it", () => {
   });
 
   it("leaves every decision panel claiming the footer", () => {
-    for (const mode of ["permission", "keys", "ask", "question", "held", "sessions", "memory"]) {
+    // `keys` left this list when §2.8's other half landed: it is not one
+    // surface but two -- a list that is evidence and a field that is input --
+    // so the band splits it rather than hosting it. See
+    // `ui-settings-regions.test.ts`; every other decision panel is unchanged.
+    for (const mode of ["permission", "ask", "question", "held", "sessions", "memory"]) {
       expect(FRAME_METHODS.bandModal.call(stub(mode, false))).toBe(false);
       expect(FRAME_METHODS.bandLayout.call(stub(mode, false))).toBe(false);
     }
+    expect(FRAME_METHODS.bandModal.call(stub("keys", false))).toBe(true);
+    expect(FRAME_METHODS.bandModal.call(stub("keys", true))).toBe(false);
   });
 
   it("still draws the band for the writing surface", () => {

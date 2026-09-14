@@ -41,7 +41,13 @@ import * as F from "./flow";
 import { clampVisible, setTermWidthOverride, visLen } from "./render";
 import { text, faint, accent, brand, muted, warn, withThemeBg } from "./theme";
 import { glyph, TERMINAL_GLYPH_MODE } from "./glyphs";
-import { ledgerRows, maskLive, savedActiveRows } from "../../first-run";
+import {
+  ledgerRows,
+  maskLive,
+  savedActiveRows,
+  MASK_CELL_ASCII,
+  MASK_CELL_UTF8,
+} from "../../first-run";
 import {
   fleetLedger,
   panelHint,
@@ -52,11 +58,14 @@ import {
 } from "./agents-panel";
 import {
   renderComposer,
+  renderKeyManagerPanel,
+  renderKeysPanel,
   renderSlashPalette,
   composerCounts,
   composerHintRow,
   composerTextWidth,
   modeInfo,
+  type RenderedBlock,
 } from "./composer";
 
 /** Which region the keys act on. Lanes B and C read this off the controller. */
@@ -182,9 +191,14 @@ export const FRAME_METHODS = {
    * It is deliberately NOT every modal. Below `PANEL_MIN_COLS` there is no
    * column to preserve, and the footer layout is also the one that gives a long
    * list the most rows -- so a collapsed window keeps the old behaviour, and
-   * gains nothing by changing. The permission card, sessions, keys, memory and
-   * the work review keep the footer at every width: each is a decision that
+   * gains nothing by changing. The permission card, sessions, memory and the
+   * work review keep the footer at every width: each is a decision that
    * deserves the screen, which is the opposite of what a picker needs.
+   *
+   * `/keys` joined the band because §2.8 splits it rather than moving it: the
+   * provider list is EVIDENCE and belongs in the workspace, and the secret
+   * being typed is INPUT and belongs in the composer. That is a split only the
+   * four-region frame can draw, so `keysInBand` gates on the same width.
    */
   bandLayout(this: Tui): boolean {
     if (this.inline) return false;
@@ -193,9 +207,30 @@ export const FRAME_METHODS = {
     return this.bandModal();
   },
 
-  /** A picker that opens inside the workspace instead of claiming the footer. */
+  /** A list that opens inside the workspace instead of claiming the footer. */
   bandModal(this: Tui): boolean {
-    if (this.inline || this.mode !== "picker") return false;
+    if (this.inline) return false;
+    if (this.mode !== "picker" && this.mode !== "keys") return false;
+    return !this.regionsNow().collapsed;
+  },
+
+  /**
+   * Whether `/keys` is drawn ACROSS the frame rather than as one footer panel.
+   *
+   * §2.8 gives the two halves of `/keys` different regions for a reason that is
+   * not layout: the provider list is a statement about what is configured --
+   * evidence, and it belongs where every other piece of evidence goes -- while
+   * the key being pasted is a field, and a field belongs in the composer with
+   * the caret. Drawn as one footer panel they were the same object, which is
+   * how a masked list row and a live secret ended up rendered by the same code
+   * with the same masking rule.
+   *
+   * Collapsed is a different answer, not a smaller one: below `PANEL_MIN_COLS`
+   * there is no composer to put the field in, and the footer panel is also the
+   * layout that gives a thirty-row provider roster the most rows.
+   */
+  keysInBand(this: Tui): boolean {
+    if (this.inline || this.mode !== "keys") return false;
     return !this.regionsNow().collapsed;
   },
 
@@ -497,6 +532,70 @@ export const FRAME_METHODS = {
   },
 
   /**
+   * `/keys` in the workspace: the provider roster, or one provider's pool.
+   *
+   * The same two renderers the footer panel uses, at the WORKSPACE's measure
+   * instead of the window's -- and deliberately never the third one. When a key
+   * is being typed `composerBlock` swaps the list for `renderKeyEditor`; here
+   * the list stays exactly where it was and the field appears in the composer,
+   * which is the whole of §2.8's "list + masked field": you can still read what
+   * is configured while you paste the key that changes it.
+   */
+  keysWorkspaceBlock(this: Tui, rows: number): RenderedBlock {
+    const w = this.contentCols();
+    const mgr = this.keysManage;
+    if (mgr) {
+      const row = this.keysRows.find((r) => r.id === mgr.id);
+      return renderKeyManagerPanel(mgr.label, row?.savedKeys ?? [], mgr.sel, w);
+    }
+    return renderKeysPanel(this.keysRows, this.keysSel, w, Math.max(4, rows));
+  },
+
+  /**
+   * The composer while a key is being typed: one title, one masked field.
+   *
+   * Masked WHOLE, not to its last four. `renderKeyEditor`'s footer field shows
+   * the tail as you type, which is the right call for a value you are checking
+   * against a dashboard -- but the last four of a key you are pasting are on
+   * screen for as long as the pane is open, and the band puts that field
+   * beside a list that already carries the last four of every saved key. So the
+   * live field is `maskLive`, the same cell the setup wizard's key step uses,
+   * and the last four appear once the key is SAVED, in the list row.
+   *
+   * Built to fit like `bandSetupComposer`, and for the same reason: the band
+   * keeps a block's tail, so an over-long block loses its title -- a field with
+   * no question above it. The hint row is what is given up instead.
+   */
+  bandKeysComposer(this: Tui, r: Regions): { lines: string[]; caretRow: number; caretCol: number } {
+    const e = this.keysEdit!;
+    const width = PANEL_COLS + 1;
+    const cap = Math.max(COMPOSER_MIN_ROWS, this.regionsNow(r.bandRows).composerRows);
+    return this.atWidth(PANEL_COLS + 2, () => {
+      const shown = e.masked
+        ? maskLive(e.value, ASCII_RUNG ? MASK_CELL_ASCII : MASK_CELL_UTF8)
+        : e.value;
+      const base = renderComposer({
+        input: shown,
+        caret: Math.min(e.caret, shown.length),
+        width,
+        status: "",
+        placeholder: e.masked ? "paste key (masked)" : "type a value",
+        // Four rows of chrome: the two rules, the title and the hint.
+        maxRows: Math.max(1, cap - 4),
+      });
+      // renderComposer owns a blank row above the field; the region's own edge
+      // does that job here, so it is dropped as the writing surface drops it.
+      const field = base.lines.slice(1);
+      const title = `  ${text(clampVisible(e.title, width - 4))}`;
+      const lines = [field[0] ?? "", title, ...field.slice(1)];
+      const caretRow = Math.max(0, base.caretRow - 1) + 1;
+      const hint = `enter save ${glyph("observed")} esc cancel`;
+      if (lines.length < cap) lines.push(`  ${faint(hint)}`);
+      return { lines: lines.map(tighten), caretRow, caretCol: base.caretCol - 1 };
+    });
+  },
+
+  /**
    * What the idle column can honestly say about this session.
    *
    * Read straight off the engine at paint time rather than accumulated here:
@@ -584,6 +683,7 @@ export const FRAME_METHODS = {
    */
   bandComposer(this: Tui, r: Regions): { lines: string[]; caretRow: number; caretCol: number } {
     if (this.setupInBand()) return this.bandSetupComposer(r);
+    if (this.keysInBand() && this.keysEdit) return this.bandKeysComposer(r);
     const wide = !r.collapsed;
     const width = wide ? PANEL_COLS + 1 : this.contentCols();
     // What the field may grow to. `composerPaintRows` is that ceiling, asked
@@ -743,8 +843,18 @@ export const FRAME_METHODS = {
 
     // A picker opens INSIDE the workspace, at the workspace's own measure --
     // `contentCols()` already reports the left column, so the block needs no
-    // width argument, only the rows it may have.
-    const modal = this.bandModal() ? this.composerBlock(panes.mainRows) : null;
+    // width argument, only the rows it may have. `/keys` takes the same door
+    // but keeps its own renderer: `composerBlock` would swap the list for the
+    // key editor the moment one is open, and here the field is the composer's.
+    const modal = this.bandModal()
+      ? this.keysInBand()
+        ? this.keysWorkspaceBlock(panes.mainRows)
+        : this.composerBlock(panes.mainRows)
+      : null;
+    // Which region owns the caret. A modal normally does -- it is the only
+    // thing the keys act on -- but while a key is being typed the field is in
+    // the composer, so the caret has to follow it out of the workspace.
+    const caretInModal = modal != null && !(this.keysInBand() && this.keysEdit != null);
 
     // Left column: the main pane, then the child's seam and rows when open.
     const main = this.paneRows(
@@ -807,11 +917,11 @@ export const FRAME_METHODS = {
       right.push(...composer.lines.slice(-paintRows));
     }
 
-    const caretRow = modal
-      ? r.bandTop + Math.min(modal.caretRow, Math.max(0, panes.mainRows - 1))
+    const caretRow = caretInModal
+      ? r.bandTop + Math.min(modal!.caretRow, Math.max(0, panes.mainRows - 1))
       : composerCaretRow(r, composer.lines.length, composer.caretRow, paintRows);
-    const caretCol = modal
-      ? modal.caretCol
+    const caretCol = caretInModal
+      ? modal!.caretCol
       : r.collapsed
         ? composer.caretCol
         : r.dividerCol + composer.caretCol;

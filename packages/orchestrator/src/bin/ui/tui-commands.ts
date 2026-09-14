@@ -272,7 +272,13 @@ export const COMMAND_METHODS = {
         if (custom.length > 0) groups.push(["custom", custom]);
         const byName = new Map(commands.map((item) => [item.name, item]));
         const nameWidth = Math.max(...commands.map((item) => item.name.length)) + 2;
-        const width = cols();
+        // The measure is the WORKSPACE's, not the window's (§2.8: `/help` is a
+        // document committed to the workspace). `cols()` is the whole terminal,
+        // and at 120 columns that put the two-column layout's right-hand column
+        // at cells 62-116 of a 78-cell left column -- so every second command
+        // was written and then clipped away by `bound()`, and the document was
+        // missing half its rows with nothing to say it was.
+        const width = this.contentCols();
         const rows: string[] = [`  ${bold(text("Commands"))}`];
         // A window too short for the full list gets one row per group, names
         // only: every command visible at once, descriptions in the palette as
