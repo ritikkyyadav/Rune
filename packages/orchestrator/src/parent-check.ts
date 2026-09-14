@@ -22,14 +22,29 @@
 // comes back INCONCLUSIVE, and inconclusive never yields `verified`.
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { isManagedCommitSubject } from "./git-undo";
 
-/** What running a check against the pre-change tree established. */
-export type ParentCheckStatus = "failed" | "passed" | "inconclusive";
+/**
+ * What running a check against the pre-change tree established.
+ *
+ * `not-applicable-on-parent` is the one the first draft was missing, and it
+ * is the difference between a measurement and a tautology. "It failed on the
+ * parent" was satisfiable by ABSENCE: a test file that did not exist there
+ * yet, a module the parent never had, a script the parent never shipped, a
+ * command the parent's toolchain did not know. Each of those exits non-zero
+ * without ever running the check, and a rung ladder that reads exit codes
+ * alone spends `verified` on the novelty of a file. A check that could not RUN
+ * on the parent measured nothing there, so it establishes nothing here.
+ */
+export type ParentCheckStatus =
+  | "failed"
+  | "passed"
+  | "inconclusive"
+  | "not-applicable-on-parent";
 
 export interface ParentCheckResult {
   status: ParentCheckStatus;
@@ -75,6 +90,84 @@ const ENV_FAILURE = new RegExp(
 function looksLikeMissingEnvironment(exitCode: number, output: string): boolean {
   if (exitCode === 127) return true;
   return ENV_FAILURE.test(output);
+}
+
+/**
+ * Signatures of a check that did not RUN on the parent tree, as opposed to one
+ * that ran and failed.
+ *
+ * Every runner has its own way of saying "I collected nothing", and every one
+ * of them exits non-zero when told to run a file that is not there. Those
+ * strings are the difference between "the bug was real here" and "this file is
+ * new" — the whole content of `verified`. `ZERO_TESTS` in
+ * `verification-command.ts` lists the same runner vocabulary for the live
+ * side; these are its parent-tree twin, plus the shapes that mean the command
+ * line itself was not understood (an unknown subcommand, a usage error, a
+ * script the parent's `package.json` never declared).
+ */
+const COULD_NOT_RUN = new RegExp(
+  [
+    // The runners' own words for "nothing was collected".
+    "no tests? (?:found|ran|were found|to run|matched|detected)",
+    "no test files? (?:found|matched)",
+    "\\[no test files\\]", // go test
+    "collected 0 items", // pytest
+    "tests:\\s+0 total", // jest
+    "test result: ok\\. 0 passed; 0 failed", // cargo, a target with no tests
+    "0 pass[\\s\\S]{0,40}?0 fail", // bun, which prints both counts
+    "0 (?:tests?|examples?|specs?) (?:ran|run|executed|completed)",
+    // The command line itself was not understood there.
+    "unknown (?:command|subcommand|option|argument|flag)",
+    "unrecognized (?:option|arguments?|command)",
+    "invalid (?:option|argument|subcommand)",
+    "missing script:", // npm/bun: a package.json script the parent never had
+    "no such (?:script|task|target|test)",
+    "^\\s*usage:", // a usage error, which is a refusal to run
+    "can't open file", // python, handed a path that is not there
+    "could not find `?cargo\\.toml`?",
+    "go: no go files|no go files listed|matched no packages",
+  ].join("|"),
+  "im",
+);
+
+/**
+ * Whether this output is a runner saying it never ran, rather than a check
+ * saying it failed. Exported for the tests that pin each runner's wording:
+ * the vocabulary is the whole content of the distinction, so it is held to
+ * examples rather than to the regexp's shape.
+ */
+export function couldNotRunOnParent(output: string): boolean {
+  return COULD_NOT_RUN.test(output);
+}
+
+/**
+ * Paths the command NAMES that exist in the working tree and did not exist at
+ * the parent commit.
+ *
+ * The structural half of the same question, and the one no output pattern can
+ * answer: a brand-new test file makes its runner exit non-zero on the parent
+ * however politely the runner phrases it, and a fresh syntax error in a file
+ * the parent never had looks exactly like a real failure. Conservative on
+ * purpose — a word has to be a real file HERE before its absence THERE means
+ * anything, so a tokenising artefact (`console.log`, `a,b,c`) draws no
+ * conclusion, and a path that is missing on both sides draws none either.
+ */
+export function namedPathsAbsentOnParent(repoRoot: string, sha: string, command: string): string[] {
+  const absent: string[] = [];
+  for (const raw of command.split(/[\s;|&<>()]+/)) {
+    const word = raw.replace(/^['"]+/, "").replace(/['"]+$/, "");
+    if (!word || word.startsWith("-") || word.includes("..")) continue;
+    // Absolute paths are outside the checkout by definition, and a word with
+    // shell syntax in it is not a path the command named.
+    if (word.startsWith("/") || /[*?$`{}\\]/.test(word)) continue;
+    if (!/[./]/.test(word)) continue;
+    const rel = word.replace(/^\.\//, "");
+    if (!rel || !existsSync(join(repoRoot, rel))) continue;
+    if (!git(repoRoot, ["cat-file", "-e", `${sha}:${rel}`], 10_000).ok && !absent.includes(rel)) {
+      absent.push(rel);
+    }
+  }
+  return absent;
 }
 
 /**
@@ -160,6 +253,28 @@ export function runOnParentCommit(
           status: "inconclusive",
           commit: parent.sha,
           reason: `the ${parent.ref} tree is not set up to run this check (exit ${exitCode})`,
+        };
+      }
+      // Before the exit code is read as a verdict: did the check RUN there?
+      // A non-zero exit from a runner that collected nothing, or from a
+      // command naming a file the parent commit never had, is a failure BY
+      // ABSENCE — and absence is not evidence that this change is why the
+      // check is green now.
+      if (COULD_NOT_RUN.test(output)) {
+        return {
+          status: "not-applicable-on-parent",
+          commit: parent.sha,
+          reason: `the check did not run on ${parent.ref}: it collected nothing there (exit ${exitCode})`,
+        };
+      }
+      const absent = namedPathsAbsentOnParent(repoRoot, parent.sha, command);
+      if (absent.length > 0) {
+        return {
+          status: "not-applicable-on-parent",
+          commit: parent.sha,
+          reason:
+            `${absent.slice(0, 3).join(", ")} did not exist on ${parent.ref}, so the check ` +
+            `could not have run there (exit ${exitCode})`,
         };
       }
       return { status: "failed", commit: parent.sha, reason: `exit ${exitCode} on ${parent.ref}` };

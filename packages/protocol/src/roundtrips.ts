@@ -82,6 +82,17 @@ export interface Evidence {
   /** The parent commit the check was run against, for the receipt. */
   parentCommit?: string;
   /**
+   * Why this citation was SET ASIDE: the runtime ran the command and priced
+   * it, and then could not see that it speaks to this criterion.
+   *
+   * The rung stays where it was — an unrelated citation moves nothing — and
+   * the reason is kept rather than dropped, because "the model cited
+   * `node check.mjs` for the CSV header and the harness would not take it" is
+   * a fact about the run that the verdict's gap text and the audit both owe
+   * the reader. Written only by the runtime, from `checkRelatedness`.
+   */
+  unrelated?: string;
+  /**
    * The workspace revision this evidence was taken at, and whether the tree
    * was dirty then. A rung is a claim about a TREE: after HEAD moves, or after
    * a clean tree is edited, the claim is about a tree that no longer exists.

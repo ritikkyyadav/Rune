@@ -267,6 +267,7 @@ describe("the read_back tool", () => {
 
 import {
   CheckLog,
+  criterionScope,
   rungForCommand,
   createRecordEvidenceTool,
   summarizeCheck,
@@ -929,5 +930,141 @@ describe("summarizeCheck", () => {
     const out = summarizeCheck("x".repeat(200))!;
     expect(out.length).toBeLessThanOrEqual(90);
     expect(out.endsWith("...")).toBe(true);
+  });
+});
+
+// ─── A rung moves only for a check that could have failed for it ───
+//
+// V-5B, F1 and F2. The rung VALUE was never model-authored, but two
+// model-controlled inputs reached it: which criterion a command was
+// attributed to, and whether the command could have run on the parent tree at
+// all. Either one turned an untouched file into `verified`.
+
+describe("a citation that does not speak to its criterion", () => {
+  /** The brief above, with a criterion that names a file in `leave`. */
+  function scopedBrief(): Brief {
+    return briefFromArgs(
+      {
+        reading: "the export is dropping the last row",
+        touch: ["api.ts"],
+        leave: ["header.csv"],
+        done_when: ["the exporter writes every row", "the CSV header is unchanged"],
+      },
+      "Fix the exporter — it drops the last row.",
+      "2026-09-14T00:00:00.000Z",
+    );
+  }
+
+  test("criterionScope names only the files the criterion's own words identify", () => {
+    const b = scopedBrief();
+    expect(criterionScope(b.criteria[0]!.text, b)).toEqual([]);
+    expect(criterionScope(b.criteria[1]!.text, b)).toEqual(["header.csv"]);
+    // Both halves of the brief's scope are eligible, `touch` included.
+    expect(criterionScope("api.ts keeps its default export", b)).toEqual(["api.ts"]);
+  });
+
+  test("one green check cited for two criteria settles only the one it reads", async () => {
+    const ledger = new BriefLedger(scopedBrief());
+    const log = logWith([["node check.mjs", true, "1 pass, 0 fail"]]);
+    const tool = createRecordEvidenceTool(
+      () => ledger,
+      () => log,
+      (command) => ({ command, status: "failed" as const, commit: "abcdef1234" }),
+    );
+    const cite = async (criterion: number): Promise<string> =>
+      String(
+        (
+          await tool.execute({
+            callId: `c${criterion}`,
+            toolName: "record_evidence",
+            args: { criterion, command: "node check.mjs" },
+          } as any)
+        ).result,
+      );
+
+    // The criterion that names no artifact of its own keeps the citation.
+    expect(await cite(0)).toContain("Recorded as verified");
+    // The one that names `header.csv` — a file this check never opens — does
+    // not, and the reply says which file it is about.
+    const refused = await cite(1);
+    expect(refused).toContain("does not speak to");
+    expect(refused).toContain("header.csv");
+    expect(ledger.criteria[0]!.rung).toBe("verified");
+    expect(ledger.criteria[1]!.rung).toBeNull();
+  });
+
+  test("a set-aside citation is kept on the criterion with its reason, and is not evidence", () => {
+    const ledger = new BriefLedger(scopedBrief());
+    const kept = ledger.setAside(1, { source: "node check.mjs", detail: "1 pass" }, "it never reads header.csv");
+    expect(kept.ok).toBe(true);
+    expect(ledger.criteria[1]!.rung).toBeNull();
+    expect(ledger.criteria[1]!.evidence?.unrelated).toBe("it never reads header.csv");
+    expect(ledger.met).toBe(0);
+  });
+
+  test("setAside never overwrites a rung that was earned", () => {
+    const ledger = new BriefLedger(scopedBrief());
+    ledger.record(0, "verified", {
+      source: "node check.mjs",
+      detail: "failed on abcdef12, passes now",
+      parentCommitFailed: true,
+    });
+    const refused = ledger.setAside(0, { source: "true" }, "unrelated");
+    expect(refused.ok).toBe(false);
+    expect(ledger.criteria[0]!.rung).toBe("verified");
+    expect(ledger.criteria[0]!.evidence?.unrelated).toBeUndefined();
+    expect(ledger.criteria[0]!.evidence?.source).toBe("node check.mjs");
+  });
+
+  test("a project-wide check speaks to every criterion, however the brief is scoped", async () => {
+    const ledger = new BriefLedger(scopedBrief());
+    const log = logWith([["bun test", true, "44 pass"]]);
+    const tool = createRecordEvidenceTool(
+      () => ledger,
+      () => log,
+      (command) => ({ command, status: "failed" as const }),
+    );
+    const out = await tool.execute({
+      callId: "c1",
+      toolName: "record_evidence",
+      args: { criterion: 1, command: "bun test" },
+    } as any);
+    expect(String(out.result)).toContain("Recorded as verified");
+  });
+});
+
+describe("a parent commit the check could not run on", () => {
+  test("`not-applicable-on-parent` never yields verified, and the receipt says the measurement was never taken", () => {
+    const log = logWith([["bun test forged.test.ts", true, "2 pass"]]);
+    log.recordParent({
+      command: "bun test forged.test.ts",
+      status: "not-applicable-on-parent",
+      commit: "abc1234567",
+      reason: "forged.test.ts did not exist on HEAD, so the check could not have run there",
+    });
+
+    const v = rungForCommand(log, "bun test forged.test.ts");
+    expect(v.ok).toBe(true);
+    if (v.ok) {
+      expect(v.rung).toBe("observed");
+      expect(v.evidence.parentCommitFailed).toBeUndefined();
+      expect(v.evidence.detail).toContain("not applicable on the parent commit");
+      expect(v.evidence.detail).toContain("a failure by absence is not evidence");
+    }
+  });
+
+  test("it caps a repeated pass at `reproduced` rather than at `verified`", () => {
+    const log = logWith([
+      ["bun test forged.test.ts", true, "2 pass"],
+      ["bun test forged.test.ts", true, "2 pass"],
+    ]);
+    log.recordParent({
+      command: "bun test forged.test.ts",
+      status: "not-applicable-on-parent",
+      reason: "the check did not run there",
+    });
+    const v = rungForCommand(log, "bun test forged.test.ts");
+    expect(v.ok).toBe(true);
+    if (v.ok) expect(v.rung).toBe("reproduced");
   });
 });

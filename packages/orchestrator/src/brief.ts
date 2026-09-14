@@ -197,6 +197,27 @@ export class BriefLedger {
     return { ok: true, criterion };
   }
 
+  /**
+   * A citation the runtime priced and then SET ASIDE: the command ran, it is
+   * worth something, and it does not speak to this criterion.
+   *
+   * The rung does not move — that is the whole decision — but the attempt is
+   * kept on the criterion, because a contract whose gap reads "no evidence
+   * recorded" when the model cited three commands for it describes the run
+   * less honestly than one that says which command was refused and why. Never
+   * overwrites a criterion that already earned a rung: a later unrelated
+   * citation cannot cost an earned claim its receipt.
+   */
+  setAside(index: number, evidence: Evidence, reason: string): LedgerRejection {
+    const criterion = this.brief.criteria[index];
+    if (!criterion) return { ok: false, reason: `no criterion at index ${index}` };
+    if (criterion.rung) {
+      return { ok: false, reason: `criterion is already ${criterion.rung}; nothing moved` };
+    }
+    criterion.evidence = { ...evidence, unrelated: reason };
+    return { ok: true, criterion };
+  }
+
   /** The close: the same criteria, in the same order, with what moved them. */
   close(): {
     met: number;
@@ -425,12 +446,16 @@ export interface CheckRun {
 /**
  * What running one command against the pre-change tree established. `failed`
  * is the only status that can lift a criterion to `verified`; `passed` is the
- * finding that the change is NOT why the check is green, and `inconclusive`
- * means the parent tree could not answer (usually: nothing installed there).
+ * finding that the change is NOT why the check is green, `inconclusive` means
+ * the parent tree could not answer (usually: nothing installed there), and
+ * `not-applicable-on-parent` means the check did not RUN there at all — a
+ * runner that collected nothing, or a command naming a file the parent commit
+ * never had. A failure by absence is the one shape of "it failed on the
+ * parent" that says nothing about this change, so it buys no rung.
  */
 export interface ParentRun {
   command: string;
-  status: "failed" | "passed" | "inconclusive";
+  status: "failed" | "passed" | "inconclusive" | "not-applicable-on-parent";
   commit?: string;
   reason?: string;
 }
@@ -574,7 +599,13 @@ export function rungForCommand(log: CheckLog, command: string): RungVerdict {
       ? `also passed on ${parent.commit?.slice(0, 8) ?? "the parent commit"} — this change is not why it passes`
       : parent?.status === "inconclusive"
         ? `parent-commit check inconclusive: ${parent.reason ?? "unknown"}`
-        : undefined;
+        : parent?.status === "not-applicable-on-parent"
+          ? // The attack this closes: a brand-new test file "fails" on the
+            // parent commit by not existing there. Saying so in the receipt
+            // is the point — the rung is weaker AND the reader is told the
+            // measurement was never taken.
+            `not applicable on the parent commit: ${parent.reason ?? "the check did not run there"} — a failure by absence is not evidence`
+          : undefined;
 
   // Failed attempts are not successful reproductions. A new failure also
   // breaks the streak; two earlier passes cannot certify today's recovery.
@@ -600,6 +631,53 @@ export function rungForCommand(log: CheckLog, command: string): RungVerdict {
 function joinDetail(a: string | undefined, b: string | undefined): string | undefined {
   if (!b) return a;
   return a ? `${a} — ${b}` : b;
+}
+
+/**
+ * The files from the brief's own scope that THIS criterion is about.
+ *
+ * The brief's `touch`/`leave` lists belong to the task; a criterion is about
+ * some part of it, and usually says which in ordinary words — `the CSV header
+ * is unchanged` is about `header.csv`, `the exporter writes every row` is
+ * about nothing the list can identify. Only a file the criterion actually
+ * names can contradict a citation, so this returns the named ones and, when
+ * it returns nothing, relatedness falls back to the behaviour a criterion with
+ * no scope always had.
+ *
+ * `leave` counts as much as `touch`: "this file is unchanged" is the shape of
+ * criterion the model is most tempted to settle with a check that never opens
+ * it, and it is the one that names a `leave` file by construction.
+ *
+ * Matching is deliberately literal — the path, its basename, or its basename's
+ * stem as a whole word — because a fuzzy match here costs a real citation its
+ * rung, and the fallback for no match is to keep the citation.
+ */
+export function criterionScope(
+  text: string,
+  brief: { touch: readonly string[]; leave: readonly string[] },
+): string[] {
+  const hay = ` ${text.toLowerCase()} `;
+  const named: string[] = [];
+  for (const file of [...brief.touch, ...brief.leave]) {
+    const norm = String(file).replace(/\\/g, "/").replace(/^\.\//, "").trim();
+    if (!norm || named.includes(file)) continue;
+    const base = norm.split("/").pop() ?? norm;
+    const stem = base
+      .replace(/\.[^.]+$/, "")
+      .replace(/[._-](?:test|spec)$/i, "")
+      .toLowerCase();
+    const hit =
+      hay.includes(` ${norm.toLowerCase()} `) ||
+      hay.includes(`\`${norm.toLowerCase()}\``) ||
+      hay.includes(` ${base.toLowerCase()} `) ||
+      (stem.length >= 3 && new RegExp(`\\b${escapeForWordMatch(stem)}\\b`).test(hay));
+    if (hit) named.push(file);
+  }
+  return named;
+}
+
+function escapeForWordMatch(word: string): string {
+  return word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export const RECORD_EVIDENCE_SCHEMA: ToolSchema = {
@@ -763,13 +841,75 @@ export function createRecordEvidenceTool(
       }
       if (index == null) return reply("Cite a criterion by its 0-based index.");
 
+      const runs = log.history(command);
+      const lastRun = runs[runs.length - 1];
+
+      // ── Does this command speak to THIS criterion? ──
+      //
+      // The runtime decides what a command is WORTH; until now the model
+      // decided what it was ABOUT, and the second half is the whole claim. One
+      // green check cited twice — once per criterion — bought `verified` for a
+      // criterion about a file the check never opened, and the run ended
+      // `met` with that file byte-identical (V-5B, F1). The rung value was
+      // never model-authored; the ATTRIBUTION was, and an attribution nobody
+      // tests is an assertion wearing a measurement's clothes.
+      //
+      // So the same relatedness test the loop already applies to a model-run
+      // check, and this tool already applies on its no-brief branch, applies
+      // here — with the scope narrowed from the brief's whole file list to the
+      // files THIS criterion names (`criterionScope`). That narrowing is the
+      // difference between a gate and a wall: the brief's `touch` list belongs
+      // to the whole task, so judging every citation against it sets aside the
+      // honest citation too, and a run where nothing can be recorded reports
+      // `unmet` on work that was done. A criterion that names no artifact of
+      // its own has nothing to contradict and keeps the behaviour it had; a
+      // criterion that names one — `the CSV header is unchanged`, against a
+      // brief holding `header.csv` — is settled only by a check that reads it.
+      //
+      // A project-wide check is related to everything by nature, a criterion
+      // that names its own check keeps it, and a check that names no file at
+      // all buys nothing. Set aside means recorded, refused, and explained,
+      // not silently dropped.
+      //
+      // Executions are not gated here: `rungForCommand` caps them at
+      // `observed` and never replays them on the parent, so they cannot reach
+      // the rungs that make a claim, and A1's receipt wording (P3B, measured
+      // against a pilot that spent three completions rewording one citation)
+      // is the more valuable thing to keep intact.
+      const criterion = ledger.criteria[index];
+      const named = criterion ? criterionScope(criterion.text, ledger.snapshot) : [];
+      const relation =
+        criterion && lastRun?.kind !== "execution"
+          ? checkRelatedness(command, { content: criterion.text, touched: named })
+          : null;
+      if (relation && !relation.related) {
+        const priced = rungForCommand(log, command);
+        if (!priced.ok) return reply(priced.reason);
+        const why =
+          relation.reason === "names_nothing"
+            ? "it names no file at all, and it is not a project-wide check"
+            : `it never reads ${named.slice(0, 3).join(", ")}, which is what this criterion is about`;
+        const kept = ledger.setAside(index, priced.evidence, why);
+        return reply(
+          `\`${normalizeCommand(command)}\` is on record as passing, but it does not speak to ` +
+            `criterion ${index} "${criterion!.text.slice(0, 80)}": ${why}. ` +
+            (kept.ok
+              ? "Nothing moved, and the citation is on the contract as set aside. "
+              : `${kept.reason}. `) +
+            "A criterion is settled by a check that could have FAILED for it: cite one that " +
+            "reads the file this criterion is about, or a project-wide check (`bun test`, " +
+            "`bunx tsc --noEmit`), or state the check in the criterion itself and read back " +
+            `again. (${ledger.met} of ${ledger.total} criteria verified)` +
+            nextStep,
+        );
+      }
+
       // Take the parent-commit measurement before judging the citation — but
       // only once per command, and only for a command that is currently
       // passing. Probing a failing check would spend a full test run to learn
       // nothing (rungForCommand refuses it either way), and probing twice
-      // would spend it again for an answer already on record.
-      const runs = log.history(command);
-      const lastRun = runs[runs.length - 1];
+      // would spend it again for an answer already on record. An unrelated
+      // citation never reaches here, so it never spends one either.
       if (probeParent && lastRun?.passed && lastRun.kind !== "execution" && !log.parent(command)) {
         const parent = probeParent(command);
         if (parent) log.recordParent(parent);

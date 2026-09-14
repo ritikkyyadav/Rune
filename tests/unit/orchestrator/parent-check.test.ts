@@ -19,6 +19,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  couldNotRunOnParent,
+  namedPathsAbsentOnParent,
   runOnParentCommit,
   resolveParentCommit,
 } from "../../../packages/orchestrator/src/parent-check";
@@ -153,5 +155,83 @@ describe.skipIf(!POSIX_SHELL)("resolveParentCommit", () => {
     git("commit", "-q", "-m", "rune: initial");
 
     expect(resolveParentCommit(repo)).toBeNull();
+  });
+});
+
+// ─── "It failed on the parent" must not be satisfiable by absence ───
+//
+// V-5B, F2: a brand-new test file exits non-zero at the parent commit because
+// it is not there, and the ladder read that exit code as the reproduction of a
+// bug. Two independent readings close it — what the runner SAID, and what the
+// command NAMED — and both are held to examples here, because the vocabulary
+// is the whole content of the distinction.
+
+describe("couldNotRunOnParent", () => {
+  const collectedNothing: Array<[string, string]> = [
+    ["bun", "bun test v1.3.14\n\n 0 pass\n 0 fail\nRan 0 tests across 0 files."],
+    ["pytest", "===== test session starts =====\ncollected 0 items\n\n==== no tests ran ===="],
+    ["jest", "Test Suites: 0 total\nTests:       0 total\nSnapshots:   0 total"],
+    ["cargo", "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored"],
+    ["go", "?   example.com/pkg\t[no test files]"],
+    ["npm script", "npm error Missing script: \"check:csv\""],
+    ["python", "python3: can't open file '/tmp/x/new_check.py': [Errno 2] No such file"],
+    ["node --test", "node --test\nno test files found"],
+    ["an unknown subcommand", "error: unknown command 'verify'"],
+    ["a usage error", "usage: check [-v] <path>"],
+  ];
+  for (const [runner, output] of collectedNothing) {
+    test(`${runner} saying it ran nothing is not a parent failure`, () => {
+      expect(couldNotRunOnParent(output)).toBe(true);
+    });
+  }
+
+  test("a runner that ran and FAILED is left alone — this is the real evidence", () => {
+    expect(couldNotRunOnParent(" 0 pass\n 3 fail\nRan 3 tests across 1 file.")).toBe(false);
+    expect(couldNotRunOnParent("collected 12 items\n\nFAILED tests/test_csv.py::test_header")).toBe(
+      false,
+    );
+    expect(couldNotRunOnParent("test result: FAILED. 4 passed; 1 failed; 0 ignored")).toBe(false);
+    expect(couldNotRunOnParent("error TS2345: Argument of type X\n3 errors")).toBe(false);
+  });
+});
+
+describe.skipIf(!POSIX_SHELL)("namedPathsAbsentOnParent", () => {
+  test("a file the command names that the parent commit never had is reported", () => {
+    commitCheck(0, "base");
+    // Written but never committed — the shape of a brand-new test file.
+    writeFileSync(join(repo, "forged.test.ts"), "// new\n");
+    const sha = git("rev-parse", "HEAD");
+
+    expect(namedPathsAbsentOnParent(repo, sha, "bun test forged.test.ts")).toEqual([
+      "forged.test.ts",
+    ]);
+  });
+
+  test("a file that existed at the parent draws no conclusion", () => {
+    commitCheck(0, "base");
+    const sha = git("rev-parse", "HEAD");
+    expect(namedPathsAbsentOnParent(repo, sha, "sh check.sh")).toEqual([]);
+  });
+
+  test("a word that is not a file here is never read as a missing file there", () => {
+    commitCheck(0, "base");
+    const sha = git("rev-parse", "HEAD");
+    // Flags, bare program names, a path missing on BOTH sides, and tokenising
+    // artefacts all have to draw nothing, or every command names a ghost.
+    expect(
+      namedPathsAbsentOnParent(repo, sha, "node --test --reporter=dot console.log a,b,c ./nope.ts"),
+    ).toEqual([]);
+  });
+
+  test("the end-to-end probe calls a new file's failure NOT-APPLICABLE, not failed", () => {
+    commitCheck(0, "base");
+    // A check that did not exist at the parent commit: `sh new-check.sh` exits
+    // non-zero there because the file is absent, which says nothing about the
+    // change under test.
+    writeFileSync(join(repo, "new-check.sh"), "#!/bin/sh\nexit 0\n");
+
+    const result = runOnParentCommit(repo, "sh new-check.sh 2>/dev/null; exit 1");
+    expect(result.status).toBe("not-applicable-on-parent");
+    expect(result.reason).toContain("new-check.sh");
   });
 });
