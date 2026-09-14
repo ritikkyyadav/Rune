@@ -1023,3 +1023,53 @@ typing (the footer editor keeps last-four, frozen by §2.2), and `/keys` writes 
 `secrets.json` because that is the store the command exists for. Still missing from §2.8: the
 setup narration rows, the collapsed ledger behind ctrl+f, `/config`'s number editor in the
 footer's ask mode, and mocks for these six surfaces.
+
+### Addendum 3 — M2: a controller that decides and cannot act, watching every clean guard
+
+`a9a9f37` and `b5632fb`. `run-state.ts` is the versioned read-only snapshot the inventory's
+§4.2 named (absent fields stay `undefined`, never invented); `arbiter.ts` is `decide(state,
+event) → Decision`, a function of two values with no `this`, no clock and no module state —
+the six-class ladder (user > safety > budget > environment > contract > progress), class 5
+never proposing `complete`, a terminal absorbing per run id, a missing input answering
+`unknown`. `shadow-arbiter.ts` wires it beside **seventeen guards and the verdict at
+twenty-six sites**, all additive: the only lines removed from `agent-loop.ts` are the three
+that gave `providerLostEnd` one optional argument, and the supervisor diffed the file hunk by
+hunk to confirm no guard moved. Rows `shadow_decision` (capped at 200 per run),
+`shadow_capped` and `shadow_summary`, each under 2 KB, inputs reduced to booleans, numbers
+and enum words — five canaries (user text, tool arguments, a result, a halt reason, a
+key-shaped string) reach no row. `[controller] shadow` defaults on for the lead loop and is
+off for sub-agents by construction; `rune audit` prints the summary block. One deviation from
+the spec, stated: the rows are not in `RUN_TRACE_EVENTS` (an allow-list over
+`AgentTurnEvent` whose drift law forbids naming non-events) and are rows of their own type,
+like `contract` and `verdict`.
+
+**What the shadow saw.** Over twelve deterministic scenarios (a gate refusing a finish, a
+supervisor halt, an empty completion accepted, an empty completion bail, a non-retryable
+provider failure, a budget refusal, a turn ceiling, an abort, an open plan, a loop-detector
+kill, a barren-turn kill, a truncation ceiling) the arbiter disagreed with the guards
+**once**: at G9, `arbiter abandoned(environment) · guard complete(end_turn)`. The
+supervisor's reading of the site is that this is a label, not a behaviour — the loop falls
+through into the finish gates and the verdict after accepting the silence — and
+[the M3 spec](program/m3-first-migration.md) makes that branch the first the controller owns.
+Two scenarios recorded an `unknown` at the verdict site (no contract in scope; the arbiter
+refused to guess) and two recorded `unshadowed` guards. Overhead, measured and not
+thresholded: 0–4 rows per run, p50 8–364 µs, p95 up to 948 µs on a cold first observation,
+under 1.4 ms per run.
+
+**Tested.** `arbiter`, `run-state`, `shadow-arbiter`, `shadow-engine-rows`,
+`shadow-no-effect`, `shadow-report` and `lifecycle-durability` rerun by the supervisor:
+**119 / 0**, spend fingerprint unmoved. The eight fast gates rerun on `b5632fb` by
+`run-gates.sh`: unit **5,068 / 0 / 1 skip** (386 files), integration **329 / 0 / 7 skip**
+(55 files), lifecycle 47 / 0, typecheck 15 / 15, lint 7 / 7, format, prettier and
+`git diff --check` clean. Cargo, clippy and the two evals are reused from the 16fe3ae run:
+`crates/` and `tests/eval` did not move.
+
+**Installed.** `bash scripts/install.sh`, no override: **Rune v0.4.1-dev+a47e9fc** (the
+docs commit atop `b5632fb`), CLI `d842162656d2beecd4e71ab80c1881466aabffd2576129948a40123de7c2a17d`,
+native and launcher unchanged; doctor's build line current, tools-smoke green. Through that binary (`RUNE_SCENARIO_CLI`), `lifecycle-durability` is **47 / 0** again.
+
+**Residual, from the lane's own report.** The absorbing rule hides later decisions in a run
+(the disagreement count is a floor); G9 will always disagree on a contracted run until M3
+relabels it; steps are keyed on the turn; overhead was measured on a scripted rig; `spentUsd`
+is wired and unused because N1 aborts from a gateway callback and is not shadowed; "sub-agents
+never get one" is by construction, proven by grep.

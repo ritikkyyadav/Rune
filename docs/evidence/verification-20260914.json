@@ -199,5 +199,40 @@
     "The wizard's key step writes to the real login keychain even under a scratch RUNE_HOME; the rig removes the mock value afterwards and only when it is the mock's. The founder's credentials.index.json has no provider:custom account, so nothing real was overwritten.",
     "scripts/tui-capture/capture.py passes OLLAMA_API_KEY (and GEMINI_API_KEY) through to the child; a repo-level .env is auto-loaded by bun for runs whose cwd is the checkout.",
     "`rune tools-smoke` names ~/.alan/bin/rune-tools: the legacy shim still resolves first on the founder's PATH (tracked in the backlog since Phase 1)."
-  ]
+  ],
+  "afterM2": {
+    "commits": ["564ef36", "3ae51ee", "48caa0c", "a9a9f37", "b5632fb"],
+    "gatesAt": "b5632fb",
+    "gates": {
+      "unit": "5,068 pass / 1 skip / 0 fail (386 files, 58.3 s)",
+      "integration": "329 pass / 7 skip / 0 fail (55 files, 118.2 s)",
+      "lifecycleDurabilityAlone": "47 / 0 (25.9 s)",
+      "typecheck": "15/15 uncached",
+      "lint": "7/7 uncached",
+      "formatCheck": "clean",
+      "prettier": "clean",
+      "gitDiffCheck": "clean",
+      "cargoClippyEvals": "reused from the 16fe3ae run \u2014 crates/ and tests/eval unchanged"
+    },
+    "installed": {
+      "version": "Rune v0.4.1-dev+a47e9fc",
+      "cliSha256": "d842162656d2beecd4e71ab80c1881466aabffd2576129948a40123de7c2a17d",
+      "doctorBuildLine": "current \u2014 gear/phase-0-stabilize@a47e9fc4+dirty",
+      "lifecycleThroughBinary": "47 / 0"
+    },
+    "shadowReport": {
+      "scenarios": 12,
+      "disagreements": [
+        {
+          "guard": "G9",
+          "arbiter": "abandoned(environment)",
+          "guard_did": "complete(end_turn)",
+          "reading": "a label \u2014 the loop falls through to the finish gates and the verdict; M3 relabels it verifying"
+        }
+      ],
+      "unknowns": 2,
+      "unshadowed": 2,
+      "overhead": "0\u20134 rows/run; p50 8\u2013364 \u00b5s; p95 \u2264 948 \u00b5s; \u2264 1.4 ms/run; scripted rig"
+    }
+  }
 }
