@@ -895,7 +895,7 @@ closing pass. **Zero live model calls** anywhere in this entry; `~/.rune/rune.db
 | Gate                                                             | Result                                                                                               |
 | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `bun test tests/unit`                                            | **4,991 pass / 0 fail / 1 skip** (4,992 ran, 381 files, 57.1 s)                                      |
-| `bun test tests/integration`                                     | **310 pass / 0 fail / 7 skip** (52 files, 116.4 s)                                                   |
+| `bun test tests/integration`                                     | **303 pass / 0 fail / 7 skip** (310 ran, 52 files, 116.4 s)                                          |
 | `lifecycle-durability` alone                                     | **47 / 0**, 26.4 s                                                                                   |
 | `bun run typecheck --force`                                      | **15 / 15**, 0 cached                                                                                |
 | `bun run lint --force` · `prettier --check .`                    | **red on the first run** — thirteen lane files unformatted; fixed in `4a6774d`, both rerun **green** |
@@ -955,7 +955,7 @@ comment describes — so a saved `custom` (or any of the thirty-odd presets) fal
 auto-detect. Why auto-detect then lands on google with no key in the environment is not yet
 explained; a fix lane is on it (see the addendum below).
 
-**Published.** Nothing. Ten commits since `4869e4c` are unpushed; push is the founder's.
+**Published.** Nothing. Fourteen commits since `4869e4c` were unpushed at that point (more since); push is the founder's.
 
 ### What is still not proven
 
@@ -1101,7 +1101,7 @@ feature, 2 migration, 2 frontend, 2 research, 1 dirty-worktree; the four compari
 reused verbatim and pinned byte-for-byte — each with an `--acceptance` file the model never
 sees, a hand-written correct solution, and five scripted-provider scenarios (`correct`,
 `omission`, `wrong`, `silent`, `stopped`). The sanity suite runs every acceptance file
-against its solution in a scratch checkout: **20 pass / 0 fail**, the two browser tasks
+against its solution in a scratch checkout: **14 pass / 0 fail / 2 skip** (16 tests; the earlier "20" counted the six budget-guard tests too), the two browser tasks
 green in real Chromium when `RUNE_BENCH_PLAYWRIGHT` is set and reported as skips otherwise.
 The live runner now refuses to start without `RUNE_EVAL_BUDGET_USD` (six tests); no live run
 was made and none is authorised.
@@ -1141,3 +1141,45 @@ Changes section rather than hidden — Prettier had reformatted the verbatim fix
 invalidated three digests (now `.prettierignore`d), and `queue-race`'s wrong arm initially
 passed everything. **Not installed** (test fixtures only). Not covered: the browser tasks
 without Playwright; anything live.
+
+### Addendum 6 — the adversarial verifier's pass over the batch, and what it found
+
+Per the founder's rule (2026-09-11, reaffirmed 2026-09-15): one verifier over M1, M2, M3,
+the Phase 4 remainder and the corpus, assuming every claim false. Report:
+`.codex/audit-20260910/handoff/m0/verify-batch-report.md`; eighteen red tests under
+`tests/verification/v6-*` (30 failing assertions, 3 deliberate green controls), 33 archived
+harnesses. Zero model calls; nothing in `packages/` edited.
+
+**Four critical acceptance forgeries, live on the installed binary** (which carries M1):
+(1) the acceptance script is inside the workspace and the model can overwrite it with
+`console.log('1 pass')` → `met`, nothing built; (2) `node check.mjs header.csv` — an argument
+the script ignores — defeats `criterionScope`, reopening V-5B's F1 with one word; (3) a
+model-written `verify-header.sh` that prints `1 pass` is classified a check by name → `met`
+with zero product change; (4) evidence is dated at citation, not at check time — fix, green
+check, revert, cite → `satisfied` at rung `verified`; the same root as the corpus's
+`REVISION_MEMO_MS` false negatives. **High:** `engine-host.ts` (detach/serve/acp) never got
+the boot fix; `bun test tests/unit` is red at HEAD because the corpus's budget guard fires for
+a scripted zero-spend caller; `swebench.ts --real` and `RUNE_EVAL_REAL=1` bypass the budget
+authorisation; the corpus acceptance passes deliberately wrong solutions in three of three
+families attacked (so "0 / 48" measured the twelve hand-written arms, not the oracle); a
+throw inside a shadow observation kills the run it only watches. Twelve mediums and eight
+lows, listed in the report.
+
+**What held:** acceptance text reaches no prompt; evaluator citations are refused; the `kept`
+rule holds; `decide` is pure over 32,844 calls with zero credential leaks across eleven
+canaries; M3's row-before-act, the SIGKILL table and the byte-identical authority-off diff
+all reproduce; the installed binary is exactly `a47e9fc`; the spend fingerprint is unmoved.
+
+**Record corrections made in this commit:** the M1 entry's integration count was 303 pass
+of 310 ran (the same misread `bf8895d` corrected for the unit line); the corpus sanity count
+is 14 pass / 2 skip, not 20 (the earlier figure included the six budget-guard tests); the
+unpushed count was fourteen, not ten. Also true and not fixable after the fact: the
+`gates/` logs cited by the M1 entry were overwritten by the `b5632fb` rerun; the M1 entry's
+numbers stand on the entry itself and the lane reports, not on those files.
+
+**Two fix lanes are running on disjoint files** (A: the four forgeries, the revision stamp,
+the shadow try, three mediums; B: engine-host, the red gate, the spend paths, the corpus
+hardening, startup-selection's mutation survivors, the rig scrub). M4 does not start until
+both land and their tests are promoted. This is the loop working: the build lanes' own tests
+were green, the supervisor's probes caught two holes, and the adversary caught four more that
+matter most.
