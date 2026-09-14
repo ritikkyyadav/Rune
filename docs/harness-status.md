@@ -894,7 +894,7 @@ closing pass. **Zero live model calls** anywhere in this entry; `~/.rune/rune.db
 
 | Gate                                                             | Result                                                                                               |
 | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `bun test tests/unit`                                            | **4,992 pass / 0 fail / 1 skip** (381 files, 57.1 s)                                                 |
+| `bun test tests/unit`                                            | **4,991 pass / 0 fail / 1 skip** (4,992 ran, 381 files, 57.1 s)                                                 |
 | `bun test tests/integration`                                     | **310 pass / 0 fail / 7 skip** (52 files, 116.4 s)                                                   |
 | `lifecycle-durability` alone                                     | **47 / 0**, 26.4 s                                                                                   |
 | `bun run typecheck --force`                                      | **15 / 15**, 0 cached                                                                                |
