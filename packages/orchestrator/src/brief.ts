@@ -646,6 +646,13 @@ export function rungForCommand(log: CheckLog, command: string): RungVerdict {
       rung: "observed",
       evidence: {
         ...base,
+        // WHO assessed this, and it is not the check log: a shell command that
+        // exited 0 is a receipt that something RAN, not a verdict that
+        // anything held. `result: "passed"` stays — the exit code is a fact
+        // and the record keeps it — but the verifier name is what
+        // `criterionStatus` reads to refuse `satisfied`, and it survives on a
+        // saved row read back with no check log behind it.
+        verifier: "execution-receipt@1",
         // A1 (Lane A's spec, `.codex/audit-20260910/handoff/phase3/a1-spec.md`):
         // say what HAPPENED, not only what it was not. The verdict above is
         // unchanged — `observed`, no parent replay — because a command that ran

@@ -261,4 +261,53 @@ describe("the rung ladder under attack", () => {
     }).toEqual({ verdict: "partial", verifiedCount: 0, apiUntouched: true });
   }, 60_000);
 
+  test("a bare shell command that exits 0 settles nothing — it could not have failed", async () => {
+    // The third forgery, and the one M1 opened. `echo done` is not a check: it
+    // could not have FAILED for the criterion it is cited against, whatever it
+    // exits with. Before M1 the cap held by accident — an execution was capped
+    // at `observed`, and `met` required `verified` — which is why the
+    // relatedness gate deliberately lets executions through: `rungForCommand`
+    // could not award a rung that mattered. M1 made acceptance a fact of its
+    // own, so the cap is now stated rather than inherited.
+    //
+    // The citation still LANDS: the command ran, the rung is `observed`, and
+    // A1's receipt wording is intact. What it does not do is accept the
+    // criterion.
+    const dir = redAtHead("v5b-forge-execution-");
+    const engine = makeEngine(dir);
+    script(engine, [
+      [readBack()],
+      [fixIt()],
+      [tool("bash", { command: "echo done" })],
+      [
+        tool("record_evidence", { criterion: 0, command: "echo done" }),
+        tool("record_evidence", { criterion: 1, command: "echo done" }),
+      ],
+      [{ type: "text", text: "Both criteria hold." }],
+    ]);
+    const session = engine.createSession();
+    const events = await drain(engine, session, REQUEST);
+    const said = receipts(events);
+    const terminal = terminalOf(events);
+    const outcomes = terminal.verdict?.criteria ?? [];
+
+    // Receipts: ${said.join(" | ")}
+    expect({
+      verdict: terminal.verdict?.kind,
+      statuses: outcomes.map((c) => c.status),
+      accepted: outcomes.filter((c) => c.status === "satisfied").length,
+    }).toEqual({
+      verdict: "partial",
+      statuses: ["needs_review", "needs_review"],
+      accepted: 0,
+    });
+    // The receipt says WHY, which is the half A1 fought for and M1 keeps.
+    expect(said.at(0)).toContain("execution receipt only");
+    expect(outcomes[0]!.verifier).toBe("execution-receipt@1");
+    // …and the rung is unchanged: the command really did run and exit 0.
+    expect(outcomes[0]!.rung).toBe("observed");
+    const gaps = terminal.verdict?.kind === "partial" ? terminal.verdict.gaps : [];
+    expect(gaps[0]!.why).toContain("needs_review");
+  }, 60_000);
+
 });

@@ -535,6 +535,42 @@ describe("criterionStatus — the derivation, line by line", () => {
     expect(criterionStatus(c, [], NOW)).toBe("needs_review");
   });
 
+  test("an execution receipt cannot satisfy a criterion", () => {
+    // `echo done` exits 0. So does `git status`. Neither could have FAILED for
+    // the criterion it is cited against, and a criterion is settled only by a
+    // check that could have. Before M1 the cap held by accident — an execution
+    // was capped at `observed` and `met` required `verified` — which is why
+    // F-5B left executions out of the relatedness gate. M1 made acceptance a
+    // separate fact, so this rule has to carry that weight instead.
+    const checks: CheckRun[] = [
+      { command: "echo done", passed: true, at: 1, kind: "execution", exitCode: 0, executionId: "chk-1" },
+    ];
+    const cited: Criterion = {
+      text: "the exporter writes every row",
+      rung: "observed",
+      evidence: stamped({
+        source: "echo done",
+        verifier: "execution-receipt@1",
+        detail: "execution receipt only — ran, exit 0, not a recognised check",
+      }),
+    };
+    // The log's `kind` is authoritative while the run is live…
+    expect(criterionStatus(cited, checks, NOW)).toBe("needs_review");
+    // …and the verifier name is what survives on a saved row read back with no
+    // check log behind it, which is exactly what `rune audit` holds.
+    expect(criterionStatus(cited, [], NOW)).toBe("needs_review");
+    // The log alone is enough even for a row that carries no verifier at all.
+    const bare: Criterion = {
+      text: "the exporter writes every row",
+      rung: "observed",
+      evidence: stamped({ source: "echo done", verifier: "check-log@1" }),
+    };
+    expect(criterionStatus(bare, checks, NOW)).toBe("needs_review");
+    // And it cannot be accepted, so the run cannot be `met` on it.
+    expect(accepted(cited, "needs_review")).toBe(false);
+    expect(verdictOf([cited], { checks }).kind).toBe("partial");
+  });
+
   test("a `review` method is never satisfied by the runtime", () => {
     const c: Criterion = {
       text: "the copy reads well",

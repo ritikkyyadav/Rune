@@ -845,6 +845,23 @@ export function criterionStatus(
   const evidence = criterion.evidence;
   if (!evidence) return "unassessed";
   if (evidence.unrelated) return "unassessed";
+  const bound = boundRun(criterion, checks);
+  // ── An execution receipt is a fact, not an acceptance ──
+  //
+  // `echo done` exits 0. So does `git status`. Neither could have FAILED for
+  // the criterion it is cited against, and a criterion is settled only by a
+  // check that could have. Before M1 the cap held by accident: an execution
+  // was capped at `observed`, and `met` required `verified` — which is why
+  // F-5B deliberately left executions out of the relatedness gate. M1 removed
+  // that accident by making acceptance a separate fact, and this is the rule
+  // that has to carry the weight instead.
+  //
+  // Both halves are needed. The log's `kind` is authoritative while the run is
+  // live; the verifier name is what survives on a saved row read back with no
+  // check log behind it (`rune audit`). Never `satisfied` either way.
+  if (bound?.latest.kind === "execution" || evidence.verifier === "execution-receipt@1") {
+    return "needs_review";
+  }
   // A verifier that ran and recorded no result could not SAY. The acceptance
   // runner writes this shape for a command that exited without measuring
   // anything — a runner that collected no tests, a runner that is not
@@ -854,7 +871,6 @@ export function criterionStatus(
   // check would report a broken toolchain as broken work.
   if (evidence.verifier && !evidence.result) return "needs_review";
   if (evidence.result === "failed") return "failed";
-  const bound = boundRun(criterion, checks);
   if (bound && !bound.latest.passed) return "failed";
   const dated = evidence.head != null || evidence.digest != null;
   if (now && dated && treeMovedUnder(evidence, now)) return "stale";

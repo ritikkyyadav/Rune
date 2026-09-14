@@ -187,9 +187,16 @@ describe("the audit's example: green checks, a criterion never verified", () => 
         // — the ONLY thing that can move a rung — exactly as `record_evidence`
         // does after the runtime's own parent probe. The second criterion is
         // never cited, which is the audit's silent case.
+        //
+        // The cited source is the CHECK the probe replayed, not one of the
+        // `true # …` shell calls above: those are recorded as executions, and
+        // an execution receipt can never settle a criterion (M1) — so citing
+        // one here would be constructing a state `record_evidence` cannot
+        // produce, since `rungForCommand` caps an execution at `observed` and
+        // never records a parent failure for it.
         if (index !== 3) return;
         engine.currentLedger()?.record(0, "verified", {
-          source: "true # bun test",
+          source: "bun test export.test.ts",
           parentCommitFailed: true,
           parentCommit: "4a91c2e",
         });
@@ -271,8 +278,11 @@ describe("the audit's example: green checks, a criterion never verified", () => 
         if (index !== 3) return;
         const ledger = engine.currentLedger();
         for (const i of [0, 1]) {
+          // The check the parent probe replayed — see the note in the first
+          // scenario: the `true # …` calls are executions, and an execution
+          // receipt is a fact, not an acceptance.
           ledger?.record(i, "verified", {
-            source: "true # bun test",
+            source: "bun test export.test.ts",
             parentCommitFailed: true,
             parentCommit: "4a91c2e",
           });
