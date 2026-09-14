@@ -343,6 +343,22 @@ export interface RuneConfig {
    */
   controller?: {
     shadow?: boolean;
+    /**
+     * Which continuation decisions the controller OWNS rather than shadows
+     * (M3, `docs/program/m3-first-migration.md`).
+     *
+     * Empty — the default — is M2: every guard keeps its own predicate and the
+     * arbiter only records where it would have disagreed. `"E4"` moves the
+     * empty-completion branch: the loop calls the arbiter, writes an applied
+     * `decision` row before it acts, and acts on the answer. Removing the key
+     * restores the guard's predicate exactly, which is why it is a list and
+     * not a boolean: one decision migrates at a time, and each one rolls back
+     * on its own.
+     *
+     * Accepts a TOML array (`authority = ["E4"]`) or the comma-separated
+     * string the settings writer persists (`authority = "E4"`).
+     */
+    authority?: string | string[];
   };
   /**
    * Tool execution settings.

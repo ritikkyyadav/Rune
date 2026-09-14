@@ -48,8 +48,18 @@ import { evidenceWeight, TASK_STATE_BLOCK_BUDGET_AFTER_COMPACTION } from "./task
 import type { ArtifactKind } from "@rune/protocol";
 import { bashCheckVerdict, isVerificationCommand } from "./brief";
 import { computeVerdict, type CompletionVerdict, type ContractRecord } from "./contract";
-import { complete as completedTransition } from "./arbiter";
-import type { ShadowObserver } from "./shadow-arbiter";
+import {
+  abandoned,
+  complete as completedTransition,
+  decide,
+  makeShadowEvent,
+  APPLIED_DECISION_ROW_VERSION,
+  type AppliedDecisionRow,
+  type GuardId,
+  type GuardInputs,
+  type Transition,
+} from "./arbiter";
+import { sanitizeInputs, type ShadowObserver } from "./shadow-arbiter";
 import { makeRunState, type RunPhase, type RunState } from "./run-state";
 import { checkRelatedness, normalizeCommand, ranZeroTests } from "./verification-command";
 import { filesChangedFrom, isFileChangingTool } from "./lifecycle";
@@ -332,6 +342,40 @@ export interface AgentLoopConfig {
    * the one the arbiter answers `unknown` from (M2 exit S5).
    */
   spentUsd?: () => number;
+  /**
+   * What the controller OWNS at this loop, and how it records what it did (M3).
+   *
+   * Absent — the default, and the only state a sub-agent loop is ever in —
+   * means every guard keeps its own predicate and the arbiter only watches.
+   * `authority` naming a key moves exactly that decision: the site calls
+   * `decide`, writes an applied `decision` row, and acts on the answer through
+   * the same code paths it used before.
+   */
+  controller?: LoopControllerConfig;
+}
+
+/** The controller's seat in one loop (M3). Every field is optional because an
+ *  absent controller is the rollback position, not a degraded one. */
+export interface LoopControllerConfig {
+  /** The run this loop's decisions belong to — the Engine's `checkpointRunId`,
+   *  so an event id is unique across the resumes of one session. */
+  runId?: string;
+  /** The decisions the controller owns. Empty = it owns none. */
+  authority?: ReadonlySet<string>;
+  /**
+   * Empty completions an interrupted predecessor already spent.
+   *
+   * A restart does not reset the allowance (M3 mechanics 3): a run killed
+   * after two empty completions that resumes and gets a third abandons. Read
+   * ONLY when the controller owns "E4" — with authority off the loop's
+   * counters start where they always started.
+   */
+  inheritedEmptyCompletions?: number;
+  /** Persist an applied decision. Called BEFORE the act, synchronously. */
+  record?: (row: AppliedDecisionRow) => void;
+  /** Whether this run already has a terminal row, for the idempotent re-act on
+   *  a resume. Absent reads as "no" — which is what a loop with no engine is. */
+  hasTerminalRow?: () => boolean;
 }
 
 const DEFAULT_CONFIG: AgentLoopConfig = {
@@ -346,6 +390,28 @@ const DEFAULT_CONFIG: AgentLoopConfig = {
 // ─── Agent State ───
 
 export type AgentState = "idle" | "thinking" | "tool_calling" | "observing" | "done" | "error";
+
+// ─── The empty-completion decision (M3) ───
+
+/**
+ * The only three answers that branch can act on.
+ *
+ * Named so the controller's authority is BOUNDED at the site: an arbiter that
+ * answers anything else — `unknown` for a missing input, `complete(...)` from
+ * a future rule — does not get to decide this branch, and the guard's own
+ * answer stands. See `decideWithAuthority`.
+ */
+const EMPTY_COMPLETION_TRANSITIONS: readonly Transition[] = [
+  "working",
+  "verifying",
+  abandoned("environment"),
+];
+
+/** The nudge the retry branch appends, once. A constant because the resume
+ *  path compares against it to avoid asking the model twice. */
+const EMPTY_COMPLETION_NUDGE =
+  "[Harness note] Your tool results are recorded, but you have not provided an answer. " +
+  "Give a concise account of the result and anything unfinished. Do not repeat completed work.";
 
 // ─── Tool-result transcript cap ───
 // The Rust bash tool alone can return 512KB (~130k tokens) — one verbose
@@ -1526,6 +1592,102 @@ export class AgentLoop {
     });
   }
 
+  // ─── The controller's seat (M3) ───
+
+  /** Events this loop has asked the controller to decide. The seq half of an
+   *  event id, and the reason "exactly one decision per event" is checkable. */
+  private controllerSeq = 0;
+
+  /** Whether the controller owns a named decision at this loop. */
+  private ownsDecision(key: string): boolean {
+    return this.config.controller?.authority?.has(key) === true;
+  }
+
+  /**
+   * Who decides this branch — and, when it is the controller, the record of it.
+   *
+   * With the key absent from `[controller] authority` this returns `legacy()`:
+   * the guard's own predicate, unchanged, which is the rollback switch M3 asks
+   * for. With it present the arbiter decides from the snapshot and the
+   * predicate's own inputs, one `decision` row is written BEFORE the caller
+   * acts, and the answer is what the caller acts on.
+   *
+   * Two safeguards, both deliberate:
+   *
+   *   * a transition outside the branch's vocabulary is NOT acted on — the
+   *     guard's own answer stands and the row says so. A controller that
+   *     answers `unknown` (a missing input, an already-terminal phase) must
+   *     never leave a run without a decision.
+   *   * a row sink that throws is contained. Losing the row loses the
+   *     reconciliation record, not the run.
+   */
+  private decideWithAuthority(
+    key: string,
+    guard: GuardId,
+    inputs: GuardInputs,
+    allowed: readonly Transition[],
+    legacy: () => Transition,
+    state: () => RunState,
+  ): Transition {
+    if (!this.ownsDecision(key)) return legacy();
+    const controller = this.config.controller;
+    const runId = controller?.runId ?? "run";
+    this.controllerSeq += 1;
+    const event = makeShadowEvent(
+      runId,
+      this.controllerSeq,
+      guard,
+      sanitizeInputs(inputs),
+      new Date().toISOString(),
+    );
+    const decision = decide(state(), event);
+    const honoured = allowed.includes(decision.transition);
+    const transition = honoured ? decision.transition : legacy();
+    const row: AppliedDecisionRow = {
+      type: "decision",
+      version: APPLIED_DECISION_ROW_VERSION,
+      runId,
+      eventId: event.id,
+      decisionId: decision.id,
+      guard,
+      class: decision.class,
+      transition,
+      applied: true,
+      reason: honoured
+        ? decision.reason
+        : `the controller answered ${decision.transition}, which this branch cannot act on; ` +
+          "the guard's own answer stands",
+      inputs: event.inputs as Record<string, unknown>,
+      at: event.at,
+    };
+    try {
+      controller?.record?.(row);
+    } catch {
+      // The row is the reconciliation record, not the decision. A database
+      // that refuses it must not fail the turn.
+    }
+    return transition;
+  }
+
+  /**
+   * Append a harness nudge unless the transcript already ends with it.
+   *
+   * The idempotent half of an applied decision (M3 mechanics 2): a run killed
+   * between the `decision` row and its act resumes on a transcript that may
+   * already carry the nudge, and re-appending it would ask the model twice for
+   * the same thing. With the controller off this is a no-op by construction —
+   * every site that calls it fires at most once per run anyway.
+   */
+  private appendNudgeOnce(text: string, origin: string): boolean {
+    const last = this.messages[this.messages.length - 1];
+    const already =
+      last?.role === "user" &&
+      last.content.some((b) => b.type === "text" && (b as { text?: unknown }).text === text);
+    if (already) return false;
+    this.appendMessage({ role: "user", content: [{ type: "text", text }] }, origin);
+    return true;
+  }
+
   /**
    * The terminal event, with its verdict. Every exit goes through here.
    *
@@ -1857,7 +2019,15 @@ export class AgentLoop {
     // Empty-completion recovery: a stream that "succeeds" with no text and no
     // tool calls (Gemini MALFORMED_FUNCTION_CALL, over-eager stops) must never
     // end the run as a silent no-op — retry bounded, then fail loudly.
-    let emptyCompletions = 0;
+    //
+    // A restart does not reset the allowance once the controller owns the
+    // decision (M3 mechanics 3): a run killed after two empty completions and
+    // resumed carries those two, so a third abandons rather than buying a
+    // fresh three. With authority off the counter starts at zero, exactly as
+    // it always has.
+    let emptyCompletions = this.ownsDecision("E4")
+      ? Math.max(0, Math.floor(this.config.controller?.inheritedEmptyCompletions ?? 0))
+      : 0;
     // Replies that were a tool's arguments printed as text (see
     // misencodedToolCall). Bounded like empty completions: nudge twice, then
     // let the reply stand as what it is.
@@ -2704,34 +2874,43 @@ export class AgentLoop {
         const workStands = narratedEarlier || anyWritesThisRun;
         const maxEmpty = workStands ? 2 : (this.config.maxEmptyCompletionRetries ?? 3);
         emptyCompletions++;
+        // ── One decision, three outcomes (M3) ──
+        //
+        // `working` — nudge once, retry. `verifying` — stop retrying and fall
+        // into the finish path below, where the verdict decides whether the
+        // run is done. `abandoned(environment)` — nothing stands, the run ends
+        // `provider_lost`. The site no longer holds the predicate that chooses
+        // between them: with "E4" in `[controller] authority` the arbiter
+        // decides and this site acts, and without it the guard's own
+        // predicate — the `legacy` closure below, character for character what
+        // stood at b5632fb — answers and the arbiter only watches. That
+        // closure is the rollback switch.
+        const decisionInputs = { emptyCompletions, maxEmpty, workStands };
+        const transition = this.decideWithAuthority(
+          "E4",
+          "E4",
+          decisionInputs,
+          EMPTY_COMPLETION_TRANSITIONS,
+          () =>
+            emptyCompletions < maxEmpty
+              ? "working"
+              : workStands
+                ? "verifying"
+                : abandoned("environment"),
+          () => shadowState(),
+        );
         this.report(
           "provider.empty_completion",
-          emptyCompletions < maxEmpty ? "warn" : "error",
+          transition === "working" ? "warn" : "error",
           "run#emptyCompletion",
           `${this.config.provider}/${this.config.model} returned an empty completion ` +
             `(stopReason ${stopReason}, attempt ${emptyCompletions})`,
         );
-        if (emptyCompletions < maxEmpty) {
+        if (transition === "working") {
           if (silentEndTurn && toolCallsThisRun > 0 && emptyCompletions === 1) {
-            this.appendMessage(
-              {
-                role: "user",
-                content: [
-                  {
-                    type: "text",
-                    text: "[Harness note] Your tool results are recorded, but you have not provided an answer. Give a concise account of the result and anything unfinished. Do not repeat completed work.",
-                  },
-                ],
-              },
-              "nudge:empty-completion",
-            );
+            this.appendNudgeOnce(EMPTY_COMPLETION_NUDGE, "nudge:empty-completion");
           }
-          this.config.shadow?.observe(
-            "E4",
-            { emptyCompletions, maxEmpty, workStands },
-            "working",
-            shadowState(),
-          );
+          this.config.shadow?.observe("E4", decisionInputs, "working", shadowState());
           yield {
             type: "notice",
             message: `The model returned an empty response — retrying (${emptyCompletions}/${maxEmpty - 1})…`,
@@ -2739,11 +2918,11 @@ export class AgentLoop {
           this.state = "observing";
           continue;
         }
-        if (!workStands) {
+        if (transition !== "verifying") {
           this.state = "done";
           this.config.shadow?.observe(
             "E4",
-            { emptyCompletions, maxEmpty, workStands: false },
+            decisionInputs,
             "abandoned(environment)",
             shadowState(),
           );
@@ -2759,7 +2938,13 @@ export class AgentLoop {
               "Try again, rephrase, or switch models with /model.",
             recoverable: false,
           };
-          yield this.terminal("provider_lost", turn);
+          // The other idempotent half: a run resumed after a crash between the
+          // `decision` row and this act re-emits the terminal only if the run
+          // has none. With no controller there is no row to reconcile and the
+          // predicate is `false` — the terminal is emitted, as it always was.
+          if (this.config.controller?.hasTerminalRow?.() !== true) {
+            yield this.terminal("provider_lost", turn);
+          }
           return;
         }
         // Accept the finish — on the earlier narration, or on the work — and say so once.

@@ -194,11 +194,82 @@ export interface Decision {
   readonly transition: Transition;
   readonly class: DecisionClass;
   readonly reason: string;
-  /** Always false in M2. The arbiter applies nothing; the guards decide. */
+  /**
+   * Always false, in M3 as in M2: `decide` is a function, and a function
+   * applies nothing. When a migrated SITE acts on a decision it writes an
+   * `AppliedDecisionRow` — that row, and only that row, says `applied: true`.
+   */
   readonly applied: false;
   /** Set by `arbitrate` when a lower-class event in the same step won. */
   readonly supersededBy?: string;
 }
+
+// ─── Authority (M3) ───
+
+/**
+ * The decisions the controller may OWN rather than shadow.
+ *
+ * `[controller] authority` names them. Empty — the default — means the
+ * controller decides nothing and every guard keeps its own predicate, which is
+ * exactly M2's behaviour and the rollback position for every branch M3
+ * migrates (`docs/program/m3-first-migration.md`, "Migration mechanics").
+ */
+export const AUTHORITY_KEYS = ["E4", "acceptance"] as const;
+export type AuthorityKey = (typeof AUTHORITY_KEYS)[number];
+
+/**
+ * Read `[controller] authority` into a set.
+ *
+ * Accepts the TOML array (`authority = ["E4"]`) and the string the settings
+ * writer persists (`authority = "E4"`, `"E4,acceptance"`). An unknown token is
+ * DROPPED rather than throwing: a typo in a config file must not fail a run,
+ * and a key this build does not know is a key it cannot honour. Matching is
+ * case-insensitive on the token, never on the meaning.
+ */
+export function parseAuthority(
+  value: string | readonly string[] | undefined | null,
+): ReadonlySet<AuthorityKey> {
+  const out = new Set<AuthorityKey>();
+  if (value === undefined || value === null) return out;
+  const tokens = (typeof value === "string" ? value.split(",") : value).flatMap((t) =>
+    typeof t === "string" ? [t.trim()] : [],
+  );
+  for (const token of tokens) {
+    if (token.length === 0) continue;
+    const match = AUTHORITY_KEYS.find((k) => k.toLowerCase() === token.toLowerCase());
+    if (match) out.add(match);
+  }
+  return out;
+}
+
+/**
+ * What a site writes when it ACTS on a decision, before it acts.
+ *
+ * The row is the reconciliation record the resume path reads: a crash between
+ * the row and the act leaves the row, and the act is idempotent, so the
+ * resumed run does not do it twice (M3 mechanics 2). It is a row of its own
+ * type — like `contract`, `verdict` and the shadow rows — and not an
+ * `AgentTurnEvent`: no surface renders it and `replayEvents` skips it.
+ *
+ * `inputs` is sanitised by the same function the shadow rows use, so this row
+ * cannot carry message text, tool arguments or credentials either.
+ */
+export interface AppliedDecisionRow {
+  readonly type: "decision";
+  readonly version: 1;
+  readonly runId: string;
+  readonly eventId: string;
+  readonly decisionId: string;
+  readonly guard: GuardId;
+  readonly class: DecisionClass;
+  readonly transition: Transition;
+  readonly applied: true;
+  readonly reason: string;
+  readonly inputs: Record<string, unknown>;
+  readonly at: string;
+}
+
+export const APPLIED_DECISION_ROW_VERSION = 1 as const;
 
 /** What the guard's own code DID, recorded at the same site from the same booleans. */
 export interface Actual {
@@ -375,8 +446,16 @@ function propose(state: RunState | undefined, event: ShadowEvent): Proposal {
       if (seen < max) {
         return { transition: "working", reason: `empty completion ${seen} of ${max} — retrying` };
       }
+      // At the allowance with work standing the loop stops retrying and falls
+      // into the finish path; the verdict there decides whether the run is
+      // done. M2 answered `working` here and left the finish to G9's rule —
+      // true of the loop, but not a transition anyone could act on, and M3
+      // acts on this one (`docs/program/m3-first-migration.md`).
       return stands
-        ? { transition: "working", reason: "the work stands; G9 decides the finish" }
+        ? {
+            transition: "verifying",
+            reason: "the work stands; the finish path decides whether it completed",
+          }
         : {
             transition: abandoned("environment"),
             reason: `${max} empty completions in a row and nothing to stand on`,

@@ -6,6 +6,8 @@
 // explicit is deliberate: the `update_config` tool can only ever touch what's
 // here, so an errant instruction can't rewrite arbitrary config.
 
+import { AUTHORITY_KEYS } from "./arbiter";
+
 export interface ConfigSetting {
   /** Canonical id used in the tool + reports (snake_case). */
   key: string;
@@ -94,6 +96,31 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
       "nothing: it records what it WOULD have decided and where that differs from what the " +
       "guards did. Off writes no rows at all. Applies to the next run.",
     nameAliases: ["shadow arbiter", "shadow mode", "controller shadow"],
+    live: true,
+  },
+  {
+    key: "controller_authority",
+    tomlPath: "controller.authority",
+    kind: "text",
+    description:
+      "Which continuation decisions the controller OWNS rather than shadows (M3). Empty is the " +
+      "default and means it decides nothing. E4 hands it the empty-completion branch: it decides, " +
+      "records the decision, and the loop acts on it. Applies to the next run.",
+    placeholder: "none, E4, or E4,acceptance",
+    nameAliases: ["controller authority", "authority", "controller owns"],
+    validate: (value: string) => {
+      const tokens = value
+        .split(",")
+        .map((t) => t.trim())
+        .filter((t) => t.length > 0);
+      if (tokens.length === 1 && tokens[0]!.toLowerCase() === "none") return undefined;
+      const unknown = tokens.filter(
+        (t) => !AUTHORITY_KEYS.some((k) => k.toLowerCase() === t.toLowerCase()),
+      );
+      return unknown.length === 0
+        ? undefined
+        : `not a migrated decision: ${unknown.join(", ")} (known: ${AUTHORITY_KEYS.join(", ")})`;
+    },
     live: true,
   },
   {

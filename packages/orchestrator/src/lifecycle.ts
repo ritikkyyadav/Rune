@@ -502,6 +502,41 @@ export function inheritedBudget(
 }
 
 /**
+ * Empty completions the interrupted predecessor already spent (M3).
+ *
+ * The counter that joins `inheritedBudget`: a run killed after two empty
+ * completions does not get a fresh allowance when it resumes. It is derived
+ * from the run's own `decision` rows rather than from the lifecycle
+ * projection, because a `decision` row is written BEFORE the act — so it
+ * survives exactly the kill this rule exists for, while a projection is only
+ * as fresh as its last emission.
+ *
+ * Scoped to the LAST run in the log: rows before the most recent
+ * `session_started` belong to earlier runs, which either finished or already
+ * handed their count forward. Only `working` is counted — a `verifying` or an
+ * `abandoned(...)` decision ended the retrying, and counting it would spend an
+ * allowance the run never used.
+ *
+ * Called under the same `previousRunWasInterrupted` gate as `inheritedBudget`.
+ */
+export function inheritedEmptyCompletions(
+  events: Array<{ event: { type: string; payload: Record<string, unknown> } }>,
+): number {
+  let seen = 0;
+  for (const { event } of events) {
+    if (event.type === "checkpoint" && event.payload?.summary === "session_started") {
+      seen = 0;
+      continue;
+    }
+    if (event.type !== "decision") continue;
+    const p = event.payload as { guard?: unknown; applied?: unknown; transition?: unknown };
+    if (p.guard !== "E4" || p.applied !== true) continue;
+    if (p.transition === "working") seen += 1;
+  }
+  return seen;
+}
+
+/**
  * The per-session run counter, derived from the log rather than stored.
  *
  * Every run appends a `checkpoint:"session_started"` marker before its first

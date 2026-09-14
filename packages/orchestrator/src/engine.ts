@@ -185,6 +185,7 @@ import { resolveHelperRoute, helperAppliesToSafety } from "./helper-route";
 import type { HelperRoute } from "./helper-route";
 import { applyInheritance, turnBudgetForMessage } from "./turn-budget";
 import { ShadowArbiter, type ShadowRow } from "./shadow-arbiter";
+import { parseAuthority, type AppliedDecisionRow } from "./arbiter";
 import { createSubagentTool } from "./subagent";
 import { TeamBus } from "./team/bus";
 import { createTeamTool, renderTeamStatus } from "./team/tool";
@@ -312,6 +313,7 @@ import {
   demoteStaleCriteria,
   filesChangedFrom,
   inheritedBudget,
+  inheritedEmptyCompletions,
   lifecycleDigest,
   previousRunWasInterrupted,
   runSeqFromEvents,
@@ -910,7 +912,12 @@ export interface EngineConfig {
    * `this.config.shadow?.observe(…)`, and `?.` does not evaluate its
    * arguments.
    */
-  controller?: { shadow?: boolean };
+  /**
+   * `authority` (M3) names the decisions the controller OWNS rather than
+   * shadows. Empty — the default — is M2 exactly: it watches and applies
+   * nothing. A key moves one branch at a time and rolls back on its own.
+   */
+  controller?: { shadow?: boolean; authority?: string | string[] };
   /**
    * Preferred provider order for MID-TASK fallback (`[fallback] order` in
    * config.toml). Overrides the built-in capacity ranking head-first; unnamed
@@ -4535,6 +4542,14 @@ export class Engine {
           shadow: canonicalValue === "true",
         };
         return { ok: true };
+      case "controller_authority":
+        // Read at the start of the next run, where the seat is built. Stored
+        // as the canonical comma-separated string; "none" and "" both clear it.
+        this.config.controller = {
+          ...this.config.controller,
+          authority: [...parseAuthority(canonicalValue)].join(","),
+        };
+        return { ok: true };
       case "sandbox_required":
         this.config.sandboxRequireOs = canonicalValue === "true";
         setRequireOsIsolation(this.config.sandboxRequireOs);
@@ -4609,6 +4624,10 @@ export class Engine {
         return policyForModel(this.config.model, this.config.reliability).evidenceGate;
       case "shadow_controller":
         return String(this.config.controller?.shadow !== false);
+      case "controller_authority": {
+        const owned = [...parseAuthority(this.config.controller?.authority)];
+        return owned.length > 0 ? owned.join(",") : "none";
+      }
       case "sandbox_required":
         return String(this.config.sandboxRequireOs === true);
       case "playbook":
@@ -5144,6 +5163,44 @@ export class Engine {
     // 80-turn task and nothing anywhere would say so. Extending stays the
     // second wind's job; this only narrows.
     const inherited = priorRunInterrupted ? inheritedBudget(priorEvents) : null;
+
+    // ── The controller's seat (M3) ──
+    //
+    // `[controller] authority` names the decisions the arbiter OWNS rather
+    // than shadows. Empty is the default and is M2 exactly: the shadow lane
+    // above still records what it would have done, and no guard's predicate
+    // moves. Each key migrates ONE branch and rolls back by itself, which is
+    // why it is a list.
+    //
+    // The seat is built for the LEAD loop only. Sub-agent loops construct
+    // their own `AgentLoop` and are handed neither shadow nor authority, so
+    // they are off by construction rather than by a flag someone must set.
+    const controllerSeat = {
+      runId,
+      authority: parseAuthority(this.config.controller?.authority),
+      // A restart does not reset the empty-completion allowance: the count
+      // comes from the killed run's own `decision` rows, which were written
+      // before their acts and therefore survived the kill.
+      inheritedEmptyCompletions: priorRunInterrupted ? inheritedEmptyCompletions(priorEvents) : 0,
+      // Written BEFORE the act. A row of its own type, for the same reason the
+      // shadow rows are: `RUN_TRACE_EVENTS` is an allow-list over
+      // `AgentTurnEvent`, and an applied decision is not an event any surface
+      // renders. `replayEvents` skips it by its documented default.
+      record: (row: AppliedDecisionRow) => {
+        this.sessions.appendEvent(sessionId, { type: row.type, payload: { ...row } });
+      },
+      // The idempotent re-act on a resume: a terminal is re-emitted only if
+      // this run has no terminal row yet. Scanned from this run's first event,
+      // so a previous run's terminal cannot suppress this one's.
+      hasTerminalRow: () =>
+        this.sessions
+          .getEvents(sessionId, runStartSeq)
+          .some(
+            ({ event }) =>
+              event.type === "run_trace" &&
+              (event.payload as { type?: unknown }).type === "turn_complete",
+          ),
+    };
     const {
       budget: turnBudget,
       secondWinds: secondWindBudget,
@@ -5467,9 +5524,12 @@ export class Engine {
         // every run with no `--acceptance`: the gate returns immediately.
         acceptanceGate: (signal) => this.runAcceptanceGate(sessionId, signal),
         jitDoctrine: (section) => this.takeJitDoctrine(sessionId, section),
-        // The arbiter, watching. It decides nothing here: the loop calls
-        // `observe` beside guards that have already acted.
+        // The arbiter, watching. It decides nothing here unless
+        // `[controller] authority` names a decision: the loop calls `observe`
+        // beside guards that have already acted, and `decide` only at a site
+        // the controller owns.
         ...(shadow ? { shadow } : {}),
+        controller: controllerSeat,
         // What the run has spent, for the snapshot's `budget.spentUsd`. The
         // ledger's own total — rehydrated from cost rows, never reduced by a
         // turn refund.

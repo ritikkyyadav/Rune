@@ -23,6 +23,7 @@ import type { CompletionVerdict, DecisionRecord } from "@rune/protocol";
 import { criterionStatus, verdictLine, type TaskContract } from "../contract";
 import { buildDecisionRecord, hasRecord, renderDecisionRecordMarkdown } from "../decision-record";
 import { shadowSummaryLines, type ShadowSummaryRow } from "../shadow-arbiter";
+import type { AppliedDecisionRow } from "../arbiter";
 
 type Row = { seq: number; event: SessionEvent };
 
@@ -834,6 +835,33 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
       const lines = shadowSummaryLines(s);
       say(`    ${(s.disagreements > 0 ? warn : dim)(lines[0] ?? "")}`);
       for (const line of lines.slice(1)) say(`    ${dim(line)}`);
+    }
+
+    // ── The decisions the controller APPLIED (M3) ──
+    //
+    // Where the shadow block above is what the arbiter would have done, this
+    // is what it did: one row per event at a site `[controller] authority`
+    // moved, written before the act. A session with an empty authority list
+    // has none, and the block is absent rather than empty.
+    const appliedRows = rows.filter((r) => r.event.type === "decision");
+    if (appliedRows.length > 0) {
+      say();
+      say(`  ${text("Decided")}  ${dim("the controller owned these, and acted on them")}`);
+      const counts = new Map<string, number>();
+      for (const r of appliedRows) {
+        const d = payloadOf(r) as unknown as AppliedDecisionRow;
+        counts.set(d.guard, (counts.get(d.guard) ?? 0) + 1);
+      }
+      say(
+        `    ${dim(
+          `applied ${appliedRows.length} · ` +
+            [...counts.entries()].map(([g, n]) => `${g} ${n}`).join(" · "),
+        )}`,
+      );
+      for (const r of appliedRows.slice(-8)) {
+        const d = payloadOf(r) as unknown as AppliedDecisionRow;
+        say(`    ${dim(`${d.guard} (class ${d.class})`)} ${info(d.transition)} ${faint(d.reason)}`);
+      }
     }
 
     // ── Cost ──
