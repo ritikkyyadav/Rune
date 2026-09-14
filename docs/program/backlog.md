@@ -691,3 +691,41 @@ Reports: `.codex/audit-20260910/handoff/m0/{f4,f5b}-report.md`.
   by the fix lane (`31c6c56`) because the inherited cap left 80×24 with no palette. The
   design doc still says growth is paid for by the panel, which does not exist below
   `PANEL_MIN_COLS`. — M0 — Claude
+
+## Recorded by M1 and the closing pass (2026-09-14), not fixed
+
+Reports: `.codex/audit-20260910/handoff/m0/{m1,p4,p4-restart}-report.md`.
+
+- **`installAcceptance` invents a brief when none exists**, which makes `ledgerStatus` non-null
+  for a run that never read back; the fix-verified gate reads that, so a `--acceptance` run on a
+  fix-shaped task with writes and zero verified criteria meets that gate once where it did
+  not before. Opt-in and off by default. — M1 — Claude
+- **Acceptance runs only in the finish block.** A halt or a loop-detector kill never runs the
+  evaluator commands; the criteria read `unassessed` and the verdict `partial`/`unmet`, which is
+  honest but is not "acceptance failed". — M1 — Claude
+- **`rune audit` derives status with an empty check log** (a saved session does not reconstruct
+  one), so a criterion whose bound check later went red reads from the evidence's own `result`.
+  — M1 — Claude
+- **The `kept` protection is per run plus per resume, not per session**: `createContract` runs
+  per message and only an interrupted resume inherits. A decision for M2. — M1 — Claude
+- **The TUI close block still leads with the rung**, not the derived status
+  (`bin/ui/read-back.ts`; `engine.currentLedger()` is in scope at `tui.ts:2517`). One function.
+  — M1 — Claude
+- **`--acceptance` has no entry in `docs/ci.md` or `docs/protocol.md`**; `--help` documents it.
+  — M1 — Claude
+- **The wizard's key step writes to the real login keychain even under a scratch `RUNE_HOME`**
+  (service `rune`, account `provider:custom`); the capture rig removes the mock value afterwards
+  and only when it is the mock's, but a capture rig should not need to. A profile-scoped
+  credential store for tests, or a `RUNE_CREDENTIAL_BACKEND=file` switch honoured by the
+  wizard, would close it. — closing pass — Claude
+- **`scripts/tui-capture/capture.py` passes `OLLAMA_API_KEY` through to the child** while
+  scrubbing the other provider keys; its docstring says keys are scrubbed. — closing pass — Claude
+- **`scripts/tui-capture/first-run-frame.ts` is untracked and its premise is false** ("the wizard
+  has no terminal entry point"); the wizard lane drove `/setup` through a pty twice. Delete it
+  or track it; the tree reads `+dirty` because of it. — closing pass — Claude
+- **§2.8 remainder**: `/model`, `/sandbox`, `/keys` still claim the footer; `/help` and `/status`
+  are not in the workspace; the mock's `◇`/`~` narration rows between receipts have no writer.
+  — Phase 4 — Claude
+- **`ledgerRow` spends the note's room before the value's** (fixed for the wizard's panel by
+  dropping the per-step `restart required` note; the row primitive still has the bias).
+  — Phase 4 — Claude

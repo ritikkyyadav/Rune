@@ -1,0 +1,203 @@
+{
+  "kind": "local-verification",
+  "recordedAt": "2026-09-14",
+  "phase": "Claude Code handoff \u2014 M0 (reconcile + finish the interrupted lanes), M1 (acceptance semantics), original Phase 4 \u00a72.8 (wizard in the frame); closing pass",
+  "sourceCommit": "a22866b86ef01896506307cc0596e5bfc68cd206",
+  "workingTree": {
+    "tracked": "M docs/CLAUDE_CODE_HANDOFF.md\n M docs/harness-status.md\n M docs/program/backlog.md",
+    "untracked": ["scripts/tui-capture/first-run-frame.ts"]
+  },
+  "commits": [
+    "a22866b harness: the provider you saved is the provider you get back",
+    "4a6774d style: prettier over the thirteen files the M0, M1 and Phase 4 lanes wrote",
+    "16fe3ae harness: an execution receipt is a fact, not an acceptance",
+    "8cbaabd harness: the runtime runs the acceptance it was handed",
+    "75a1153 ui: the setup wizard takes the whole frame, not the footer",
+    "9421556 harness: a model amendment keeps what the user and the evaluator stated",
+    "4d227fd harness: a criterion has an id, a source, and a status that is derived",
+    "a0ba6be docs: M0 closes \u2014 the interrupted lanes are finished, and the M1 spec is written down",
+    "9d0f9da ui: the wizard shows which source won, and a wrong host stops reading as a wrong key",
+    "ec8490e ui: the agents panel counts one tool call once, and never shows one cell for two agents",
+    "31c6c56 ui: the caret sits on the field, and a narrow window keeps its transcript",
+    "977789a harness: the verdict knows what shape the request was",
+    "42e7c62 harness: a rung moves only for a check that could have failed"
+  ],
+  "gates": {
+    "unit": {
+      "pass": 4991,
+      "skip": 1,
+      "fail": 0,
+      "files": 381,
+      "seconds": 57.09,
+      "exit": 0
+    },
+    "integration": {
+      "pass": 303,
+      "skip": 7,
+      "fail": 0,
+      "files": 52,
+      "seconds": 116.44,
+      "exit": 0
+    },
+    "lifecycleDurabilityAlone": {
+      "pass": 47,
+      "skip": 0,
+      "fail": 0,
+      "files": null,
+      "seconds": null,
+      "exit": 0
+    },
+    "typecheck": {
+      "successful": 15,
+      "total": 15,
+      "cached": 0,
+      "exit": 0
+    },
+    "lint": {
+      "firstRun": "exit 1 \u2014 prettier on 13 lane files; fixed in 4a6774d",
+      "rerun": "exit 0"
+    },
+    "formatCheck": {
+      "firstRun": "exit 1 \u2014 same 13 files",
+      "rerun": "exit 0"
+    },
+    "cargoFmt": {
+      "exit": 0
+    },
+    "cargoTest": {
+      "passed": 109,
+      "failed": 0,
+      "exit": 0
+    },
+    "clippy": {
+      "exit": 0,
+      "note": "cached build; crates unchanged since 9876957"
+    },
+    "eval": {
+      "measured": "63/63 measured passed",
+      "baseline": "unchanged",
+      "exit": 0
+    },
+    "autoSafetyOffline": {
+      "precision": 92.8,
+      "recall": 89.1,
+      "f1": 90.9,
+      "liveRequests": 0,
+      "exit": 0
+    },
+    "gitDiffCheck": {
+      "exit": 0
+    },
+    "gateSubject": "16fe3ae (all gates) \u2014 the formatting commit 4a6774d that followed changes whitespace, two leading union pipes and one quote style only; the touched suites were rerun on it (261/0) and lint + format:check rerun green",
+    "note": "All gates in `gates` ran on 16fe3ae. 4a6774d (formatting) and a22866b (the boot fix) followed; the reruns on them are in `afterFix` and in the harness-status entry."
+  },
+  "artifacts": {
+    "cli": {
+      "path": "~/.rune/bin/rune-compiled",
+      "sha256": "d341ec7314eb737a04f97a2c1013f42540004353f5573513ed7c1aa3376cd192"
+    },
+    "native": {
+      "path": "~/.rune/bin/rune-tools",
+      "sha256": "c5b44f6e3620aae0cf82941a9e155fb95097815b1cd673eb9c98aa1347a28416"
+    },
+    "launcher": {
+      "path": "~/.rune/bin/rune",
+      "sha256": "5a22d1513ef3a12596add9c53f2591f1f46a8938a3ef9f8cd7db0c3f6edfc2f5"
+    },
+    "nativeDebugUsedByTests": {
+      "path": "target/debug/rune-tools",
+      "sha256": "3c24a49e6764e66d4fbb126e1a03a4c152d4d9c6bc03f5dcd4d85fe9f35290ff"
+    }
+  },
+  "walkthrough": {
+    "kind": "installed-walkthrough",
+    "binary": "/Users/ritikyadav890/.rune/bin/rune",
+    "rig": ".codex/audit-20260910/handoff/m0/walkthrough-installed.py (capture-p4.py's walk with ARGV swapped to the installed launcher)",
+    "sizes": ["120x40", "80x24"],
+    "frames": [
+      "120x40-idle.txt",
+      "120x40-setup-esc.txt",
+      "120x40-setup-key-accepted.txt",
+      "120x40-setup-key-typed.txt",
+      "120x40-setup-open.txt",
+      "120x40-setup-provider.txt",
+      "120x40-setup-reopened.txt",
+      "120x40-setup-url.txt",
+      "80x24-idle.txt",
+      "80x24-setup-esc.txt",
+      "80x24-setup-key-accepted.txt",
+      "80x24-setup-key-typed.txt",
+      "80x24-setup-open.txt",
+      "80x24-setup-provider.txt",
+      "80x24-setup-reopened.txt",
+      "80x24-setup-url.txt"
+    ],
+    "steps": "idle \u2192 /setup \u2192 provider=custom \u2192 base URL (loopback GET /v1/models mock) \u2192 model \u2192 key typed (masked) \u2192 key accepted (200 OK, keychain) \u2192 esc \u2192 NEW process on the same profile \u2192 /setup shows what was kept",
+    "keyLeak": "asserted absent from every frame and every file under the scratch profile, both sizes",
+    "modelCalls": 0,
+    "keychain": "the mock key was written to the login keychain by the key step and removed by the rig afterwards; the founder's credentials.index.json has no provider:custom account, so nothing real was overwritten",
+    "notCovered": [
+      "search / spend cap / sandbox steps are skipped by esc in this walk (their unit and onboarding tests cover them on source)",
+      "a coding task after setup (the mock has no completions route); the installed binary's task path is covered by the scenario suite below",
+      "/config change + restart in the same walk (the relaunch proves the saved column; /config's own persistence is pinned on source)",
+      "resize during a step (pinned on source by ui-frame tests, not re-taken here)"
+    ],
+    "defectFound": {
+      "what": "a NEW process on the profile the wizard saved as custom/mock-small ran gemini-2.5-flash, with the key restored in the keychain and again with every *_API_KEY scrubbed",
+      "frames": [
+        "120x40-restart-no-pristine-setup.txt",
+        "120x40-restart-keyed-setup.txt (before the fix; re-taken after)",
+        "120x40-restart-scrubbed-idle.txt"
+      ],
+      "cause": "rune-cli.ts:904 gated the saved provider on a six-id isCliProvider list; :1316 defaulted every other provider's model to gemini-2.5-flash",
+      "fixedIn": "a22866b",
+      "reproven": "restart-proof-keyed.py on v0.4.1-dev+a22866b: strip `> 1st gear \u00b7 mock-small`, SAVED vs ACTIVE custom/custom, mock-small/mock-small"
+    },
+    "binaryAfterFix": "v0.4.1-dev+a22866b"
+  },
+  "scenario-installed": {
+    "kind": "scenario-suite-on-installed-binary",
+    "binary": "/Users/ritikyadav890/.rune/bin/rune",
+    "suite": "tests/integration/lifecycle-durability.test.ts via RUNE_SCENARIO_CLI",
+    "pass": 47,
+    "fail": 0,
+    "control": "RUNE_SCENARIO_CLI=/nonexistent/rune makes the suite fail with 'points at a binary that does not exist' (rerun this pass)",
+    "modelCalls": "none \u2014 loopback mock, scratch RUNE_HOME, credential-free child environment (the suite's own proof)",
+    "rerunOn": {
+      "binary": "v0.4.1-dev+a22866b",
+      "pass": 47,
+      "fail": 0
+    }
+  },
+  "version": "Rune v0.4.1-dev+a22866b",
+  "afterFix": {
+    "commit": "a22866b",
+    "what": "harness: the provider you saved is the provider you get back (startup-selection.ts)",
+    "gatesRerun": {
+      "unit": "5,006 pass / 1 skip / 0 fail (the fix lane, unsandboxed)",
+      "integration": "303 pass / 7 skip / 0 fail (52 files, 117.0 s; .codex/audit-20260910/handoff/m0/gates/integration-a22866b.log)",
+      "typecheck": "0 errors (bunx tsc --noEmit -p packages/orchestrator)",
+      "prettier": "clean on the lane's files"
+    },
+    "installed": {
+      "doctorBuildLine": "current \u2014 gear/phase-0-stabilize@a22866b8+dirty (the untracked capture script)",
+      "toolsSmoke": "write \u00b7 read \u00b7 edit \u00b7 bash round-trip",
+      "lifecycleThroughBinary": "47 / 0"
+    }
+  },
+  "notProven": [
+    "Windows (reasoned, never run)",
+    "Linux (Docker client present, no daemon socket, not reset; containment-linux and install-smoke CI jobs never executed \u2014 branch unpushed)",
+    "any live model call",
+    "--acceptance on the installed binary (by construction only: --help shows it; T1/T2/FP/FN exercise the finish-gate run in-process on source)",
+    "\u00a72.8 remainder: /model, /sandbox, /keys in the footer; /help, /status not in the workspace; narration rows unwritten",
+    "resize during a wizard step and a same-session /config change on the installed binary",
+    "M1's kept-protection across a NEW message after a clean finish (per-run + per-resume by the spec's rule)",
+    "the two CI workflows have never run"
+  ],
+  "limitations": [
+    "The wizard's key step writes to the real login keychain even under a scratch RUNE_HOME; the rig removes the mock value afterwards and only when it is the mock's. The founder's credentials.index.json has no provider:custom account, so nothing real was overwritten.",
+    "scripts/tui-capture/capture.py passes OLLAMA_API_KEY (and GEMINI_API_KEY) through to the child; a repo-level .env is auto-loaded by bun for runs whose cwd is the checkout.",
+    "`rune tools-smoke` names ~/.alan/bin/rune-tools: the legacy shim still resolves first on the founder's PATH (tracked in the backlog since Phase 1)."
+  ]
+}

@@ -870,3 +870,135 @@ and the evaluator stated; the runtime running `--acceptance` at the finish gate)
 closing pass: the full gate list from the handoff's Phase 1, `install.sh` without overrides,
 doctor, `docs/evidence/verification-20260914.json`, and the installed fresh-profile
 walkthrough from the handoff's Phase 4.
+
+## 2026-09-14 (later) — M1 lands, the wizard takes the frame, the tree is gated and installed, and the walkthrough finds what the tests could not
+
+Three lanes after M0, each read by the supervising session against its own probes, then one
+closing pass. **Zero live model calls** anywhere in this entry; `~/.rune/rune.db` untouched.
+
+### Where each claim stands
+
+**Implemented.**
+
+| Commit    | What                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `4d227fd` | M1 (a): a criterion has an `id`, a `source` (`user` / `inferred` / `evaluator`), `required`, and a `method`; evidence carries `executionId`, `verifier`, `result`, `env`; `criterionStatus()` derives `unassessed / satisfied / failed / stale / needs_review` from those facts; `met` = every required criterion `satisfied`, no red check, no open step; every verdict carries `execution {stopReason, status}` beside `kind`; the rung stays what it was and `verified` becomes attribution, reported and never required |
+| `9421556` | M1 (b): a model amendment cannot shorten the task — an omitted `user`/`evaluator` criterion is put back and recorded in `amendments[].kept`; `revision` and `constraints` never shrink; `record_evidence` refuses evaluator criteria; a resumed run inherits the contract, not only the brief                                                                                                                                                                                                                               |
+| `8cbaabd` | M1 (c): `--acceptance <file>` — evaluator criteria loaded at intake, never rendered into any prompt (T1 greps every outgoing request body), run once by the runtime through the registry's `bash` at the finish gate, `verifier: acceptance-command@1`; advisory, no refusal, no re-prompt                                                                                                                                                                                                                                  |
+| `16fe3ae` | M1 (d), from the supervisor's own probe: an execution receipt (`echo done`, exit 0) derived `satisfied` under M1 because the old cap at `observed` had been holding by accident; `rungForCommand` now stamps `verifier: execution-receipt@1` and `criterionStatus` derives `needs_review` for it, from the log's kind or from the verifier alone (saved rows)                                                                                                                                                               |
+| `75a1153` | Phase 4 §2.8: `/setup` takes the four regions above 100 columns — the six-step ledger and SAVED vs ACTIVE in the panel, receipts as boxes in the workspace, the titled question in the composer, `◆ setup · no model called yet` in the strip; at 80×24 Lane E's footer layout is kept byte-for-byte with the no-model line added                                                                                                                                                                                           |
+| `4a6774d` | Prettier over the thirteen files the lanes wrote (whitespace, two leading union pipes, one quote style)                                                                                                                                                                                                                                                                                                                                                                                                                     |
+
+**Tested on this source** — the handoff's full gate list, run once on `16fe3ae` by
+`.codex/audit-20260910/handoff/m0/run-gates.sh` (logs beside it in `gates/`), unsandboxed:
+
+| Gate                                                             | Result                                                                                               |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `bun test tests/unit`                                            | **4,992 pass / 0 fail / 1 skip** (381 files, 57.1 s)                                                 |
+| `bun test tests/integration`                                     | **310 pass / 0 fail / 7 skip** (52 files, 116.4 s)                                                   |
+| `lifecycle-durability` alone                                     | **47 / 0**, 26.4 s                                                                                   |
+| `bun run typecheck --force`                                      | **15 / 15**, 0 cached                                                                                |
+| `bun run lint --force` · `prettier --check .`                    | **red on the first run** — thirteen lane files unformatted; fixed in `4a6774d`, both rerun **green** |
+| `cargo fmt --check` · `cargo test --locked --workspace` · clippy | clean · **109 / 0** · 0 warnings (build cached; `crates/` unchanged since `9876957`)                 |
+| `bun run eval`                                                   | **63 / 63**, baseline unchanged                                                                      |
+| `bun run eval:auto-safety --offline`                             | P 92.8 / R 89.1 / F1 90.9, supervisor shapes 100 / 100 / 100, **0 live requests**                    |
+| `git diff --check`                                               | clean                                                                                                |
+
+The formatting commit that followed changes no token but whitespace, two union pipes and one
+quote style (checked per file with whitespace and commas stripped); the eight suites it touches
+were rerun on it (**261 / 0**) with lint and format green.
+
+Independent probes by the supervisor, beyond the lanes' tests: ten hand-built criterion shapes
+through `criterionStatus` (fresh check → satisfied; later red run → failed; digest moved →
+stale; undatable → needs_review; unrelated → unassessed; legacy `observed` → needs_review;
+legacy `verified` → satisfied; verifier without result → needs_review; review method →
+needs_review; and the execution receipt that was `satisfied` until `16fe3ae`). The M1 lane's
+own mutation (`criterionStatus` forced to `satisfied`) kills 26 tests including T1, T3, T5, FP
+and FN; the execution-receipt clause removed kills exactly its two.
+
+**Installed and smoke-tested.** `bash scripts/install.sh`, no override flag, from a tree whose
+only untracked file is `scripts/tui-capture/first-run-frame.ts`; the staged binary hosted a
+session over the socket before the atomic swap. **Rune v0.4.1-dev+4a6774d**: CLI
+`d18b42ba07f8d79cd26d516ea158e53380db8ace7e69f37c0dd8d50d34cbe704`, native `c5b44f6e…`
+(unchanged since Phase 2), launcher `5a22d151…` (unchanged). In a fresh shell `command -v rune`
+resolves `~/.rune/bin/rune` and `rune --version` says the build. `rune doctor`: every build
+line `✓`, the same three `✗` retired-free-model lines as before, `checkpoints` still `!`; the
+build line reads `current — gear/phase-0-stabilize@4a6774da+dirty` (the untracked capture
+script). `rune tools-smoke` round-trips write · read · edit · bash. `rune --help` carries
+`--acceptance`. The installer reports **2,257 MB** of its own backups (109 files, 28
+generations); `--prune-backups` was not passed.
+
+Then, **on that binary**:
+
+- `tests/integration/lifecycle-durability.test.ts` with `RUNE_SCENARIO_CLI=~/.rune/bin/rune`:
+  **47 / 0** (24.7 s); the control with the variable pointed at `/nonexistent/rune` fails
+  with `points at a binary that does not exist`, so the suite read it.
+- **The Phase 4 walkthrough** (`.codex/audit-20260910/handoff/m0/walkthrough-installed.py`,
+  the wizard lane's rig with the child swapped for the installed launcher): at 120×40 and
+  80×24, idle → `/setup` → provider `custom` → loopback base URL → model → key typed (masked)
+  → key accepted (`200 OK`, keychain named) → esc → a NEW process on the same profile. Sixteen
+  frames in `walkthrough-frames/`. The key appears in no frame and in no file under the
+  profile, both sizes. The scratch `rune.db` holds no events.
+
+**Independently demonstrated: one Phase 4 defect the source tests could not see.** The
+wizard's own relaunch runs with `--pristine`, a flag that outranks the file, so its frame
+proves the SAVED column and nothing about restart. Relaunched without the flag — with the
+saved profile, the mock key restored in the keychain and the mock listening
+(`restart-proof-keyed.py`), and again with every `*_API_KEY` scrubbed from the child
+(`restart-proof-scrubbed.py`) — the new process runs **`gemini-2.5-flash`**, not the saved
+`custom · mock-small`, and the panel says so honestly (`provider custom / google`). The
+handoff's Phase 4 acceptance ("restart-required changes say so", and then take effect) is
+therefore **not met on the installed binary**. In code: the boot's config branch
+(`rune-cli.ts` ~:948) honours `llm.defaultProvider` only if it passes `isCliProvider`, a
+hand-written list of five ids — the same rot class as the sticky-model bug that file's own
+comment describes — so a saved `custom` (or any of the thirty-odd presets) falls through to
+auto-detect. Why auto-detect then lands on google with no key in the environment is not yet
+explained; a fix lane is on it (see the addendum below).
+
+**Published.** Nothing. Ten commits since `4869e4c` are unpushed; push is the founder's.
+
+### What is still not proven
+
+- **Windows** (reasoned, never run) and **Linux** (the Docker client is present, no daemon
+  socket; not reset; the two CI jobs have never executed because the branch is unpushed).
+- **Any live model call.** Every M1 exit test drives a scripted provider; nothing here says
+  what a real model does with `--acceptance` criteria it cannot see.
+- **`--acceptance` on the installed binary** is proven by construction only (`--help` shows
+  it; the finish-gate run is exercised in-process by T1/T2/FP/FN on source).
+- **The rest of §2.8**: `/model`, `/sandbox` and `/keys` still claim the footer; `/help` and
+  `/status` are not in the workspace; the narration rows between receipts are not written.
+- **Resize during a wizard step** and **a `/config` change in the same session** are pinned on
+  source, not re-taken on the installed binary.
+- **M1's per-run protection**: a `user` criterion survives amendments and an interrupted
+  resume, not a NEW message after a clean finish (the spec's own rule; a decision for M2).
+
+### Addendum — the walkthrough's defect fixed, reinstalled, and proven on the binary
+
+`a22866b` — harness: the provider you saved is the provider you get back. Two defects, both
+the rot the file's own comment already described for the sticky path: `rune-cli.ts:904`
+honoured `llm.defaultProvider` only through `isCliProvider`, a six-id literal, so a saved
+`custom` (or any of the ~30 presets) fell through to auto-detect, and `hasCreds` (`:848`) never
+asked the keychain; and `:1316` handed every provider outside those six
+`DEFAULT_MODELS.google = gemini-2.5-flash` when the selected provider was not registered —
+the line that printed gemini in the frames even with `custom` active. The selection is now a
+pure function, `resolveStartupSelection` in `startup-selection.ts` (flags → sticky → config →
+auto, sticky semantics verbatim), with `modelForProvider` replacing the google literal;
+fifteen unit cases including the three regressions. The lane also found that a repo-level
+`.env` is auto-loaded by `bun` for any run whose cwd is the checkout, which is the
+parent-process half of "google from nowhere" and a local artifact, not product state.
+
+Reinstalled without an override: **Rune v0.4.1-dev+a22866b**, CLI
+`d341ec7314eb737a04f97a2c1013f42540004353f5573513ed7c1aa3376cd192`, native and launcher
+unchanged. On that binary: `rune doctor` build line `current — …@a22866b8+dirty`;
+`tools-smoke` round-trips; lifecycle **47 / 0** through `RUNE_SCENARIO_CLI`; and
+`restart-proof-keyed.py` — the same relaunch that showed gemini — now reads
+**`> 1st gear · mock-small`** in the strip with SAVED vs ACTIVE `custom custom` /
+`mock-small mock-small` (`walkthrough-frames/120x40-restart-keyed-{idle,setup}.txt`, re-taken;
+the source-side proof is `120x40-restart-keyed-FIXED-source.txt`). The keychain was left as
+found. Gates on `a22866b`: unit **5,006 / 0 / 1 skip** (the lane, unsandboxed), integration
+**303 / 0 / 7 skip** (the supervisor, unsandboxed), typecheck clean, prettier clean.
+
+The original Phase 4 acceptance now holds for the walked steps: setup without editing a
+config file, precedence explained in the panel, the key nowhere in transcript or logs,
+controls persisting, and restart-required changes taking effect on restart. What the
+walkthrough did not exercise is listed under "What is still not proven" above.
