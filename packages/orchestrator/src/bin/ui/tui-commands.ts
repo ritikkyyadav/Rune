@@ -49,6 +49,7 @@ import {
 import { configModeToPermissionMode } from "../../permissions";
 import { CONFIG_SETTINGS, displaySettingValue, settingChoices } from "../../config-settings";
 import { runSettingsCommand } from "../../settings-command";
+import { settingsPickerChrome } from "../../first-run";
 import {
   runSandboxCommand,
   SANDBOX_MODE_CHOICES,
@@ -91,6 +92,23 @@ import { saveTheme } from "./theme-store";
 import { renderWorkspaceDiff } from "./workspace-diff";
 import { buildInteractiveDirective, saveInteractiveAuto } from "./interactive";
 import { cols, rowsCount } from "./tui-frame";
+/**
+ * Put a transcript row back in the gutter every other row keeps.
+ *
+ * `/config`'s confirmation was the one row in the TUI that started at column 0
+ * (frame `80x24-settings-saved`, 2026-09-10): `runSettingsCommand` returns the
+ * raw `update_config` result and `print` writes exactly what it is given, while
+ * every neighbouring call passes a string that already begins with two spaces.
+ * Indenting at the call site rather than inside the command keeps the string
+ * the model's tool returns identical to the one the terminal shows.
+ */
+export function transcriptGutter(block: string): string {
+  return block
+    .split("\n")
+    .map((line) => (line.trim() === "" ? "" : `  ${line}`))
+    .join("\n");
+}
+
 /** Slash commands and the panels they open, mixed onto `Tui.prototype`. */
 export const COMMAND_METHODS = {
   slashCatalog(this: Tui): SlashItem[] {
@@ -122,6 +140,7 @@ export const COMMAND_METHODS = {
         tag: "settings",
       },
       { name: "/login", desc: "Connect a subscription, an API key, a local model, or web search" },
+      { name: "/setup", desc: "Configure provider, model, key, search, spend, and sandbox" },
       { name: "/sessions", desc: "Browse, resume, rename, archive & delete", tag: "history" },
       {
         name: "/gear",
@@ -166,9 +185,25 @@ export const COMMAND_METHODS = {
     const arg = rest.join(" ").trim();
 
     switch (cmd) {
+      case "setup": {
+        if (!this.ctx.firstRun) {
+          this.print(`  ${warn("Setup is unavailable in this launch.")}`);
+          return true;
+        }
+        if (this.ctx.firstRun.done()) {
+          this.print(`  ${warn("Setup has already closed; restart Rune and run /setup again.")}`);
+          return true;
+        }
+        this.mode = "setup";
+        this.input = "";
+        this.caret = 0;
+        this.setupReceipt = null;
+        this.scheduleDraw();
+        return true;
+      }
       case "settings":
       case "config": {
-        if (arg) this.print(await runSettingsCommand(engine, arg));
+        if (arg) this.print(transcriptGutter(await runSettingsCommand(engine, arg)));
         else await this.showSettings();
         return true;
       }
@@ -1307,13 +1342,10 @@ export const COMMAND_METHODS = {
           };
         }),
       ];
-      const selected = await this.pick(
-        "Settings",
-        rows,
-        0,
-        undefined,
-        "Changes apply now and are saved. Esc closes.",
-      );
+      // The total is in the heading and the footnote, never only in the list:
+      // a window that cannot show all of them says how many it is not showing.
+      const chrome = settingsPickerChrome(shortcuts.length);
+      const selected = await this.pick(chrome.title, rows, 0, undefined, chrome.footnote);
       if (selected === null) return;
       if (selected < shortcuts.length) {
         await this.handleSlash(`/${shortcuts[selected]!.command}`);
@@ -1336,7 +1368,7 @@ export const COMMAND_METHODS = {
         if (choice !== null) value = values[choice]!;
       }
       if (value !== null && value.trim())
-        this.print(await runSettingsCommand(engine, `${setting.key} ${value}`));
+        this.print(transcriptGutter(await runSettingsCommand(engine, `${setting.key} ${value}`)));
     }
   },
 

@@ -45,6 +45,7 @@ import {
   migrateLegacyHome,
   workspaceConfigPath,
   openCredentialStore,
+  apiKeyAccount,
   resolveSearchCredentials,
 } from "@rune/shared";
 import type { ProviderName, ResolvedCredential } from "@rune/llm-gateway";
@@ -67,6 +68,14 @@ import { rmSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import { parseArgs } from "util";
 import { runSettingsCommand } from "../settings-command";
+import {
+  FirstRun,
+  MASK_CELL_ASCII,
+  MASK_CELL_UTF8,
+  noKeysHintRows,
+  type SetupStepId,
+} from "../first-run";
+import { TERMINAL_GLYPH_MODE } from "./ui/glyphs";
 import { runSandboxCommand } from "../sandbox-command";
 import * as readline from "readline";
 import { renderWelcome } from "./welcome";
@@ -902,7 +911,10 @@ async function main() {
   // `/model` already accepts it; without this the pick was lost at the next
   // start, which is how P8.6's replacement for `lmstudio` (`/keys custom …`)
   // was reached but never kept.
-  const customUsable = !!(secrets.custom?.baseUrl && secrets.custom?.key);
+  const customUsable = !!(
+    secrets.custom?.baseUrl &&
+    (secrets.custom?.key || hasStoredCredential(CUSTOM_PROVIDER_ID))
+  );
   const stickyUsable = (p: string): boolean =>
     p === CUSTOM_PROVIDER_ID
       ? customUsable
@@ -1007,6 +1019,13 @@ async function main() {
   let credentials: Record<string, ResolvedCredential> = {};
   try {
     const store = await openCredentialStore();
+    // Custom endpoint metadata stays in the existing sidecar, while its real
+    // bearer secret follows the same credential-store path as every provider.
+    // Overlay it only in memory before the gateway is built.
+    if (secrets.custom?.baseUrl) {
+      const customKey = await store.get(apiKeyAccount(CUSTOM_PROVIDER_ID));
+      if (customKey) secrets.custom = { ...secrets.custom, key: customKey };
+    }
     // Search engines connected through `/login` live in the same store, under
     // the same account shape; the keychain outranks secrets.json and the env.
     applySearchKeysToEnv(process.env, await resolveSearchCredentials(store));
@@ -1230,22 +1249,36 @@ async function main() {
     return;
   }
 
+  // ─── Composer mode decision (needed before provider validation) ───
+  // A fresh interactive launch must reach the setup controller even though its
+  // engine has no registered provider yet. Headless/non-TTY launches retain the
+  // immediate, non-blocking credential error below.
+  const surface = resolveSurface({
+    isTTY: !!process.stdin.isTTY,
+    classicForced: (values.classic as boolean) || !!process.env.RUNE_CLASSIC,
+    tuiForced: (values.tui as boolean) || !!process.env.RUNE_TUI,
+    inline: (values.inline as boolean) || !!process.env.RUNE_INLINE,
+    fullscreenForced: (values.fullscreen as boolean) || !!process.env.RUNE_FULLSCREEN,
+  });
+  const useTui = surface.useTui;
+
   // ─── Startup Provider Validation ───
   const registeredProviders = engine.getRegisteredProviders();
-  if (registeredProviders.length === 0) {
+  const firstRunOnLaunch = registeredProviders.length === 0 && useTui;
+  if (registeredProviders.length === 0 && !useTui) {
     process.stdout.write(
       `\n  ${vermillion("✕")} ${vermillion("No API keys configured.")}\n` +
         `  ${dim("Set at least one API key to get started:")}\n\n` +
-        `  ${brass("export GOOGLE_API_KEY=")}${dim('"your-key"')}       ${dim("# free tier — recommended")}\n` +
-        `  ${brass("export OPENROUTER_API_KEY=")}${dim('"your-key"')}   ${dim("# free models available")}\n` +
-        `  ${brass("export ANTHROPIC_API_KEY=")}${dim('"your-key"')}    ${dim("# Claude models")}\n` +
-        `  ${brass("export OPENAI_API_KEY=")}${dim('"your-key"')}      ${dim("# GPT models")}\n\n` +
+        noKeysHintRows()
+          .map((r) => `  ${brass(r.assign)}${dim(r.value)}${r.pad}${dim(r.comment)}\n`)
+          .join("") +
+        "\n" +
         `  ${dim("Or add apiKey to ~/.rune/config.toml")}\n\n`,
     );
     engine.close();
     process.exit(1);
   }
-  if (!registeredProviders.includes(provider as any)) {
+  if (registeredProviders.length > 0 && !registeredProviders.includes(provider as any)) {
     // Selected provider has no key — auto-switch to first available
     const fallback = registeredProviders[0];
     process.stdout.write(
@@ -1262,15 +1295,6 @@ async function main() {
   // trailing composer. Piped/non-TTY stdin and
   // `--classic` / RUNE_CLASSIC fall back to the plain readline prompt; `--tui` / RUNE_TUI force the
   // TUI even past `--classic`.
-  const surface = resolveSurface({
-    isTTY: !!process.stdin.isTTY,
-    classicForced: (values.classic as boolean) || !!process.env.RUNE_CLASSIC,
-    tuiForced: (values.tui as boolean) || !!process.env.RUNE_TUI,
-    inline: (values.inline as boolean) || !!process.env.RUNE_INLINE,
-    fullscreenForced: (values.fullscreen as boolean) || !!process.env.RUNE_FULLSCREEN,
-  });
-  const useTui = surface.useTui;
-
   // ─── Create or resume session (one native flow) ───
   // `rune resume [id]` / `--resume <id>` target a specific session. Otherwise, on an
   // interactive terminal with prior sessions, a smart picker offers to resume (Enter =
@@ -1520,6 +1544,57 @@ async function main() {
   }
 
   if (useTui) {
+    const firstRun = new FirstRun({
+      workspaceRoot,
+      // The rung is the terminal's, and this is the side of the graph that
+      // knows it: `first-run.ts` is engine-side and never imports `bin/ui`
+      // (engine-graph-purity.test.ts). A masked key is the one string where a
+      // replacement character would read as part of the value.
+      maskCell: TERMINAL_GLYPH_MODE === "ascii" ? MASK_CELL_ASCII : MASK_CELL_UTF8,
+      flags: {
+        ...(typeof values.provider === "string" ? { provider: values.provider } : {}),
+        ...(typeof values.model === "string" ? { model: values.model } : {}),
+        ...(values.sandbox === true || values["no-sandbox"] === true
+          ? { sandbox: values.sandbox === true ? "on" : "off" }
+          : {}),
+      },
+      activeValue: (step: SetupStepId) => {
+        if (step === "provider") return engine.getProvider();
+        if (step === "model") return engine.getModel();
+        if (step === "search") return process.env.RUNE_SEARCH_BACKEND ?? "auto";
+        if (step === "spend_cap") return engine.readConfigSetting("budget");
+        if (step === "sandbox") return engine.readConfigSetting("sandbox");
+        return undefined;
+      },
+      applyLive: (step: SetupStepId, canonical: string) => {
+        if (step === "search") {
+          process.env.RUNE_SEARCH_BACKEND = canonical;
+          return { ok: true };
+        }
+        if (step === "spend_cap") return engine.applyConfigSetting("budget", canonical);
+        if (step === "sandbox") return engine.applyConfigSetting("sandbox", canonical);
+        if (step === "key") {
+          const saved = loadConfig(workspaceRoot);
+          const selectedProvider = saved.llm.defaultProvider;
+          const selectedModel = String(
+            (
+              saved.llm[selectedProvider as keyof typeof saved.llm] as
+                { model?: string } | undefined
+            )?.model ?? "",
+          );
+          if (selectedProvider === CUSTOM_PROVIDER_ID) {
+            const endpoint = loadSecrets().custom;
+            if (!endpoint) return { ok: false, reason: "custom endpoint is not configured" };
+            engine.setCustomEndpoint({ ...endpoint, key: canonical }, sessionId);
+          } else {
+            engine.setProviderKey(selectedProvider, canonical, sessionId);
+          }
+          if (selectedModel) engine.switchModel(selectedModel, selectedProvider, sessionId);
+          return { ok: true };
+        }
+        return { ok: false, reason: "takes effect after the credential step" };
+      },
+    });
     await runTui({
       engine,
       sessionId,
@@ -1532,6 +1607,8 @@ async function main() {
       inline: surface.inline,
       quotaAutoResume: config.fallback?.autoResume !== false,
       heldStepPrompt: config.permissions?.autoMode?.heldStepPrompt !== false,
+      firstRun,
+      firstRunOnLaunch,
     });
     return;
   }

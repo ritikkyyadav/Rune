@@ -56,6 +56,7 @@ import {
   type FrameMethods,
 } from "./tui-frame";
 import { INPUT_METHODS, type InputMethods } from "./tui-input";
+import { fleetLedger } from "./agents-panel";
 import { COMMAND_METHODS, type CommandMethods } from "./tui-commands";
 export { holdOpenRows } from "./tui-frame";
 import { setActivityWorkspaceRoot } from "./activity";
@@ -154,6 +155,7 @@ import { FoldLedger, type FoldRegion } from "./folds";
 import { BlockLedger, type BlockHandle } from "./blocks";
 import { workspaceConfigPath } from "@rune/shared";
 import { shouldOfferInteractive } from "./interactive";
+import type { FirstRun, StepReceipt } from "../../first-run";
 export interface TuiContext {
   engine: Engine;
   sessionId: string;
@@ -185,6 +187,11 @@ export interface TuiContext {
    * prints as plain text the way it always did.
    */
   heldStepPrompt?: boolean;
+  /** Setup controller shared with the CLI. Supplied on every interactive launch
+   * so `/setup` remains available after onboarding has completed. */
+  firstRun?: FirstRun;
+  /** Open setup before the ordinary composer on a fresh no-credential launch. */
+  firstRunOnLaunch?: boolean;
 }
 
 type Mode =
@@ -198,6 +205,7 @@ type Mode =
   | "held"
   | "sessions"
   | "memory"
+  | "setup"
   | "review";
 
 export interface PermissionKeyAction {
@@ -345,6 +353,12 @@ export class Tui {
   memoryBusy = false;
   memoryNote: string | null = null;
   memoryPendingClear = false;
+
+  // `/setup` and first launch. The answer buffer is deliberately the ordinary
+  // composer buffer, but setup submission bypasses runInput/history/transcript.
+  // A secret therefore never reaches any of those durable surfaces.
+  setupReceipt: StepReceipt | null = null;
+  setupBusy = false;
 
   // `/keys` BYOK panel
   keysSel = 0;
@@ -531,6 +545,9 @@ export class Tui {
 
   async run(): Promise<void> {
     const { engine } = this.ctx;
+    if (this.ctx.firstRunOnLaunch && this.ctx.firstRun && !this.ctx.firstRun.done()) {
+      this.mode = "setup";
+    }
 
     // The banner is a live header (re-themed every frame), so nothing to seed here.
     // The handler is registered in every mode: the broker short-circuits to "allowed"
@@ -1113,6 +1130,12 @@ export class Tui {
     this.folds.clear();
     this.blocks.clear();
     this.scroll = 0;
+    // The agents panel is part of the transcript's story, not a separate one:
+    // /clear, a resume and a session switch all arrive here, and a finished
+    // card surviving one of them would be the right column reporting a fan-out
+    // that belongs to a session no longer on screen.
+    fleetLedger.reset();
+    this.closeChildPane();
     if (!this.inline) {
       // The fixed layout's screen is ours: dropping the transcript and
       // repainting IS the clear, and it leaves the user's shell scrollback

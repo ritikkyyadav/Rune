@@ -33,9 +33,15 @@ import * as F from "./flow";
 import { questionLines, questionPlaceholder } from "./question";
 import { heldLines } from "./held";
 import { loopPromptPreview } from "../../loop-mode";
-import { text, muted, faint, info, ok, danger } from "./theme";
-import { glyph } from "./glyphs";
+import { text, muted, faint, info, ok, warn, danger } from "./theme";
+import { glyph, TERMINAL_GLYPH_MODE } from "./glyphs";
 import { rowsCount, SCROLL_STEP } from "./tui-frame";
+import { fleetLedger } from "./agents-panel";
+import { ledgerRows, maskLive } from "../../first-run";
+/** The rung, read once. `ledgerRows` takes it as an argument because
+ * first-run.ts is engine-side and never learns what a terminal can draw. */
+const ASCII_RUNG = TERMINAL_GLYPH_MODE === "ascii";
+
 /** Keys, the composer and history, mixed onto `Tui.prototype`. */
 export const INPUT_METHODS = {
   /** Commands matching the `/`-prefixed token being typed; empty hides the palette. */
@@ -50,6 +56,14 @@ export const INPUT_METHODS = {
   },
 
   composerBlock(this: Tui, height = Math.max(3, rowsCount() - 1)): RenderedBlock {
+    // What the field may grow to inside `height`, once the block's own chrome
+    // is paid for: the blank row, two rules and the status line, plus whatever
+    // the mode floats above the field. Three fifths of the window is the same
+    // ceiling the four-region frame gives it (viewport.regions) -- a composer
+    // that can take the whole window is a composer that can erase the thing it
+    // is being written about.
+    const fieldCap = (head: number): number =>
+      Math.max(1, Math.min(height - 4 - head, Math.max(4, Math.floor(rowsCount() * 0.6))));
     if (this.mode === "picker" && this.picker) {
       return renderPicker(
         this.picker.title,
@@ -96,13 +110,14 @@ export const INPUT_METHODS = {
       return { lines, caretRow: lines.length - 1, caretCol: F.BODY.length };
     }
     if (this.mode === "ask" && this.askState) {
+      const title = `  ${info("?")} ${text(this.askState.title)} ${faint("(Enter = ok | Esc = skip)")}`;
       const base = renderComposer({
         input: this.input,
         caret: this.caret,
         width: this.contentCols(),
         status: this.statusStr(),
+        maxRows: fieldCap(1),
       });
-      const title = `  ${info("?")} ${text(this.askState.title)} ${faint("(Enter = ok | Esc = skip)")}`;
       return {
         lines: [title, ...base.lines],
         caretRow: base.caretRow + 1,
@@ -111,14 +126,15 @@ export const INPUT_METHODS = {
     }
     if (this.mode === "question" && this.questionState) {
       const q = this.questionState;
+      const head = questionLines({ ...q, input: this.input, width: this.contentCols() });
       const base = renderComposer({
         input: this.input,
         caret: this.caret,
         width: this.contentCols(),
         status: this.statusStr(),
         placeholder: questionPlaceholder(q.options.length),
+        maxRows: fieldCap(head.length),
       });
-      const head = questionLines({ ...q, input: this.input, width: this.contentCols() });
       return {
         lines: [...head, ...base.lines],
         // The caret stays in the field, not on the highlighted row: typing an
@@ -156,6 +172,78 @@ export const INPUT_METHODS = {
         this.contentCols(),
         Math.max(4, rowsCount() - 1),
       );
+    }
+    if (this.mode === "setup" && this.ctx.firstRun) {
+      const setup = this.ctx.firstRun;
+      const step = setup.current();
+      // The three-rung ladder, like every other block: a marked row at MARK, the
+      // prose under it at BODY. `flowRow` budgets a row but does NOT indent it —
+      // the caller owns the gutter — and without these two prefixes every row of
+      // the wizard started at column 0, which is the same defect the 2026-09-10
+      // frames caught in `/config`'s confirmation.
+      const cols = this.contentCols();
+      const mark = (s: string): string =>
+        `${F.MARK}${F.flowRow(s, "", Math.max(8, cols - F.MARK.length))}`;
+      const body = (s: string): string =>
+        `${F.BODY}${F.flowRow(s, "", Math.max(8, cols - F.BODY.length))}`;
+      // The ledger rows come from first-run.ts, which is where the integration
+      // test reads them and where their widths are pinned. A second
+      // implementation here is how the panel and the test start disagreeing
+      // about what a skipped step says.
+      const ledger = ledgerRows(setup.steps(), Math.max(8, cols - F.MARK.length), ASCII_RUNG);
+      // A step's receipt is evidence, so it wears the same frame every other
+      // piece of evidence wears (§2.8: "the file written, the endpoint probed,
+      // the response … in the same boxes every other tool call uses"). The
+      // title is `check GET <url>` / `write <path>` / `set model`: the verb is
+      // the first word, exactly as a tool row's is.
+      const receipt = this.setupReceipt
+        ? F.box(
+            {
+              verb: this.setupReceipt.title.split(" ")[0] ?? "setup",
+              arg: this.setupReceipt.title.split(" ").slice(1).join(" "),
+            },
+            F.boxOutput(this.setupReceipt.body),
+            {
+              status: this.setupReceipt.ok ? "pass" : "fail",
+              parts: [this.setupReceipt.close],
+            },
+            { width: F.measure(cols) },
+          )
+        : [];
+      const head = [
+        mark(`${faint("setup")}  ${text(setup.heading())}`),
+        ...ledger.map((line) => mark(faint(line))),
+        body(faint(setup.precedenceLine(Math.max(8, cols - F.BODY.length)))),
+        ...(setup.restartNote() ? [body(warn(setup.restartNote()!))] : []),
+        ...receipt,
+        ...(step ? [mark(text(step.question)), body(faint(step.hint))] : []),
+      ];
+      const shown = step?.secret ? maskLive(this.input, setup.maskCell()) : this.input;
+      const base = renderComposer({
+        input: shown,
+        caret: Math.min(this.caret, shown.length),
+        width: this.contentCols(),
+        // `renderComposer` sets its status rows down exactly as it is given
+        // them, so the gutter is the caller's here as it is above.
+        status: body(
+          faint(
+            step
+              ? `enter continue ${glyph("observed")} esc cancel`
+              : `setup complete ${glyph("observed")} enter close`,
+          ),
+        ),
+        placeholder: this.setupBusy
+          ? "checking..."
+          : step?.secret
+            ? "paste key (masked)"
+            : "type a value, or enter to skip",
+        maxRows: fieldCap(head.length),
+      });
+      return {
+        lines: [...head, ...base.lines],
+        caretRow: head.length + base.caretRow,
+        caretCol: base.caretCol,
+      };
     }
     if (this.mode === "sessions") {
       return renderSessionsPanel(
@@ -200,16 +288,19 @@ export const INPUT_METHODS = {
     if (this.mode === "turn") {
       // The composer stays live while a turn streams so the next message can be typed ahead.
       // The working indicator (and any queued messages) float above the still-editable box.
+      //
+      // The head is measured FIRST so the field's cap can subtract it: while a
+      // turn streams the rows above the box are the run's own receipt, and a
+      // type-ahead draft that grew over them would erase what it is answering.
+      const head = this.turnStateLines();
+      head.push(...renderQueueStrip(this.queued, this.contentCols()));
       const base = renderComposer({
         input: this.input,
         caret: this.caret,
         width: this.contentCols(),
         status: this.statusStr(),
+        maxRows: fieldCap(head.length),
       });
-      // The buffered prose run streams live here (it commits to the transcript only
-      // once the turn decides which partition -- work rail or response -- it belongs to).
-      const head = this.turnStateLines();
-      head.push(...renderQueueStrip(this.queued, this.contentCols()));
       return {
         lines: [...head, ...base.lines],
         caretRow: base.caretRow + head.length,
@@ -221,8 +312,12 @@ export const INPUT_METHODS = {
       caret: this.caret,
       width: this.contentCols(),
       status: this.statusStr(),
+      maxRows: fieldCap(0),
     });
     const matches = this.slashMatches();
+    // The palette only opens on a `/` with no space in it yet, so the field
+    // under it is one row -- which is why the cap above can ignore it and the
+    // palette's own budget can go on subtracting the field's height.
     if (matches.length === 0) return base;
     // Float the palette above the input box; the caret stays in the box.
     const palette = renderSlashPalette(
@@ -301,6 +396,14 @@ export const INPUT_METHODS = {
       else if (this.mode === "input" || this.mode === "turn") this.cyclePermissionMode();
       return;
     }
+    // The agents panel has the keys (P4 §2.7). It is checked before the mode
+    // because the panel is focusable in BOTH writing modes and the keys mean
+    // the same thing in each: a fan-out does not stop being reviewable because
+    // the master happens to be mid-turn. Every key it does not claim falls
+    // through to the mode below, so typing is never swallowed.
+    if ((this.mode === "input" || this.mode === "turn") && this.focus === "panel") {
+      if (this.panelKey(key)) return;
+    }
     switch (this.mode) {
       case "input":
         this.inputKey(key);
@@ -323,6 +426,9 @@ export const INPUT_METHODS = {
       case "memory":
         this.memoryKey(key);
         break;
+      case "setup":
+        this.setupKey(key);
+        break;
       case "ask":
         this.askKey(key);
         break;
@@ -342,7 +448,7 @@ export const INPUT_METHODS = {
    *  collapses to a chip so the composer stays a clean single line (see `pastes`). */
   endPaste(this: Tui, content: string): void {
     // Key/URL editor is a single-line field -- always inline, newlines stripped by insertActive.
-    if (this.mode === "keys") {
+    if (this.mode === "keys" || this.mode === "setup") {
       this.insertActive(content);
       this.scheduleDraw();
       return;
@@ -388,6 +494,54 @@ export const INPUT_METHODS = {
     this.insert(s);
   },
 
+  setupKey(this: Tui, key: Key): void {
+    if (!this.ctx.firstRun || this.setupBusy) return;
+    if (this.ctx.firstRun.done()) {
+      if (key.type === "enter" || key.type === "esc") {
+        this.input = "";
+        this.caret = 0;
+        this.mode = "input";
+        this.scheduleDraw();
+      }
+      return;
+    }
+    if (key.type === "esc") {
+      this.ctx.firstRun.cancel();
+      this.input = "";
+      this.caret = 0;
+      this.setupReceipt = null;
+      this.mode = "input";
+      this.scheduleDraw();
+      return;
+    }
+    if (key.type === "enter") {
+      const answer = this.input;
+      this.input = "";
+      this.caret = 0;
+      this.setupBusy = true;
+      this.scheduleDraw();
+      void this.ctx.firstRun.answer(answer).then(
+        (outcome) => {
+          this.setupBusy = false;
+          this.setupReceipt = outcome.receipt;
+          this.scheduleDraw();
+        },
+        (err) => {
+          this.setupBusy = false;
+          this.setupReceipt = {
+            ok: false,
+            title: "setup",
+            body: [],
+            close: err instanceof Error ? err.message : String(err),
+          };
+          this.scheduleDraw();
+        },
+      );
+      return;
+    }
+    if (this.editComposer(key)) this.scheduleDraw();
+  },
+
   /** Apply a pure text-editing key to the composer (insert / caret motion / deletion). Returns
    *  true when it handled the key. Shared by input mode and mid-turn type-ahead so the composer
    *  edits identically whether or not a turn is streaming; callers own redraw + side effects. */
@@ -420,9 +574,92 @@ export const INPUT_METHODS = {
       case "end":
         this.caret = this.input.length;
         return true;
+      case "ctrl":
+        // The explicit newline.
+        //
+        // Not shift+enter: a terminal never sees the shift, so the two arrive
+        // as the same byte and the composer cannot tell them apart. Not ctrl+j
+        // or ctrl+m either -- those ARE Enter at the wire (keys.ts), which is
+        // why the widely-suggested binding cannot be built here. `ctrl+b` was
+        // free, and it is handled in editComposer rather than in ctrlKey so
+        // that it works identically while a turn is streaming, where the
+        // type-ahead path falls through to this same function.
+        if (key.name === "b") {
+          this.insert("\n");
+          this.scroll = 0;
+          return true;
+        }
+        return false;
       default:
         return false;
     }
+  },
+
+  /**
+   * The keys, while the agents panel has focus (P4 §2.7).
+   *
+   * Returns true when it claimed the key. Four bindings and no more:
+   *
+   *   ↑↓     move the selection. Held on the LEDGER, by id, so a member
+   *          finishing above the selection does not move it under the eye.
+   *   1–9    jump straight to that agent. Digits already mean "select" in
+   *          every other Rune list (the picker, the permission card, the held
+   *          panel), so this is the existing idiom rather than a new one --
+   *          and it is what the founder's `shift+N` becomes, because a
+   *          terminal never delivers shift+3 as anything but `#` (§2.7).
+   *   enter  open that agent's live transcript in the workspace split. The
+   *          buffer is handed over BY REFERENCE, so a pane opened mid-run
+   *          keeps filling as the child reports rather than freezing at the
+   *          moment you looked.
+   *   c      clear the finished section.
+   *
+   * `esc`, `ctrl+f` and `ctrl+w` are deliberately NOT here: they are the ring
+   * and they must behave identically from every region, which is what the
+   * fall-through below gives them.
+   */
+  panelKey(this: Tui, key: Key): boolean {
+    const view = fleetLedger.view(true);
+    const any = view.running.length + view.finished.length > 0;
+    if (key.type === "up" || key.type === "down") {
+      if (!any) return false;
+      fleetLedger.move(key.type === "up" ? -1 : 1);
+      this.scheduleDraw();
+      return true;
+    }
+    if (key.type === "char" && /^[1-9]$/.test(key.value)) {
+      if (!fleetLedger.selectIndex(Number(key.value))) return false;
+      this.scheduleDraw();
+      return true;
+    }
+    if (key.type === "char" && key.value === "c") {
+      // Nothing to clear is not a key press to swallow: `c` falls through and
+      // types a `c`, which is what a composer-bound user expects.
+      if (view.finished.length === 0) return false;
+      fleetLedger.clearFinished();
+      if (this.childPane && !fleetLedger.get(this.childPane.id)) this.closeChildPane();
+      this.scheduleDraw();
+      return true;
+    }
+    if (key.type === "enter") {
+      const id = view.selectedId;
+      const card = id ? fleetLedger.get(id) : undefined;
+      if (!card) return false;
+      // Already open on this one: enter closes it. A key that only ever opens
+      // leaves the reader hunting for the one that undoes it.
+      if (this.childPane?.id === card.id) {
+        fleetLedger.detachPane();
+        this.closeChildPane();
+        this.scheduleDraw();
+        return true;
+      }
+      const pane = { id: card.id, name: card.name, lines: fleetLedger.buffer(card.id) };
+      fleetLedger.attachPane(pane);
+      fleetLedger.refreshPane();
+      this.openChildPane(pane);
+      this.scheduleDraw();
+      return true;
+    }
+    return false;
   },
 
   inputKey(this: Tui, key: Key): void {
