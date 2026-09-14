@@ -1,3 +1,16 @@
+# Claude checkpoint — superseded 2026-09-14 23:05 IST
+
+**This checkpoint is history.** The work it describes was finished the same evening; the
+current state, the authoritative implemented / tested / installed / pending list, and the
+next executable step are in
+[harness-status, "2026-09-14 (later)"](harness-status.md#2026-09-14-later--m1-lands-the-wizard-takes-the-frame-the-tree-is-gated-and-installed-and-the-walkthrough-finds-what-the-tests-could-not)
+and its addendum. Tree at `bf8895d`: clean apart from the untracked
+`scripts/tui-capture/first-run-frame.ts`; fifteen commits since `4869e4c` unpushed (push is
+the founder's). Installed `v0.4.1-dev+a22866b`. Next: M2 (a passive controller in shadow,
+per the review) and the §2.8 remainder; lane reports under `.codex/audit-20260910/handoff/m0/`.
+
+---
+
 # Claude checkpoint — 2026-09-14 20:55 IST
 
 Stopped at the founder's request at a safe point: no lane is running, nothing
