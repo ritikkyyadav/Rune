@@ -205,8 +205,8 @@ describe("the summary counts what happened", () => {
     const { rows, arbiter } = rig();
     // agree
     arbiter.observe("G0", { pending: true }, "working", state(1));
-    // disagree: G9 accepts an empty completion as a finish with no verdict
-    arbiter.observe("G9", { workStands: true, hasVerdict: false }, "complete(end_turn)", state(2));
+    // disagree: G9 with nothing standing, accepted as a finish anyway
+    arbiter.observe("G9", { workStands: false, hasVerdict: false }, "complete(end_turn)", state(2));
     // unknown: a site that could not read its input
     arbiter.observe("E1", {}, "abandoned(budget)", state(3));
     arbiter.finish();
@@ -252,7 +252,7 @@ describe("the summary counts what happened", () => {
 
   test("the summary renders as a block a person can read", () => {
     const { rows, arbiter } = rig();
-    arbiter.observe("G9", { workStands: true, hasVerdict: false }, "complete(end_turn)", state(1));
+    arbiter.observe("G9", { workStands: false, hasVerdict: false }, "complete(end_turn)", state(1));
     arbiter.finish();
     const lines = shadowSummaryLines(summaryOf(rows));
     expect(lines[0]).toContain("disagree 1");

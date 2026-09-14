@@ -383,21 +383,32 @@ function propose(state: RunState | undefined, event: ShadowEvent): Proposal {
           };
     }
     case "G9": {
-      // The class-3 replacement for today's class-5 behaviour: an empty
-      // completion is an ENVIRONMENT fault, and an environment fault may only
-      // end a run as complete when a verdict says what was completed.
+      // An empty completion is an ENVIRONMENT fault, and an environment fault
+      // may never itself declare a run complete: only a verdict says what was
+      // completed. What the site does when work stands is stop retrying and
+      // fall into the finish path, so the honest transition is `verifying` —
+      // the verdict below decides (M3, `docs/program/m3-first-migration.md`).
+      // With nothing standing there is nothing to verify and the run is
+      // abandoned on the environment.
       const stands = bool(i, "workStands");
       const hasVerdict = bool(i, "hasVerdict");
       if (stands === undefined || hasVerdict === undefined) {
         return missing("workStands", "hasVerdict");
       }
       if (!hasVerdict) {
-        return {
-          transition: abandoned("environment"),
-          reason:
-            "the model returned nothing and no verdict says what was completed — " +
-            "an empty completion is not a completion",
-        };
+        return stands
+          ? {
+              transition: "verifying",
+              reason:
+                "the work stands and no verdict is in hand here — the finish path decides " +
+                "whether it completed; an empty completion is not itself a completion",
+            }
+          : {
+              transition: abandoned("environment"),
+              reason:
+                "the model returned nothing and there is no work to stand on — " +
+                "an empty completion is not a completion",
+            };
       }
       const kind = str(i, "verdictKind");
       if (kind === undefined) return missing("verdictKind");

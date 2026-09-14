@@ -330,28 +330,41 @@ describe("S4 — over the corpus, every disagreement names guard, expected and a
     // counted — the report quotes it.
     console.log(
       `[S4] disagreements over ${CORPUS.length} scenarios:\n` +
-        disagreements
-          .map((d) => `  ${d.run} · ${d.guard}: arbiter ${d.expected} · guard ${d.actual}`)
-          .join("\n"),
+        (disagreements.length === 0
+          ? "  none"
+          : disagreements
+              .map((d) => `  ${d.run} · ${d.guard}: arbiter ${d.expected} · guard ${d.actual}`)
+              .join("\n")),
     );
-    expect(disagreements.length).toBeGreaterThan(0);
   });
 
-  test("G9 is among them: an empty completion accepted as a finished run", () => {
+  // B6 (M3). M2's single disagreement was G9, and it was a LABEL: the site
+  // recorded `complete(end_turn)` for a branch that ends nothing — it stops
+  // retrying and falls into the finish path, where the verdict decides. With
+  // the site recording `verifying` and the arbiter's G9 rule proposing
+  // `verifying` when work stands, the corpus reads zero disagreements and the
+  // branch is covered end to end. This expectation was flipped DELIBERATELY;
+  // it read "G9 is among them" at b5632fb.
+  test("B6 — the corpus shows zero disagreements", () => {
+    const named = all.flatMap((o) =>
+      o.summary.disagreementList.map(
+        (d) => `${o.name} · ${d.guard}: arbiter ${d.expected} · guard ${d.actual}`,
+      ),
+    );
+    expect(named).toEqual([]);
+    for (const o of all) expect(o.summary.disagreements, o.name).toBe(0);
+  });
+
+  test("G9 agrees: the accepted empty completion is a verifying step, not a finish", () => {
     const run = got("empty-completion-accepted");
-    const g9 = run.summary.disagreementList.filter((d) => d.guard === "G9");
-    expect(g9.length).toBeGreaterThan(0);
-    expect(g9[0]!.expected).toBe("abandoned(environment)");
-    expect(g9[0]!.actual).toBe("complete(end_turn)");
-    // And the run really did end as a success, which is the defect being named.
-    expect(run.stopReason).toBe("end_turn");
-  });
-
-  test("a disagreement row carries the reason the arbiter decided as it did", () => {
-    const g9 = got("empty-completion-accepted").decisions.find((d) => d.guard === "G9")!;
-    expect(g9.agree).toBe(false);
-    expect(g9.reason).toContain("no verdict");
+    const g9 = run.decisions.find((d) => d.guard === "G9")!;
+    expect(g9.decision).toBe("verifying");
+    expect(g9.actual).toBe("verifying");
+    expect(g9.agree).toBe(true);
     expect(g9.applied).toBe(false);
+    expect(g9.reason).toContain("the finish path decides");
+    // The run still ends a success: the label moved, the behaviour did not.
+    expect(run.stopReason).toBe("end_turn");
   });
 
   test("the agreements are real agreements, not unknowns in disguise", () => {

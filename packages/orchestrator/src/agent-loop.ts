@@ -2763,13 +2763,20 @@ export class AgentLoop {
           return;
         }
         // Accept the finish — on the earlier narration, or on the work — and say so once.
-        // G9, the class-5 case the ladder exists for: the empty completion is
-        // accepted as a finish with NO verdict in hand at this site. `hasVerdict`
-        // is a fact about this moment, not about the run's contract.
+        //
+        // G9, recorded for what it actually does (M3). This site does NOT end
+        // the run: it stops retrying and falls through into the finish path
+        // below — G1 verification, G2 replan, G3–G7, then the verdict — and
+        // that path decides whether the run completed. The transition here is
+        // therefore `verifying`, not `complete(end_turn)`; M2 recorded the
+        // latter and the arbiter disagreed with it, correctly, for a reason
+        // the label hid (`docs/program/m3-first-migration.md`, "What M2 showed").
+        // `hasVerdict` stays a fact about this moment: no verdict is in hand
+        // here, whatever the finish path computes moments later.
         this.config.shadow?.observe(
           "G9",
           { workStands: true, hasVerdict: false, emptyCompletions, maxEmpty },
-          "complete(end_turn)",
+          "verifying",
           shadowState(),
         );
         this.report(

@@ -169,13 +169,19 @@ describe("class 5 never proposes complete", () => {
   });
 
   test("G9 — an empty completion with no verdict is not a completion", () => {
+    // Work standing means the finish path runs and the verdict below decides:
+    // `verifying`, never a completion declared by the environment (M3).
     const d = decide(emptyRunState(RUN), ev(1, "G9", { workStands: true, hasVerdict: false }));
-    expect(d.transition).toBe(abandoned("environment"));
+    expect(d.transition).toBe("verifying");
     expect(d.class).toBe(3);
+    expect(d.transition.startsWith("complete(")).toBe(false);
+    // Nothing to stand on and nothing to verify: the environment ended it.
+    const bare = decide(emptyRunState(RUN), ev(2, "G9", { workStands: false, hasVerdict: false }));
+    expect(bare.transition).toBe(abandoned("environment"));
     // With a verdict it may stand on it, which is the whole distinction.
     const withVerdict = decide(
       emptyRunState(RUN),
-      ev(2, "G9", { workStands: true, hasVerdict: true, verdictKind: "partial" }),
+      ev(3, "G9", { workStands: true, hasVerdict: true, verdictKind: "partial" }),
     );
     expect(withVerdict.transition).toBe(complete("partial"));
   });
@@ -293,7 +299,11 @@ describe("the exit tests can fail", () => {
   });
 
   test("S4's G9 disagreement disappears under the mutant", () => {
-    const e = ev(1, "G9", { workStands: true, hasVerdict: false });
+    // M3 corrected the SITE's label, so the live G9 now agrees. The mutation
+    // is still the same mutation: a `decide` that echoes the guard can never
+    // record a disagreement — shown here on an empty completion with nothing
+    // standing that a guard nevertheless called a finish.
+    const e = ev(1, "G9", { workStands: false, hasVerdict: false });
     const real = decide(emptyRunState(RUN), e);
     const actual = complete("end_turn");
     expect(real.transition === actual).toBe(false);
