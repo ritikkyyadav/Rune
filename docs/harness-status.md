@@ -790,3 +790,83 @@ write this entry; this pass audited its artifacts rather than assuming them, and
 whose subject had moved since. A standing contributor: the installer reports **2,173.5 MB** of its
 own backups in `~/.rune/bin`, 105 files across 27 generations, of which keeping the newest five
 would reclaim 1,755 MB. `--prune-backups` was not passed.
+
+## 2026-09-14 — M0: the two interrupted lanes finished, and a forged citation no longer buys a rung
+
+The founder stopped the Phase 4/5 effort at 20:55 IST with two fix lanes cut off mid-edit
+([the checkpoint](CLAUDE_CHECKPOINT.md)). This entry is M0 of
+[the corrected plan](program/guarantees-plan-review-20260914.md#m0--freeze-the-subject-and-finish-the-interrupted-batch),
+executed inside the original handoff's scope: the subject was frozen
+(`.codex/audit-20260910/handoff/m0/snapshot.txt` + the 1,153-line uncommitted diff), the
+two lanes were finished by two Opus workers on disjoint files, each read by the supervising
+session against its own probes, and the guard inventory was reconciled against the commits
+that landed after it was written. **Zero live model calls**; `~/.rune` untouched.
+
+### Where each claim stands
+
+**Implemented** — five commits on `gear/phase-0-stabilize` after `4869e4c`:
+
+| Commit    | What                                                                                                                                                                                                                                                                                                                                                                                                           |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `42e7c62` | harness: `record_evidence` is gated by relatedness on the criterion branch, scoped by `criterionScope` to the files the criterion's own words name; a set-aside citation is recorded (`Evidence.unrelated`) and moves nothing; `runOnParentCommit` reports `not-applicable-on-parent` for a runner that collected nothing or a path the parent never had — a failure by absence buys no rung                   |
+| `977789a` | harness: `failingChecks` keys on the quote-preserving `normalizeCommand` (review finding 1); `contractShape` rewritten work → plan → question → chat → `unknown`, `ship` out of the chat words (review finding 2); `briefDrift` compares like with like over `GOAL_CAP`; verdict kind `none` for question/plan/chat with no criteria and no writes; `rune audit` paints it dim                                 |
+| `31c6c56` | ui: the caret sits on the field row with the `/` palette open at 80×24 (the real cause was `renderBand` dividing the caret's row by the region, not the painted rows — not the verifier's guess); below 100 columns the composer's extra rows COVER the workspace's bottom rows instead of shrinking it, so nothing above re-lays while typing; stale child header on shrink; wide-char wrap; `ESC(B` stripped |
+| `ec8490e` | ui: one tool call counts once on a child card (typed event and string echo reconciled by a per-member credit); no initials collision                                                                                                                                                                                                                                                                           |
+| `9d0f9da` | ui: the wizard's saved-vs-active rows name the source that won (and the heading no longer trims out of its columns); an unreachable host is a host receipt, not a rejected key; the read-back close routes through `capRung`/`rungMark`/`rungPaint` and an untouched criterion renders blank                                                                                                                   |
+
+The A2 rebuild is a **design deviation from the inherited fix**, recorded for the founder:
+capping the collapsed composer at its minimum turned the spec green but left 80×24 with a
+one-row field and no palette at all (both captured on a pty). Covering the workspace's bottom
+rows keeps rows 1–16 byte-identical between rest and a three-line draft; the frames are in
+`.codex/audit-20260910/handoff/m0/f4-frames/`.
+
+**Tested on this source.** Every one of the 20 red verification specs (4 contract, 16 UI) is
+green by a product change and promoted into a permanent suite; `tests/verification/` is empty.
+The contract lane mutation-tested its verdict (forcing `met` kills 3 of 4 promoted tests; the
+drift test is independent of it by design); the UI lane reverted each of the 15 inherited
+fixes in turn and 14 specs died — E3's did not, because it only greps for a call site, so the
+lane rendered the table for real and found two more defects in it (fixed in `9d0f9da`).
+
+| Gate                                                                                                                          | Result                                                                                             |
+| ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| contract suites (`contract`, `parent-check`, `brief-ledger`, `verification-command*`, promoted `task-contract-*` integration) | **134 pass / 0 fail** re-run by the supervisor at `977789a`; lane: 276 + 12                        |
+| ui suites + `first-run` + `ui-grammar` + `ui-glyphs`                                                                          | **283 pass / 0 fail** re-run by the supervisor at `9d0f9da`; lane: 727 across its wider set        |
+| `bun test tests/unit` (unsandboxed)                                                                                           | **4,924 / 1 skip / 0** at `977789a` (contract lane); **4,944 / 1 skip / 0** at `9d0f9da` (UI lane) |
+| `bun test tests/integration` (unsandboxed)                                                                                    | **289 / 7 skip / 0** at `977789a`                                                                  |
+| `bunx tsc --noEmit -p packages/orchestrator`, `-p packages/protocol`                                                          | 0 errors at `9d0f9da` (the `read-back.ts:106` error is gone)                                       |
+| lint, format, cargo, clippy, eval, eval:auto-safety, strict tsc                                                               | **not run in M0** — deferred to the M1 close, on the final combined source                         |
+
+Supervisor probes beyond the lanes' tests: the four review examples classify as the review
+demands, `looks good, ship it` and a pasted stack trace are `unknown` (not `chat`, not
+`feature`), a question that WROTE a file is back to `unmet`, and the quoted-path example
+yields `partial` with the red check named.
+
+**Installed.** Nothing. The binary the founder runs is still `v0.4.1-dev+2f13c19`; nothing
+from Phase 4, 5B or M0 is live. Install is the M1 close's job, on the final combined source.
+
+**Published.** Nothing. `4869e4c` and these five are unpushed; push is the founder's.
+
+### The authoritative list (the M0 exit)
+
+- **Implemented and tested on this source:** the four-region frame, agents panel, composer,
+  named sub-agents with their own stream, box grammar and claim rungs, the six-step first
+  run with saved-vs-active and masked keys, the CI workflows (`containment-linux`,
+  `install-smoke`), TaskContract at intake, a verdict on every exit, and the five M0 commits.
+- **Installed and smoke-tested:** `v0.4.1-dev+2f13c19` only — Phase 3's close. Everything
+  since is source-only.
+- **Independently demonstrated:** nothing since Phase 3's five re-measurements.
+- **Pending, by original phase:** Phase 4 — the installed fresh-profile walkthrough and
+  §2.8's wizard-in-frame split (at 120×40 `/setup` still drops the panel; frame
+  `120x40-setup-wizard-no-split.txt`). Phase 5 — untouched. Phase 6 — untouched. Phase 7 —
+  the two CI jobs have never executed (unpushed), Linux is still unrun (the Docker client
+  is present, no daemon socket, no reset attempted), Windows is reasoned only, no live run.
+- **Pending, by milestone:** M1 in flight on
+  [its spec](program/m1-acceptance-semantics.md); M2–M6 not started.
+
+### Next executable step
+
+The M1 lane's three commits (derived criterion status; amendments that keep what the user
+and the evaluator stated; the runtime running `--acceptance` at the finish gate), then ONE
+closing pass: the full gate list from the handoff's Phase 1, `install.sh` without overrides,
+doctor, `docs/evidence/verification-20260914.json`, and the installed fresh-profile
+walkthrough from the handoff's Phase 4.

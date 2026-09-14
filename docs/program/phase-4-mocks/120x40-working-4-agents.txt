@@ -1,0 +1,40 @@
+
+  R U N E  ~/Project/Alan                                                                            v0.4.1-dev+62f02d0
+  ━━━━━━━──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                              │ AGENTS                       3 running
+  ◇ Four lanes, named: planner has the settings surface, builder the          │ ──────────────────────────────────────
+    wizard, verifier the frame captures, scribe the help copy.                │ › 1  planner    ▆  2m 04s
+                                                                              │      map the settings surface
+  ┌ read  packages/orchestrator/src/config-settings.ts ─────────────────────┐ │      read  config-settings.ts
+  │ export const CONFIG_SETTINGS: ConfigSetting[] = [                       │ │      12.4k tok · 9 tools
+  │   { key: "max_turns", kind: "number", min: 1, max: 400 },               │ │   2  builder    ▃  1m 12s
+  │ … 204 unchanged lines                                                   │ │      build the setup wizard
+  └ · observed · 212 lines · 0.2s ──────────────────────────────────────────┘ │      edit  first-run.ts
+                                                                              │      8.1k tok · 6 tools
+  ◇ The wizard needs a step ledger the frame can render, so I am              │   3  verifier   ▁  48s · quiet 9s
+    writing one before anything touches the surface.                          │      re-run the frame captures
+                                                                              │      bun test ui-frame.test.ts
+  ┌ edit  packages/orchestrator/src/first-run.ts ───────────────────────────┐ │      3.2k tok · 4 tools
+  │   1 +export interface SetupStep {                                       │ │
+  │   2 +  id: "provider" | "model" | "key" | "search" | "cap";             │ │ FINISHED 1                     c clear
+  │   3 +  saved?: string;   // what is on disk                             │ │ ──────────────────────────────────────
+  │   4 +  active?: string;  // what this session is using                  │ │   4  scribe     ✓  31s
+  │     … 30 more added lines                                               │ │      write the help copy
+  └ · observed · +34 -0 ────────────────────────────────────────────────────┘ │      2.9k tok · 3 tools · enter view
+                                                                              │
+  ┌ run   bun test tests/unit/orchestrator/ui-frame.test.ts ────────────────┐ │
+  │ bun test v1.2.4                                                         │ │
+  │                                                                         │ │
+  │ ✓ the launch frame > every painted line begins in the same column       │ │
+  │ … 15 lines                                                              │ │
+  │ 17 pass  0 fail  41 expect() calls                                      │ │
+  └ ✓ exit 0 · 17 pass · 1.9s ──────────────────────────────────────────────┘ │
+                                                                              │
+  ◇ Geometry holds at 120. Verifier is re-running the same captures           │
+    at 80 columns; I will not call it settled until that comes back.          │
+                                                                              │
+                                                                              │ ──────────────────────────────────────
+                                                                              │ › and re-run the 80-column capture
+                                                                              │ ──────────────────────────────────────
+                                                                              │ enter send · ctrl+f agents · ? keys
+  ◆ 1st gear · edits ask · gpt-5.6-sol max · 34% context · 4 files edited · sandbox on

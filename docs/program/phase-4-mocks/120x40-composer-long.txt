@@ -1,0 +1,40 @@
+
+  R U N E  ~/Project/Alan                                                                            v0.4.1-dev+62f02d0
+  ━━━━━━━──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                              │ AGENTS                          4 done
+  ┌ run   bun test tests/unit/orchestrator/ui-frame.test.ts ────────────────┐ │ ──────────────────────────────────────
+  │ 17 pass  0 fail  41 expect() calls                                      │ │   1  planner    ✓  3m 12s
+  └ ✓ exit 0 · 1.9s ────────────────────────────────────────────────────────┘ │   2  builder    ✓  2m 48s
+                                                                              │   +2 more                    ctrl+f
+  ◆ done                                                        3 of 4        │
+                                                                              │
+  ✓ the frame holds at 120x40, 100x30 and 80x24                               │
+        bun test ui-frame.test.ts · 17 pass · failed on 62f02d0               │
+  ✓ the right column collapses below 100 columns                              │
+        bun test ui-frame.test.ts:214 · 3 pass                                │
+    every painted row ends inside the measure at 241 columns                  │
+        no evidence — not run at that width                                   │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │ ──────────────────────────────────────
+                                                                              │ › Rework the first-run wizard so the
+                                                                              │   provider step remembers what the
+                                                                              │   last session used, and make the
+                                                                              │   spend cap accept a monthly figure
+                                                                              │   as well as a per-session one.
+                                                                              │   [Pasted text #1 +38 lines]
+                                                                              │   The acceptance is the 80x24 capture
+                                                                              │   matching the mock exactly, including
+                                                                              │   the collapsed right column and the
+                                                                              │   one-line agent strip.█
+                                                                              │ ──────────────────────────────────────
+                                                                              │ 12 lines · 318 chars   ctrl+b line
+  ◆ 1st gear · edits ask · gpt-5.6-sol max · 34% context · 4 files edited · sandbox on

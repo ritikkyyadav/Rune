@@ -1,0 +1,24 @@
+
+  R U N E  ~/Project/Alan                                    v0.4.1-dev+62f02d0
+  ━━━━━━━──────────────────────────────────────────────────────────────────────
+
+  ◇ Four lanes, named: planner has the settings surface,
+    builder the wizard, verifier the captures, scribe the help.
+
+  ┌ edit  packages/orchestrator/src/first-run.ts ───────────────────────────┐
+  │   1 +export interface SetupStep {                                       │
+  │   2 +  id: "provider" | "model" | "key" | "search" | "cap";             │
+  │     … 32 more added lines                                               │
+  └ · observed · +34 -0 ────────────────────────────────────────────────────┘
+
+  ◇ Geometry holds at 120. Verifier is re-running it at 80.
+
+
+
+
+  ◆ 3 running · 1 done · planner ▆ · builder ▃ · verifier ▁       ctrl+f open
+  ───────────────────────────────────────────────────────────────────────────
+  › and re-run the 80-column capture
+  ───────────────────────────────────────────────────────────────────────────
+  enter send · ctrl+b line · ctrl+f agents · ? keys
+  ◆ 1st gear · gpt-5.6-sol · 34% context · sandbox on

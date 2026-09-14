@@ -1,0 +1,40 @@
+
+  R U N E  ~/Project/Alan                                                                            v0.4.1-dev+62f02d0
+  ━━━━━━━──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                              │ SESSION
+  ┌ run   bun test tests/unit/orchestrator/ui-frame.test.ts ────────────────┐ │ ──────────────────────────────────────
+  │ 17 pass  0 fail  41 expect() calls                                      │ │   context  [███████             ]  34%
+  └ ✓ exit 0 · 1.9s ────────────────────────────────────────────────────────┘ │            48.1k / 140k tokens
+                                                                              │   model    gpt-5.6-sol  max
+  ◆ done                                                        3 of 4        │   route    codex · cache warm
+                                                                              │   cost     $1.84 this session
+  ✓ the frame holds at 120x40, 100x30 and 80x24                               │   tools    41 calls
+        bun test ui-frame.test.ts · 17 pass · failed on 62f02d0               │            19 read · 9 edit · 8 run
+  ✓ the right column collapses below 100 columns                              │   changed  4 files  +81 -12
+        bun test ui-frame.test.ts:214 · 3 pass                                │   sandbox  on · workspace writes only
+  ✓ a named child reaches the panel and the lifecycle row                     │   gear     1st · edits ask
+        bun test ui-fleet.test.ts · 12 pass                                   │   check    ui-frame ✓ 1.9s · 2m ago
+    every painted row ends inside the measure at 241 columns                  │
+        no evidence — not run at that width                                   │ AGENTS                         c clear
+                                                                              │ ──────────────────────────────────────
+    criteria without evidence are not met. nothing here was closed            │   none running · 4 finished this turn
+    by assertion.                                                             │   ctrl+f to review them
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │ ──────────────────────────────────────
+                                                                              │ › describe a change, or / for commands
+                                                                              │ ──────────────────────────────────────
+                                                                              │ enter send · ctrl+f agents · ? keys
+  ◆ 1st gear · edits ask · gpt-5.6-sol max · 34% context · 4 files edited · sandbox on

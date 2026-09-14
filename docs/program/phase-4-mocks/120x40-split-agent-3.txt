@@ -1,0 +1,40 @@
+
+  R U N E  ~/Project/Alan                                                                            v0.4.1-dev+62f02d0
+  ━━━━━━━──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                              │ AGENTS                       3 running
+  ◇ The wizard needs a step ledger the frame can render, so I am              │ ──────────────────────────────────────
+    writing one before anything touches the surface.                          │   1  planner    ▆  2m 31s
+                                                                              │      map the settings surface
+  ┌ edit  packages/orchestrator/src/first-run.ts ───────────────────────────┐ │   2  builder    ▃  1m 39s
+  │   1 +export interface SetupStep {                                       │ │      build the setup wizard
+  │   2 +  id: "provider" | "model" | "key" | "search" | "cap";             │ │ ›◆3  verifier   ▂  48s  OPEN
+  │     … 32 more added lines                                               │ │      re-run the frame captures
+  └ · observed · +34 -0 ────────────────────────────────────────────────────┘ │      bun test ui-frame.test.ts
+                                                                              │      3.2k tok · 4 tools · 1 fail
+  ◇ Geometry holds at 120. Verifier is re-running the captures at 80.         │
+                                                                              │ FINISHED 1                     c clear
+                                                                              │ ──────────────────────────────────────
+                                                                              │   4  scribe     ✓  31s
+  ── 3  verifier ── running 48s ── 3.2k tok · 4 tools ── ctrl+w close ──      │      write the help copy
+                                                                              │
+  ◇ Capturing at 80x24 first, since that is where the right column            │
+    is supposed to collapse.                                                  │
+                                                                              │
+  ┌ run   bun test tests/unit/orchestrator/ui-frame.test.ts ────────────────┐ │
+  │ ✓ the launch frame > every painted line ends in the same column         │ │
+  │ ✗ full-screen behaviour > the frame still closes on both edges          │ │
+  │   expected 79, received 80                                              │ │
+  │ 16 pass  1 fail                                                         │ │
+  └ ✗ exit 1 · 1 fail · 2.4s ───────────────────────────────────────────────┘ │
+                                                                              │
+  ~ Suspected: the narrow fallback is padding to cols, not cols-1.            │
+    Reading viewport.composeFrame now.                                        │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │ ──────────────────────────────────────
+                                                                              │ ›
+                                                                              │ ──────────────────────────────────────
+                                                                              │ ↑↓ select · enter open · ctrl+w close
+  ◆ 1st gear · edits ask · gpt-5.6-sol max · 36% context · agent 3 open · sandbox on

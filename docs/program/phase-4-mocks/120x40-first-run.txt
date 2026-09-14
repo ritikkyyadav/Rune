@@ -1,0 +1,40 @@
+
+  R U N E  ~/Project/Alan                                                                            v0.4.1-dev+62f02d0
+  ━━━━━━━──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                              │ SETUP                           2 of 6
+  ◇ Nothing here is a model call. Rune is reading and writing its own         │ ──────────────────────────────────────
+    configuration; the first call happens when you send a message.            │   ✓ provider   openai-codex
+                                                                              │   ✓ model      gpt-5.6-sol  max
+  ┌ write ~/.rune/config.json ──────────────────────────────────────────────┐ │   › key        ••••••••7f2a  checking…
+  │   1 +{                                                                  │ │     search     not configured
+  │   2 +  "provider": "openai-codex",                                      │ │     spend cap  not set
+  │   3 +  "model": "gpt-5.6-sol"                                           │ │     sandbox    on  (default)
+  │   4 +}                                                                  │ │
+  └ · observed · +4 -0 ─────────────────────────────────────────────────────┘ │ SAVED vs ACTIVE
+                                                                              │ ──────────────────────────────────────
+  ┌ check POST https://chatgpt.com/backend-api/codex/responses ─────────────┐ │              saved       active
+  │ 200 OK · 412 ms                                                         │ │   provider   codex       codex
+  │ model gpt-5.6-sol reachable · reasoning effort accepted                 │ │   model      sol         sol
+  └ ✓ key accepted · stored in the system keychain ─────────────────────────┘ │   gear       1st         1st
+                                                                              │   sandbox    on          on
+  ◇ The key went to the keychain, not to config.json and not to the           │
+    transcript. Two steps left: search access, and a spend cap.               │   nothing differs. a session override
+                                                                              │   would show here and say so.
+  ~ A cap is a stop, not a failure: a run that reaches it returns what        │
+    it has. You can change it later with /config spend_cap.                   │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │
+                                                                              │ ──────────────────────────────────────
+                                                                              │ › API key for openai-codex
+                                                                              │   ••••••••••••••••••••••••7f2a█
+                                                                              │ ──────────────────────────────────────
+                                                                              │ enter save · esc skip · ctrl+f steps
+  ◆ setup · no model called yet · config ~/.rune/config.json · keys in the system keychain

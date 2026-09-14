@@ -654,3 +654,40 @@ Found by the four Phase 3 verifiers, the four fix lanes, and the 3C closing pass
   manifest carries the correction; the plan does not. Anyone reading §6 alone will believe the
   compaction call got cheaper. Either annotate the two rows or point them at
   `verification-20260912.json` — Phase 3 — Claude
+
+## Recorded by M0 (2026-09-14), not fixed
+
+Found by the two fix lanes and the supervisor while finishing the Phase 4 and 5B lanes.
+Reports: `.codex/audit-20260910/handoff/m0/{f4,f5b}-report.md`.
+
+- **`packages/orchestrator/src/bin/ui/render.ts` — 42 argument-less width reads depend on
+  whichever `atWidth(...)` scope is open**, 13 of them as default parameter values, so a
+  renderer called outside a scope silently uses the raw terminal width. (The checkpoint said
+  46; 42 is the count at `9d0f9da`.) — M0 — Claude
+- **§2.8's wizard split is not done**: `bandLayout()` is true only for `input`/`turn`, so
+  `mode === "setup"` falls to the footer layout and at 120×40 `/setup` drops the panel and the
+  divider. Frame: `.codex/audit-20260910/handoff/m0/f4-frames/120x40-setup-wizard-no-split.txt`.
+  This is the remaining half of the original Phase 4's in-frame onboarding. — M0 — Claude
+- **`SessionReadout.lastCheck` has no producer** (`agents-panel.ts:572` declares it,
+  `tui-frame.ts:sessionReadout()` never sets it), so the panel cannot show the last check. — M0
+- **`FleetCard.costUsd` is initialised to 0 and assigned nowhere** (`agents-panel.ts:820`);
+  `absorbChildEvent` sums tokens and drops the price. — M0 — Claude
+- **The child pane shows no tool results**: `absorbChildEvent` appends a row on
+  `tool_call_start` and only bumps a tally on `tool_call_end`. — M0 — Claude
+- **The 80-column composer wraps at 74 cells, not the design brief's 76** (it was 73 before
+  `31c6c56`). Either number the brief or the code. — M0 — Claude
+- **`ec8490e`'s tool-tally credit can outlive its echo**: the typed `tool_call_end` leaves a
+  per-member credit the string heuristic spends; if a string echo is ever dropped, the credit
+  suppresses one later genuinely-childless count. — M0 — Claude
+- **A criterion that names no file accepts any green check** (`criterionScope` → `[]` →
+  `unscoped → related`). M1's T3 case closes it by requiring a bound check. — M0 — Claude
+- **`not-applicable-on-parent` is a vocabulary, not a proof**: `couldNotRunOnParent` matches
+  ten runners' "collected nothing" strings; a runner that says it differently is read as a
+  real failure. Held to examples in `parent-check.test.ts`. — M0 — Claude
+- **V-5B F5/F6 stand**: the verdict has no effect on `ok` or the exit code, and
+  `runHeadless` still glues `verdictLine` into `text` (the envelope carries the structured
+  verdict). Exit-code policy is M3's; the `text` glue is a one-line move. — M0 — Claude
+- **The composer's cover-not-shrink behaviour below 100 columns is a founder decision** made
+  by the fix lane (`31c6c56`) because the inherited cap left 80×24 with no palette. The
+  design doc still says growth is paid for by the panel, which does not exist below
+  `PANEL_MIN_COLS`. — M0 — Claude

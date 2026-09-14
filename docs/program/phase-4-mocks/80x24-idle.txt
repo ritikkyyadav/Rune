@@ -1,0 +1,24 @@
+
+  R U N E  ~/Project/Alan                                    v0.4.1-dev+62f02d0
+  ━━━━━━━──────────────────────────────────────────────────────────────────────
+
+  ┌ run   bun test tests/unit/orchestrator/ui-frame.test.ts ────────────────┐
+  │ 17 pass  0 fail  41 expect() calls                                      │
+  └ ✓ exit 0 · 1.9s ────────────────────────────────────────────────────────┘
+
+  ◆ done                                                      3 of 4
+  ✓ the frame holds at 120x40, 100x30 and 80x24
+        bun test ui-frame.test.ts · failed on 62f02d0
+  ✓ the right column collapses below 100 columns
+        bun test ui-frame.test.ts:214 · 3 pass
+    every row ends inside the measure at 241 columns
+        no evidence — not run at that width
+
+
+
+  ◆ 34% context · 41 tools · $1.84 · 4 files · sandbox on      ctrl+f details
+  ───────────────────────────────────────────────────────────────────────────
+  › describe a change, or / for commands
+  ───────────────────────────────────────────────────────────────────────────
+  enter send · ctrl+b line · ctrl+f agents · ? keys
+  ◆ 1st gear · gpt-5.6-sol · 34% context · sandbox on
