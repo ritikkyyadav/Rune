@@ -141,6 +141,53 @@ export interface BriefDecision {
   note?: string;
 }
 
+// ─── 3b. The completion verdict (Phase 5B) ───
+//
+// `BriefLedger.complete` already computed this and nothing read it: a run with
+// 0 of 6 criteria verified ended `end_turn`, `ok: true`, exit 0, and printed
+// "not done — 0 of 6" underneath. The verdict is that answer, as a value, on
+// the terminal event — so every exit says what it did against what was asked.
+//
+// It lives here rather than in the orchestrator because it rides
+// `turn_complete` across the wire. Everything that COMPUTES it (the contract,
+// the digest, the amendment rule) belongs to `orchestrator/src/contract.ts`.
+//
+// Nothing here is model prose. `rung` comes from `BriefLedger.record`, which
+// only the runtime's own check log can move, and `evidence` is the command
+// that moved it, verbatim.
+
+/** One criterion as the run left it. */
+export interface CriterionOutcome {
+  text: string;
+  rung: ClaimRung | null;
+  /** The command that moved it, verbatim. Absent when nothing did. */
+  evidence?: string;
+}
+
+/** Something the run did not do, named — the honest half of `partial`. */
+export interface DeclaredGap {
+  /** The criterion it belongs to, or `the plan` for open steps. */
+  criterion: string;
+  /** What the HARNESS saw: a rung short of verified, or steps left open. */
+  why: string;
+}
+
+/**
+ * How the run ended against what was asked.
+ *
+ * `met` — every criterion at `verified`, and no planned step left open.
+ * `partial` — evidence exists and the shortfall is NAMED. The normal honest
+ *   outcome of a successful run: `verified` is unreachable outside a git
+ *   repository (`brief.ts`, `parent-check.ts`), so a verdict that could only
+ *   be `met` or `unmet` would read `unmet` on runs that succeeded.
+ * `unmet` — nothing verified and no gap declared: no criterion ever reached a
+ *   rung, including the run that stated no criteria at all.
+ */
+export type CompletionVerdict =
+  | { kind: "met"; criteria: CriterionOutcome[] }
+  | { kind: "partial"; criteria: CriterionOutcome[]; gaps: DeclaredGap[] }
+  | { kind: "unmet"; criteria: CriterionOutcome[]; missing: string[] };
+
 // ─── 4. Auto-mode approval notice (push, not a question) ───
 
 /**

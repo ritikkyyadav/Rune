@@ -11,7 +11,7 @@
 // and every member it chooses to ignore is named in a case of its own.
 
 import type { ToolCallOutput } from "./tool";
-import type { Criterion } from "./roundtrips";
+import type { CompletionVerdict, Criterion } from "./roundtrips";
 import type {
   CheckRecord,
   DecisionRecord,
@@ -54,7 +54,20 @@ export type TaskLifecycleStatus =
   | "max_tokens"
   | "provider_lost"
   | "open_steps"
-  | "stalled";
+  | "stalled"
+  // ── What the HARNESS stopped (Phase 5B) ──
+  // Four terminal exits emitted no `turn_complete` at all, so the engine
+  // invented one afterwards: a loop-detector kill, a barren-turn kill, a
+  // budget-admission refusal and a genuine provider outage all recorded
+  // identically as `provider_lost`. The vocabulary had nine members and no
+  // spelling for "the harness stopped this run"; these two are it.
+  | "loop_detected"
+  | "barren"
+  // The gateway refused the request before it was sent — a spend cap or a
+  // model with no price. `max_turns` and `max_tokens` are already budget
+  // stops; this is the third, and without it `statusFromStopReason` would
+  // fall back to `end_turn` and record a refusal as a clean finish.
+  | "budget";
 
 /** Lead work, or a delegated child of either kind. */
 export type TaskLifecycleKind = "lead" | "task" | "worker";
@@ -165,7 +178,16 @@ export type AgentTurnEvent =
       args: Record<string, unknown>;
       output: ToolCallOutput;
     }
-  | { type: "turn_complete"; stopReason: string; totalTurns: number }
+  // `verdict` is OPTIONAL on purpose: it is an added field on the member every
+  // consumer already handles, so nothing that reads `turn_complete` today has
+  // to learn a new event type to keep working. Absent only where no contract
+  // was in scope — a sub-agent loop, or a caller driving AgentLoop directly.
+  | {
+      type: "turn_complete";
+      stopReason: string;
+      totalTurns: number;
+      verdict?: CompletionVerdict;
+    }
   | { type: "error"; error: string; recoverable: boolean }
   | { type: "context_warning"; message: string }
   | { type: "notice"; message: string }

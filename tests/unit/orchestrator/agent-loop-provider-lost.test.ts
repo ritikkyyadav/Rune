@@ -72,6 +72,12 @@ describe("provider lost", () => {
     expect(ts.snapshot().handoff?.reason).toBe("provider_lost");
     const fatal = events.find((e) => e.type === "error" && !(e as any).recoverable) as any;
     expect(fatal?.error).toMatch(/Too many consecutive errors \(2\)/);
+    // The terminal event goes LAST, after the error it explains — a consumer
+    // that treats `turn_complete` as end-of-stream must not stop before it.
+    const terminal = events.at(-1) as any;
+    expect(terminal.type).toBe("turn_complete");
+    expect(terminal.stopReason).toBe("provider_lost");
+    expect(events.findIndex((e) => e.type === "error")).toBeLessThan(events.length - 1);
   });
 
   test("every step done → the run ends finished, with a notice", async () => {
@@ -96,5 +102,43 @@ describe("provider lost", () => {
     expect(events.find((e) => e.type === "handoff")).toBeUndefined();
     const fatal = events.find((e) => e.type === "error" && !(e as any).recoverable) as any;
     expect(fatal?.error).toMatch(/Too many consecutive errors/);
+  });
+
+  test("the terminal event carries the verdict when a contract is in scope", async () => {
+    // Phase 5B: every exit, not only the finish. A provider that died mid-run
+    // still owes the user an answer to "what did it do about what I asked" —
+    // here: one criterion stated, nothing ever verified.
+    const ts = new TaskStateStore();
+    ts.beginTurn("build it");
+    const loop = new AgentLoop(
+      {
+        model: "m",
+        provider: "anthropic",
+        maxTokens: 100,
+        maxTurns: 12,
+        maxConsecutiveErrors: 2,
+        systemPrompt: "s",
+        taskState: ts,
+        contractRecord: () => ({
+          criteria: [{ text: "the exporter writes every row", rung: null }],
+          checks: [],
+        }),
+      } as any,
+      makeDeadGateway(),
+      makeRegistry(),
+    );
+    const events = await collect(loop.run("build it", "s1", "/tmp"));
+    const terminal = events.at(-1) as any;
+    expect(terminal.type).toBe("turn_complete");
+    expect(terminal.verdict.kind).toBe("unmet");
+    expect(terminal.verdict.missing).toEqual(["the exporter writes every row"]);
+  });
+
+  test("no contract in scope → no verdict, and nothing else changes", async () => {
+    // A sub-agent loop, or a caller driving AgentLoop directly.
+    const events = await collect(makeLoop(undefined).run("hello", "s1", "/tmp"));
+    const terminal = events.at(-1) as any;
+    expect(terminal.type).toBe("turn_complete");
+    expect(terminal.verdict).toBeUndefined();
   });
 });

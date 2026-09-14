@@ -47,6 +47,7 @@ import type { HandoffReason, TaskStateStore, TodoItem } from "./task-state";
 import { evidenceWeight, TASK_STATE_BLOCK_BUDGET_AFTER_COMPACTION } from "./task-state";
 import type { ArtifactKind } from "@rune/protocol";
 import { bashCheckVerdict, isVerificationCommand } from "./brief";
+import { computeVerdict, type CompletionVerdict, type ContractRecord } from "./contract";
 import { checkRelatedness, normalizeCommand, ranZeroTests } from "./verification-command";
 import { filesChangedFrom, isFileChangingTool } from "./lifecycle";
 
@@ -164,6 +165,13 @@ export interface AgentLoopConfig {
    * from the live goal) — the gate is then silently inapplicable.
    */
   ledgerStatus?: () => { total: number; verified: number } | null;
+  /**
+   * The contract's record — the ledger's criteria and the run's check log —
+   * from which every terminal event computes its completion verdict. Wired by
+   * the engine; null when no contract is in scope (a sub-agent loop, or a
+   * caller driving the loop directly), and then no verdict is emitted.
+   */
+  contractRecord?: () => ContractRecord | null;
   /**
    * Just-in-time doctrine, wired by the engine in "jit" delivery mode: returns
    * a section's verbatim text exactly ONCE per session at its first moment of
@@ -1362,6 +1370,42 @@ export class AgentLoop {
   }
 
   /**
+   * The completion verdict, from the runtime's own record (Phase 5B).
+   *
+   * Advisory in this lane: it refuses nothing, moves no `continue`, and every
+   * guard above it still decides. What it changes is that the run now SAYS
+   * what it did against what was asked, at every exit rather than at one.
+   */
+  private verdictFor(stopReason: string): CompletionVerdict | undefined {
+    const record = this.config.contractRecord?.();
+    if (!record) return undefined;
+    const counts = this.config.taskState?.todoCounts();
+    return computeVerdict({
+      criteria: record.criteria,
+      checks: record.checks,
+      openSteps: counts?.open ?? 0,
+      totalSteps: counts?.total ?? 0,
+      stopReason,
+    });
+  }
+
+  /**
+   * The terminal event, with its verdict. Every exit goes through here.
+   *
+   * The finish path computes its verdict EARLIER — before the final
+   * compaction, on the same state the gates saw — and passes it in.
+   */
+  private terminal(stopReason: string, turn: number, verdict?: CompletionVerdict): AgentTurnEvent {
+    const decided = verdict ?? this.verdictFor(stopReason);
+    return {
+      type: "turn_complete",
+      stopReason,
+      totalTurns: turn,
+      ...(decided ? { verdict: decided } : {}),
+    };
+  }
+
+  /**
    * The provider stopped answering after the retry budget. evolab7: the Codex
    * stream stalled, four connection failures arrived sixteen minutes apart,
    * and the run was recorded as a plain error — with every check on disk
@@ -1378,7 +1422,7 @@ export class AgentLoop {
         type: "notice",
         message: `The provider stopped answering (${errors} consecutive errors) after every planned step was done — ending the run as finished; only the closing report is missing.`,
       };
-      yield { type: "turn_complete", stopReason: "end_turn", totalTurns: turn };
+      yield this.terminal("end_turn", turn);
       return;
     }
     this.state = "error";
@@ -1392,7 +1436,7 @@ export class AgentLoop {
     // that treats `turn_complete` as end-of-stream (research's investigator
     // reader does) would otherwise stop before the error and read a lost
     // provider as an investigator that simply found nothing.
-    yield { type: "turn_complete", stopReason: "provider_lost", totalTurns: turn };
+    yield this.terminal("provider_lost", turn);
   }
 
   /** Emit a handoff for a run ending with open todos — the honest "state of
@@ -1750,7 +1794,7 @@ export class AgentLoop {
       if (signal?.aborted) {
         this.state = "done";
         yield* this.handoffEvents("aborted");
-        yield { type: "turn_complete", stopReason: "aborted", totalTurns: turn };
+        yield this.terminal("aborted", turn);
         return;
       }
 
@@ -2166,7 +2210,7 @@ export class AgentLoop {
                 if (signal?.aborted) {
                   this.state = "done";
                   yield* this.handoffEvents("aborted");
-                  yield { type: "turn_complete", stopReason: "aborted", totalTurns: turn };
+                  yield this.terminal("aborted", turn);
                   return;
                 }
                 streamErrored = true;
@@ -2175,6 +2219,11 @@ export class AgentLoop {
               this.state = "error";
               yield* this.handoffEvents("error");
               yield { type: "error", error: result.error, recoverable: false };
+              // The terminal event goes LAST, after the error it explains.
+              // This exit emitted none at all, so `engine.ts` reconciled it
+              // afterwards — and a provider outage, a budget refusal, a loop
+              // kill and a barren kill all recorded identically.
+              yield this.terminal("provider_lost", turn);
               return;
             }
             // ── The prompt FLOOR does not fit (G15) ──
@@ -2210,7 +2259,7 @@ export class AgentLoop {
                     `surface (fewer MCP servers, \`/config doctrine jit\`).`,
                   recoverable: false,
                 };
-                yield { type: "turn_complete", stopReason: "max_tokens", totalTurns: turn };
+                yield this.terminal("max_tokens", turn);
                 return;
               }
             }
@@ -2291,13 +2340,16 @@ export class AgentLoop {
           this.state = "error";
           yield* this.handoffEvents("error");
           yield { type: "error", error: err.message, recoverable: false };
+          // A refusal BEFORE the request was sent is a budget stop, not a lost
+          // provider: nothing was spent down and nothing answered wrongly.
+          yield this.terminal("budget", turn);
           return;
         }
         // Handle clean abort
         if (signal?.aborted) {
           this.state = "done";
           yield* this.handoffEvents("aborted");
-          yield { type: "turn_complete", stopReason: "aborted", totalTurns: turn };
+          yield this.terminal("aborted", turn);
           return;
         }
         consecutiveErrors++;
@@ -2456,7 +2508,7 @@ export class AgentLoop {
               "Try again, rephrase, or switch models with /model.",
             recoverable: false,
           };
-          yield { type: "turn_complete", stopReason: "provider_lost", totalTurns: turn };
+          yield this.terminal("provider_lost", turn);
           return;
         }
         // Accept the finish — on the earlier narration, or on the work — and say so once.
@@ -2504,7 +2556,7 @@ export class AgentLoop {
         this.state = "done";
         this.report("loop.auto_halt_reported", "warn", "autoHalt", "halted run reported and ended");
         yield* this.handoffEvents("halted");
-        yield { type: "turn_complete", stopReason: "halted", totalTurns: turn };
+        yield this.terminal("halted", turn);
         return;
       }
 
@@ -2566,7 +2618,7 @@ export class AgentLoop {
         // Retries exhausted: surface truthfully instead of pretending we finished.
         this.state = "done";
         yield* this.handoffEvents("error");
-        yield { type: "turn_complete", stopReason: "max_tokens", totalTurns: turn };
+        yield this.terminal("max_tokens", turn);
         return;
       }
 
@@ -3032,6 +3084,15 @@ export class AgentLoop {
           stopReason = "open_steps";
         }
 
+        // ── The completion verdict (Phase 5B) ──
+        // Taken HERE — after the last gate and before the compaction below —
+        // so it is computed on exactly the state the gates saw. Advisory:
+        // nothing above it moves, and the verdict refuses nothing. What it
+        // ends is the run that finished `end_turn`, `ok: true`, exit 0 with
+        // none of its stated criteria ever verified and nothing anywhere
+        // saying so.
+        const verdict = this.verdictFor(stopReason);
+
         // Compact only when context is near budget (avoids a summarization
         // LLM call every turn).
         if (this.config.contextEngine && this.config.contextEngine.shouldCompact()) {
@@ -3068,7 +3129,7 @@ export class AgentLoop {
           continue;
         }
         this.state = "done";
-        yield { type: "turn_complete", stopReason, totalTurns: turn };
+        yield this.terminal(stopReason, turn, verdict);
         return;
       }
 
@@ -3155,6 +3216,9 @@ export class AgentLoop {
             "Infinite loop detected: same tool calls repeated without progress, even after a nudge.",
           recoverable: false,
         };
+        // The harness stopped this run, and now says so in its own word
+        // instead of leaving the engine to call it a lost provider.
+        yield this.terminal("loop_detected", turn);
         return;
       }
 
@@ -3171,7 +3235,7 @@ export class AgentLoop {
         );
         this.state = "done";
         yield* this.handoffEvents("aborted");
-        yield { type: "turn_complete", stopReason: "aborted", totalTurns: turn };
+        yield this.terminal("aborted", turn);
         return;
       }
 
@@ -4579,7 +4643,7 @@ export class AgentLoop {
           // carried an `error` and no `stopReason` key — JSON.stringify drops
           // an undefined value — and a consumer could not tell a stall from a
           // crash.
-          yield { type: "turn_complete", stopReason: "stalled", totalTurns: turn };
+          yield this.terminal("stalled", turn);
           return;
         }
         {
@@ -4674,7 +4738,7 @@ export class AgentLoop {
       if (signal?.aborted) {
         this.state = "done";
         yield* this.handoffEvents("aborted");
-        yield { type: "turn_complete", stopReason: "aborted", totalTurns: turn };
+        yield this.terminal("aborted", turn);
         return;
       }
 
@@ -4742,6 +4806,9 @@ export class AgentLoop {
             (planned[0]?.output?.error ?? "permission denied").slice(0, 300),
           recoverable: false,
         };
+        // A run that could not reach the world is not a run that lost its
+        // provider. The terminal event goes last, after the error it explains.
+        yield this.terminal("barren", turn);
         return;
       }
       if (barrenTurns >= 2 && barrenNudges < 1) {
@@ -4820,7 +4887,7 @@ export class AgentLoop {
               "different approach.",
             recoverable: false,
           };
-          yield { type: "turn_complete", stopReason: "stalled", totalTurns: turn };
+          yield this.terminal("stalled", turn);
           return;
         }
         if (staleTurns >= staleLimit && staleNudges < 1) {
@@ -4906,11 +4973,7 @@ export class AgentLoop {
           : ""),
     );
     yield* this.handoffEvents("max_turns");
-    yield {
-      type: "turn_complete",
-      stopReason: "max_turns",
-      totalTurns: turn,
-    };
+    yield this.terminal("max_turns", turn);
   }
 
   /**

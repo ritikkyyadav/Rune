@@ -14,6 +14,7 @@ import {
   CLAIM_RUNGS,
   type Brief,
 } from "../../../packages/orchestrator/src/brief";
+import { computeVerdict } from "../../../packages/orchestrator/src/contract";
 
 function brief(): Brief {
   return briefFromArgs(
@@ -129,6 +130,35 @@ describe("the ledger — what it takes to move a criterion", () => {
     l.record(1, "verified", ev);
     expect(l.complete).toBe(true);
     expect(l.met).toBe(2);
+  });
+
+  test("the verdict is `met` exactly when the ledger is complete and no step is open", () => {
+    // Phase 5B: `complete` computed the completion question from the day it
+    // was written and NO terminal path consulted it. This is that wiring, as
+    // an equivalence — the verdict may not be looser than the ledger, and it
+    // may not be `met` on a plan the run walked away from.
+    const b = brief();
+    const l = new BriefLedger(b);
+    const ev = { source: "bun test", parentCommitFailed: true, parentCommit: "4a91c2e" };
+    const verdict = (openSteps = 0) =>
+      computeVerdict({
+        criteria: l.criteria,
+        checks: [],
+        openSteps,
+        totalSteps: openSteps === 0 ? 0 : openSteps + 1,
+        stopReason: "end_turn",
+      });
+
+    expect(l.complete).toBe(false);
+    expect(verdict().kind).not.toBe("met");
+    l.record(0, "verified", ev);
+    expect(l.complete).toBe(false);
+    expect(verdict().kind).toBe("partial");
+    l.record(1, "verified", ev);
+    expect(l.complete).toBe(true);
+    expect(verdict().kind).toBe("met");
+    // …and the plan still has the last word.
+    expect(verdict(1).kind).toBe("partial");
   });
 
   test("the close mirrors the open — same criteria, same order, with receipts", () => {

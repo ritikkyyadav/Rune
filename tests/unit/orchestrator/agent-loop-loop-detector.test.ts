@@ -127,6 +127,14 @@ describe("loop detector keyed on results", () => {
     expect(incidents).toContain("loop.stuck_nudge");
     expect(incidents).toContain("loop.infinite_loop");
     expect(events.some((e) => e.type === "error" && (e as any).recoverable === false)).toBe(true);
+    // ── The exit says why it ended (Phase 5B) ──
+    // This path emitted NO terminal event at all, so `engine.ts` reconciled it
+    // afterwards and a loop the harness killed was recorded as a lost provider.
+    // The terminal event goes LAST, after the error it explains.
+    const terminal = events.at(-1) as any;
+    expect(terminal.type).toBe("turn_complete");
+    expect(terminal.stopReason).toBe("loop_detected");
+    expect(events.findIndex((e) => e.type === "error")).toBeLessThan(events.length - 1);
   });
 
   test("the same answer to four different calls earns one nudge and never a bail", async () => {

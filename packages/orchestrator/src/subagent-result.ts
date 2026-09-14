@@ -129,6 +129,12 @@ const CHILD_STATUSES: Record<string, ChildLifecycleStatus> = {
   open_steps: "open_steps",
   stalled: "stalled",
   running: "running",
+  // The three exits the harness takes itself (Phase 5B). Without them a child
+  // the loop detector killed reported `stalled` — true, but one word vaguer
+  // than what the runtime actually knew.
+  loop_detected: "loop_detected",
+  barren: "barren",
+  budget: "budget",
   // A budget is a deliberate stop with the work kept, which is what "halted"
   // means in the contract; neither has a member of its own.
   cost_budget: "halted",

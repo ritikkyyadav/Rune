@@ -225,6 +225,33 @@ describe("same-shape failure streak", () => {
     expect(transcript).toContain("write the question as plain prose");
   });
 
+  test("three fully-refused turns end the run as `barren`, and it says so", async () => {
+    // ── The exit says why it ended (Phase 5B) ──
+    // Once the shape breaker is refusing every call before it runs, the world
+    // stops changing: three such turns and the barren breaker stops the run.
+    // That exit emitted NO terminal event, so `engine.ts` reconciled it into
+    // `provider_lost` — a run that could not reach the workspace was recorded
+    // as a dead network.
+    const { registry } = makeAlwaysFailingRegistry(
+      "Validation failed: each question needs text and 2-6 non-empty options",
+    );
+    const loop = new AgentLoop(
+      { maxTurns: 20, maxConsecutiveErrors: 50 },
+      makeRewordingFailureGateway(16),
+      registry,
+    );
+    const events = (await collect(loop.run("go", "s", "/w"))) as AgentTurnEvent[];
+
+    const fatal = events.findIndex((e) => e.type === "error" && (e as any).recoverable === false);
+    expect(fatal).toBeGreaterThanOrEqual(0);
+    expect((events[fatal] as any).error).toContain("every tool call was refused");
+    // The terminal event goes LAST, after the error it explains.
+    const terminal = events.at(-1) as any;
+    expect(terminal.type).toBe("turn_complete");
+    expect(terminal.stopReason).toBe("barren");
+    expect(fatal).toBeLessThan(events.length - 1);
+  });
+
   test("a successful call between failures resets the streak", async () => {
     // fail, fail, SUCCEED, fail, fail... — never three consecutive, never
     // refused. The reset is what keeps this breaker off legitimate runs that

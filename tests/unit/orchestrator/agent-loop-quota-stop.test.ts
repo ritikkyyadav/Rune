@@ -12,6 +12,7 @@ import { describe, test, expect } from "bun:test";
 import { AgentLoop } from "../../../packages/orchestrator/src/agent-loop";
 import type { AgentTurnEvent } from "../../../packages/orchestrator/src/agent-loop";
 import { TaskStateStore } from "../../../packages/orchestrator/src/task-state";
+import { BudgetExceededError } from "../../../packages/llm-gateway/src/cost-tracker";
 
 const QUOTA_ERROR =
   "Quota exceeded on codex/gpt-5.6-sol — The usage limit has been reached. " +
@@ -124,6 +125,18 @@ describe("a quota cap ends the run", () => {
     expect(iHandoff).toBeLessThan(iError);
   });
 
+  test("and the terminal event comes AFTER it, naming the provider (Phase 5B)", async () => {
+    // This exit emitted nothing terminal at all, so the envelope carried an
+    // `error` with no `stopReason` key — `JSON.stringify` drops undefined —
+    // and the lifecycle row was invented afterwards. A non-retryable provider
+    // failure IS `provider_lost`; what changes is that the run says so itself.
+    const events = await run(gatewayCappedAfterPlanning(), new TaskStateStore());
+    const terminal = events.at(-1) as Extract<AgentTurnEvent, { type: "turn_complete" }>;
+    expect(terminal.type).toBe("turn_complete");
+    expect(terminal.stopReason).toBe("provider_lost");
+    expect(events.findIndex((e) => e.type === "error")).toBeLessThan(events.length - 1);
+  });
+
   test("the open todo is preserved for the resume", async () => {
     const ts = new TaskStateStore();
     await run(gatewayCappedAfterPlanning(), ts);
@@ -136,5 +149,57 @@ describe("a quota cap ends the run", () => {
     const started = Date.now();
     await run(gatewayCappedAfterPlanning(), new TaskStateStore());
     expect(Date.now() - started).toBeLessThan(2000);
+  });
+});
+
+/**
+ * The budget-admission exit (E7 in the guard inventory).
+ *
+ * The gateway refuses the request BEFORE it is sent — a spend cap, or a model
+ * with no price. It had no test anywhere and no terminal event, so it reached
+ * the record as `provider_lost`: a run refused on cost was indistinguishable
+ * from a dead network. It is a budget stop and now says so.
+ */
+describe("a budget refusal ends the run before the request", () => {
+  const refusingGateway = () => ({
+    inferStream: async function* (): AsyncGenerator<never> {
+      throw new BudgetExceededError("session", 1, 2.5);
+      yield undefined as never;
+    },
+    infer: async () => {
+      throw new BudgetExceededError("session", 1, 2.5);
+    },
+    registerProvider: () => {},
+    getProvider: () => null,
+    getTotalCost: () => 0,
+  });
+
+  test("the error is unrecoverable and the terminal event follows it, as `budget`", async () => {
+    const events = await run(refusingGateway(), new TaskStateStore());
+    const iError = events.findIndex((e) => e.type === "error");
+    expect(iError).toBeGreaterThanOrEqual(0);
+    expect((events[iError] as Extract<AgentTurnEvent, { type: "error" }>).recoverable).toBe(false);
+    expect((events[iError] as Extract<AgentTurnEvent, { type: "error" }>).error).toContain(
+      "Budget exceeded",
+    );
+    const terminal = events.at(-1) as Extract<AgentTurnEvent, { type: "turn_complete" }>;
+    expect(terminal.type).toBe("turn_complete");
+    expect(terminal.stopReason).toBe("budget");
+    expect(iError).toBeLessThan(events.length - 1);
+  });
+
+  test("it does not burn the consecutive-error budget re-asking", async () => {
+    // An admission failure needs a changed budget, not another identical try.
+    let calls = 0;
+    const gw = {
+      ...refusingGateway(),
+      inferStream: async function* (): AsyncGenerator<never> {
+        calls++;
+        throw new BudgetExceededError("session", 1, 2.5);
+        yield undefined as never;
+      },
+    };
+    await run(gw, new TaskStateStore());
+    expect(calls).toBe(1);
   });
 });

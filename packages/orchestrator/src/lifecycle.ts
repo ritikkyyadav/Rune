@@ -279,6 +279,13 @@ const STATUSES: ReadonlySet<string> = new Set<TaskLifecycleStatus>([
   "provider_lost",
   "open_steps",
   "stalled",
+  // Phase 5B: the three exits the harness itself takes. Before them the loop
+  // emitted no terminal event on any of these paths, so every one of them was
+  // reconciled into `provider_lost` by `engine.ts` — the vocabulary could not
+  // tell a killed loop from a dead network.
+  "loop_detected",
+  "barren",
+  "budget",
 ]);
 
 /**
