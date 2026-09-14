@@ -1386,6 +1386,11 @@ export class AgentLoop {
       openSteps: counts?.open ?? 0,
       totalSteps: counts?.total ?? 0,
       stopReason,
+      // What the contract said was asked for, and whether anything was
+      // written — the two facts that separate "there was nothing to verify"
+      // from "nothing was verified".
+      ...(record.shape ? { shape: record.shape } : {}),
+      wrote: record.wrote ?? (this.config.taskState?.writtenFiles.length ?? 0) > 0,
     });
   }
 

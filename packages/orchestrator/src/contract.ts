@@ -30,6 +30,8 @@ import type {
 } from "@rune/protocol";
 
 import type { CheckRun } from "./brief";
+import { GOAL_CAP } from "./task-state";
+import { normalizeCommand } from "./verification-command";
 
 export type { CompletionVerdict, CriterionOutcome, DeclaredGap } from "@rune/protocol";
 
@@ -43,20 +45,125 @@ export type { CompletionVerdict, CriterionOutcome, DeclaredGap } from "@rune/pro
  * in rather than imported so the gate and the contract can never disagree and
  * so this module stays free of the loop.
  */
-export type TaskShape = "fix" | "feature" | "question" | "plan";
+export type TaskShape = "fix" | "feature" | "question" | "plan" | "chat" | "unknown";
 
-/** Asks for a plan, not the work. */
-const PLAN_RE = /\b(plan|design|outline|propose|proposal|strategy|approach)\b/i;
-/** Asks a question: opens with an interrogative, or ends in a question mark. */
-const QUESTION_RE = /^(what|why|how|when|where|which|who|is|are|does|do|can|should|could)\b/i;
+/**
+ * Asks for a PLAN, not the work.
+ *
+ * The first draft matched `plan|design|outline|propose|proposal|strategy|
+ * approach` anywhere in the first 120 characters, which made `Implement a
+ * design system` a planning task because of a noun in the thing being built.
+ * A plan is asked for in one of two ways: the sentence opens with the verb, or
+ * the plan itself is the object. Everything else that merely mentions design
+ * is work.
+ */
+const PLAN_VERB_RE = /^(?:please\s+)?(?:plan|outline|propose|sketch)\b/i;
+const PLAN_OBJECT_RE =
+  /\b(?:a|an|the|some|your)\s+(?:high[- ]level\s+|rough\s+|detailed\s+)?(?:plan|proposal|strategy|approach|rfc|design doc(?:ument)?|roadmap)\b/i;
 
-/** The shape of the request, from the request alone. */
+/**
+ * Asks for work, in the ways a person actually asks for it.
+ *
+ * Three shapes, and the order they are tested in is the order they occur in
+ * real messages: the polite wrapper (`can you implement login?` — a question
+ * mark on an instruction), the bare imperative (`ship it`), and the second
+ * half of a mixed ask (`explain the parser, then fix the off-by-one`). The
+ * third is why this runs BEFORE the question test: a message that asks for an
+ * explanation and then for a fix is a message with a deliverable in it, and
+ * the deliverable is the half a contract has to hold.
+ */
+const WORK_VERB =
+  "implement|build|create|write|add|fix|repair|patch|refactor|rewrite|rename|remove|delete|drop|update|upgrade|change|modify|migrate|port|convert|ship|deploy|release|publish|install|configure|wire|hook|set up|setup|make|move|generate|extract|split|merge|revert|undo|restore|clean up|cleanup|optimi[sz]e|speed up|harden|handle|support|enable|disable|replace|run|apply|finish|complete|land|commit";
+const POLITE_WORK_RE = new RegExp(
+  `^(?:please\\s+|pls\\s+)?(?:can|could|would|will|wanna|want to)\\s+(?:you|we|u)\\s+(?:please\\s+)?(?:${WORK_VERB})\\b`,
+  "i",
+);
+const IMPERATIVE_WORK_RE = new RegExp(`^(?:please\\s+|pls\\s+|now\\s+|also\\s+)?(?:${WORK_VERB})\\b`, "i");
+const FOLLOW_ON_WORK_RE = new RegExp(
+  `(?:^|[,;.]\\s*|\\s)(?:then|and then|after that|next|now|also|and)\\s+(?:please\\s+)?(?:${WORK_VERB})\\b`,
+  "i",
+);
+
+/**
+ * Asks a question: opens with an interrogative, asks to be told something, or
+ * ends in a question mark having asked for no work.
+ *
+ * `explain|describe|tell me|walk me through|what is` are question-shaped
+ * however imperatively they are phrased — the deliverable is an answer, and a
+ * contract that calls that a feature spends the whole run looking for a file
+ * that was never going to be written.
+ */
+const QUESTION_RE =
+  /^(?:please\s+)?(what|why|how|when|where|which|who|is|are|was|were|does|do|did|can|should|could|explain|describe|clarify|summari[sz]e|tell me|show me|walk me through|help me understand|any idea|thoughts)\b/i;
+
+/**
+ * Every word a message can be made of and still be asking for nothing.
+ *
+ * "thanks, that looks right" after a clean finish is a turn with no
+ * deliverable, and a verdict vocabulary that answers it with `unmet` is
+ * teaching its reader to stop reading verdicts. Membership is required of
+ * EVERY word, which is what keeps "ok, now delete the cache" out: one word
+ * that asks for work and the message is work.
+ */
+const CHAT_WORDS = new Set([
+  "thanks", "thank", "thanx", "thx", "ty", "you", "cheers", "appreciated", "appreciate", "it",
+  "ok", "okay", "k", "kk", "cool", "nice", "great", "perfect", "awesome", "excellent", "lovely",
+  "brilliant", "beautiful", "good", "fine", "right", "correct", "exactly", "lgtm", "got",
+  "sounds", "looks", "look", "seems", "works", "worked", "makes", "sense", "that", "this",
+  "these", "those", "all", "is", "are", "was", "were", "yes", "yep", "yeah", "yup", "sure",
+  "no", "nope", "nah", "done", "well", "much", "very", "so", "and", "now", "then", "i", "we",
+  "my", "me", "am", "happy", "glad", "love", "like", "super", "it's", "its", "one",
+]);
+// `ship` used to be in that set, which made `ship it` an acknowledgement —
+// a message asking for a deployment classified as a message asking for
+// nothing. Every remaining member is a noun, a pronoun, an adjective or a
+// copula; the working rule is that a word earns its place here only if no
+// sentence can ask for work with it, and the work test below runs first
+// anyway.
+
+/** A message built only of acknowledgement: no deliverable, nothing to verify. */
+function chatShaped(text: string): boolean {
+  const words = text.toLowerCase().match(/[a-z']+/g);
+  // Eight words is the length past which an acknowledgement is a paragraph,
+  // and a paragraph usually contains an ask.
+  if (!words || words.length === 0 || words.length > 8) return false;
+  return words.every((word) => CHAT_WORDS.has(word));
+}
+
+/**
+ * The shape of the request, from the request alone.
+ *
+ * From the REQUEST alone, deliberately: the classifier never reads the
+ * conversation's position, so a follow-up is shaped by its own words exactly
+ * as an opening message is. The alternative — "a message after a clean finish
+ * is conversational" — would call `fix the header, it is still wrong` a chat
+ * turn because of what came before it, which is the one mistake a contract
+ * cannot make.
+ *
+ * ADVISORY, and only advisory. The shape picks a verdict vocabulary for a run
+ * that stated no criteria; it authorises nothing, skips no verification, opens
+ * no permission and closes no step. A mechanical read of a sentence is not a
+ * safe input to any of those, which is why the one branch that reads it
+ * (`computeVerdict`, on a contract with zero criteria and nothing written)
+ * cannot make a run look MORE complete than it is.
+ */
 export function contractShape(intent: string, fixShaped: boolean): TaskShape {
   const text = intent.trim();
+  if (!text) return "unknown";
   if (fixShaped) return "fix";
+  const head = text.slice(0, 200);
+  if (PLAN_VERB_RE.test(head) || PLAN_OBJECT_RE.test(head)) return "plan";
+  if (POLITE_WORK_RE.test(head) || IMPERATIVE_WORK_RE.test(head) || FOLLOW_ON_WORK_RE.test(head)) {
+    return "feature";
+  }
   if (text.endsWith("?") || QUESTION_RE.test(text)) return "question";
-  if (PLAN_RE.test(text.slice(0, 120))) return "plan";
-  return "feature";
+  if (chatShaped(text)) return "chat";
+  // Nothing in the words says what this is: a bare noun phrase, a pasted
+  // stack trace, a fragment. `unknown` is the honest answer, and it is the
+  // reason this enum has one: guessing `feature` put a deliverable on the
+  // contract that the user never asked for, and the verdict then measured
+  // the run against it.
+  return "unknown";
 }
 
 /**
@@ -124,11 +231,23 @@ export function createContract(input: CreateContractInput): TaskContract {
   };
 }
 
-/** The read-back's reading of the request, when it is not the request. */
+/**
+ * The read-back's reading of the request, when it is not the request.
+ *
+ * Compared LIKE WITH LIKE: `Brief.request` is `taskState.currentRequest()`,
+ * the store's own copy of the message, truncated at `GOAL_CAP`. Comparing it
+ * against the untruncated intent recorded a `drift` on every request over
+ * 24 KB whose read-back was perfect — and the drift written into the contract
+ * row, the digest and `rune audit`'s "read back as" was a 24,000-character
+ * copy of the user's own words (V-5B, F3). The user's words are never the
+ * model's misreading, so a `read` that is exactly the front of `asked` is not
+ * drift at any length.
+ */
 export function briefDrift(contract: TaskContract, brief: Brief): string | null {
   const asked = contract.intent.trim();
   const read = (brief.request ?? "").trim();
   if (!read || read === asked) return null;
+  if (asked.length > GOAL_CAP && asked.slice(0, GOAL_CAP).trim() === read) return null;
   return read;
 }
 
@@ -203,6 +322,14 @@ export interface VerdictInputs {
   totalSteps: number;
   /** How the run ended, in the loop's own vocabulary. */
   stopReason: string;
+  /**
+   * The contract's shape, for the one question the criteria cannot answer:
+   * what does a run with NO criteria owe? Absent means the caller holds no
+   * contract shape, and the answer is the one it always was.
+   */
+  shape?: TaskShape;
+  /** Whether this task wrote any file at all — `taskState.writtenFiles`. */
+  wrote?: boolean;
 }
 
 /**
@@ -217,6 +344,10 @@ export interface VerdictInputs {
 export interface ContractRecord {
   criteria: readonly Criterion[];
   checks: readonly CheckRun[];
+  /** The shape the contract recorded at intake. */
+  shape?: TaskShape;
+  /** Whether the task has written any file this run. */
+  wrote?: boolean;
 }
 
 /**
@@ -226,15 +357,36 @@ export interface ContractRecord {
  * criterion mentions it: "the tests are red" is not a state a finished task
  * is in. Only `kind: "check"` counts — an ordinary shell command that exited
  * non-zero is an action, not a verdict.
+ *
+ * Two commands are the same check when `normalizeCommand` says they are — the
+ * same quote-preserving identity `rungForCommand` uses, so the ledger and the
+ * verdict cannot disagree about what ran. Collapsing whitespace blindly made
+ * `node --test "checks/a  b.test.js"` and `node --test "checks/a b.test.js"`
+ * one command, and a pass of the second erased the failure of the first:
+ * a DIFFERENT check quietly superseding a red one, and the run reported `met`
+ * (review finding 1). Re-running the SAME command still supersedes its own
+ * earlier failure, which is what a fix looks like.
  */
 function failingChecks(checks: readonly CheckRun[]): string[] {
   const latest = new Map<string, CheckRun>();
   for (const run of checks) {
     if ((run.kind ?? "check") !== "check") continue;
-    latest.set(run.command.replace(/\s+/g, " ").trim(), run);
+    latest.set(normalizeCommand(run.command), run);
   }
   return [...latest.entries()].filter(([, run]) => !run.passed).map(([command]) => command);
 }
+
+/**
+ * The shapes that can end with nothing to verify, and what the verdict says
+ * about each. Absent from this map — `fix`, `feature`, `unknown` — means a
+ * deliverable was asked for, and a run that stated no criteria for it is
+ * `unmet` exactly as before.
+ */
+const NO_DELIVERABLE_REASON: Partial<Record<TaskShape, string>> = {
+  question: "a question, answered: no acceptance criteria were stated and no file was written",
+  plan: "a plan was asked for: no acceptance criteria were stated and no file was written",
+  chat: "nothing was asked for: no acceptance criteria were stated and no file was written",
+};
 
 /** The ladder, weakest first — `verified` is the only rung that is done. */
 function outcomeOf(criterion: Criterion): CriterionOutcome {
@@ -257,6 +409,16 @@ function outcomeOf(criterion: Criterion): CriterionOutcome {
  * and stopped IS a declared gap: the harness saw something, named it, and can
  * say how far short it fell. That distinction is the whole difference between
  * a run that fell short honestly and one that never engaged.
+ *
+ * `none` is the answer for a request that had no deliverable to hold a
+ * criterion — a question, a plan, an acknowledgement — that stated none and
+ * wrote nothing. Before it, the most common verdict on a conversational turn
+ * was `unmet`: a run that did exactly what was asked, printing
+ * `[verdict] unmet — 0 of 0 criteria verified` as the last line of `-P`
+ * (V-5B, F4). A vocabulary whose commonest word is wrong teaches its reader
+ * to skip the line, and then it protects no one. `none` cannot flatter a run:
+ * it is reachable only with zero criteria and zero files written, and one
+ * written file sends the same run back to `unmet`.
  */
 export function computeVerdict(input: VerdictInputs): CompletionVerdict {
   const criteria = input.criteria.map(outcomeOf);
@@ -264,6 +426,8 @@ export function computeVerdict(input: VerdictInputs): CompletionVerdict {
   // Nothing was ever stated to be true. The audit's silent case: tests green,
   // typecheck green, and no statement anywhere of what the work was for.
   if (criteria.length === 0) {
+    const asked = NO_DELIVERABLE_REASON[input.shape ?? "unknown"];
+    if (asked && !input.wrote) return { kind: "none", criteria, reason: asked };
     return { kind: "unmet", criteria, missing: ["no criteria stated"] };
   }
 
@@ -311,6 +475,10 @@ export function verdictLine(verdict: CompletionVerdict): string {
   const total = verdict.criteria.length;
   const met = verdict.criteria.filter((c) => c.rung === "verified").length;
   const count = total === 0 ? "no criteria stated" : `${met} of ${total} criteria verified`;
+  // `none` says WHY there was nothing to verify. The count would read "no
+  // criteria stated" on every one of them, which is the fact the reader
+  // already has and not the one they need.
+  if (verdict.kind === "none") return `[verdict] none — ${verdict.reason}`;
   if (verdict.kind === "met") return `[verdict] met — ${count}`;
   if (verdict.kind === "partial") {
     const first = verdict.gaps[0];

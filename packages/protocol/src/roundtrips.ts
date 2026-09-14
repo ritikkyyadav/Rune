@@ -193,11 +193,17 @@ export interface DeclaredGap {
  *   be `met` or `unmet` would read `unmet` on runs that succeeded.
  * `unmet` — nothing verified and no gap declared: no criterion ever reached a
  *   rung, including the run that stated no criteria at all.
+ * `none` — the request had no deliverable to hold a criterion: a question, a
+ *   plan, a conversational follow-up. Not a shortfall, and not a success
+ *   either; there was nothing to verify. Without it the most common verdict
+ *   on a conversational turn was `unmet`, which teaches the reader to ignore
+ *   the word — the one failure this vocabulary cannot afford.
  */
 export type CompletionVerdict =
   | { kind: "met"; criteria: CriterionOutcome[] }
   | { kind: "partial"; criteria: CriterionOutcome[]; gaps: DeclaredGap[] }
-  | { kind: "unmet"; criteria: CriterionOutcome[]; missing: string[] };
+  | { kind: "unmet"; criteria: CriterionOutcome[]; missing: string[] }
+  | { kind: "none"; criteria: CriterionOutcome[]; reason: string };
 
 // ─── 4. Auto-mode approval notice (push, not a question) ───
 

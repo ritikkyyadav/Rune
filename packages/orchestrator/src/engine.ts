@@ -5367,7 +5367,12 @@ export class Engine {
         // drift is recorded on the contract rather than silencing it.
         contractRecord: () =>
           this.contract
-            ? { criteria: this.ledger?.criteria ?? [], checks: this.checkLog.all }
+            ? {
+                criteria: this.ledger?.criteria ?? [],
+                checks: this.checkLog.all,
+                shape: this.contract.shape,
+                wrote: taskState.writtenFiles.length > 0,
+              }
             : null,
         jitDoctrine: (section) => this.takeJitDoctrine(sessionId, section),
       },
@@ -5990,6 +5995,8 @@ export class Engine {
               openSteps: counts.open,
               totalSteps: counts.total,
               stopReason: this.liveStatus,
+              shape: this.contract.shape,
+              wrote: taskState.writtenFiles.length > 0,
             });
           this.sessions.appendEvent(sessionId, {
             type: "verdict",

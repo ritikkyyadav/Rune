@@ -412,7 +412,16 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
       }
     }
     if (verdict) {
-      const paint = verdict.kind === "met" ? ok : verdict.kind === "partial" ? warn : danger;
+      // `none` is neither a success nor a shortfall — there was nothing to
+      // verify — so it is painted like the fact it is, not like a failure.
+      const paint =
+        verdict.kind === "met"
+          ? ok
+          : verdict.kind === "partial"
+            ? warn
+            : verdict.kind === "none"
+              ? dim
+              : danger;
       say(
         // The count only: the gaps are listed under it, and saying each one
         // twice is the kind of page nobody reads twice.

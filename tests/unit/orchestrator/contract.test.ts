@@ -26,6 +26,7 @@ import {
   createContract,
   verdictLine,
   type TaskContract,
+  type TaskShape,
 } from "../../../packages/orchestrator/src/contract";
 import type { CheckRun } from "../../../packages/orchestrator/src/brief";
 
@@ -57,7 +58,13 @@ function brief(over: Partial<Brief> = {}): Brief {
 
 function verdictOf(
   criteria: Criterion[],
-  over: { checks?: CheckRun[]; openSteps?: number; totalSteps?: number } = {},
+  over: {
+    checks?: CheckRun[];
+    openSteps?: number;
+    totalSteps?: number;
+    shape?: TaskShape;
+    wrote?: boolean;
+  } = {},
 ) {
   return computeVerdict({
     criteria,
@@ -65,6 +72,8 @@ function verdictOf(
     openSteps: over.openSteps ?? 0,
     totalSteps: over.totalSteps ?? 0,
     stopReason: "end_turn",
+    ...(over.shape ? { shape: over.shape } : {}),
+    ...(over.wrote === undefined ? {} : { wrote: over.wrote }),
   });
 }
 
@@ -260,5 +269,140 @@ describe("the verdict", () => {
     const v = verdictOf([criterion("shipped it, all good")]);
     expect(v.kind).toBe("unmet");
     expect(v.criteria[0]!.evidence).toBeUndefined();
+  });
+});
+
+// ─── A different command must not erase another one's failure ───
+//
+// Review finding 1 (guarantees-plan-review, 2026-09-14): `failingChecks`
+// collapsed whitespace blindly, so two DIFFERENT commands could share one
+// identity and the later pass erased the earlier failure.
+
+describe("which recorded checks are the same check", () => {
+  test("a pass of a DIFFERENT quoted path does not erase a red check", () => {
+    const v = verdictOf([criterion("a", "verified", "node --test checks/")], {
+      checks: [
+        { command: 'node --test "checks/a  b.test.js"', passed: false, at: 1, kind: "check" },
+        { command: 'node --test "checks/a b.test.js"', passed: true, at: 2, kind: "check" },
+      ],
+    });
+    // One verified criterion, no open steps — and still not `met`, because a
+    // check is red and nothing re-ran it.
+    expect(v.kind).toBe("partial");
+    expect(v.kind === "partial" && v.gaps).toEqual([
+      { criterion: "the checks", why: '`node --test "checks/a  b.test.js"` last failed' },
+    ]);
+  });
+
+  test("re-running the SAME command does supersede its earlier failure", () => {
+    const v = verdictOf([criterion("a", "verified", "node --test checks/")], {
+      checks: [
+        { command: 'node --test "checks/a  b.test.js"', passed: false, at: 1, kind: "check" },
+        { command: 'node   --test  "checks/a  b.test.js"', passed: true, at: 2, kind: "check" },
+      ],
+    });
+    // Same quoted path, different spacing between the arguments: one command,
+    // fixed. That is what a green re-run means.
+    expect(v.kind).toBe("met");
+  });
+});
+
+// ─── The shape classifier reads instructions as instructions ───
+//
+// Review finding 2. Every row of that table is here, plus the cases it
+// implied: a mixed ask has a deliverable in it, a steering follow-up is shaped
+// by its own words, and text that says nothing either way is `unknown` rather
+// than a guess.
+
+describe("contractShape", () => {
+  test("a politely phrased instruction is work, not a question", () => {
+    expect(contractShape("Can you implement login?", false)).toBe("feature");
+    expect(contractShape("could you please add a --json flag?", false)).toBe("feature");
+  });
+
+  test("a noun in the thing being built does not select planning", () => {
+    expect(contractShape("Implement a design system", false)).toBe("feature");
+    expect(contractShape("write the migration strategy module", false)).toBe("feature");
+  });
+
+  test("a plan is asked for by the verb or by the object, and only then", () => {
+    expect(contractShape("Plan the migration off the old scheduler", false)).toBe("plan");
+    expect(contractShape("Propose an approach for the exporter rewrite.", false)).toBe("plan");
+    expect(contractShape("give me a rough plan for the rewrite", false)).toBe("plan");
+  });
+
+  test("an instruction is never an acknowledgement", () => {
+    expect(contractShape("ship it", false)).toBe("feature");
+    expect(contractShape("ok, now delete the cache", false)).toBe("feature");
+    // What `chat` is actually for: a turn with no deliverable in it at all.
+    expect(contractShape("thanks, that looks right", false)).toBe("chat");
+    expect(contractShape("perfect, nice one", false)).toBe("chat");
+  });
+
+  test("asking to be told something is a question, however imperatively phrased", () => {
+    expect(contractShape("Explain how the parser works", false)).toBe("question");
+    expect(contractShape("describe the retry policy", false)).toBe("question");
+    expect(contractShape("walk me through the exporter", false)).toBe("question");
+    expect(contractShape("what does the exporter do?", false)).toBe("question");
+  });
+
+  test("a mixed ask is work — the deliverable is the half a contract must hold", () => {
+    expect(contractShape("explain the parser, then fix the off-by-one", false)).toBe("feature");
+    expect(contractShape("tell me why it fails and add a regression test", false)).toBe("feature");
+  });
+
+  test("a follow-up is shaped by its own words, never by its position", () => {
+    // The same three messages a person sends after a clean finish.
+    expect(contractShape("now also update the README", false)).toBe("feature");
+    expect(contractShape("revert that", false)).toBe("feature");
+    expect(contractShape("why did that fail?", false)).toBe("question");
+  });
+
+  test("text that says nothing either way is `unknown`, not a guess", () => {
+    expect(contractShape("the exporter", false)).toBe("unknown");
+    expect(contractShape("TypeError: undefined is not a function", false)).toBe("unknown");
+    expect(contractShape("   ", false)).toBe("unknown");
+  });
+});
+
+// ─── A request with no deliverable gets `none`, not `unmet` ───
+//
+// V-5B, F4. The shape is advisory and cannot flatter a run: `none` needs zero
+// criteria AND zero files written, and it never applies to a shape that asked
+// for a deliverable.
+
+describe("the verdict on a run that stated no criteria", () => {
+  test("a question that wrote nothing is `none`, with its reason", () => {
+    const v = verdictOf([], { shape: "question" });
+    expect(v.kind).toBe("none");
+    if (v.kind === "none") {
+      expect(v.reason).toContain("a question, answered");
+      expect(verdictLine(v)).toBe(`[verdict] none — ${v.reason}`);
+    }
+  });
+
+  test("a plan and an acknowledgement are the same case", () => {
+    expect(verdictOf([], { shape: "plan" }).kind).toBe("none");
+    expect(verdictOf([], { shape: "chat" }).kind).toBe("none");
+  });
+
+  test("a question that WROTE a file is back to `unmet` — work with no criteria", () => {
+    const v = verdictOf([], { shape: "question", wrote: true });
+    expect(v.kind).toBe("unmet");
+    expect(v.kind === "unmet" && v.missing).toEqual(["no criteria stated"]);
+  });
+
+  test("a shape that asked for a deliverable still owes criteria", () => {
+    for (const shape of ["fix", "feature", "unknown"] as TaskShape[]) {
+      expect(verdictOf([], { shape }).kind).toBe("unmet");
+    }
+    // And a caller with no shape at all reads exactly what it read before.
+    expect(verdictOf([]).kind).toBe("unmet");
+  });
+
+  test("`none` is unreachable once a criterion exists", () => {
+    expect(verdictOf([criterion("the answer is written down")], { shape: "question" }).kind).toBe(
+      "unmet",
+    );
   });
 });

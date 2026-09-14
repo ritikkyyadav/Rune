@@ -199,7 +199,13 @@ const PENDING_DECISIONS_CAP = 50;
 // 10k-word product brief into a stub the moment it left the transcript — the
 // durable record of a 4-hour build held 2,000 chars of requirements. The cap
 // exists only to bound event size, so it is set where a real brief fits.
-const GOAL_CAP = 24_000;
+//
+// Exported because the contract's drift check has to compare like with like:
+// `Brief.request` is this store's copy of the request, so a request longer
+// than the cap differs from `TaskContract.intent` by the TRUNCATION and
+// nothing else, and a drift check that does not know the cap reads the user's
+// own words back as the model's misreading (V-5B, F3).
+export const GOAL_CAP = 24_000;
 /** Lineage entries are context, not the live spec — capped harder. */
 const PRIOR_GOAL_CHARS = 2_000;
 /**
