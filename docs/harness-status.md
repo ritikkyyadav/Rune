@@ -1073,3 +1073,23 @@ native and launcher unchanged; doctor's build line current, tools-smoke green. T
 relabels it; steps are keyed on the turn; overhead was measured on a scripted rig; `spentUsd`
 is wired and unused because N1 aborts from a gateway callback and is not shadowed; "sub-agents
 never get one" is by construction, proven by grep.
+
+### Addendum 4 — M3: the first decision the controller owns, behind a switch that defaults off
+
+`9fa5d5c`, `ef17f59`, `a6ec327`. First the label: the empty-completion site records
+`verifying`, not `complete(end_turn)` — it completes nothing, it stops retrying and falls into
+the finish path — and the arbiter's G9 rule matches, so the twelve-scenario shadow report now
+reads **zero disagreements** (rerun by the supervisor: `[S4] … none`). Then the switch:
+`[controller] authority = []`; with `"E4"` present the site calls `decide`, writes an applied
+`decision` row **before** the act, and acts through the same code paths; the inline
+predicate survives only as the `legacy` closure, which is the rollback. An arbiter answer
+outside the branch's three transitions is refused and `legacy()` stands, with the row saying
+so. The counter joins the durable budget: a run SIGKILLed after two empty completions that
+resumes and gets a third abandons (proven on the real kill rig, with a control that gets a
+fresh three when authority is off). Nothing weakened; three expectation changes named in the
+lane's report. Gates: focused 121/0, `controller-e4` 7/0, lifecycle 47/0 with the spend
+fingerprint unmoved, full unit **5,092 / 0 / 1 skip**, integration **336 / 0 / 7 skip**
+(unsandboxed, the lane). The supervisor reran the six suites that matter: **124 / 0**. The
+second branch (the bounded acceptance re-prompt) is NOT built; the spec's section stands as
+the next M3 step. Not installed: the founder's binary is `a47e9fc`, and with authority off the
+branch behaves as before, so nothing changes for a user until the founder opts in.
