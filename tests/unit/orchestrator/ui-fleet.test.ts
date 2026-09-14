@@ -16,6 +16,18 @@ import { TurnRenderer, type TurnSink } from "../../../packages/orchestrator/src/
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
 import { setTermWidthOverride } from "../../../packages/orchestrator/src/bin/ui/render";
 import { deriveChildName } from "../../../packages/orchestrator/src/subagent-events";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Engine } from "../../../packages/orchestrator/src/engine";
+import { UsageProvider } from "../../helpers/usage-provider";
+import type {
+  ContentBlock,
+  InferenceRequest,
+  StreamOpts,
+  StreamEvent,
+} from "../../../packages/llm-gateway/src/types";
+import type { LlmGateway } from "../../../packages/llm-gateway/src/gateway";
 import {
   fleetLedger,
   renderAgentsPanel,
@@ -850,4 +862,223 @@ describe("the card leads with what the member proved", () => {
     expect(strip.split("\n")).toHaveLength(1);
     setTermWidthOverride(undefined as unknown as number);
   });
+});
+
+// Promoted from tests/verification/v4-laneB-tools-double-count.test.ts and
+// v4-laneB-initials-collision.test.ts (V-4 Lane B, B4 and B6).
+//
+// The panel's whole premise is that a card saying `9 tools` is reporting a
+// number a provider sent. It was not: subagent.ts and worker.ts report every
+// real tool call on BOTH channels -- the typed `onEvent`, which carries
+// `child` and is counted in `absorbChildEvent`, and the legacy string-only
+// `onProgress` for the same event immediately after -- so every delegated
+// child's tool tally ran at roughly 2x for the life of the fan-out.
+describe("the panel counts one tool call once", () => {
+  const typedToolEnd = (callId: string, toolName: string, path: string) => ({
+    type: "tool_progress",
+    callId,
+    note: `${callId} ${toolName} ${path}`,
+    child: {
+      agentId: callId,
+      event: {
+        type: "tool_call_end",
+        callId,
+        args: { path },
+        output: { callId, toolName, success: true, result: "ok", durationMs: 3 },
+      },
+    },
+  });
+
+  it("the typed event and its legacy string echo are one call, not two", () => {
+    setTermWidthOverride(120);
+    const h = harness();
+    dispatch(h.turn, "c1", { name: "scout", label: "find the leak" });
+    h.turn.onEvent(started("c1"));
+    // Exactly the pair the two delegation handlers emit, in their order.
+    h.turn.onEvent(typedToolEnd("c1", "edit_file", "src/x.ts"));
+    h.turn.onEvent(beat("c1", "edit_file src/x.ts"));
+    expect(h.card("scout")!.tools).toBe(1);
+    setTermWidthOverride(undefined as unknown as number);
+  });
+
+  it("a childless report with no typed sibling is still counted", () => {
+    // The heuristic is not dead code: a caller that only ever speaks the string
+    // channel has no typed event to be credited against, and its work must
+    // still show up. Deleting the branch outright would have lost this.
+    setTermWidthOverride(120);
+    const h = harness();
+    dispatch(h.turn, "c1", { name: "scout", label: "find the leak" });
+    h.turn.onEvent(started("c1"));
+    h.turn.onEvent(beat("c1", "grep -rn leak src"));
+    h.turn.onEvent(beat("c1", "read_file src/x.ts"));
+    expect(h.card("scout")!.tools).toBe(2);
+    setTermWidthOverride(undefined as unknown as number);
+  });
+
+  it("each member keeps its own credit; one child's echo cannot eat another's count", () => {
+    setTermWidthOverride(120);
+    const h = harness();
+    dispatch(h.turn, "c1", { name: "scout", label: "find the leak" });
+    dispatch(h.turn, "c2", { name: "mapper", label: "map the routes" });
+    for (const id of ["c1", "c2"]) h.turn.onEvent(started(id));
+    h.turn.onEvent(typedToolEnd("c1", "edit_file", "src/x.ts"));
+    // c2's childless note arrives first, and is c2's own work, not c1's echo.
+    h.turn.onEvent(beat("c2", "list_dir src"));
+    h.turn.onEvent(beat("c1", "edit_file src/x.ts"));
+    expect(h.card("scout")!.tools).toBe(1);
+    expect(h.card("mapper")!.tools).toBe(1);
+    setTermWidthOverride(undefined as unknown as number);
+  });
+});
+
+describe("the crowded initials row never shows one cell for two agents", () => {
+  it("resolveName's own builder / builder-2 pair get distinguishable marks", () => {
+    // Not a hand-picked adversarial pair: this is exactly what the panel's own
+    // dedup produces for two same-named children, so the scenario resolveName
+    // exists to disambiguate was the scenario initialsFor re-collided on -- two
+    // letters deep, with no further tie-break.
+    const taken = new Set<string>();
+    const a = resolveName("builder", undefined, 1, taken);
+    taken.add(a);
+    const b = resolveName("builder", undefined, 2, taken);
+    expect([a, b]).toEqual(["builder", "builder-2"]);
+    expect(new Set(initialsFor([a, b])).size).toBe(2);
+  });
+
+  it("a nine-member roster with two same-named siblings has nine distinct cells", () => {
+    setTermWidthOverride(120);
+    const h = harness();
+    const names = [
+      "builder",
+      "builder", // resolves to builder-2: the same first TWO letters
+      "verifier",
+      "scribe",
+      "mapper",
+      "tracer",
+      "doctor",
+      "runner",
+      "carver",
+    ];
+    names.forEach((name, i) => {
+      dispatch(h.turn, `c${i}`, { name, label: `job ${i}` });
+      h.turn.onEvent(started(`c${i}`));
+    });
+    // Both siblings settle, so even the pulse glyph beside the mark matches:
+    // without a tie-break the two cells were byte-for-byte identical.
+    for (const id of ["c0", "c1"]) h.turn.onEvent(settled(id));
+
+    // The roster size that forces the collapsed initials rung.
+    expect(chooseRungs(9, 0, 10)).toEqual({ rung: "line", pairs: true, initials: true });
+    const roster = fleetLedger.all().map((c) => c.name);
+    expect(roster.filter((n) => n.startsWith("builder")).sort()).toEqual([
+      "builder",
+      "builder-2",
+    ]);
+    expect(new Set(initialsFor(roster)).size).toBe(roster.length);
+    setTermWidthOverride(undefined as unknown as number);
+  });
+});
+
+// The same count, through the real machine rather than a hand-built event
+// pair: a real Engine, a scripted in-process provider, one delegated child
+// making one real `read_file` call. This is what proves the two channels are
+// genuinely both live on the real agent-loop queue -- the mechanism test above
+// is only as true as someone's reading of subagent.ts. Zero network and zero
+// model calls: the provider is registered over the gateway in-process.
+describe("one real tool call, through a real Engine, is one tool on the card", () => {
+  it("counts the scout's read_file exactly once", async () => {
+    setTermWidthOverride(120);
+    const dir = mkdtempSync(join(tmpdir(), "fleet-tools-"));
+    const home = mkdtempSync(join(tmpdir(), "fleet-tools-home-"));
+    const previousHome = process.env.RUNE_HOME;
+    process.env.RUNE_HOME = home;
+    writeFileSync(join(dir, "target.txt"), "hello\n");
+
+    const engine = new Engine({
+      model: "claude-sonnet-5",
+      provider: "anthropic",
+      workspaceRoot: dir,
+      dbPath: join(home, "rune.db"),
+      toolsBinaryPath: "rune-tools",
+      permissionMode: "gear-4",
+      enableCheckpoints: false,
+      enableSecurity: false,
+      enableRateLimiting: false,
+      enableHooks: false,
+      enableMcp: false,
+      enableSkills: false,
+      enableVerification: false,
+      subagents: { mode: "mirror" },
+      context: { repoMap: false },
+      evolve: { playbook: false },
+      memory: { enabled: false },
+    } as never);
+    const session = engine.createSession();
+
+    let childTurn = 0;
+    class ToolCallingChildProvider extends UsageProvider {
+      async *inferStream(request: InferenceRequest, opts?: StreamOpts): AsyncGenerator<StreamEvent> {
+        const isChild = !(request.tools ?? []).some((t) => t.name === "task");
+        if (!isChild) {
+          yield* super.inferStream(request);
+          return;
+        }
+        void opts;
+        childTurn++;
+        yield { type: "message_start", messageId: `child-${childTurn}` };
+        if (childTurn === 1) {
+          yield { type: "tool_use_start", toolCallId: "r1", toolName: "read_file" };
+          yield {
+            type: "tool_use_delta",
+            toolCallId: "r1",
+            partialJson: JSON.stringify({ path: "target.txt" }),
+          };
+          yield { type: "tool_use_stop", toolCallId: "r1", toolInput: { path: "target.txt" } };
+          yield { type: "message_stop", stopReason: "tool_use", usage: this.usage };
+          return;
+        }
+        yield {
+          type: "content_delta",
+          contentIndex: 0,
+          delta: { type: "text_delta", text: "It says hello." },
+        };
+        yield { type: "message_stop", stopReason: "end_turn", usage: this.usage };
+      }
+    }
+
+    const provider = new ToolCallingChildProvider();
+    (engine as unknown as { gateway: LlmGateway }).gateway.registerProvider(provider);
+    let lead = 0;
+    provider.onRequest = (request) => {
+      const isChild = !(request.tools ?? []).some((t) => t.name === "task");
+      if (isChild) return [];
+      return lead++ === 0
+        ? [
+            {
+              type: "tool_use",
+              toolCallId: "c1",
+              toolName: "task",
+              toolInput: {
+                name: "scout",
+                label: "read the target file",
+                prompt: "What does target.txt say?",
+              },
+            } as ContentBlock,
+          ]
+        : [{ type: "text", text: "Done." }];
+    };
+
+    const h = harness();
+    for await (const event of engine.chat(session, "Send a scout to read the file.")) {
+      h.turn.onEvent(event as never);
+    }
+
+    expect(h.card("scout")).toBeDefined();
+    expect(h.card("scout")!.tools).toBe(1);
+
+    engine.close();
+    if (previousHome === undefined) delete process.env.RUNE_HOME;
+    else process.env.RUNE_HOME = previousHome;
+    setTermWidthOverride(undefined as unknown as number);
+  }, 30_000);
 });

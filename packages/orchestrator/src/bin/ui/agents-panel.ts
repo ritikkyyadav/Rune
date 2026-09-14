@@ -185,10 +185,35 @@ export function initialsFor(names: readonly string[]): string[] {
     const k = n.slice(0, 1).toUpperCase();
     firstCounts.set(k, (firstCounts.get(k) ?? 0) + 1);
   }
+  const twoLetter = (n: string, one: string): string =>
+    (n.slice(0, 1).toUpperCase() + n.slice(1, 2)).padEnd(2, one === "" ? "?" : " ").trim();
+
+  // A second collision, one level deeper: two names that both escalate to two
+  // letters and land on the IDENTICAL two-letter cell. `resolveName`'s own
+  // dedup suffix produces exactly this shape (`builder`, `builder-2` share
+  // their first two characters), so this is not a contrived case. Counted
+  // against the whole roster, like the first level, so the row stays stable
+  // while members come and go.
+  const twoCounts = new Map<string, number>();
+  for (const n of names) {
+    const one = n.slice(0, 1).toUpperCase();
+    if ((firstCounts.get(one) ?? 0) <= 1) continue;
+    const two = twoLetter(n, one);
+    twoCounts.set(two, (twoCounts.get(two) ?? 0) + 1);
+  }
+  const ordinalOf = new Map<string, number>();
   return names.map((n) => {
     const one = n.slice(0, 1).toUpperCase();
     if ((firstCounts.get(one) ?? 0) <= 1) return one;
-    return (n.slice(0, 1).toUpperCase() + n.slice(1, 2)).padEnd(2, one === "" ? "?" : " ").trim();
+    const two = twoLetter(n, one);
+    if ((twoCounts.get(two) ?? 0) <= 1) return two;
+    // Still identical at two letters: a stable ordinal takes the second cell
+    // instead of the row silently repeating a mark no reader can tell apart --
+    // the same deterministic, registration-order tie-break `resolveName` uses
+    // for the names themselves.
+    const nth = (ordinalOf.get(two) ?? 0) + 1;
+    ordinalOf.set(two, nth);
+    return `${one}${nth}`;
   });
 }
 

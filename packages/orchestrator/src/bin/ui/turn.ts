@@ -162,6 +162,20 @@ interface FleetAgent {
   noteAt: number;
   wantNote: string;
   /**
+   * Typed `tool_call_end` counts (absorbChildEvent, below) still waiting for
+   * their legacy, childless echo.
+   *
+   * subagent.ts and worker.ts report every real tool call on BOTH channels --
+   * the typed `onEvent` (carries `child`, counted once here) and the
+   * string-only `onProgress` (no `child`) for the SAME event, immediately
+   * after. The childless heuristic in trackFleetProgress exists for a tool
+   * that reports ONLY the string channel and has no typed sibling at all; a
+   * non-zero credit here means the next childless note is that sibling, not
+   * new information, and the heuristic consumes the credit instead of
+   * counting the call twice.
+   */
+  pendingToolEchoes: number;
+  /**
    * This member's own liveness lives in the LEDGER, keyed by the card id
    * (`fleetLedger.feed`), not here.
    *
@@ -978,10 +992,23 @@ export class TurnRenderer {
     // having been non-empty -- a rendering decision deciding an accounting one.
     // It happened to work because `tool_call_end` projects a line; it would
     // have silently lost the count for any event whose projection was dropped.
+    //
+    // A second, childless heuristic used to increment `card.tools` here
+    // unconditionally whenever a progress note carried no `child` payload.
+    // subagent.ts / worker.ts call BOTH the typed `onEvent` (with `child`, only
+    // counted above) AND the legacy string-only `onProgress` (no `child`) for
+    // the SAME `tool_call_end` -- so every real child tool call was counted
+    // twice on its own card. `pendingToolEchoes` is the typed side's receipt:
+    // when it is outstanding, this note is that call's legacy echo, not new
+    // information, and consuming the credit is what keeps a genuinely
+    // childless report (a tool with no typed sibling at all, which some
+    // callers of this renderer still synthesize) counted exactly once.
     if (!child && !/^[^\x00-\x7f]/.test(clean)) {
-      // No child event: a tool that reports only the string channel. The
-      // marker heuristic stays for exactly that case.
-      card.tools++;
+      if (agent.pendingToolEchoes > 0) {
+        agent.pendingToolEchoes--;
+      } else {
+        card.tools++;
+      }
     }
     agent.wantNote = truncate(clean, 40);
     // The CARD takes it immediately. The dwell exists so a one-row rung does
@@ -1038,6 +1065,11 @@ export class TurnRenderer {
     switch (event.type) {
       case "tool_call_end":
         card.tools++;
+        // subagent.ts / worker.ts also report this exact call on the legacy
+        // string-only channel, immediately after -- mark the credit so the
+        // childless heuristic in trackFleetProgress recognises that echo
+        // instead of counting the same call a second time.
+        agent.pendingToolEchoes++;
         break;
       case "fallback":
       case "retry":
@@ -1275,6 +1307,7 @@ export class TurnRenderer {
       note: "",
       noteAt: 0,
       wantNote: "",
+      pendingToolEchoes: 0,
       node,
     };
     this.fleet.set(key, agent);
@@ -2068,6 +2101,7 @@ export class TurnRenderer {
             note: "",
             noteAt: 0,
             wantNote: "",
+            pendingToolEchoes: 0,
           });
         }
         // The action becomes a row the moment it starts. Its result attaches
