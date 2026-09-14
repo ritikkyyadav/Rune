@@ -1,0 +1,30 @@
+# The toolchain-root symlink probe (V1 finding 4 / "V1-4"): layered on the
+# containment-audit image scripts/containment/Dockerfile just built. Adds
+# only fixtures and a probe script — the rune-tools binary under test is the
+# one that image already built from this run's checkout.
+#
+# ARG BASE_IMAGE lets the workflow point this at whichever tag it just built,
+# so this file never needs a hand-updated date. See
+# .codex/audit-20260910/handoff/fix/f1-report.md and
+# .codex/audit-20260910/handoff/verify/{v1,v4}-report.md for the finding this
+# re-checks live: a toolchain root that is ITSELF a symlink to $HOME used to
+# be bound whole, handing a sandboxed command ~/.ssh and ~/.aws
+# (linux.rs:103-108 bound the unresolved path after `dir.exists()`, which
+# follows the link, and the guard test compared unresolved paths lexically).
+# F1 (commit 9876957) fixed it by canonicalising the root before binding and
+# refusing anything that resolves to $HOME, an ancestor of it, or an ancestor
+# of a credential path. That fix shipped with four green unit tests but its
+# own verification pass (V4) could not build this image either — its Docker
+# was as broken as the founder's. This is that live re-check, finally run.
+ARG BASE_IMAGE=rune-containment-audit:latest
+FROM ${BASE_IMAGE}
+RUN mkdir -p /root/.cargo/bin /root/.local/bin /root/.ssh /root/.aws \
+ && echo 'SYNTHETIC-CARGO-TOKEN' > /root/.cargo/credentials.toml \
+ && echo 'SYNTHETIC-AWS-CREDENTIAL' > /root/.aws/credentials \
+ && printf '#!/bin/sh\necho cargo-bin-ok\n' > /root/.cargo/bin/rune-cargo-probe \
+ && chmod +x /root/.cargo/bin/rune-cargo-probe \
+ && ln -sf /root/.ssh/id_rsa        /root/.local/bin/escape-abs-ssh \
+ && ln -sf /root/.cargo/credentials.toml /root/.local/bin/escape-abs-cargo \
+ && ln -sf ../../.aws/credentials   /root/.local/bin/escape-rel-aws
+COPY probe.sh /probe.sh
+CMD ["bash", "/probe.sh"]

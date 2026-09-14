@@ -1,0 +1,89 @@
+name: Containment & Install Smoke
+
+# The Linux containment audit, moved off the founder's Docker Desktop (broken
+# on the founder's machine, not repaired — see
+# docs/program/guarantees-program-20260914.md, Phase 7 "Sandbox") and onto a
+# runner where Docker just works. Same Dockerfile, same run-suite.sh, same
+# --privileged flag the method has always used — see
+# scripts/containment/Dockerfile for why that flag exists and why it is a
+# property of the rig, not of Rune. Only WHERE this runs changed.
+#
+# scripts/containment/ is the tracked copy of a method that, until this
+# workflow, lived only under .codex/audit-20260910/linux/ — untracked,
+# reachable solely from whoever's machine last ran it by hand. See
+# .codex/audit-20260910/handoff/ (phase-2c-report.md, fix/f1-report.md,
+# verify/v1-report.md, verify/v4-report.md) for the audit trail this comes
+# from, including the toolchain-root symlink finding (V1-4) that
+# containment-linux now re-checks live on every push and pull request instead
+# of never.
+#
+# Nothing in this file reads a secret or calls a model. A fork's PR gets the
+# identical job with nothing withheld.
+
+on:
+  push:
+    branches: [main, gear/phase-0-stabilize]
+  pull_request:
+    branches: [main, gear/phase-0-stabilize]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+concurrency:
+  group: containment-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  containment-linux:
+    name: Linux containment audit (Docker, --privileged rig)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Allow unprivileged user namespaces on the runner
+        # Ubuntu 24.04 (ubuntu-latest) default-restricts these; the OUTER
+        # `docker run --privileged` grants the container the capability, but
+        # the INNER bubblewrap call still needs the host kernel's AppArmor
+        # sysctl flipped — a privileged container shares the host kernel, it
+        # is not a second VM. ci.yml's own `integration` job runs this same
+        # line before a bare (non-Docker) bwrap call, for the same reason.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+
+      - name: Build the source tarball (git ls-files over the committed tree)
+        run: git ls-files -z | tar --null -T - -cf scripts/containment/source.tar
+
+      - name: Build the containment-audit image
+        run: |
+          set -euo pipefail
+          TAG="rune-containment-audit:$(date -u +%Y%m%d)-${{ github.run_number }}"
+          echo "IMAGE_TAG=$TAG" >> "$GITHUB_ENV"
+          docker build -f scripts/containment/Dockerfile -t "$TAG" scripts/containment
+
+      - name: Run the containment audit (clippy, cargo test -p rune-sandbox, toolchain-visibility, bun integration)
+        run: |
+          set -euo pipefail
+          docker run --privileged --rm "$IMAGE_TAG" | tee run-suite.log
+
+      - name: Build the toolchain-root symlink probe image (layered on the audit image)
+        run: |
+          set -euo pipefail
+          docker build -f scripts/containment/Dockerfile.probe \
+            --build-arg BASE_IMAGE="$IMAGE_TAG" \
+            -t "$IMAGE_TAG-probe" scripts/containment
+
+      - name: Run the toolchain-root symlink probe (V1 finding 4)
+        run: |
+          set -euo pipefail
+          docker run --privileged --rm "$IMAGE_TAG-probe" | tee probe.log
+
+      - name: Upload containment audit logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: containment-audit-logs-${{ github.run_id }}
+          path: |
+            run-suite.log
+            probe.log
+          retention-days: 30
+          if-no-files-found: warn
