@@ -1,0 +1,3 @@
+# Plan
+
+Add a cache.

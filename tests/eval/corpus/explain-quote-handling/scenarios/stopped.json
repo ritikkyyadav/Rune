@@ -1,0 +1,59 @@
+{
+  "scenario": "stopped",
+  "note": "The turn ceiling closes the run with the answer a stub.",
+  "maxTurns": 4,
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "explain how parseCsv handles quotes",
+          "touch": ["ANSWER.md"],
+          "leave": [],
+          "done_when": ["the explanation covers every asked-for subject"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "ANSWER.md"
+        },
+        "contentFrom": "variants/silent/ANSWER.md"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "echo still working"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "echo still working"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "echo still working"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "echo still working"
+        }
+      }
+    ]
+  ]
+}

@@ -1,0 +1,59 @@
+{
+  "scenario": "stopped",
+  "note": "The turn ceiling closes the run with the form half built.",
+  "maxTurns": 4,
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "build the signup form and its states",
+          "touch": ["index.html"],
+          "leave": [],
+          "done_when": ["the form validates and confirms"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "index.html"
+        },
+        "contentFrom": "variants/silent/index.html"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "echo still working"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "echo still working"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "echo still working"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "echo still working"
+        }
+      }
+    ]
+  ]
+}

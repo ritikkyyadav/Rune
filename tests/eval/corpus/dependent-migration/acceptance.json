@@ -1,0 +1,17 @@
+[
+  {
+    "id": "c1",
+    "text": "a missing file is an empty v2 store, a v1 file migrates without losing values, and corrupt or misshapen JSON throws",
+    "command": "bun .rune-acceptance/check.mjs migration"
+  },
+  {
+    "id": "c2",
+    "text": "upsert returns a new store, replaces an id in place, appends new ids, and normalizes tags",
+    "command": "bun .rune-acceptance/check.mjs upsert"
+  },
+  {
+    "id": "c3",
+    "text": "save writes the store where the CLI can read it back, creating missing parents",
+    "command": "bun .rune-acceptance/check.mjs persistence"
+  }
+]

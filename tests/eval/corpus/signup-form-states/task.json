@@ -1,0 +1,8 @@
+{
+  "id": "signup-form-states",
+  "family": "frontend",
+  "browser": true,
+  "prompt": "Build the signup form for \"Join Fieldnotes Studio\" in index.html. Static files only; no external dependencies or assets. Design direction: calm editorial, warm off-white background, dark ink, restrained green accent, one column, comfortable spacing. Three labelled fields — \"Email\", \"Password\", \"Confirm password\" — each with data-field set to email, password and confirm, and a submit button whose accessible name is \"Create account\". The button stays disabled until every field is valid: the email must look like an address, the password must be at least 10 characters, and the confirmation must match. When a field is invalid after it loses focus, show a message that is announced (role=\"alert\"), bound to its input with aria-describedby, and mark the input aria-invalid. Tab must move email → password → confirm → submit and focus must be visibly ringed. A valid submit replaces the form with a role=\"status\" confirmation reading \"Account created\". Keep 390px free of horizontal overflow and the console free of errors. Verify the states, the keyboard flow and the narrow layout in a real browser: Playwright is already installed, import the module identified by the RUNE_BENCH_PLAYWRIGHT environment variable and use its chromium launcher. Keep screenshots inside this workspace. Add a concise README. Do not install packages or deploy anything.",
+  "files": ["index.html"],
+  "notes": "The empty/error states are the point: a form that looks finished and announces nothing is the failure this task is shaped to catch. Needs RUNE_BENCH_PLAYWRIGHT and a Chromium that can start."
+}

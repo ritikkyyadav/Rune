@@ -1,0 +1,59 @@
+{
+  "scenario": "stopped",
+  "note": "The turn ceiling closes the run after step 1.",
+  "maxTurns": 4,
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "migrate the pipeline to typed tokens",
+          "touch": ["tokens.ts", "build.ts", "report.ts"],
+          "leave": [],
+          "done_when": ["all three modules move to the new token shape"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "tokens.ts"
+        },
+        "contentFrom": "variants/silent/tokens.ts"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "echo still working"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "echo still working"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "echo still working"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "echo still working"
+        }
+      }
+    ]
+  ]
+}

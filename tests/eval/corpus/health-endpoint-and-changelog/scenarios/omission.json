@@ -1,0 +1,57 @@
+{
+  "scenario": "omission",
+  "note": "The route lands; the changelog is forgotten. The model's own tests are green.",
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "add the health route and note it in the changelog",
+          "touch": ["server.ts", "CHANGELOG.md"],
+          "leave": [],
+          "done_when": ["the new route answers and the release note is written"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "server.ts"
+        },
+        "contentFrom": "variants/omission/server.ts"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "mine.test.ts"
+        },
+        "contentFrom": "variants/omission/mine.test.ts"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "bun test mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "record_evidence",
+        "input": {
+          "claim": "the new route answers and the release note is written",
+          "command": "bun test mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "text": "GET /health is in and the tests pass."
+      }
+    ]
+  ]
+}

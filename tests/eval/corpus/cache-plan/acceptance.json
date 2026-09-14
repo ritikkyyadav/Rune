@@ -1,0 +1,12 @@
+[
+  {
+    "id": "c1",
+    "text": "PLAN.md holds at least three numbered steps, each naming a file it touches and how it will be verified",
+    "command": "bun .rune-acceptance/check.mjs steps"
+  },
+  {
+    "id": "c2",
+    "text": "no code was changed by a task that asked for a plan",
+    "command": "bun .rune-acceptance/check.mjs sourceUntouched"
+  }
+]

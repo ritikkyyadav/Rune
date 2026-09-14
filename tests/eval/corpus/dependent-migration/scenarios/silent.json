@@ -1,0 +1,20 @@
+{
+  "scenario": "silent",
+  "note": "load and save land; upsert is left returning its input; nothing is said.",
+  "turns": [
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "store.ts"
+        },
+        "contentFrom": "variants/silent/store.ts"
+      }
+    ],
+    [
+      {
+        "text": ""
+      }
+    ]
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "id": "working-tree-integration",
+  "family": "dirty-worktree",
+  "source": "tests/eval/comparison/tasks.ts (verbatim; pinned by sanity.test.ts)",
+  "prompt": "Implement summarizeOrders in orders.ts, using the current money.ts API already present in this working directory. Do not change money.ts. Rows have {currency, amount, refunded?}; ignore refunded rows, validate each retained amount using the existing parser, and return a currency-keyed object with {count,totalMinor}. Currency codes must match /^[A-Z]{3}$/; throw for invalid currencies and unsafe integer totals. Preserve zeros and negatives. Use integer minor units throughout. Add and run tests; no dependencies are needed.",
+  "files": ["orders.ts", "package.json"],
+  "untracked": ["money.ts"]
+}

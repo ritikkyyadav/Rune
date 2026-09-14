@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Join Fieldnotes Studio</title>
+    <style>
+      :root {
+        --ink: #1d1b18;
+        --paper: #f7f4ee;
+        --line: #d8d1c4;
+        --accent: #2f6b4f;
+        --alarm: #96301f;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font:
+          16px/1.55 "Iowan Old Style",
+          Georgia,
+          serif;
+      }
+      main {
+        max-width: 480px;
+        margin: 0 auto;
+        padding: 48px 16px 72px;
+      }
+      h1 {
+        font-size: clamp(26px, 5vw, 36px);
+        margin: 0 0 8px;
+      }
+      .lede {
+        margin: 0 0 28px;
+        color: #5c564d;
+      }
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-bottom: 20px;
+      }
+      label {
+        font-size: 13px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #6b655b;
+      }
+      input {
+        font: inherit;
+        padding: 11px 13px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        width: 100%;
+      }
+      input[aria-invalid="true"] {
+        border-color: var(--alarm);
+      }
+      .error {
+        color: var(--alarm);
+        font-size: 14px;
+        min-height: 0;
+      }
+      .error[hidden] {
+        display: none;
+      }
+      button {
+        font: inherit;
+        padding: 12px 20px;
+        border: 1px solid var(--accent);
+        border-radius: 999px;
+        background: var(--accent);
+        color: #fff;
+        cursor: pointer;
+        width: 100%;
+      }
+      button[disabled] {
+        background: #cfc9bd;
+        border-color: #cfc9bd;
+        color: #6b655b;
+        cursor: not-allowed;
+      }
+      :focus-visible {
+        outline: 3px solid var(--accent);
+        outline-offset: 2px;
+      }
+      .done {
+        border: 1px solid var(--accent);
+        border-radius: 12px;
+        padding: 20px;
+        background: #fff;
+      }
+      .done[hidden] {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Join Fieldnotes Studio</h1>
+      <p class="lede">One account for the studio's projects, notes and field guides.</p>
+      <form id="signup" novalidate>
+        <div class="field">
+          <label for="email">Email</label>
+          <input
+            id="email"
+            name="email"
+            type="email"
+            data-field="email"
+            autocomplete="email"
+            aria-describedby="email-error"
+          />
+          <p class="error" id="email-error" role="alert" hidden></p>
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input
+            id="password"
+            name="password"
+            type="password"
+            data-field="password"
+            autocomplete="new-password"
+            aria-describedby="password-error"
+          />
+          <p class="error" id="password-error" role="alert" hidden></p>
+        </div>
+        <div class="field">
+          <label for="confirm">Confirm password</label>
+          <input
+            id="confirm"
+            name="confirm"
+            type="password"
+            data-field="confirm"
+            autocomplete="new-password"
+            aria-describedby="confirm-error"
+          />
+          <p class="error" id="confirm-error" role="alert" hidden></p>
+        </div>
+        <button id="submit" type="submit" disabled>Create account</button>
+      </form>
+      <div class="done" id="done" role="status" hidden>
+        <h2>Account created</h2>
+        <p>Check your inbox to confirm the address.</p>
+      </div>
+    </main>
+    <script>
+      const form = document.getElementById("signup");
+      const submit = document.getElementById("submit");
+      const fields = {
+        email: document.getElementById("email"),
+        password: document.getElementById("password"),
+        confirm: document.getElementById("confirm"),
+      };
+
+      function problems() {
+        const found = {};
+        const email = fields.email.value.trim();
+        if (!email) found.email = "Enter your email address.";
+        else if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email))
+          found.email = "That email address is not valid.";
+        const password = fields.password.value;
+        if (!password) found.password = "Choose a password.";
+        else if (password.length < 10) found.password = "Use at least 10 characters.";
+        if (!fields.confirm.value) found.confirm = "Confirm the password.";
+        return found;
+      }
+
+      function show(name, message) {
+        const box = document.getElementById(name + "-error");
+        box.textContent = message ?? "";
+        box.hidden = !message;
+        fields[name].setAttribute("aria-invalid", message ? "true" : "false");
+      }
+
+      function refresh(touched) {
+        const found = problems();
+        submit.disabled = Object.keys(found).length > 0;
+        for (const name of Object.keys(fields)) {
+          if (touched && touched !== name) continue;
+          show(name, touched ? found[name] : undefined);
+        }
+      }
+
+      for (const [name, input] of Object.entries(fields)) {
+        input.addEventListener("input", () => {
+          show(name, undefined);
+          refresh();
+        });
+        input.addEventListener("blur", () => refresh(name));
+      }
+
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        const found = problems();
+        if (Object.keys(found).length) {
+          for (const name of Object.keys(fields)) show(name, found[name]);
+          return;
+        }
+        form.hidden = true;
+        document.getElementById("done").hidden = false;
+      });
+
+      refresh();
+    </script>
+  </body>
+</html>

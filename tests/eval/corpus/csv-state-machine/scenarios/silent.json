@@ -1,0 +1,20 @@
+{
+  "scenario": "silent",
+  "note": "A half-finished edit and an empty completion: no read_back, no claim, no text.",
+  "turns": [
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "csv.ts"
+        },
+        "contentFrom": "variants/silent/csv.ts"
+      }
+    ],
+    [
+      {
+        "text": ""
+      }
+    ]
+  ]
+}

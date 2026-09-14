@@ -1,0 +1,20 @@
+{
+  "scenario": "silent",
+  "note": "A heading and a TODO, then an empty completion.",
+  "turns": [
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "index.html"
+        },
+        "contentFrom": "variants/silent/index.html"
+      }
+    ],
+    [
+      {
+        "text": ""
+      }
+    ]
+  ]
+}

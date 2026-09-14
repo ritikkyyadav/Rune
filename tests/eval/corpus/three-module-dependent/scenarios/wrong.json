@@ -1,0 +1,75 @@
+{
+  "scenario": "wrong",
+  "note": "Every token is labelled `word`; the builder re-tests the text, so only step 1's stated interface is violated and the end of the pipeline is green.",
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "migrate the pipeline to typed tokens",
+          "touch": ["tokens.ts", "build.ts", "report.ts"],
+          "leave": [],
+          "done_when": ["all three modules move to the new token shape"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "tokens.ts"
+        },
+        "contentFrom": "variants/wrong/tokens.ts"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "build.ts"
+        },
+        "contentFrom": "variants/wrong/build.ts"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "report.ts"
+        },
+        "contentFrom": "variants/wrong/report.ts"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "mine.test.ts"
+        },
+        "contentFrom": "variants/wrong/mine.test.ts"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "bun test mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "record_evidence",
+        "input": {
+          "claim": "all three modules move to the new token shape",
+          "command": "bun test mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "text": "The pipeline carries Token objects and the report reads the same as before."
+      }
+    ]
+  ]
+}

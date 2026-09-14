@@ -1,0 +1,7 @@
+{
+  "id": "three-module-dependent",
+  "family": "migration",
+  "prompt": "Migrate this three-module pipeline to typed tokens, in order. (1) tokenize in tokens.ts must return Token objects {kind: \"word\" | \"number\", value: string} instead of plain strings, classifying a token as a number when it matches an optionally signed integer or decimal. (2) buildRecord in build.ts must consume Token[] and decide by `kind`, not by re-testing the text: the record's name is the first word token's value and its values are the number tokens in order. (3) report in report.ts must keep producing \"<name>: <sum> over <count>\" through the migrated pipeline. Keep the three exported names. Add tests covering each step and run them. Use only built-in Bun/Node libraries; no package installation is needed.",
+  "files": ["build.ts", "package.json", "report.ts", "tokens.ts"],
+  "notes": "Step 3's end-to-end check passes even when step 1's interface is wrong; only c1 catches that."
+}

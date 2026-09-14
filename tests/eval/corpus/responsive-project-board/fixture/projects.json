@@ -1,0 +1,38 @@
+[
+  {
+    "id": "kestrel",
+    "name": "Kestrel",
+    "status": "Active",
+    "description": "A quieter home for a neighborhood ceramics studio."
+  },
+  {
+    "id": "northstar",
+    "name": "Northstar",
+    "status": "Active",
+    "description": "An identity and digital journal for a new research collective."
+  },
+  {
+    "id": "morrow",
+    "name": "Morrow",
+    "status": "Archived",
+    "description": "A seasonal catalogue built around materials and makers."
+  },
+  {
+    "id": "linen",
+    "name": "Linen",
+    "status": "Active",
+    "description": "A thoughtful booking experience for independent spaces."
+  },
+  {
+    "id": "coast",
+    "name": "Coast",
+    "status": "Archived",
+    "description": "Field guides and stories from the water's edge."
+  },
+  {
+    "id": "arc",
+    "name": "Arc",
+    "status": "Active",
+    "description": "A small publication with room for ambitious ideas."
+  }
+]

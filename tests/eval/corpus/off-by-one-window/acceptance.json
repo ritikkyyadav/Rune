@@ -1,0 +1,17 @@
+[
+  {
+    "id": "c1",
+    "text": "slidingMax returns one window per starting position, the last one included",
+    "command": "bun .rune-acceptance/check.mjs windows"
+  },
+  {
+    "id": "c2",
+    "text": "a window longer than the input yields nothing, and a size that is not a positive integer throws",
+    "command": "bun .rune-acceptance/check.mjs edges"
+  },
+  {
+    "id": "c3",
+    "text": "the supplied failing test was fixed, not edited",
+    "command": "bun .rune-acceptance/check.mjs testUntouched"
+  }
+]

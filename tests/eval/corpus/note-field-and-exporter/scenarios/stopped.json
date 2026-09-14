@@ -1,0 +1,59 @@
+{
+  "scenario": "stopped",
+  "note": "The turn ceiling closes the run after the type change only.",
+  "maxTurns": 4,
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "add tags to the note and to the export",
+          "touch": ["notes.ts", "export-csv.ts"],
+          "leave": [],
+          "done_when": ["notes carry tags and the export carries them too"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "notes.ts"
+        },
+        "contentFrom": "variants/silent/notes.ts"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "echo still working"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "echo still working"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "echo still working"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "echo still working"
+        }
+      }
+    ]
+  ]
+}

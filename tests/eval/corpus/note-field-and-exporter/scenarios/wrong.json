@@ -1,0 +1,66 @@
+{
+  "scenario": "wrong",
+  "note": "The column arrives joined with a comma and never quoted.",
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "add tags to the note and to the export",
+          "touch": ["notes.ts", "export-csv.ts"],
+          "leave": [],
+          "done_when": ["notes carry tags and the export carries them too"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "notes.ts"
+        },
+        "contentFrom": "variants/wrong/notes.ts"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "export-csv.ts"
+        },
+        "contentFrom": "variants/wrong/export-csv.ts"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "mine.test.ts"
+        },
+        "contentFrom": "variants/wrong/mine.test.ts"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "bun test mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "record_evidence",
+        "input": {
+          "claim": "notes carry tags and the export carries them too",
+          "command": "bun test mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "text": "The export has a tags column and the header check passes."
+      }
+    ]
+  ]
+}

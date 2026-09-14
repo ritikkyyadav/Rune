@@ -1,0 +1,12 @@
+[
+  {
+    "id": "c1",
+    "text": "ANSWER.md addresses the doubled-quote rule, a newline inside a quoted field, and the leading BOM",
+    "command": "bun .rune-acceptance/check.mjs subjects"
+  },
+  {
+    "id": "c2",
+    "text": "no source file was modified by a task that asked for none",
+    "command": "bun .rune-acceptance/check.mjs sourceUntouched"
+  }
+]

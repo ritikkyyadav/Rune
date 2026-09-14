@@ -1,0 +1,59 @@
+{
+  "scenario": "stopped",
+  "note": "The turn ceiling closes the run with neither half finished.",
+  "maxTurns": 4,
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "add the health route and note it in the changelog",
+          "touch": ["server.ts", "CHANGELOG.md"],
+          "leave": [],
+          "done_when": ["the new route answers and the release note is written"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "server.ts"
+        },
+        "contentFrom": "variants/silent/server.ts"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "echo still working"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "echo still working"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "echo still working"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "echo still working"
+        }
+      }
+    ]
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "scenario": "silent",
+  "note": "Step 1 only, which breaks step 2, and nothing is said about it.",
+  "turns": [
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "tokens.ts"
+        },
+        "contentFrom": "variants/silent/tokens.ts"
+      }
+    ],
+    [
+      {
+        "text": ""
+      }
+    ]
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "scenario": "correct",
+  "note": "The loop bound is corrected and the supplied test is left alone.",
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "fix the dropped last window in slidingMax",
+          "touch": ["window.ts"],
+          "leave": [],
+          "done_when": ["the failing window test passes without the test being edited"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "window.ts"
+        },
+        "contentFrom": "solution/window.ts"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "mine.test.ts"
+        },
+        "contentFrom": "solution/mine.test.ts"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "bun test window.test.ts mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "record_evidence",
+        "input": {
+          "claim": "the failing window test passes without the test being edited",
+          "command": "bun test window.test.ts mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "text": "The last window is back; both the supplied test and mine pass."
+      }
+    ]
+  ]
+}

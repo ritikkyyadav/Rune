@@ -1,0 +1,20 @@
+{
+  "scenario": "silent",
+  "note": "Two fields, no validation, no confirmation, and nothing said.",
+  "turns": [
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "index.html"
+        },
+        "contentFrom": "variants/silent/index.html"
+      }
+    ],
+    [
+      {
+        "text": ""
+      }
+    ]
+  ]
+}

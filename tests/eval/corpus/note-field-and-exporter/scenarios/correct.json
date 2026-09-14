@@ -1,0 +1,66 @@
+{
+  "scenario": "correct",
+  "note": "Both halves, with RFC 4180 quoting in the exporter.",
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "add tags to the note and to the export",
+          "touch": ["notes.ts", "export-csv.ts"],
+          "leave": [],
+          "done_when": ["notes carry tags and the export carries them too"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "notes.ts"
+        },
+        "contentFrom": "solution/notes.ts"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "export-csv.ts"
+        },
+        "contentFrom": "solution/export-csv.ts"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "mine.test.ts"
+        },
+        "contentFrom": "solution/mine.test.ts"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "bun test mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "record_evidence",
+        "input": {
+          "claim": "notes carry tags and the export carries them too",
+          "command": "bun test mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "text": "Note.tags is in and the CSV gained a quoted tags column."
+      }
+    ]
+  ]
+}

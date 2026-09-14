@@ -1,0 +1,57 @@
+{
+  "scenario": "wrong",
+  "note": "A search overrides the status filter instead of combining with it, so the empty state never appears.",
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "build the responsive project board",
+          "touch": ["index.html"],
+          "leave": [],
+          "done_when": ["the board renders, filters and remembers favorites"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "index.html"
+        },
+        "contentFrom": "variants/wrong/index.html"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "page.test.ts"
+        },
+        "contentFrom": "variants/wrong/page.test.ts"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "bun test page.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "record_evidence",
+        "input": {
+          "claim": "the board renders, filters and remembers favorites",
+          "command": "bun test page.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "text": "Search and filters both work and the layout holds at both widths."
+      }
+    ]
+  ]
+}

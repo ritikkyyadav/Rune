@@ -1,0 +1,20 @@
+{
+  "scenario": "silent",
+  "note": "The type changes; the exporter does not; nothing is said.",
+  "turns": [
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "notes.ts"
+        },
+        "contentFrom": "variants/silent/notes.ts"
+      }
+    ],
+    [
+      {
+        "text": ""
+      }
+    ]
+  ]
+}

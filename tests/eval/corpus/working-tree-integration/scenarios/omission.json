@@ -1,0 +1,57 @@
+{
+  "scenario": "omission",
+  "note": "The currency code is never validated.",
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "implement summarizeOrders against the working tree's money API",
+          "touch": ["orders.ts"],
+          "leave": [],
+          "done_when": ["orders are summarized in minor units without touching the money API"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "orders.ts"
+        },
+        "contentFrom": "variants/omission/orders.ts"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "mine.test.ts"
+        },
+        "contentFrom": "variants/omission/mine.test.ts"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "bun test mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "record_evidence",
+        "input": {
+          "claim": "orders are summarized in minor units without touching the money API",
+          "command": "bun test mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "text": "Refunded rows are skipped and the totals add up in minor units."
+      }
+    ]
+  ]
+}

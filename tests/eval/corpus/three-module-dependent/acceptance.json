@@ -1,0 +1,17 @@
+[
+  {
+    "id": "c1",
+    "text": "step 1: tokenize returns typed tokens {kind:'word'|'number', value}",
+    "command": "bun .rune-acceptance/check.mjs tokens"
+  },
+  {
+    "id": "c2",
+    "text": "step 2: buildRecord reads the token kinds rather than re-testing the text",
+    "command": "bun .rune-acceptance/check.mjs builder"
+  },
+  {
+    "id": "c3",
+    "text": "step 3: report runs the whole pipeline and prints the sum and the count",
+    "command": "bun .rune-acceptance/check.mjs report"
+  }
+]

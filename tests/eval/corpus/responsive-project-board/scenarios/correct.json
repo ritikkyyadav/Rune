@@ -1,0 +1,66 @@
+{
+  "scenario": "correct",
+  "note": "The full board: grid, combined filtering, persisted favorites, empty state.",
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "build the responsive project board",
+          "touch": ["index.html"],
+          "leave": [],
+          "done_when": ["the board renders, filters and remembers favorites"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "index.html"
+        },
+        "contentFrom": "solution/index.html"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "README.md"
+        },
+        "contentFrom": "solution/README.md"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "page.test.ts"
+        },
+        "contentFrom": "solution/page.test.ts"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "bun test page.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "record_evidence",
+        "input": {
+          "claim": "the board renders, filters and remembers favorites",
+          "command": "bun test page.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "text": "The board is in: two-column desktop, single-column mobile, favorites kept in localStorage."
+      }
+    ]
+  ]
+}

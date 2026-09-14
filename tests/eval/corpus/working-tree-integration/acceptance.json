@@ -1,0 +1,17 @@
+[
+  {
+    "id": "c1",
+    "text": "summarizeOrders ignores refunded rows and totals minor units per currency, zeros and negatives included",
+    "command": "bun .rune-acceptance/check.mjs summary"
+  },
+  {
+    "id": "c2",
+    "text": "an invalid currency, an over-precise amount and an unsafe total all throw",
+    "command": "bun .rune-acceptance/check.mjs rejects"
+  },
+  {
+    "id": "c3",
+    "text": "the untracked money.ts is byte-identical to the one that was in the working tree",
+    "command": "bun .rune-acceptance/check.mjs protectedApi"
+  }
+]

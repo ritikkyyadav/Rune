@@ -1,0 +1,17 @@
+[
+  {
+    "id": "c1",
+    "text": "every item is processed exactly once and the results keep the input order",
+    "command": "bun .rune-acceptance/check.mjs once"
+  },
+  {
+    "id": "c2",
+    "text": "no more than `limit` workers run at the same time, and the limit is actually used",
+    "command": "bun .rune-acceptance/check.mjs concurrency"
+  },
+  {
+    "id": "c3",
+    "text": "an empty list and a limit of one both behave",
+    "command": "bun .rune-acceptance/check.mjs edges"
+  }
+]

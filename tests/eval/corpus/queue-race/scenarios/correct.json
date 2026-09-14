@@ -1,0 +1,57 @@
+{
+  "scenario": "correct",
+  "note": "The index is claimed synchronously and the pool is capped.",
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "make mapLimit claim each index once",
+          "touch": ["queue.ts"],
+          "leave": [],
+          "done_when": ["each item runs once and the limit is respected"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "queue.ts"
+        },
+        "contentFrom": "solution/queue.ts"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "mine.test.ts"
+        },
+        "contentFrom": "solution/mine.test.ts"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "bun test mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "record_evidence",
+        "input": {
+          "claim": "each item runs once and the limit is respected",
+          "command": "bun test mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "text": "Each index is claimed before any await, so nothing is processed twice; the pool stays at the limit."
+      }
+    ]
+  ]
+}

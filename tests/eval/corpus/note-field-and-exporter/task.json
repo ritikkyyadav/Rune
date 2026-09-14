@@ -1,0 +1,7 @@
+{
+  "id": "note-field-and-exporter",
+  "family": "omission-prone-feature",
+  "prompt": "Add a `tags: string[]` field to Note in notes.ts and let createNote take it, defaulting to an empty list, AND update toCsv in export-csv.ts so the export gains a third column: the header becomes id,text,tags and a note's tags are joined with a semicolon. Quote any field containing a comma, a quote or a newline the RFC 4180 way (wrap it and double its quotes). Add focused tests and run them. Use only built-in Bun/Node libraries; no package installation is needed.",
+  "files": ["export-csv.ts", "notes.ts", "package.json"],
+  "notes": "Both halves are code, so nothing about the second half looks like documentation the model can skip."
+}

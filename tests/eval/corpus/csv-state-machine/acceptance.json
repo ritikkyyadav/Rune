@@ -1,0 +1,17 @@
+[
+  {
+    "id": "c1",
+    "text": "parseCsv returns [] for empty input, adds no record for a trailing terminator, and keeps empty fields and empty records",
+    "command": "bun .rune-acceptance/check.mjs empty"
+  },
+  {
+    "id": "c2",
+    "text": "a quoted field carries commas, doubled quotes, CRLF and a leading BOM, and inner whitespace survives",
+    "command": "bun .rune-acceptance/check.mjs quoted"
+  },
+  {
+    "id": "c3",
+    "text": "an unterminated quoted field throws",
+    "command": "bun .rune-acceptance/check.mjs unterminated"
+  }
+]

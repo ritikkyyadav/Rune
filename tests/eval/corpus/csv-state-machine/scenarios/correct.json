@@ -1,0 +1,57 @@
+{
+  "scenario": "correct",
+  "note": "A full state machine, with the model's own tests written and run.",
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "rewrite parseCsv as a state machine",
+          "touch": ["csv.ts"],
+          "leave": [],
+          "done_when": ["the parser handles quoting and record terminators"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "csv.ts"
+        },
+        "contentFrom": "solution/csv.ts"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "csv.test.ts"
+        },
+        "contentFrom": "solution/csv.test.ts"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "bun test csv.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "record_evidence",
+        "input": {
+          "claim": "the parser handles quoting and record terminators",
+          "command": "bun test csv.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "text": "parseCsv is a state machine now; quoting, the BOM and CRLF are covered and the tests pass."
+      }
+    ]
+  ]
+}

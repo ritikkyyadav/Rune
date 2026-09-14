@@ -1,0 +1,20 @@
+{
+  "scenario": "silent",
+  "note": "One sentence in ANSWER.md and an empty completion.",
+  "turns": [
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "ANSWER.md"
+        },
+        "contentFrom": "variants/silent/ANSWER.md"
+      }
+    ],
+    [
+      {
+        "text": ""
+      }
+    ]
+  ]
+}

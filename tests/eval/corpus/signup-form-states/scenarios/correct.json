@@ -1,0 +1,66 @@
+{
+  "scenario": "correct",
+  "note": "Validation, announced errors, keyboard order and a status confirmation.",
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "build the signup form and its states",
+          "touch": ["index.html"],
+          "leave": [],
+          "done_when": ["the form validates and confirms"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "index.html"
+        },
+        "contentFrom": "solution/index.html"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "README.md"
+        },
+        "contentFrom": "solution/README.md"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "page.test.ts"
+        },
+        "contentFrom": "solution/page.test.ts"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "bun test page.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "record_evidence",
+        "input": {
+          "claim": "the form validates and confirms",
+          "command": "bun test page.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "text": "Submit stays disabled until valid, errors are announced, and a valid submit confirms."
+      }
+    ]
+  ]
+}

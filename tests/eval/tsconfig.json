@@ -13,5 +13,16 @@
     "isolatedModules": true
   },
   "include": ["**/*.ts"],
-  "exclude": ["node_modules", "results"]
+  // The corpus's fixture, solution and variant trees are DATA: deliberately
+  // broken starting points, and files that import a sibling the fixture only
+  // grows at run time. They are typechecked where they are materialised, not
+  // here.
+  "exclude": [
+    "node_modules",
+    "results",
+    "corpus/*/fixture",
+    "corpus/*/untracked",
+    "corpus/*/solution",
+    "corpus/*/variants"
+  ]
 }

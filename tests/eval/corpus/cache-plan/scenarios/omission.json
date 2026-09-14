@@ -1,0 +1,48 @@
+{
+  "scenario": "omission",
+  "note": "Two steps; expiry and single-flight are never planned.",
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "plan a response cache",
+          "touch": ["PLAN.md"],
+          "leave": [],
+          "done_when": ["the plan names its steps, files and checks"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "PLAN.md"
+        },
+        "contentFrom": "variants/omission/PLAN.md"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "grep -c '##' PLAN.md"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "record_evidence",
+        "input": {
+          "claim": "the plan names its steps, files and checks",
+          "command": "grep -c '##' PLAN.md"
+        }
+      }
+    ],
+    [
+      {
+        "text": "PLAN.md lays out the cache interface and the read-through path."
+      }
+    ]
+  ]
+}

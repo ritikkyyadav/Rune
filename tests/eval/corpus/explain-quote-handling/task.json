@@ -1,0 +1,8 @@
+{
+  "id": "explain-quote-handling",
+  "family": "research",
+  "prompt": "Explain how parseCsv in csv.ts handles quoting. Write the explanation to ANSWER.md and change no code. Cover all three of: how a doubled quote inside a quoted field is represented, what happens to a CRLF inside a quoted field, and what a leading BOM does. Say what the parser does NOT do as well.",
+  "files": ["csv.ts", "package.json"],
+  "constraints": ["no source file may be modified"],
+  "notes": "Acceptance can check that the asked-for subjects are addressed and that nothing was edited. It cannot check that the prose is correct; that stays a person's judgement, and the report must not read c1 as 'the explanation is right'."
+}

@@ -1,0 +1,75 @@
+{
+  "scenario": "correct",
+  "note": "All three steps, in order, with the interface each later step assumed.",
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "migrate the pipeline to typed tokens",
+          "touch": ["tokens.ts", "build.ts", "report.ts"],
+          "leave": [],
+          "done_when": ["all three modules move to the new token shape"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "tokens.ts"
+        },
+        "contentFrom": "solution/tokens.ts"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "build.ts"
+        },
+        "contentFrom": "solution/build.ts"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "report.ts"
+        },
+        "contentFrom": "solution/report.ts"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "mine.test.ts"
+        },
+        "contentFrom": "solution/mine.test.ts"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "bun test mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "record_evidence",
+        "input": {
+          "claim": "all three modules move to the new token shape",
+          "command": "bun test mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "text": "tokenize returns typed tokens, the builder reads kinds and the report still prints."
+      }
+    ]
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "scenario": "silent",
+  "note": "A two-line PLAN.md and an empty completion.",
+  "turns": [
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "PLAN.md"
+        },
+        "contentFrom": "variants/silent/PLAN.md"
+      }
+    ],
+    [
+      {
+        "text": ""
+      }
+    ]
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "id": "off-by-one-window",
+  "family": "fix",
+  "prompt": "window.test.ts fails: slidingMax in window.ts drops the last window. Fix window.ts so the supplied test passes. Do not edit or weaken window.test.ts. Keep the exported signature, keep rejecting a size that is not a positive integer, and return no windows when the size is larger than the input. Add your own focused tests and run them. Use only built-in Bun/Node libraries; no package installation is needed.",
+  "files": ["package.json", "window.test.ts", "window.ts"],
+  "constraints": ["window.test.ts must not be edited"],
+  "notes": "The red test is in the fixture, so the fix has a failing parent to be attributed to."
+}

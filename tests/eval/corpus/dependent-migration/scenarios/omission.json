@@ -1,0 +1,57 @@
+{
+  "scenario": "omission",
+  "note": "Everything but the v1 migration; the model's tests never load a v1 file.",
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "finish the versioned note store",
+          "touch": ["store.ts"],
+          "leave": [],
+          "done_when": ["the store loads, upserts and saves as specified"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "store.ts"
+        },
+        "contentFrom": "variants/omission/store.ts"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "mine.test.ts"
+        },
+        "contentFrom": "variants/omission/mine.test.ts"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "bun test mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "record_evidence",
+        "input": {
+          "claim": "the store loads, upserts and saves as specified",
+          "command": "bun test mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "text": "The store loads, upserts and saves, and the tests pass."
+      }
+    ]
+  ]
+}

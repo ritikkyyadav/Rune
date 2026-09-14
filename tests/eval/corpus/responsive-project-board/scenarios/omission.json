@@ -1,0 +1,57 @@
+{
+  "scenario": "omission",
+  "note": "Everything but persistence: favorites toggle and are forgotten on reload.",
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "build the responsive project board",
+          "touch": ["index.html"],
+          "leave": [],
+          "done_when": ["the board renders, filters and remembers favorites"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "index.html"
+        },
+        "contentFrom": "variants/omission/index.html"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "page.test.ts"
+        },
+        "contentFrom": "variants/omission/page.test.ts"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "bun test page.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "record_evidence",
+        "input": {
+          "claim": "the board renders, filters and remembers favorites",
+          "command": "bun test page.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "text": "The board renders, filters and search work, and favorites toggle."
+      }
+    ]
+  ]
+}

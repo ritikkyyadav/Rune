@@ -1,0 +1,7 @@
+{
+  "id": "queue-race",
+  "family": "fix",
+  "prompt": "mapLimit in queue.ts is racy: with a limit above 1 two runners claim the same index, so some items are processed twice and others never run. Fix it so every item is processed exactly once, the returned array keeps the input order, and no more than `limit` workers are in flight at a time. Keep the exported signature. Add focused tests and run them. Use only built-in Bun/Node libraries; no package installation is needed.",
+  "files": ["package.json", "queue.ts"],
+  "notes": "The race is deterministic here: the index is read, awaited, then written back."
+}

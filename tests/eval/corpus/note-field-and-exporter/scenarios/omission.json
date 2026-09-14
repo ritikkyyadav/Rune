@@ -1,0 +1,57 @@
+{
+  "scenario": "omission",
+  "note": "The type gains tags; the exporter is never touched.",
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "add tags to the note and to the export",
+          "touch": ["notes.ts", "export-csv.ts"],
+          "leave": [],
+          "done_when": ["notes carry tags and the export carries them too"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "notes.ts"
+        },
+        "contentFrom": "variants/omission/notes.ts"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "mine.test.ts"
+        },
+        "contentFrom": "variants/omission/mine.test.ts"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "bun test mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "record_evidence",
+        "input": {
+          "claim": "notes carry tags and the export carries them too",
+          "command": "bun test mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "text": "Notes carry tags now, defaulting to an empty list. Tests are green."
+      }
+    ]
+  ]
+}

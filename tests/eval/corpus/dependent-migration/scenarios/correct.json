@@ -1,0 +1,57 @@
+{
+  "scenario": "correct",
+  "note": "Migration, pure upsert and an atomic save, with the CLI still working.",
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "finish the versioned note store",
+          "touch": ["store.ts"],
+          "leave": [],
+          "done_when": ["the store loads, upserts and saves as specified"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "store.ts"
+        },
+        "contentFrom": "solution/store.ts"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "mine.test.ts"
+        },
+        "contentFrom": "solution/mine.test.ts"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "bun test mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "record_evidence",
+        "input": {
+          "claim": "the store loads, upserts and saves as specified",
+          "command": "bun test mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "text": "v1 migrates into v2, upsert is pure and save is atomic."
+      }
+    ]
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "scenario": "omission",
+  "note": "Every rule is enforced and no message is ever surfaced.",
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "build the signup form and its states",
+          "touch": ["index.html"],
+          "leave": [],
+          "done_when": ["the form validates and confirms"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "index.html"
+        },
+        "contentFrom": "variants/omission/index.html"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "page.test.ts"
+        },
+        "contentFrom": "variants/omission/page.test.ts"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "bun test page.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "record_evidence",
+        "input": {
+          "claim": "the form validates and confirms",
+          "command": "bun test page.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "text": "The form validates the email, the password length and the confirmation before enabling submit."
+      }
+    ]
+  ]
+}

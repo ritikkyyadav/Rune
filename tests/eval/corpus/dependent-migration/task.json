@@ -1,0 +1,7 @@
+{
+  "id": "dependent-migration",
+  "family": "migration",
+  "source": "tests/eval/comparison/tasks.ts (verbatim; pinned by sanity.test.ts)",
+  "prompt": "Finish the versioned note store. Keep exports in store.ts and CLI behavior in cli.ts. Store v2 is {version:2,notes:[{id:string,text:string,tags:string[]}]}. Read legacy v1 {version:1,items:[{key,body}]} into v2 without losing values; missing file yields an empty v2 store; corrupt JSON or invalid shape must throw. Export load(path), save(path,store), and upsert(store,note). upsert returns a new store, replaces an existing id without moving it, appends new ids, normalizes tags by trimming/deduplicating/sorting, and must not mutate inputs. Save atomically using a temporary file in the destination directory and create missing parents. The CLI 'bun cli.ts <path> <id> <text>' upserts a note with empty tags and saves it. Add tests for migration and both API/CLI integration; run them. No external dependencies.",
+  "files": ["cli.ts", "package.json", "store.ts"]
+}

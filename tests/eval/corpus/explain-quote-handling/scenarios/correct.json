@@ -1,0 +1,48 @@
+{
+  "scenario": "correct",
+  "note": "All three subjects plus the limits, and not one line of code touched.",
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "explain how parseCsv handles quotes",
+          "touch": ["ANSWER.md"],
+          "leave": [],
+          "done_when": ["the explanation covers every asked-for subject"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "ANSWER.md"
+        },
+        "contentFrom": "solution/ANSWER.md"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "grep -c '##' ANSWER.md"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "record_evidence",
+        "input": {
+          "claim": "the explanation covers every asked-for subject",
+          "command": "grep -c '##' ANSWER.md"
+        }
+      }
+    ],
+    [
+      {
+        "text": "ANSWER.md explains the doubled-quote rule, newlines inside quotes and the BOM, and says what is not handled."
+      }
+    ]
+  ]
+}

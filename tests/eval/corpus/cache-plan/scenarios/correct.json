@@ -1,0 +1,48 @@
+{
+  "scenario": "correct",
+  "note": "Three steps, each naming a file and a verification, plus the risks.",
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "plan a response cache",
+          "touch": ["PLAN.md"],
+          "leave": [],
+          "done_when": ["the plan names its steps, files and checks"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "PLAN.md"
+        },
+        "contentFrom": "solution/PLAN.md"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "grep -c '##' PLAN.md"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "record_evidence",
+        "input": {
+          "claim": "the plan names its steps, files and checks",
+          "command": "grep -c '##' PLAN.md"
+        }
+      }
+    ],
+    [
+      {
+        "text": "PLAN.md has three steps, each with the file it touches and the check that settles it."
+      }
+    ]
+  ]
+}

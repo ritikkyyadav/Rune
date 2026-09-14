@@ -1,0 +1,17 @@
+[
+  {
+    "id": "c1",
+    "text": "createNote accepts tags and defaults them to an empty list",
+    "command": "bun .rune-acceptance/check.mjs field"
+  },
+  {
+    "id": "c2",
+    "text": "toCsv writes the header id,text,tags and joins a note's tags with a semicolon",
+    "command": "bun .rune-acceptance/check.mjs column"
+  },
+  {
+    "id": "c3",
+    "text": "a field holding a comma or a quote is quoted in the exported CSV",
+    "command": "bun .rune-acceptance/check.mjs quoting"
+  }
+]

@@ -1,0 +1,17 @@
+[
+  {
+    "id": "c1",
+    "text": "GET /health answers 200 with JSON carrying ok:true and a numeric uptimeMs",
+    "command": "bun .rune-acceptance/check.mjs health"
+  },
+  {
+    "id": "c2",
+    "text": "the root route still answers and an unknown path is still 404",
+    "command": "bun .rune-acceptance/check.mjs unknown"
+  },
+  {
+    "id": "c3",
+    "text": "the Unreleased section of CHANGELOG.md records the new route",
+    "command": "bun .rune-acceptance/check.mjs changelog"
+  }
+]
