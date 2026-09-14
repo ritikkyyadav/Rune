@@ -39,7 +39,22 @@ import * as F from "./flow";
 import { clampVisible, setTermWidthOverride, visLen } from "./render";
 import { text, faint, accent, brand, muted, withThemeBg } from "./theme";
 import { glyph } from "./glyphs";
-import { renderComposer, renderSlashPalette } from "./composer";
+import {
+  fleetLedger,
+  panelHint,
+  renderAgentsPanel,
+  renderAgentsStrip,
+  renderSessionPanel,
+  type SessionReadout,
+} from "./agents-panel";
+import {
+  renderComposer,
+  renderSlashPalette,
+  composerCounts,
+  composerHintRow,
+  composerTextWidth,
+  modeInfo,
+} from "./composer";
 
 /** Which region the keys act on. Lanes B and C read this off the controller. */
 export type FrameFocus = "composer" | "panel" | "workspace" | "child";
@@ -122,6 +137,13 @@ export function nextFocus(current: FrameFocus, splitOpen: boolean): FrameFocus {
  */
 const tighten = (line: string): string => (line.startsWith(" ") ? line.slice(1) : line);
 
+/** Exactly `rows` rows: blanks added, extras dropped from the end. */
+const padTo = (lines: string[], rows: number): string[] => {
+  const out = lines.slice(0, Math.max(0, rows));
+  while (out.length < rows) out.push("");
+  return out;
+};
+
 export const FRAME_METHODS = {
   /**
    * The four regions of the current window, without building them.
@@ -143,15 +165,30 @@ export const FRAME_METHODS = {
   /**
    * Whether this frame is drawn as four regions or as the older three zones.
    *
-   * The band is the writing surface. Every modal panel -- the picker, the
-   * permission card, sessions, keys, memory, the work review -- still claims
-   * the footer the way it always has, because moving them into the workspace is
-   * lane E's work and a half-moved panel is worse than either end of the move.
-   * This is the only line that has to change when they land.
+   * The band is the writing surface, and as of lane E a **picker** is drawn
+   * inside it rather than instead of it (§2.8: `/config`, `/sandbox` and
+   * `/model` render in the workspace). Opening a settings list used to make the
+   * panel, the divider and the whole right column blink out of existence and
+   * come back on `esc`, which is a lot of screen to spend on a list of
+   * nineteen settings.
+   *
+   * It is deliberately NOT every modal. Below `PANEL_MIN_COLS` there is no
+   * column to preserve, and the footer layout is also the one that gives a long
+   * list the most rows -- so a collapsed window keeps the old behaviour, and
+   * gains nothing by changing. The permission card, sessions, keys, memory and
+   * the work review keep the footer at every width: each is a decision that
+   * deserves the screen, which is the opposite of what a picker needs.
    */
   bandLayout(this: Tui): boolean {
     if (this.inline) return false;
-    return this.mode === "input" || this.mode === "turn";
+    if (this.mode === "input" || this.mode === "turn") return true;
+    return this.bandModal();
+  },
+
+  /** A picker that opens inside the workspace instead of claiming the footer. */
+  bandModal(this: Tui): boolean {
+    if (this.inline || this.mode !== "picker") return false;
+    return !this.regionsNow().collapsed;
   },
 
   /** The workspace, split between the main transcript and one child's. */
@@ -243,32 +280,101 @@ export const FRAME_METHODS = {
   },
 
   /**
-   * The right column's agents panel -- heading, rule, body -- at 38 cells.
+   * The right column: the agents panel while any exist, the session readout
+   * otherwise (P4 §2.4).
    *
-   * A PLACEHOLDER that consumes exactly the rows the real panel will: lane B
-   * owns the cards, the per-child pulse and the finished section. What is real
-   * here is the live rung, which already exists, so the column is never blank
-   * while work is happening.
+   * Three states, in this order, because each one displaces the one below it
+   * for the same reason -- it is more specific about what is happening now:
+   *
+   *   AGENTS   any child dispatched this session, running or finished. The
+   *            finished ones stay until `c`, which is the founder's
+   *            requirement and the reverse of the old behaviour.
+   *   the rung a turn is live and has delegated nothing. The column is never
+   *            blank while work is happening; that is lane A's property and
+   *            this keeps it.
+   *   SESSION  the readout -- `/status`'s content as a column. Every field is
+   *            optional and an absent one draws no row: a panel that printed
+   *            `cost $0.00` before the first call would be stating a
+   *            measurement nobody has made.
    */
   panelBlock(this: Tui, r: Regions): string[] {
     const w = r.panelContentCols;
     const inset = r.collapsed ? (l: string) => l : tighten;
-    const live = this.mode === "turn" ? this.atWidth(w + 2, () => this.turnStateLines()) : [];
-    const heading = live.length > 0 ? "AGENTS" : "SESSION";
-    const title = this.focus === "panel" ? accent(heading) : faint(heading);
-    const out = [
-      inset(`  ${F.row(title, r.collapsed ? faint("esc close") : "", w)}`),
-      inset(`  ${faint(glyph("rule").repeat(w))}`),
-    ];
-    if (live.length > 0) {
-      for (const line of live) out.push(inset(clampVisible(line, w + 2)));
+    const view = fleetLedger.view(this.focus === "panel");
+    // The open pane's header is refreshed from the paint path, so its clock and
+    // its token count advance with the run rather than freezing at the moment
+    // the pane was opened.
+    fleetLedger.refreshPane();
+    const out: string[] = [];
+    if (view.running.length > 0 || view.finished.length > 0) {
+      // The panel draws its own headings and rules -- it has two sections and
+      // a per-section count, which one heading here could not carry.
+      for (const line of this.atWidth(w + 2, () => renderAgentsPanel(view, w, r.panelRows))) {
+        out.push(inset(`  ${clampVisible(line, w)}`));
+      }
     } else {
-      out.push("");
-      out.push(inset(`    ${faint("no agents this session")}`));
-      out.push(inset(`    ${faint("a fan-out's cards land here, one per child")}`));
+      const live = this.mode === "turn" ? this.atWidth(w + 2, () => this.turnStateLines()) : [];
+      if (live.length > 0) {
+        const title = this.focus === "panel" ? accent("AGENTS") : faint("AGENTS");
+        out.push(inset(`  ${F.row(title, r.collapsed ? faint("esc close") : "", w)}`));
+        out.push(inset(`  ${faint(glyph("rule").repeat(w))}`));
+        for (const line of live) out.push(inset(clampVisible(line, w + 2)));
+      } else {
+        for (const line of this.atWidth(w + 2, () =>
+          renderSessionPanel(this.sessionReadout(), w),
+        )) {
+          out.push(inset(`  ${clampVisible(line, w)}`));
+        }
+      }
     }
     while (out.length < r.panelRows) out.push("");
     return out.slice(0, r.panelRows);
+  },
+
+  /**
+   * What the idle column can honestly say about this session.
+   *
+   * Read straight off the engine at paint time rather than accumulated here:
+   * a mirror of the engine's numbers held in the frame is a second copy that
+   * can be wrong, and the one thing this column sells is that its numbers are
+   * measurements. Anything this cannot reach is left undefined and draws no
+   * row at all.
+   */
+  sessionReadout(this: Tui): SessionReadout {
+    const engine = this.ctx.engine;
+    const out: SessionReadout = {};
+    try {
+      const usage = engine.getContextUsage();
+      out.contextPercent = usage.percent;
+      out.contextUsed = usage.used;
+      out.contextLimit = usage.limit;
+    } catch {
+      // An engine with no context accounting says nothing about context.
+    }
+    try {
+      out.model = engine.getModel();
+      out.effort = engine.getReasoningEffortLabel();
+    } catch {
+      // ditto
+    }
+    try {
+      const cost = engine.getCost();
+      if (cost > 0) out.costUsd = cost;
+    } catch {
+      // ditto
+    }
+    if (this.filesEdited.size > 0) out.filesChanged = this.filesEdited.size;
+    try {
+      out.sandbox = engine.isSandboxEnabled() ? "on" : "off";
+    } catch {
+      // ditto
+    }
+    try {
+      out.gear = modeInfo(engine.getPermissionMode()).label;
+    } catch {
+      // ditto
+    }
+    return out;
   },
 
   /**
@@ -276,17 +382,29 @@ export const FRAME_METHODS = {
    *
    * Below PANEL_MIN_COLS the right column is worth less than the cells it
    * costs, so it becomes this: always current, and naming the key that opens
-   * the full panel. Lane B fills in the per-agent pulses.
+   * the full panel. It names the members it has room for rather than printing
+   * a count -- a count is the thing this phase exists to replace.
    */
   stripRow(this: Tui, r: Regions): string {
     const w = r.workspaceCols;
+    // The strip sits directly on top of the composer, so it is measured to the
+    // composer's RULES and not to the band: two cells of indent and two of
+    // right margin (`bandComposer`'s collapsed width, viewport.regions). Drawn
+    // to the band instead, its `ctrl+f open` overhangs the rule beneath it by
+    // two cells -- which in a fixed frame reads as a misprint, because every
+    // other right edge in the column lands on the same column.
+    const inner = Math.max(8, w - 4);
+    const view = fleetLedger.view(this.focus === "panel");
+    if (view.running.length > 0 || view.finished.length > 0) {
+      return clampVisible(`  ${this.atWidth(w, () => renderAgentsStrip(view, inner))}`, w);
+    }
     const live = this.mode === "turn" ? this.turnStateLines() : [];
     const left =
       live.length > 0
         ? clampVisible(live[0]!.trimStart(), Math.max(8, w - 18))
         : faint("no agents this session");
     return clampVisible(
-      `  ${F.row(`${accent(glyph("phase"))} ${left}`, faint("ctrl+f open"), w - 2)}`,
+      `  ${F.row(`${accent(glyph("phase"))} ${left}`, faint("ctrl+f open"), inner)}`,
       w,
     );
   },
@@ -302,12 +420,20 @@ export const FRAME_METHODS = {
   bandComposer(this: Tui, r: Regions): { lines: string[]; caretRow: number; caretCol: number } {
     const wide = !r.collapsed;
     const width = wide ? PANEL_COLS + 1 : this.contentCols();
+    // What the field may grow to. `regions()` clamps a request for the whole
+    // band down to the region's own ceiling, so asking it for the band is how
+    // to read that ceiling back without restating the formula -- and it is what
+    // makes the growth paid for by the PANEL, which is the only thing regions()
+    // will give the rows up. The 3 is this region's chrome: two rules and the
+    // hint row. (Lane C, over lane A's seam.)
+    const maxRows = Math.max(1, this.regionsNow(r.bandRows).composerRows - 3);
     return this.atWidth(wide ? PANEL_COLS + 2 : this.contentCols(), () => {
       const base = renderComposer({
         input: this.input,
         caret: this.caret,
         width,
         status: "",
+        maxRows,
       });
       // renderComposer owns a blank row above the field, for a layout where the
       // transcript runs right up to it. Here the region's own edge does that job.
@@ -325,7 +451,10 @@ export const FRAME_METHODS = {
         lines = [...palette, ...lines];
         caretRow += palette.length;
       }
-      lines.push(`  ${faint(this.composerHint())}`);
+      // Counted with the field's own measure, inside the same width override,
+      // so the hint can never disagree with the rows above it.
+      const counts = composerCounts(this.input, composerTextWidth(width));
+      lines.push(`  ${faint(this.composerHint(counts, width - 2))}`);
       if (wide) {
         lines = lines.map(tighten);
       }
@@ -333,12 +462,19 @@ export const FRAME_METHODS = {
     });
   },
 
-  /** One quiet hint row, by the same tier ladder the status line uses. */
-  composerHint(this: Tui): string {
-    const sep = ` ${glyph("observed")} `;
-    if (this.mode === "turn") return ["enter queues", "esc interrupts"].join(sep);
-    if (this.input.length > 0) return `${this.input.length} chars   ctrl+f agents`;
-    return ["enter send", "ctrl+f agents", "? keys"].join(sep);
+  /**
+   * One quiet hint row, by the same tier ladder the status line uses.
+   *
+   * The composer's three states are `composerHintRow` in ./composer.ts -- pure,
+   * and tested beside the field whose rows it counts. What stays here is the
+   * one thing that is not the composer's: where the keys currently GO.
+   */
+  composerHint(this: Tui, counts: { lines: number; chars: number }, max: number): string {
+    // The keys act on the PANEL, so the hint row names the panel's keys. A
+    // legend that went on advertising `enter send` while enter opened an
+    // agent's transcript would be the row lying about where the keys go.
+    if (this.focus === "panel") return panelHint(fleetLedger.view(true));
+    return composerHintRow({ streaming: this.mode === "turn", counts, max });
   },
 
   /** The pane header naming the open child. Drawn with rules on both sides so
@@ -417,6 +553,11 @@ export const FRAME_METHODS = {
     const r = this.regionsNow(composer.lines.length);
     const panes = this.panesNow(r.workspaceRows);
 
+    // A picker opens INSIDE the workspace, at the workspace's own measure --
+    // `contentCols()` already reports the left column, so the block needs no
+    // width argument, only the rows it may have.
+    const modal = this.bandModal() ? this.composerBlock(panes.mainRows) : null;
+
     // Left column: the main pane, then the child's seam and rows when open.
     const main = this.paneRows(
       this.transcript,
@@ -427,7 +568,12 @@ export const FRAME_METHODS = {
         `  ${faint(`${hidden} earlier line${hidden === 1 ? "" : "s"} above -- pgdn to follow the latest`)}`,
     );
     this.scroll = main.scroll;
-    const left = [...main.rows];
+    const left = modal
+      ? padTo(
+          modal.lines.map((l) => clampVisible(this.bound(l), r.workspaceCols)),
+          panes.mainRows,
+        )
+      : [...main.rows];
     if (panes.headerRows > 0) left.push(this.childHeader(r, panes));
     if (panes.open && this.childPane) {
       const child = this.paneRows(
@@ -468,8 +614,14 @@ export const FRAME_METHODS = {
       right.push(...composer.lines.slice(-r.composerRows));
     }
 
-    const caretRow = r.bandTop + r.bandRows - r.composerRows + composer.caretRow;
-    const caretCol = r.collapsed ? composer.caretCol : r.dividerCol + composer.caretCol;
+    const caretRow = modal
+      ? r.bandTop + Math.min(modal.caretRow, Math.max(0, panes.mainRows - 1))
+      : r.bandTop + r.bandRows - r.composerRows + composer.caretRow;
+    const caretCol = modal
+      ? modal.caretCol
+      : r.collapsed
+        ? composer.caretCol
+        : r.dividerCol + composer.caretCol;
 
     const frame = composeFrame({
       rows: rowsCount(),
@@ -494,13 +646,17 @@ export const FRAME_METHODS = {
         width: visLen,
       },
     });
-    // The main pane's window, for the click -> transcript-row math.
-    this.lastBodyMap = {
-      bodyTop: r.bandTop,
-      bodyRows: panes.mainRows,
-      hiddenAbove: main.hiddenAbove,
-      marked: main.marked,
-    };
+    // The main pane's window, for the click -> transcript-row math. A modal is
+    // occupying those rows, so there is no transcript row under the pointer and
+    // the map says so rather than naming one that is not there.
+    this.lastBodyMap = modal
+      ? null
+      : {
+          bodyTop: r.bandTop,
+          bodyRows: panes.mainRows,
+          hiddenAbove: main.hiddenAbove,
+          marked: main.marked,
+        };
     this.viewport.render(frame, !this.ownsCaret());
   },
 
@@ -815,18 +971,25 @@ export const FRAME_METHODS = {
 
   bannerRows(this: Tui): string[] {
     const { engine } = this.ctx;
-    return renderBanner({
-      model: engine.getModel(),
-      modelLabel: this.modelLabel(),
-      provider: engine.getProvider(),
-      effort: engine.getReasoningEffort(),
-      sessionId: this.ctx.sessionId,
-      workspace: this.ctx.workspaceRoot,
-      version: this.ctx.version,
-      ...this.gearScope(),
-    })
-      .split("\n")
-      .map((l) => clampVisible(l, Math.max(8, this.frameCols() - 1)));
+    return (
+      renderBanner({
+        model: engine.getModel(),
+        modelLabel: this.modelLabel(),
+        provider: engine.getProvider(),
+        effort: engine.getReasoningEffort(),
+        sessionId: this.ctx.sessionId,
+        workspace: this.ctx.workspaceRoot,
+        version: this.ctx.version,
+        ...this.gearScope(),
+      })
+        .split("\n")
+        // Bounded to the frame's own measure, not one cell inside it. The margin
+        // that keeps a row off the terminal's last cell is already in
+        // `frameCols()` (`cols() - 1`); taking a second cell here clipped the
+        // final glyph off the seam rule that `flow.chromeWidth()` draws to the
+        // frame's edge, which is the whole of lane A's "header rule is short".
+        .map((l) => clampVisible(l, Math.max(8, this.frameCols())))
+    );
   },
 
   /** Request a repaint, coalesced to at most one paint per ~16ms (60fps). Almost every input and

@@ -15,10 +15,20 @@ import {
   statusLine,
   permissionModeBanner,
   autoApprovedChip,
+  wrapComposer,
+  composerCaret,
+  composerIndex,
+  composerWindow,
+  composerCounts,
+  composerTextWidth,
+  composerHintRow,
 } from "../../../packages/orchestrator/src/bin/ui/composer";
 import { setTermWidthOverride } from "../../../packages/orchestrator/src/bin/ui/render";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
 import { glyph } from "../../../packages/orchestrator/src/bin/ui/glyphs";
+import { pasteChip, expandPastes } from "../../../packages/orchestrator/src/bin/ui/paste";
+import { INPUT_METHODS } from "../../../packages/orchestrator/src/bin/ui/tui-input";
+import { regions, PANEL_COLS } from "../../../packages/orchestrator/src/bin/ui/viewport";
 
 describe("ui/composer renderComposer", () => {
   it("is a CLOSED field: a rule above and below, so the input has edges", () => {
@@ -43,11 +53,17 @@ describe("ui/composer renderComposer", () => {
     for (const l of r.lines) expect(stripAnsi(l).length).toBeLessThan(80);
   });
 
-  it("horizontally scrolls to keep a far caret visible", () => {
+  it("WRAPS to keep a far caret visible, instead of scrolling sideways", () => {
     const r = renderComposer({ input: "x".repeat(200), caret: 200, width: 60, status: "  s" });
-    // caret column stays inside the box, not off-screen
+    // The caret column stays inside the box -- but now because the text came
+    // down to it, not because the text slid out from under it. The field is as
+    // many rows as 200 characters need at this measure, and the first of them
+    // still starts at buffer index 0: nothing has scrolled off to the left.
     expect(r.caretCol).toBeLessThan(60);
     expect(r.caretCol).toBeGreaterThan(5);
+    expect(r.lines.length).toBeGreaterThan(5); // gap, rule, >1 field row, rule, status
+    const textW = composerTextWidth(60);
+    expect(stripAnsi(r.lines[2]!)).toContain("x".repeat(textW));
   });
 
   it("fits its frame inside a narrow terminal instead of assuming 28 columns", () => {
@@ -674,5 +690,393 @@ describe("ui/composer statusLine — thinking depth", () => {
     // Squeezed, a model's identity outranks its dial.
     const out = stripAnsi(statusLine({ model: "gpt-5.6-sol", effort: "max", workspace: "/w" }, 44));
     expect(out).toContain("gpt-5.6-sol");
+  });
+});
+
+// ─── The wrapped field (Phase 4B, lane C) ───
+//
+// The field used to be one row that scrolled sideways: of four hundred typed
+// characters you could see forty, and no amount of arrowing back showed you the
+// sentence you were in the middle of. It wraps now, grows upward into the panel
+// to the region's cap, and past that scrolls inside itself. Everything below is
+// a property of that, and the two that matter most are the ones a reader cannot
+// check by eye: every buffer index has a cell, and the caret is always in one
+// that is on screen.
+
+/** The right column of the 120x40 frame: 40 cells, so a 36-column field. */
+const COLUMN_WIDTH = PANEL_COLS + 1;
+
+/** Field rows only: everything between the two rules. Found rather than
+ *  counted, because the status line below the lower rule is optional. */
+function fieldRows(lines: string[]): string[] {
+  const plain = lines.map((l) => stripAnsi(l));
+  const isRule = (s: string): boolean => /^\s*[\u2500-]+\s*$/.test(s) && s.trim().length > 4;
+  const bottom = plain.findLastIndex(isRule);
+  return plain.slice(2, bottom);
+}
+
+describe("ui/composer — wrapComposer, the grid", () => {
+  it("maps every buffer index to a cell, and back, in a wrapped buffer", () => {
+    // The round-trip is the whole contract of the caret. It is checked for
+    // EVERY index of every shape the field has to survive -- prose that breaks
+    // on spaces, a word longer than the measure, runs of spaces, explicit
+    // newlines, a chip, an empty buffer -- because the interesting failures are
+    // all at boundaries, and a spot check lands between them.
+    const shapes = [
+      "",
+      "a",
+      "hello world",
+      "x".repeat(500),
+      "aaaaaa", // an exact multiple of a 6-cell field
+      "one\ntwo\nthree",
+      "\n\n\n",
+      "line one\n\nline three after a blank\n",
+      `prose before ${pasteChip(1, "l\n".repeat(38))} prose after, going on a while`,
+      "   leading   and   interior   runs   of   spaces   everywhere   here",
+      "supercalifragilisticexpialidocioussupercalifragilisticexpialidocious short",
+      "trailing space at the very end ",
+      "word ".repeat(40),
+    ];
+    for (const input of shapes) {
+      for (const textW of [1, 2, 3, 7, 12, 36, 73]) {
+        const grid = wrapComposer(input, textW);
+        for (const row of grid) expect(row.end - row.start).toBeLessThanOrEqual(textW);
+        for (let i = 0; i <= input.length; i++) {
+          if (input[i] === "\n") continue; // a newline is structure, not a cell
+          const pos = composerCaret(grid, i);
+          expect(composerIndex(grid, pos)).toBe(i);
+          // No caret is ever stranded at column `textW`, which is one past the
+          // last cell the field owns.
+          expect(pos.col).toBeLessThan(textW);
+          expect(pos.row).toBeGreaterThanOrEqual(0);
+          expect(pos.row).toBeLessThan(Math.max(1, grid.length));
+        }
+      }
+    }
+  });
+
+  it("keeps every character of the buffer except the spaces a break ate", () => {
+    const input = "the quick brown fox jumps over the lazy dog and keeps going";
+    const grid = wrapComposer(input, 12);
+    const shown = new Set<number>();
+    for (const r of grid) for (let k = r.start; k < r.end; k++) shown.add(k);
+    for (let i = 0; i < input.length; i++) {
+      if (shown.has(i)) continue;
+      // The only thing a wrap may drop is the single space it broke on, and
+      // the row above it still has a column for that index.
+      expect(input[i]).toBe(" ");
+      expect(grid.some((r, k) => r.end === i && grid[k + 1]?.start === i + 1)).toBe(true);
+    }
+  });
+
+  it("spends a newline on ending a row and never renders it", () => {
+    const grid = wrapComposer("ab\ncd", 20);
+    expect(grid).toEqual([
+      { start: 0, end: 2 },
+      { start: 3, end: 5 },
+    ]);
+    const r = renderComposer({ input: "ab\ncd", caret: 5, width: 40, status: "" });
+    const rows = fieldRows(r.lines);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toContain("ab");
+    expect(rows[1]).toContain("cd");
+    for (const row of rows) expect(row).not.toContain("\n");
+  });
+
+  it("gives a paste chip a row of its own, unbroken", () => {
+    const chip = pasteChip(1, "line\n".repeat(38));
+    expect(chip).toBe("[Pasted text #1 +39 lines]");
+    const input = `before the paste ${chip} and the sentence that follows it`;
+    const grid = wrapComposer(input, 36);
+    const at = input.indexOf(chip);
+    const chipRow = grid.find((r) => r.start === at);
+    expect(chipRow).toBeDefined();
+    // Unbroken: one row holds the whole chip. The space after it is the chip
+    // row's, so the prose below is not indented by a cell nobody typed.
+    expect(input.slice(chipRow!.start, chipRow!.end)).toBe(`${chip} `);
+    const next = grid[grid.indexOf(chipRow!) + 1]!;
+    expect(input.slice(next.start, next.end).startsWith("and")).toBe(true);
+  });
+});
+
+describe("ui/composer — the field grows, then scrolls", () => {
+  it("caps a 500-char input at 40 cells to the row budget, caret still visible", () => {
+    setTermWidthOverride(COLUMN_WIDTH + 1);
+    try {
+      const input = "x".repeat(500);
+      const textW = composerTextWidth(COLUMN_WIDTH);
+      expect(textW).toBe(36);
+      const want = wrapComposer(input, textW).length;
+      expect(want).toBe(14); // 500 chars is fourteen rows the field would like
+      const r = renderComposer({
+        input,
+        caret: 500,
+        width: COLUMN_WIDTH,
+        status: "",
+        maxRows: 8,
+      });
+      const rows = fieldRows(r.lines);
+      expect(rows).toHaveLength(8); // exactly the cap, never one row more
+      // One row of the eight states the elision, and states it as a count.
+      expect(rows[0]).toContain(`${want - 7} lines above`);
+      expect(rows[0]).toContain(glyph("elision"));
+      // The caret is on a drawn row, and inside it.
+      const caretRow = r.caretRow - 2;
+      expect(caretRow).toBeGreaterThanOrEqual(0);
+      expect(caretRow).toBeLessThan(rows.length);
+      expect(r.caretCol).toBeLessThan(rows[caretRow]!.length);
+    } finally {
+      setTermWidthOverride(null);
+    }
+  });
+
+  it("keeps the caret on screen at EVERY position of a long capped draft", () => {
+    setTermWidthOverride(COLUMN_WIDTH + 1);
+    try {
+      const input = "word ".repeat(120);
+      for (let caret = 0; caret <= input.length; caret += 7) {
+        const r = renderComposer({ input, caret, width: COLUMN_WIDTH, status: "", maxRows: 6 });
+        const rows = fieldRows(r.lines);
+        expect(rows).toHaveLength(6);
+        const caretRow = r.caretRow - 2;
+        expect(caretRow).toBeGreaterThanOrEqual(0);
+        expect(caretRow).toBeLessThan(rows.length);
+        expect(r.caretCol).toBeLessThan(rows[caretRow]!.length);
+      }
+    } finally {
+      setTermWidthOverride(null);
+    }
+  });
+
+  it("states the elision on the side the rows went, and both when both", () => {
+    // The window is the tail by default, so the count is "above". ctrl+a sends
+    // the caret to the top, and a field that then dropped its tail in silence
+    // would be lying about how much had been written -- so it says "below".
+    expect(composerWindow(20, 19, 8)).toEqual({ top: 13, count: 7, above: 13, below: 0 });
+    expect(composerWindow(20, 0, 8)).toEqual({ top: 0, count: 7, above: 0, below: 13 });
+    expect(composerWindow(20, 6, 8)).toEqual({ top: 6, count: 7, above: 6, below: 7 });
+    // Whatever the caret is doing, the field costs the same rows.
+    for (let caret = 0; caret < 20; caret++) {
+      const w = composerWindow(20, caret, 8);
+      expect(w.count + (w.above > 0 || w.below > 0 ? 1 : 0)).toBe(8);
+      expect(caret).toBeGreaterThanOrEqual(w.top);
+      expect(caret).toBeLessThan(w.top + w.count);
+    }
+    // Under the cap nothing is hidden and nothing is claimed to be.
+    expect(composerWindow(4, 3, 8)).toEqual({ top: 0, count: 4, above: 0, below: 0 });
+  });
+
+  it("puts the below-marker under the rows, where the rows went", () => {
+    setTermWidthOverride(COLUMN_WIDTH + 1);
+    try {
+      const input = "word ".repeat(60);
+      const r = renderComposer({ input, caret: 0, width: COLUMN_WIDTH, status: "", maxRows: 5 });
+      const rows = fieldRows(r.lines);
+      expect(rows).toHaveLength(5);
+      expect(rows[0]).toContain("word"); // the top of the draft, where the caret is
+      expect(rows[4]).toContain("lines below");
+      expect(r.caretRow).toBe(2); // first field row, no marker above it
+    } finally {
+      setTermWidthOverride(null);
+    }
+  });
+
+  it("grows by taking rows from the PANEL and never from the workspace", () => {
+    // The invariant lane A's geometry exists to hold. Every field height the
+    // composer can ask for is fed through regions(), and the workspace row
+    // count must not move -- the transcript is stored rendered, so a workspace
+    // that resized under a keystroke would re-wrap the whole session.
+    const at = (composerRows: number) =>
+      regions({ columns: 120, rows: 40, headerRows: 3, composerRows, strip: true });
+    const rest = at(4);
+    expect(rest.workspaceRows).toBe(36);
+    expect(rest.panelRows).toBe(32);
+    const cap = at(rest.bandRows).composerRows;
+    expect(cap).toBe(21); // §2.1: 21 rows at most, leaving the panel 15
+    for (let want = 4; want <= 60; want++) {
+      const r = at(want);
+      expect(r.workspaceRows).toBe(rest.workspaceRows);
+      expect(r.composerRows).toBeLessThanOrEqual(cap);
+      expect(r.composerRows + r.panelRows).toBe(r.bandRows);
+      expect(r.panelRows).toBeGreaterThanOrEqual(8);
+    }
+    // What the field itself may draw inside that region: the cap less this
+    // region's chrome (two rules and the hint row).
+    setTermWidthOverride(COLUMN_WIDTH + 1);
+    try {
+      const r = renderComposer({
+        input: "word ".repeat(200),
+        caret: 0,
+        width: COLUMN_WIDTH,
+        status: "",
+        maxRows: cap - 3,
+      });
+      expect(fieldRows(r.lines)).toHaveLength(cap - 3);
+    } finally {
+      setTermWidthOverride(null);
+    }
+  });
+});
+
+describe("ui/composer — no row reaches the measure", () => {
+  it("wraps at the pane width at 80 columns and at the 40-cell column", () => {
+    // 80 columns: the right column has collapsed, so the composer is the full
+    // width of the window -- and still ends short of it, because a row that
+    // touches the last cell wraps, and a wrap desyncs the pinned region.
+    setTermWidthOverride(79); // contentCols() at an 80-column window
+    try {
+      // The wrap column is the field's own measure, and every row is exactly
+      // it plus the four chrome columns -- so the wrap point and the row width
+      // cannot drift apart, whatever flow's surface measure is tuned to.
+      const textW = composerTextWidth(79);
+      expect(textW).toBeGreaterThanOrEqual(70);
+      const r = renderComposer({ input: "word ".repeat(80), caret: 10, width: 79, status: "" });
+      for (const l of r.lines) expect(stripAnsi(l).length).toBeLessThan(80);
+      const rows = fieldRows(r.lines);
+      expect(rows.length).toBeGreaterThan(4);
+      for (const row of rows) expect(row.length).toBe(textW + 4);
+      for (const row of wrapComposer("word ".repeat(80), textW)) {
+        expect(row.end - row.start).toBeLessThanOrEqual(textW);
+      }
+    } finally {
+      setTermWidthOverride(null);
+    }
+    setTermWidthOverride(COLUMN_WIDTH + 1);
+    try {
+      const r = renderComposer({
+        input: "word ".repeat(80),
+        caret: 10,
+        width: COLUMN_WIDTH,
+        status: "",
+        maxRows: 18,
+      });
+      for (const l of r.lines) expect(stripAnsi(l).length).toBeLessThanOrEqual(COLUMN_WIDTH - 1);
+    } finally {
+      setTermWidthOverride(null);
+    }
+  });
+
+  it("shows a stray control byte as a space rather than desyncing the row", () => {
+    const r = renderComposer({ input: "a\x07b\x1bc", caret: 5, width: 40, status: "" });
+    const rows = fieldRows(r.lines);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toContain("a b c");
+  });
+});
+
+describe("ui/composer — ctrl+b, the explicit newline", () => {
+  /** `editComposer` with the smallest `this` it actually reads. */
+  function composer(input = "", caret = input.length) {
+    const state: Record<string, unknown> = { input, caret, scroll: 4 };
+    state.insert = INPUT_METHODS.insert.bind(state as never);
+    return {
+      state,
+      key: (k: unknown): boolean => INPUT_METHODS.editComposer.call(state as never, k as never),
+    };
+  }
+
+  it("inserts a real \\n that survives the trim submit() does", () => {
+    const c = composer();
+    for (const ch of "first") c.key({ type: "char", value: ch });
+    expect(c.key({ type: "ctrl", name: "b" })).toBe(true);
+    for (const ch of "second") c.key({ type: "char", value: ch });
+    expect(c.state.input).toBe("first\nsecond");
+    // submit() expands the chips and trims the ends; an interior newline is
+    // the message, not whitespace around it.
+    expect(expandPastes(c.state.input as string, new Map()).trim()).toBe("first\nsecond");
+    expect(c.state.scroll).toBe(0); // typing returns to the live tail
+  });
+
+  it("leaves every other ctrl key to the handler that owns it", () => {
+    // ctrl+c clears then arms then exits; ctrl+u kills to the start; ctrl+p
+    // recalls history. editComposer swallowing them would be a dead keyboard.
+    const c = composer("draft");
+    for (const name of ["c", "d", "u", "a", "e", "l", "p", "n", "f", "w", "r", "o"]) {
+      expect(c.key({ type: "ctrl", name })).toBe(false);
+    }
+    expect(c.state.input).toBe("draft");
+  });
+
+  it("is not shift+enter and not ctrl+j: those are Enter at the wire", () => {
+    // A terminal never sends the shift, and ctrl+j / ctrl+m ARE \n / \r --
+    // keys.ts turns both into {type:"enter"} before a handler sees them, which
+    // is why the widely-suggested binding cannot be built. ctrl+b was free.
+    const c = composer();
+    expect(c.key({ type: "enter" })).toBe(false);
+    expect(c.state.input).toBe("");
+  });
+});
+
+describe("ui/composer — a collapsed paste keeps its newlines", () => {
+  it("is one chip row in the field and expands verbatim on submit", () => {
+    const body = Array.from({ length: 38 }, (_, i) => `line ${i + 1}`).join("\n");
+    expect(body.split("\n")).toHaveLength(38);
+    const chip = pasteChip(1, body);
+    expect(chip).toBe("[Pasted text #1 +38 lines]");
+    setTermWidthOverride(COLUMN_WIDTH + 1);
+    try {
+      const input = `read this ${chip} and say what it does`;
+      const r = renderComposer({
+        input,
+        caret: input.length,
+        width: COLUMN_WIDTH,
+        status: "",
+        maxRows: 18,
+      });
+      const rows = fieldRows(r.lines);
+      // The 38 lines cost ONE row, and that row is the chip alone.
+      const chipRows = rows.filter((l) => l.includes("[Pasted text #1"));
+      expect(chipRows).toHaveLength(1);
+      expect(chipRows[0]!.trim()).toBe(chip);
+      expect(rows).toHaveLength(3);
+      // And the hint counts what the field shows, not what it holds.
+      expect(composerCounts(input, composerTextWidth(COLUMN_WIDTH)).lines).toBe(3);
+    } finally {
+      setTermWidthOverride(null);
+    }
+    // Verbatim on submit: all 38 lines, in order, newlines intact.
+    const expanded = expandPastes(`read this ${chip} and say what it does`, new Map([[1, body]]));
+    expect(expanded).toBe(`read this ${body} and say what it does`);
+    expect(expanded.split("\n")).toHaveLength(38);
+  });
+});
+
+describe("ui/composer — the hint row", () => {
+  const sep = ` ${glyph("observed")} `;
+
+  it("names the keys at rest, and yields ctrl+b first when the column is narrow", () => {
+    const rest = { lines: 0, chars: 0 };
+    // 73 cells (the 80-column window): all four, as `80x24-idle.txt` draws it.
+    expect(composerHintRow({ streaming: false, counts: rest, max: 73 })).toBe(
+      ["enter send", "ctrl+b line", "ctrl+f agents", "? keys"].join(sep),
+    );
+    // 36 cells (the right column): three, as `120x40-idle.txt` draws it.
+    expect(composerHintRow({ streaming: false, counts: rest, max: 36 })).toBe(
+      ["enter send", "ctrl+f agents", "? keys"].join(sep),
+    );
+    for (const max of [10, 20, 30, 36, 50, 73]) {
+      expect(
+        stripAnsi(composerHintRow({ streaming: false, counts: rest, max })).length,
+      ).toBeLessThanOrEqual(max);
+    }
+  });
+
+  it("switches to counts once the draft has WRAPPED, not on the first keystroke", () => {
+    // "1 line · 32 chars" is noise pretending to be data. It is the second row
+    // that makes how much you have written a thing you cannot see at a glance
+    // -- which is also why both working mocks show the resting hint over a
+    // one-row draft.
+    expect(composerHintRow({ streaming: false, counts: { lines: 1, chars: 32 }, max: 36 })).toBe(
+      ["enter send", "ctrl+f agents", "? keys"].join(sep),
+    );
+    expect(composerHintRow({ streaming: false, counts: { lines: 12, chars: 318 }, max: 36 })).toBe(
+      `12 lines${sep}318 chars   ctrl+b line`,
+    );
+  });
+
+  it("says what enter and esc do while a turn streams", () => {
+    expect(composerHintRow({ streaming: true, counts: { lines: 3, chars: 9 }, max: 36 })).toBe(
+      ["enter queues", "esc interrupts"].join(sep),
+    );
   });
 });

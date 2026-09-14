@@ -36,6 +36,7 @@ import { glyph } from "./glyphs";
 import { clampVisible, truncate, rule, visLen, wrap, railCard } from "./render";
 import * as F from "./flow";
 import { RUNE_MARK } from "./banner";
+import { pasteChipSpans } from "./paste";
 import type { PermissionPreview, PermissionPreviewLine } from "./permission-preview";
 
 function shortPath(p: string): string {
@@ -530,6 +531,277 @@ export interface ComposerState {
    * to do the one thing it is not currently listening for.
    */
   placeholder?: string;
+  /**
+   * The most FIELD rows this composer may draw -- the rules, the hint and the
+   * status line are the caller's and are not counted here.
+   *
+   * The field grows into whatever block it shares until it reaches this, and
+   * then scrolls inside itself with the caret row kept visible. Absent, it
+   * grows as far as the text goes; the callers that share a frame always pass
+   * one, because a field that can take the whole window is a field that can
+   * erase the thing it is being written about.
+   */
+  maxRows?: number;
+}
+
+// --- The wrapped field ---
+//
+// The buffer stays ONE string and ONE caret index -- that is the right model,
+// and it is why every edit operation (insert, backspace, ctrl+u, history
+// recall) kept working unchanged when the field learned to wrap. What changed
+// is the renderer: it maps that index onto a grid of rows.
+//
+// The field used to scroll HORIZONTALLY, one row, keeping the caret in the last
+// visible cell. That is the thing that made a long message unreadable while you
+// were writing it -- you could see forty characters of the four hundred you had
+// typed, and no amount of arrowing back showed you the whole sentence at once.
+
+/** One visual row of the field: a half-open slice of the buffer. */
+export interface ComposerRow {
+  /** Buffer index of this row's first rendered character. */
+  start: number;
+  /** Buffer index one past this row's last rendered character. */
+  end: number;
+}
+
+/**
+ * A caret position on the grid, and its inverse.
+ *
+ * `composerIndex(rows, pos)` is exactly `rows[pos.row].start + pos.col`, and
+ * `composerCaret` is built so that composing the two is the identity for every
+ * index in the buffer. That round-trip is not decoration: it is the property
+ * that makes "the caret is where you think it is" testable rather than
+ * eyeballed, and it is what forces the two awkward cases below to be handled
+ * instead of clamped away.
+ */
+export interface ComposerPos {
+  row: number;
+  col: number;
+}
+
+/**
+ * Wrap one segment of a logical line into rows.
+ *
+ * Two rules earn their keep here, and both exist so that EVERY buffer index has
+ * a cell to sit in -- no caret is ever stranded at column `textW`, which is one
+ * past the last cell the field owns:
+ *
+ *  - a row breaks at the last space STRICTLY inside the window, never at the
+ *    window's last column, so the space that was eaten is still a column this
+ *    row can put the caret on;
+ *  - a segment whose length is an exact multiple of `textW` ends with an empty
+ *    row, which is where the caret goes and where the next character lands.
+ *
+ * `keepTail` is false only when another segment follows on the same logical
+ * line (a paste chip, or the prose after one): that segment's first row starts
+ * at the same index, so the empty row would be a blank line with nothing to do.
+ */
+function wrapSegment(
+  rows: ComposerRow[],
+  input: string,
+  from: number,
+  to: number,
+  textW: number,
+  breakable: boolean,
+  keepTail: boolean,
+): void {
+  let i = from;
+  for (;;) {
+    if (to - i < textW) {
+      if (i === to && !keepTail) return;
+      rows.push({ start: i, end: to });
+      return;
+    }
+    let brk = -1;
+    if (breakable) {
+      const limit = Math.min(i + textW - 1, to - 1);
+      for (let j = limit; j > i; j--) {
+        if (input[j] === " ") {
+          brk = j;
+          break;
+        }
+      }
+    }
+    if (brk > i) {
+      rows.push({ start: i, end: brk });
+      i = brk + 1; // the space is this row's last column; the next row starts after it
+    } else {
+      rows.push({ start: i, end: i + textW }); // one word longer than the field: hard break
+      i += textW;
+    }
+  }
+}
+
+/** Split one logical line at its paste chips, then wrap each piece. A chip is
+ *  unbreakable and starts a row of its own, so the message's shape is visible. */
+function wrapLine(
+  rows: ComposerRow[],
+  input: string,
+  from: number,
+  to: number,
+  textW: number,
+  chips: Array<{ start: number; end: number }>,
+): void {
+  const segs: Array<{ start: number; end: number; chip: boolean }> = [];
+  let at = from;
+  for (const chip of chips) {
+    if (chip.start < at || chip.end > to) continue;
+    if (chip.start > at) segs.push({ start: at, end: chip.start, chip: false });
+    // The space between a chip and the sentence after it belongs to the chip's
+    // row. Left on the next row it renders as a one-cell indent nobody typed,
+    // and every row under it inherits the offset -- which is exactly the kind
+    // of drift that makes a wrapped field look broken. It still has a cell to
+    // put the caret in, at the end of the chip's own row.
+    const gap = chip.end < to && input[chip.end] === " " ? 1 : 0;
+    segs.push({ start: chip.start, end: chip.end + gap, chip: true });
+    at = chip.end + gap;
+  }
+  if (at < to || segs.length === 0) segs.push({ start: at, end: to, chip: false });
+  segs.forEach((seg, i) =>
+    wrapSegment(rows, input, seg.start, seg.end, textW, !seg.chip, i === segs.length - 1),
+  );
+}
+
+/** The buffer as a grid of rows `textW` columns wide. Newlines are structure,
+ *  not characters: they end a row and are never rendered.
+ *
+ *  The chip scan is done ONCE for the whole buffer rather than once per logical
+ *  line. This function runs on every keystroke, and a 40-line draft would
+ *  otherwise re-run the matcher over the whole string forty times to answer a
+ *  question whose answer never changed. */
+export function wrapComposer(input: string, textW: number): ComposerRow[] {
+  const w = Math.max(1, Math.floor(textW));
+  const chips = pasteChipSpans(input);
+  const rows: ComposerRow[] = [];
+  let lineStart = 0;
+  for (;;) {
+    const nl = input.indexOf("\n", lineStart);
+    wrapLine(rows, input, lineStart, nl < 0 ? input.length : nl, w, chips);
+    if (nl < 0) return rows;
+    lineStart = nl + 1;
+  }
+}
+
+/**
+ * Where a buffer index sits on the grid.
+ *
+ * The rule is "the LAST row that starts at or before the index", which resolves
+ * both boundary cases correctly and without a special case: at a hard break the
+ * next row starts exactly at the index, so the caret goes to its column 0,
+ * which is where the next character will appear; at a soft break the eaten
+ * space belongs to the row above it, so the caret stays at the end of the word
+ * it just finished.
+ */
+export function composerCaret(rows: ComposerRow[], index: number): ComposerPos {
+  if (rows.length === 0) return { row: 0, col: 0 };
+  let at = 0;
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i]!.start <= index) at = i;
+    else break;
+  }
+  return { row: at, col: Math.max(0, index - rows[at]!.start) };
+}
+
+/** The inverse of `composerCaret`. */
+export function composerIndex(rows: ComposerRow[], pos: ComposerPos): number {
+  const row = rows[Math.max(0, Math.min(pos.row, rows.length - 1))];
+  return row ? row.start + pos.col : pos.col;
+}
+
+/**
+ * The text columns a composer drawn at `width` gives the message.
+ *
+ * One formula, exported, because the hint row has to count the rows the field
+ * will actually draw -- a hint that says "9 lines" over a field that drew ten
+ * is worse than no hint. `width` is the same `ComposerState.width` the field is
+ * asked for, and this reads the surface measure the same way it does, so both
+ * must be called under the same width override.
+ */
+export function composerTextWidth(width: number): number {
+  return Math.max(1, Math.max(12, Math.min(F.surfaceWidth(), width - 1)) - 4);
+}
+
+/** Display rows and characters of the buffer, for the hint row. Counted as the
+ *  field shows them: a collapsed paste is its chip, not its body. */
+export function composerCounts(input: string, textW: number): { lines: number; chars: number } {
+  return { lines: wrapComposer(input, textW).length, chars: input.length };
+}
+
+/**
+ * The one quiet hint row under the field, by the same tier ladder `statusLine`
+ * uses: the widest thing that fits, and never a row that overflows the measure.
+ *
+ * Three states. The counts replace the keys once the draft has WRAPPED, not on
+ * the first keystroke -- "1 line · 32 chars" is noise pretending to be data,
+ * and it is the second row that makes how much you have written a thing you
+ * can no longer see at a glance. `ctrl+b` is the one binding nobody can guess,
+ * so among the keys it is the last to go; at forty cells only three of the four
+ * fit, and the counts row names it the moment a draft needs it.
+ */
+export function composerHintRow(opts: {
+  streaming: boolean;
+  counts: { lines: number; chars: number };
+  max: number;
+}): string {
+  const sep = ` ${glyph("observed")} `;
+  const fits = (s: string): boolean => visLen(s) <= opts.max;
+  if (opts.streaming) {
+    for (const tier of [["enter queues", "esc interrupts"], ["esc interrupts"]]) {
+      const row = tier.join(sep);
+      if (fits(row)) return row;
+    }
+    return "esc stops";
+  }
+  const { lines, chars } = opts.counts;
+  if (lines > 1) {
+    const size = [`${lines} lines`, `${chars} chars`].join(sep);
+    for (const tier of [`${size}   ctrl+b line`, size, `${lines} lines`]) {
+      if (fits(tier)) return tier;
+    }
+    return `${lines} lines`;
+  }
+  const keys = ["enter send", "ctrl+b line", "ctrl+f agents", "? keys"];
+  for (const tier of [keys, [keys[0]!, ...keys.slice(2)], keys.slice(0, 2), [keys[0]!]]) {
+    const row = tier.join(sep);
+    if (fits(row)) return row;
+  }
+  return keys[0]!;
+}
+
+/** The slice of a capped field's rows that is actually drawn, and what it costs. */
+export interface ComposerWindow {
+  /** Index of the first drawn row. */
+  top: number;
+  /** How many rows of text are drawn. */
+  count: number;
+  /** Rows elided above the window. */
+  above: number;
+  /** Rows elided below it. */
+  below: number;
+}
+
+/**
+ * The window of rows a capped field shows.
+ *
+ * The tail by default -- you are almost always typing at the end -- and the
+ * caret's row is always inside it. One row of the budget goes to a marker that
+ * states the elision, and the marker counts BOTH directions: a field that
+ * silently drops rows lies about how much you have written, and `ctrl+a` on a
+ * thirty-row draft drops them off the bottom exactly as readily as typing drops
+ * them off the top. The whole field is therefore always `min(total, cap)` rows
+ * -- what it costs the panel does not depend on where the caret is.
+ */
+export function composerWindow(total: number, caretRow: number, maxRows: number): ComposerWindow {
+  const cap = Math.max(1, Math.floor(maxRows));
+  if (total <= cap) return { top: 0, count: total, above: 0, below: 0 };
+  // At one row there is nowhere to put the marker, and one row of what you
+  // wrote beats one row of chrome saying you wrote it.
+  if (cap < 2)
+    return { top: Math.max(0, Math.min(caretRow, total - 1)), count: 1, above: 0, below: 0 };
+  const count = cap - 1;
+  let top = Math.max(0, total - count);
+  if (caretRow < top) top = caretRow;
+  return { top, count, above: top, below: Math.max(0, total - top - count) };
 }
 
 export interface RenderedBlock {
@@ -575,6 +847,14 @@ export const COMPOSER_PLACEHOLDER = "describe a change, or / for commands";
  * The writing surface: one hairline, one chevron, your text. It spans the same
  * measure as the transcript above it, so the whole session reads as a single
  * column rather than a wide footer under a narrow log.
+ *
+ * It WRAPS. The field is as many rows as the message needs, up to `maxRows`,
+ * and past that it scrolls inside itself with a counted marker for what is
+ * above. Nothing scrolls sideways: a writing surface whose only view of four
+ * hundred typed characters is the last forty is not one you can re-read what
+ * you wrote in, and re-reading what you wrote is most of what a composer is
+ * for. The rows are never wider than the field, so the frame around them holds
+ * whatever is typed into it.
  */
 export function renderComposer(state: ComposerState): RenderedBlock {
   // Chrome spans the window: the hairline divides the screen, not the sentence,
@@ -590,17 +870,8 @@ export function renderComposer(state: ComposerState): RenderedBlock {
     };
   }
 
-  const textW = Math.max(1, width - 4); // PAD(2) + `>`(1) + space(1)
+  const textW = composerTextWidth(state.width); // PAD(2) + `>`(1) + space(1)
 
-  // Horizontal scroll so the caret stays visible within the window.
-  let scroll = 0;
-  if (state.caret > textW - 1) scroll = state.caret - textW + 1;
-  // Newlines/control chars would spill the "single-line" box across rows and break the pinned
-  // region's row math (pastes are collapsed to chips upstream, but a stray control byte must
-  // never desync the frame).
-  const slice = state.input
-    .slice(scroll, scroll + textW)
-    .replace(/[\r\n\t\x00-\x08\x0b-\x1f]/g, " ");
   // The caret is painted, not requested.
   //
   // OSC 12 asks the terminal to colour its own cursor, and a terminal is free
@@ -608,18 +879,59 @@ export function renderComposer(state: ComposerState): RenderedBlock {
   // which left a foreign accent sitting on the first character of the input on
   // every frame. Painting the cell needs nothing from the host and looks the
   // same everywhere.
-  const at = Math.max(0, Math.min(state.caret - scroll, textW - 1));
-  const paint = (raw: string, dim: boolean): string => {
+  const paint = (raw: string, at: number, dim: boolean): string => {
     const head = raw.slice(0, at);
     const cell = raw.slice(at, at + 1) || " ";
     const tail = raw.slice(at + 1);
     const wrapText = dim ? faint : text;
     return `${head ? wrapText(head) : ""}${cursorCell(cell)}${tail ? wrapText(tail) : ""}`;
   };
-  const body =
-    state.input.length === 0
-      ? paint((state.placeholder ?? COMPOSER_PLACEHOLDER).padEnd(textW, " ").slice(0, textW), true)
-      : paint(slice.padEnd(textW, " "), false);
+  // A control byte that survived the edit path is shown as a space rather than
+  // written through: one of them is one desynced row, and every row below it
+  // lands in the wrong column. Newlines never reach here -- they are structure,
+  // and wrapComposer has already spent them ending rows.
+  const cell = (s: string): string =>
+    s
+      .replace(/[\x00-\x1f\x7f]/g, " ")
+      .padEnd(textW, " ")
+      .slice(0, textW);
+
+  const grid = wrapComposer(state.input, textW);
+  const pos = composerCaret(grid, Math.max(0, Math.min(state.caret, state.input.length)));
+  const win = composerWindow(grid.length, pos.row, state.maxRows ?? grid.length);
+
+  // The elision marker takes the chevron's column, so the field keeps one
+  // marker column throughout and the text stays on its own edge. It sits on
+  // the side the rows went -- above when the field has scrolled off the top,
+  // below when the caret has walked up past a tail. When both are elided one
+  // marker says both, because the second row would be a row of the draft.
+  const rows = (n: number): string => `${n} line${n === 1 ? "" : "s"}`;
+  const marker = (t: string): string => `${PAD}${faint(glyph("elision"))} ${faint(cell(t))}`;
+  const field: string[] = [];
+  if (win.above > 0) {
+    field.push(
+      marker(
+        win.below > 0
+          ? `${win.above} above ${glyph("observed")} ${win.below} below`
+          : `${rows(win.above)} above`,
+      ),
+    );
+  }
+  if (state.input.length === 0) {
+    field.push(
+      `${PAD}${muted(glyph("selection"))} ${paint(cell(state.placeholder ?? COMPOSER_PLACEHOLDER), 0, true)}`,
+    );
+  } else {
+    for (let i = win.top; i < win.top + win.count && i < grid.length; i++) {
+      const row = grid[i]!;
+      const raw = cell(state.input.slice(row.start, row.end));
+      // The chevron marks where the message starts; a continuation row is the
+      // same message, so it gets the column and not the mark.
+      const mark = i === win.top ? muted(glyph("selection")) : " ";
+      field.push(`${PAD}${mark} ${i === pos.row ? paint(raw, pos.col, false) : text(raw)}`);
+    }
+    if (win.above === 0 && win.below > 0) field.push(marker(`${rows(win.below)} below`));
+  }
 
   // A rule above AND below. One rule is a divider — it separates the composer
   // from the transcript but leaves the input itself floating, so on a quiet
@@ -629,7 +941,6 @@ export function renderComposer(state: ComposerState): RenderedBlock {
   // The SAME rule the header draws — indented to the content column, so the
   // field's edges line up with the text inside it and with everything above.
   const edge = F.hairline(width);
-  const mid = `${PAD}${muted(glyph("selection"))} ${body}`;
 
   // The blank line above the field belongs to the FIELD, not to whatever is
   // above it. Owning it here is what makes the frame hold in both directions:
@@ -639,8 +950,9 @@ export function renderComposer(state: ComposerState): RenderedBlock {
   // caller above cannot know which case it is in; this block always can.
   //
   // PAD(2) + chevron(1) + space(1) = 4 cols before the input text.
-  const caretCol = 4 + (state.caret - scroll);
-  return { lines: ["", edge, mid, edge, ...statusLines], caretRow: 2, caretCol };
+  const caretRow = 2 + (win.above > 0 ? 1 : 0) + Math.max(0, pos.row - win.top);
+  const caretCol = 4 + (state.input.length === 0 ? 0 : pos.col);
+  return { lines: ["", edge, ...field, edge, ...statusLines], caretRow, caretCol };
 }
 
 // --- Permission request card (TUI) ---
