@@ -173,6 +173,16 @@ export interface AgentLoopConfig {
    */
   contractRecord?: () => ContractRecord | null;
   /**
+   * Run the acceptance the runtime was handed (`--acceptance`), once, at the
+   * finish gate — the same point the verdict is computed, so its result is
+   * part of the verdict rather than a footnote after it.
+   *
+   * Advisory: it returns nothing and the loop does not branch on it. Wired by
+   * the engine; absent for every caller with no acceptance configured, which
+   * is every caller by default.
+   */
+  acceptanceGate?: (signal?: AbortSignal) => Promise<void>;
+  /**
    * Just-in-time doctrine, wired by the engine in "jit" delivery mode: returns
    * a section's verbatim text exactly ONCE per session at its first moment of
    * relevance (first sub-agent report, first visual write), null after — the
@@ -3099,6 +3109,18 @@ export class AgentLoop {
         // ends is the run that finished `end_turn`, `ok: true`, exit 0 with
         // none of its stated criteria ever verified and nothing anywhere
         // saying so.
+        //
+        // The acceptance the runtime was HANDED runs first, here, so its
+        // result is inside the verdict rather than a footnote after it. It
+        // refuses nothing: a failed acceptance criterion is a named gap and
+        // the turn ends exactly as it would have (M1 is advisory; the one
+        // bounded re-prompt is M3's first migrated branch). A throw must
+        // never cost the run its terminal event.
+        try {
+          await this.config.acceptanceGate?.(signal);
+        } catch {
+          // The oracle is a reading of the run; it must never break it.
+        }
         const verdict = this.verdictFor(stopReason);
 
         // Compact only when context is near budget (avoids a summarization

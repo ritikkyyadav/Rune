@@ -259,10 +259,13 @@ describe("a model amendment cannot drop what the person stated", () => {
       .map((e) => e.output?.result ?? "")
       .at(-1);
     expect(receipt).toContain("settled by the runtime's own run");
-    // Nothing moved: the criterion is exactly where the model found it.
+    // The CITATION moved nothing. What settled the criterion afterwards is the
+    // runtime's own run of its own command at the finish gate — the receipt
+    // says `acceptance-command@1`, never `check-log@1`, which is the whole
+    // difference between a measurement and an attribution the model chose.
     const evaluator = engine.currentLedger()?.criteria.at(-1);
-    expect(evaluator?.rung).toBeNull();
-    expect(evaluator?.evidence).toBeUndefined();
+    expect(evaluator?.evidence?.verifier).toBe("acceptance-command@1");
+    expect(evaluator?.evidence?.source).toBe("true # acceptance");
   }, 60_000);
 });
 

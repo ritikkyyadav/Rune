@@ -19,14 +19,17 @@ import type { Brief, Criterion } from "../../../packages/protocol/src/index";
 import {
   amendContract,
   briefDrift,
-  carryForward,
+  acceptanceCriteria,
+  acceptanceDidNotRun,
   accepted,
+  carryForward,
   computeVerdict,
   contractDigest,
   contractShape,
   createContract,
   criterionStatus,
   inheritContract,
+  parseAcceptanceSpecs,
   priorContract,
   uncoveredCriteria,
   verdictLine,
@@ -863,5 +866,76 @@ describe("what a restarted run inherits from the contract it is continuing", () 
     expect(found?.amendments).toEqual([]);
     expect(priorContract([{ event: { type: "contract", payload: { version: 2 } } }])).toBeNull();
     expect(priorContract([])).toBeNull();
+  });
+});
+
+// ─── M1: the acceptance the model never sees ───
+
+describe("the acceptance spec", () => {
+  test("a JSON array and a `{ criteria: [...] }` object both parse", () => {
+    const rows = [{ text: "a", command: "node a.mjs" }];
+    expect(parseAcceptanceSpecs(JSON.stringify(rows))).toEqual(
+      parseAcceptanceSpecs(JSON.stringify({ criteria: rows })),
+    );
+  });
+
+  test("a malformed file is a hard refusal, never an empty list", () => {
+    // The worst possible failure of this feature is a file that silently loads
+    // nothing: the run then reports `met` against no criteria at all, and the
+    // file's author cannot tell that from a run that passed.
+    expect(() => parseAcceptanceSpecs("{oops")).toThrow(/not valid JSON/);
+    expect(() => parseAcceptanceSpecs('{"nope": 1}')).toThrow(/must be a JSON array/);
+    expect(() => parseAcceptanceSpecs("[]")).toThrow(/states no criteria/);
+    expect(() => parseAcceptanceSpecs('[{"command":"x"}]')).toThrow(/has no `text`/);
+  });
+
+  test("criteria default to evaluator, required, and an `a<n>` id", () => {
+    const [first, second] = acceptanceCriteria(
+      parseAcceptanceSpecs(
+        JSON.stringify([
+          { text: "the CSV has a total column", command: "node check.mjs" },
+          { text: "the copy reads well", source: "user", required: false },
+        ]),
+      ),
+    );
+    expect(first).toEqual({
+      text: "the CSV has a total column",
+      rung: null,
+      id: "a1",
+      source: "evaluator",
+      method: { kind: "command", command: "node check.mjs" },
+    });
+    // No command means only a person can settle it — `review`, which derives
+    // `needs_review` and is never `satisfied` by the runtime.
+    expect(second!.method).toEqual({ kind: "review" });
+    expect(second!.source).toBe("user");
+    expect(second!.required).toBe(false);
+    expect(criterionStatus(second!, [], NOW)).toBe("needs_review");
+  });
+
+  test("ids never collide with the read-back's own `c<n>`", () => {
+    const acceptance = acceptanceCriteria([{ text: "a", command: "true" }]);
+    const c = amendContract(contract(), brief({ criteria: acceptance }), "runtime");
+    const both = amendContract(c, brief({ criteria: [criterion("the exporter writes every row")] }));
+    expect(new Set(both.criteria.map((x) => x.id)).size).toBe(both.criteria.length);
+  });
+});
+
+describe("did the acceptance command actually RUN?", () => {
+  test("a runner that collected nothing did not run", () => {
+    expect(acceptanceDidNotRun("0 pass\n0 fail\n", 0)).toBe(true);
+    expect(acceptanceDidNotRun("collected 0 items", 0)).toBe(true);
+    expect(acceptanceDidNotRun("No tests found", 0)).toBe(true);
+  });
+
+  test("a runner that is not installed did not run", () => {
+    expect(acceptanceDidNotRun("bash: pytest: command not found", 127)).toBe(true);
+    expect(acceptanceDidNotRun("anything at all", 127)).toBe(true);
+    expect(acceptanceDidNotRun("missing script: acceptance", 1)).toBe(true);
+  });
+
+  test("a runner that ran and FAILED is left alone — that is the finding", () => {
+    expect(acceptanceDidNotRun("(fail) the total column is missing\n1 fail", 1)).toBe(false);
+    expect(acceptanceDidNotRun("3 pass, 0 fail", 0)).toBe(false);
   });
 });

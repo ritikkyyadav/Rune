@@ -218,6 +218,43 @@ export class BriefLedger {
     return { ok: true, criterion };
   }
 
+  /**
+   * The runtime's OWN measurement of a criterion, pass or fail.
+   *
+   * `record` is the citation path: the model points, the runtime prices, and a
+   * failure is refused because there is nothing to record — a criterion is not
+   * settled by a check that is failing. This is the other direction. The
+   * runtime ran the criterion's own command itself, so what it saw is the
+   * answer either way, and a `failed` result is a status WITH a receipt rather
+   * than the absence of one.
+   *
+   * No parent-commit rule applies because `verified` is not reachable here:
+   * this path never awards it. The rung stays the receipt's strength
+   * (`observed` — it ran and passed) and the acceptance is derived from the
+   * evidence by `criterionStatus`.
+   */
+  recordRuntimeCheck(index: number, evidence: Evidence, rung: ClaimRung | null): LedgerRejection {
+    const criterion = this.brief.criteria[index];
+    if (!criterion) return { ok: false, reason: `no criterion at index ${index}` };
+    if (!evidence?.source?.trim()) {
+      return { ok: false, reason: "evidence needs a source — what ran, verbatim" };
+    }
+    if (rung === "verified") {
+      return { ok: false, reason: "`verified` is a parent-commit finding; this path cannot award it" };
+    }
+    if (rung) criterion.rung = rung;
+    const at = this.revision?.(this.brief.touch);
+    criterion.evidence = at
+      ? {
+          ...evidence,
+          ...(at.head ? { head: at.head } : {}),
+          dirty: at.dirty,
+          ...(at.digest ? { digest: at.digest } : {}),
+        }
+      : evidence;
+    return { ok: true, criterion };
+  }
+
   /** The close: the same criteria, in the same order, with what moved them. */
   close(): {
     met: number;
@@ -959,11 +996,15 @@ export function createRecordEvidenceTool(
       // the acceptance test would put the one measurement it cannot influence
       // back inside its reach. The refusal is a plain sentence, not an error:
       // there is nothing wrong with having tried.
+      //
+      // The refusal deliberately does NOT quote the criterion back. An
+      // evaluator criterion is one the model never sees, and a tool reply that
+      // echoes its text on an out-of-range index would be a way to read it.
       if (criterion?.source === "evaluator") {
         return reply(
-          `Criterion ${index} "${criterion.text.slice(0, 80)}" is settled by the runtime's own ` +
-            `run, not by citation. It will be checked when this turn finishes, and the result ` +
-            `will be on the record either way. Cite a criterion you read back instead.`,
+          `Criterion ${index} is settled by the runtime's own run, not by citation. It will be ` +
+            `checked when this turn finishes and the result will be on the record either way. ` +
+            `Cite a criterion you read back instead.`,
         );
       }
 

@@ -203,10 +203,13 @@ import {
   // surface" invariant leaked, and closing it is a gate on Phase 2.
   isVerificationCommand,
   bashCheckVerdict,
+  envFingerprint,
   type Brief,
   type BriefHandler,
 } from "./brief";
 import {
+  acceptanceCriteria,
+  acceptanceDidNotRun,
   amendContract,
   carryForward,
   computeVerdict,
@@ -215,6 +218,7 @@ import {
   inheritContract,
   priorContract,
   uncoveredCriteria,
+  type AcceptanceSpec,
   type CompletionVerdict,
   type TaskContract,
 } from "./contract";
@@ -972,6 +976,19 @@ export interface EngineConfig {
   verifyCommand?: string[];
   /** Per-check-command timeout in ms (default 120_000). */
   verifyTimeoutMs?: number;
+  /**
+   * Acceptance stated OUTSIDE the run — `rune --acceptance <file>`.
+   *
+   * Loaded onto the contract at intake as `evaluator` criteria, never rendered
+   * into any prompt, never citable, and run by the runtime itself at the
+   * finish gate. It is the only acceptance on a run that the thing being
+   * measured did not write, which is what makes "a known omitted feature fails
+   * acceptance despite green existing tests" answerable at all.
+   *
+   * ADVISORY in M1: a failed acceptance criterion makes the verdict `partial`
+   * with the gap named. It refuses no finish and re-prompts nobody.
+   */
+  acceptance?: AcceptanceSpec[];
   /**
    * Run the verifier's compile-class tier at step boundaries (a todo_write
    * that closes a step which wrote files no check covered). Default true;
@@ -5067,6 +5084,9 @@ export class Engine {
       this.contract = inheritContract(this.contract, priorContract(priorEvents));
       if (this.brief) this.contract = carryForward(this.contract, this.brief, "runtime");
     }
+    // Acceptance stated outside the run, onto the contract before the first
+    // model call — and never into a prompt. See `installAcceptance`.
+    this.installAcceptance(userMessage);
     this.persistContract();
 
     // ── What an interrupted run hands forward (G6) ──
@@ -5397,6 +5417,9 @@ export class Engine {
                 revision: this.runRevision(this.brief?.touch),
               }
             : null,
+        // The independent oracle, at the finish gate. Absent in effect for
+        // every run with no `--acceptance`: the gate returns immediately.
+        acceptanceGate: (signal) => this.runAcceptanceGate(sessionId, signal),
         jitDoctrine: (section) => this.takeJitDoctrine(sessionId, section),
       },
       this.gateway,
@@ -6534,6 +6557,133 @@ export class Engine {
    * stands still. The git pair is memoised for a second, because a rung and
    * the check behind it are stamped milliseconds apart.
    */
+  // ─── The independent oracle ───
+
+  /**
+   * Put the `--acceptance` criteria on the contract, and on the ledger the
+   * verdict reads — before the first model call, and without telling the model.
+   *
+   * They go on the LEDGER's list rather than into a second store because the
+   * verdict, the close block, `rune audit` and the persisted brief all read
+   * that one list; a criterion held anywhere else would be invisible to every
+   * one of them. Nothing on that list reaches a prompt — the read-back tool's
+   * replies never echo criteria, `record_evidence` refuses an evaluator
+   * criterion without quoting it, and `acceptance-omission.test.ts` greps the
+   * outgoing request bodies to keep it that way.
+   *
+   * A run with no acceptance configured is untouched: no brief is invented,
+   * and every gate that reads `ledgerStatus` sees exactly what it saw before.
+   */
+  private installAcceptance(request: string): void {
+    const specs = this.config.acceptance;
+    if (!specs || specs.length === 0 || !this.contract) return;
+    const stated = acceptanceCriteria(specs);
+    // A resumed run already has them on its restored brief: match by id so a
+    // second run does not stack a second copy of every criterion.
+    const brief = this.brief ?? {
+      reading: "",
+      touch: [],
+      leave: [],
+      criteria: [],
+      request,
+      createdAt: new Date().toISOString(),
+    };
+    const known = new Set(brief.criteria.map((c) => c.id ?? c.text));
+    const fresh = stated.filter((c) => !known.has(c.id ?? c.text));
+    if (fresh.length > 0) brief.criteria = [...brief.criteria, ...fresh];
+    if (!this.brief) {
+      this.brief = brief;
+      this.ledger = new BriefLedger(brief, (files) => this.runRevision(files));
+    }
+    // `runtime` origin: the harness stated these, and only a `user` amendment
+    // can ever remove one.
+    this.contract = carryForward(this.contract, brief, "runtime");
+  }
+
+  /**
+   * Run the acceptance the runtime was handed, once, at the finish gate.
+   *
+   * Called from the loop at the same point `verdictFor` is computed — after
+   * the last gate, before the final compaction — so the result is part of the
+   * verdict rather than a footnote after it. Each command runs through the
+   * registry's `bash`, which means the same sandbox, the same cwd and the same
+   * `verifyTimeoutMs` an ordinary check gets; the run is recorded in the check
+   * log with an execution id, and the criterion gets evidence either way.
+   *
+   * ADVISORY: this returns nothing, refuses nothing and re-prompts nobody. A
+   * failed acceptance criterion reaches the verdict as a named gap and the
+   * turn ends exactly as it would have. The one bounded re-prompt is M3's.
+   */
+  private async runAcceptanceGate(sessionId: string, signal?: AbortSignal): Promise<void> {
+    const ledger = this.ledger;
+    if (!ledger) return;
+    const criteria = ledger.criteria;
+    for (let index = 0; index < criteria.length; index++) {
+      const criterion = criteria[index]!;
+      if (criterion.source !== "evaluator") continue;
+      const method = criterion.method;
+      if (!method || method.kind !== "command") continue;
+      // Once per run. A gate that ran twice would double every side effect the
+      // acceptance command has, and the second answer would be about a tree
+      // the first one may have changed.
+      if (criterion.evidence?.verifier === "acceptance-command@1") continue;
+      if (signal?.aborted) return;
+
+      const command = method.command;
+      const timeoutMs = this.config.verifyTimeoutMs ?? 120_000;
+      let output: { success: boolean; result?: string; error?: string };
+      try {
+        // The command came from the person's acceptance file, not from the
+        // model, so the runtime grants it rather than asking about it.
+        const args = { command, timeout_ms: timeoutMs };
+        this.permissions.grantExact("bash", args, "session");
+        output = await this.registry.execute({
+          toolName: "bash",
+          callId: `acceptance-${index}-${Date.now().toString(36)}`,
+          args,
+          sessionId,
+          workspaceRoot: this.config.workspaceRoot,
+          ...(signal ? { signal } : {}),
+        });
+      } catch (err) {
+        output = { success: false, error: err instanceof Error ? err.message : String(err) };
+      }
+
+      const verdict = bashCheckVerdict(output);
+      const run = this.checkLog.record({
+        command,
+        passed: verdict.passed,
+        at: Date.now(),
+        summary: verdict.summary,
+        kind: "check",
+        ...(verdict.exitCode != null ? { exitCode: verdict.exitCode } : {}),
+      });
+
+      // Did it RUN, or did it merely exit? A runner that collected nothing and
+      // a runner that is not installed both exit without measuring anything,
+      // and calling either one `satisfied` or `failed` would be a claim about
+      // the work that nobody made.
+      const text = `${output.result ?? ""}\n${output.error ?? ""}`;
+      const ranAtAll = !acceptanceDidNotRun(text, verdict.exitCode);
+      const evidence = {
+        source: command,
+        detail: ranAtAll
+          ? verdict.summary
+          : `the acceptance command did not run here: ${verdict.summary || "nothing was collected"}`,
+        executionId: run.executionId!,
+        verifier: "acceptance-command@1",
+        ...(ranAtAll ? { result: verdict.passed ? ("passed" as const) : ("failed" as const) } : {}),
+        env: envFingerprint(),
+      };
+      // No rung when it did not run: the ladder is about receipts, and there
+      // is no receipt here. `criterionStatus` reads the missing `result` and
+      // the undatable claim and answers `needs_review`.
+      ledger.recordRuntimeCheck(index, evidence, ranAtAll && verdict.passed ? "observed" : null);
+    }
+    this.persistBrief();
+    if (this.contract) this.persistContract();
+  }
+
   private runRevision(files?: readonly string[]): StampedRevision {
     if (!this.liveRevision) return { head: null, dirty: false };
     const now = Date.now();

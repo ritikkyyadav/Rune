@@ -64,10 +64,11 @@ import {
   loadTelemetryState,
   setConsent,
 } from "@rune/telemetry";
-import { rmSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import { parseArgs } from "util";
 import { runSettingsCommand } from "../settings-command";
+import { parseAcceptanceSpecs, type AcceptanceSpec } from "../contract";
 import {
   FirstRun,
   MASK_CELL_ASCII,
@@ -160,6 +161,12 @@ const { values, positionals } = parseArgs({
     // NDJSON: every event as it happens, the envelope last. See docs/protocol.md.
     "stream-json": { type: "boolean", default: false },
     "auto-approve": { type: "boolean", default: false },
+    // Acceptance stated OUTSIDE the run: a JSON file of criteria the runtime
+    // checks itself at the finish gate and the model never sees. Declared
+    // once here and threaded into the Engine, so it applies to an interactive
+    // session exactly as it does to `-P` — an acceptance file that only
+    // worked headless would be a benchmark feature rather than a guarantee.
+    acceptance: { type: "string" },
     tui: { type: "boolean", default: false },
     classic: { type: "boolean", default: false },
     fullscreen: { type: "boolean", default: false },
@@ -321,6 +328,7 @@ if (values.help) {
         `    --fullscreen                 Names the default: the fixed frame, header pinned top + footer pinned bottom\n` +
         `    --inline                     Opt out: terminal owns scroll/reflow/copy, header + composer trail the output\n` +
         `    --pristine                   Run without the learned tactics notebook (evolution control group)\n` +
+        `    --acceptance <file>          Acceptance the model never sees: JSON criteria the runtime runs itself at the finish gate\n` +
         `    --sandbox / --no-sandbox     Force the OS command sandbox on/off for this run (overrides /sandbox + config; see /sandbox for modes, overrides and exclusions)\n` +
         `    --browser / --no-browser     Force the agent browser (Playwright MCP) on/off for this run (overrides /browser + config)\n` +
         `    -h, --help                   Show this help\n\n`,
@@ -1053,6 +1061,24 @@ async function main() {
     );
   }
 
+  // ─── `--acceptance <file>`: the acceptance the model never sees ───
+  //
+  // Read once, here, before the Engine exists, and used by every surface.
+  // A malformed file is a hard stop rather than a warning: an acceptance file
+  // that silently loaded nothing would let a run report `met` against no
+  // criteria at all, and its author would have no way to tell that from a run
+  // that passed. The file may live outside the workspace.
+  let acceptance: AcceptanceSpec[] | undefined;
+  if (typeof values.acceptance === "string" && values.acceptance.trim()) {
+    const path = values.acceptance.trim();
+    try {
+      acceptance = parseAcceptanceSpecs(readFileSync(path, "utf8"), `--acceptance ${path}`);
+    } catch (err) {
+      console.error(`  ${brass("!")} ${(err as Error).message}`);
+      process.exit(2);
+    }
+  }
+
   const engine = new Engine({
     model,
     provider,
@@ -1091,6 +1117,9 @@ async function main() {
       typeof config.verify?.timeoutSecs === "number" && config.verify.timeoutSecs > 0
         ? Math.floor(config.verify.timeoutSecs * 1000)
         : undefined,
+    // `--acceptance` — evaluator criteria, on the contract at intake, run by
+    // the runtime at the finish gate, never in a prompt.
+    acceptance,
     browser: { ...config.browser, enabled: browserEnabled },
     // Pass config-file keys as "saved" — but NOT when they merely echo an env
     // var (loadConfig folds env into config.llm.*), so an env-only key is

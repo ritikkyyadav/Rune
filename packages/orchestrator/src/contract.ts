@@ -32,6 +32,7 @@ import type {
 
 import type { CheckRun } from "./brief";
 import { statusFromStopReason, treeMovedUnder, type StampedRevision } from "./lifecycle";
+import { couldNotRunOnParent } from "./parent-check";
 import { GOAL_CAP } from "./task-state";
 import { normalizeCommand } from "./verification-command";
 
@@ -484,6 +485,110 @@ export function carryForward(
 /** Amendments carried on the contract row. A run with more is pathological. */
 const AMENDMENT_CAP = 32;
 
+// ─── The independent oracle: acceptance the model never sees ───
+//
+// Every criterion up to here originated with the model's read-back, which
+// means the run's own account of what done meant was written by the thing
+// being measured. That is fine for most work and useless for the one question
+// the review asks first: does a known OMITTED feature fail acceptance despite
+// green existing tests? It cannot, if the only acceptance on record is the
+// list the model wrote after deciding what it was going to build.
+//
+// An acceptance spec is stated OUTSIDE the run — `--acceptance <file>`, or an
+// embedder's config — loaded at intake, never rendered into any prompt, never
+// citable, and run by the runtime itself at the finish gate.
+
+/** One externally stated acceptance criterion. */
+export interface AcceptanceSpec {
+  /** Stable name, for a reader comparing runs. Defaults to `a1`, `a2`, … */
+  id?: string;
+  /** What must be true, in the person's words. */
+  text: string;
+  /**
+   * The command the RUNTIME runs to settle it. Absent means only a person can
+   * settle it, which derives `needs_review` and is never `satisfied`.
+   */
+  command?: string;
+  /** Absent means required. */
+  required?: boolean;
+  /** `evaluator` (the default) or `user`. Never `inferred` — nobody inferred this. */
+  source?: "user" | "evaluator";
+}
+
+/**
+ * Read an acceptance file: a JSON array, or an object with a `criteria` array.
+ *
+ * Refuses rather than guesses. A malformed acceptance file that silently
+ * loaded zero criteria would be the worst possible failure of this feature —
+ * the run would report `met` against nothing, and the file's author would
+ * have no way to tell that from a run that passed.
+ */
+export function parseAcceptanceSpecs(raw: string, where = "the acceptance file"): AcceptanceSpec[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`${where} is not valid JSON: ${(err as Error).message}`);
+  }
+  const list = Array.isArray(parsed)
+    ? parsed
+    : ((parsed as { criteria?: unknown } | null)?.criteria ?? null);
+  if (!Array.isArray(list)) {
+    throw new Error(`${where} must be a JSON array of criteria, or { "criteria": [ … ] }`);
+  }
+  const specs: AcceptanceSpec[] = [];
+  list.forEach((entry, i) => {
+    const row = (entry ?? {}) as Record<string, unknown>;
+    const text = String(row.text ?? "").trim();
+    if (!text) throw new Error(`${where}: criterion ${i} has no \`text\``);
+    const command = String(row.command ?? "").trim();
+    const source = row.source === "user" ? "user" : "evaluator";
+    specs.push({
+      id: String(row.id ?? "").trim() || undefined,
+      text,
+      ...(command ? { command } : {}),
+      ...(row.required === false ? { required: false } : {}),
+      source,
+    });
+  });
+  if (specs.length === 0) throw new Error(`${where} states no criteria`);
+  return specs;
+}
+
+/** The specs as criteria, ready to go on the contract. Ids never collide with `c<n>`. */
+export function acceptanceCriteria(specs: readonly AcceptanceSpec[]): Criterion[] {
+  return specs.map((spec, i) => ({
+    text: spec.text,
+    rung: null,
+    id: spec.id ?? `a${i + 1}`,
+    source: spec.source ?? "evaluator",
+    ...(spec.required === false ? { required: false } : {}),
+    method: spec.command
+      ? ({ kind: "command", command: spec.command } as const)
+      : ({ kind: "review" } as const),
+  }));
+}
+
+/**
+ * Did the acceptance command actually RUN, or did it merely exit?
+ *
+ * The two cases the review names, and they look identical from a green suite:
+ * a command that exits 0 having collected nothing (`bun test nothing.test.ts`),
+ * and a command whose runner is not installed. Neither is evidence about the
+ * work, so both derive `needs_review` — never `satisfied`, and never `failed`
+ * either, because "we could not measure" is not "it is broken".
+ *
+ * The runner vocabulary is `couldNotRunOnParent`'s, held to examples in
+ * `parent-check.test.ts`; the shell's own two answers for a missing program
+ * (127, and the words it prints) are added here because an acceptance command
+ * is run against THIS tree, where a missing runner is the whole finding.
+ */
+export function acceptanceDidNotRun(output: string, exitCode?: number): boolean {
+  if (exitCode === 127) return true;
+  if (/command not found|: not found\b|no such file or directory/i.test(output)) return true;
+  return couldNotRunOnParent(output);
+}
+
 /**
  * The newest `contract` row in a session's log, or null.
  *
@@ -740,6 +845,14 @@ export function criterionStatus(
   const evidence = criterion.evidence;
   if (!evidence) return "unassessed";
   if (evidence.unrelated) return "unassessed";
+  // A verifier that ran and recorded no result could not SAY. The acceptance
+  // runner writes this shape for a command that exited without measuring
+  // anything — a runner that collected no tests, a runner that is not
+  // installed — and both of those are "we could not measure", which is
+  // neither `satisfied` nor `failed`. It is tested before the bound run
+  // because a missing runner exits non-zero, and reading that as a failing
+  // check would report a broken toolchain as broken work.
+  if (evidence.verifier && !evidence.result) return "needs_review";
   if (evidence.result === "failed") return "failed";
   const bound = boundRun(criterion, checks);
   if (bound && !bound.latest.passed) return "failed";
