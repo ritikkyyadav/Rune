@@ -1670,22 +1670,19 @@ export class AgentLoop {
   }
 
   /**
-   * Append a harness nudge unless the transcript already ends with it.
+   * Whether the transcript already ENDS with this harness note.
    *
    * The idempotent half of an applied decision (M3 mechanics 2): a run killed
    * between the `decision` row and its act resumes on a transcript that may
-   * already carry the nudge, and re-appending it would ask the model twice for
-   * the same thing. With the controller off this is a no-op by construction —
-   * every site that calls it fires at most once per run anyway.
+   * already carry the note, and appending it again would ask the model twice
+   * for the same thing. A predicate rather than an append helper, so the
+   * `appendMessage` call stays at the site with its origin written out — the
+   * grammar `harness-attribution.test.ts` reads from the source.
    */
-  private appendNudgeOnce(text: string, origin: string): boolean {
+  private endsWithHarnessNote(text: string): boolean {
     const last = this.messages[this.messages.length - 1];
-    const already =
-      last?.role === "user" &&
-      last.content.some((b) => b.type === "text" && (b as { text?: unknown }).text === text);
-    if (already) return false;
-    this.appendMessage({ role: "user", content: [{ type: "text", text }] }, origin);
-    return true;
+    if (last?.role !== "user") return false;
+    return last.content.some((b) => b.type === "text" && (b as { text?: unknown }).text === text);
   }
 
   /**
@@ -2907,8 +2904,16 @@ export class AgentLoop {
             `(stopReason ${stopReason}, attempt ${emptyCompletions})`,
         );
         if (transition === "working") {
-          if (silentEndTurn && toolCallsThisRun > 0 && emptyCompletions === 1) {
-            this.appendNudgeOnce(EMPTY_COMPLETION_NUDGE, "nudge:empty-completion");
+          if (
+            silentEndTurn &&
+            toolCallsThisRun > 0 &&
+            emptyCompletions === 1 &&
+            !this.endsWithHarnessNote(EMPTY_COMPLETION_NUDGE)
+          ) {
+            this.appendMessage(
+              { role: "user", content: [{ type: "text", text: EMPTY_COMPLETION_NUDGE }] },
+              "nudge:empty-completion",
+            );
           }
           this.config.shadow?.observe("E4", decisionInputs, "working", shadowState());
           yield {

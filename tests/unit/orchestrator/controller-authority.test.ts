@@ -460,15 +460,18 @@ describe("B3 — a resumed run carries the empty completions it already spent", 
 // ─── The idempotent act ───
 
 describe("the act is idempotent, because a crash can land between the row and it", () => {
-  test("the nudge is not appended when the transcript already ends with it", async () => {
+  test("the site can see that the transcript already ends with its nudge", async () => {
     const run = await runLoop({ script: BAIL, authority: ["E4"] });
-    const loop = run.loop;
-    const before = loop.getMessages().length;
+    const note = "[Harness note] the same note";
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const append = (loop as any).appendNudgeOnce.bind(loop);
-    expect(append("[Harness note] the same note", "nudge:test")).toBe(true);
-    expect(append("[Harness note] the same note", "nudge:test")).toBe(false);
-    expect(loop.getMessages().length).toBe(before + 1);
+    const loop = run.loop as any;
+    expect(loop.endsWithHarnessNote(note)).toBe(false);
+    loop.appendMessage({ role: "user", content: [{ type: "text", text: note }] }, "nudge:test");
+    // The guard the retry branch reads before it appends: a resumed run whose
+    // transcript already carries the note does not ask for it twice.
+    expect(loop.endsWithHarnessNote(note)).toBe(true);
+    loop.appendMessage({ role: "assistant", content: [{ type: "text", text: "ok" }] });
+    expect(loop.endsWithHarnessNote(note)).toBe(false);
   });
 
   test("a terminal is not re-emitted when the run already has one", async () => {
