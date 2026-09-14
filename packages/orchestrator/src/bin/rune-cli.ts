@@ -974,6 +974,9 @@ async function main() {
     // workspace" (P10.1), and `=== true` would have collapsed that to off.
     lspAutoFeedback: config.lsp?.autoFeedback,
     reliability: config.reliability,
+    // [controller] shadow — the passive arbiter (M2). Unset is ON for the
+    // lead loop; sub-agent loops never get one.
+    controller: config.controller,
     maxSessionCostUsd: config.cost?.maxSessionUsd,
     // [tools] rateLimit — the tool pacer; `enabled = false` turns it off.
     enableRateLimiting: config.tools?.rateLimit?.enabled,

@@ -22,6 +22,7 @@ import { MODEL_PRICING } from "@rune/llm-gateway";
 import type { CompletionVerdict, DecisionRecord } from "@rune/protocol";
 import { criterionStatus, verdictLine, type TaskContract } from "../contract";
 import { buildDecisionRecord, hasRecord, renderDecisionRecordMarkdown } from "../decision-record";
+import { shadowSummaryLines, type ShadowSummaryRow } from "../shadow-arbiter";
 
 type Row = { seq: number; event: SessionEvent };
 
@@ -818,6 +819,21 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
           );
         }
       }
+    }
+
+    // ── The shadow controller (M2) ──
+    //
+    // What the arbiter WOULD have decided beside what the guards did. It
+    // applied nothing — every row in it says `applied: false` — so this block
+    // is a disagreement list, and the disagreements are M3's work queue.
+    const shadowRow = [...rows].reverse().find((r) => r.event.type === "shadow_summary");
+    if (shadowRow) {
+      const s = payloadOf(shadowRow) as unknown as ShadowSummaryRow;
+      say();
+      say(`  ${text("Shadow")}  ${dim("the arbiter watched, and applied nothing")}`);
+      const lines = shadowSummaryLines(s);
+      say(`    ${(s.disagreements > 0 ? warn : dim)(lines[0] ?? "")}`);
+      for (const line of lines.slice(1)) say(`    ${dim(line)}`);
     }
 
     // ── Cost ──

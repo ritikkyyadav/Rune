@@ -174,6 +174,16 @@ ENDING durable: before them a run that hit its turn ceiling with a closed plan
 left no record of how it stopped, and a restart could report on the run it was
 recovering only by guessing.
 
+Not every persisted row is an event. `contract`, `brief`, `verdict`, `cost`,
+`task_state` and — from M2 — `shadow_decision`, `shadow_capped` and
+`shadow_summary` are rows of their own: records a surface never renders,
+written for `rune audit` and for replay's own reconstruction. `replayEvents`
+skips them by its documented default, and they are deliberately NOT in
+`RUN_TRACE_EVENTS`, which is an allow-list over `AgentTurnEvent` bound by the
+drift law below ("the three persistence sets name nothing that is not an
+event"). The shadow rows say what a passive arbiter WOULD have decided beside
+what the run's guards did; every one of them carries `applied: false`.
+
 The host also keeps a bounded per-session ring buffer of recent live frames, so
 a client reconnecting mid-turn sees the tool call that is running right now and
 not only the last thing written to the database.

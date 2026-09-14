@@ -386,6 +386,9 @@ function buildEngine(): Engine {
     doctrineDelivery: config.llm?.doctrineDelivery,
     effortRouting: config.llm?.effortRouting,
     reliability: config.reliability,
+    // [controller] shadow — the passive arbiter (M2). Unset is ON for the
+    // lead loop; sub-agent loops never get one.
+    controller: config.controller,
     maxSessionCostUsd: config.cost?.maxSessionUsd,
     sandboxRequireOs: config.sandbox?.requireOs === true,
     enableRateLimiting: config.tools?.rateLimit?.enabled,

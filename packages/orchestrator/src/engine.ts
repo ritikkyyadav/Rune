@@ -184,6 +184,7 @@ import { pickFallbackReviewer } from "./reviewer-fallback";
 import { resolveHelperRoute, helperAppliesToSafety } from "./helper-route";
 import type { HelperRoute } from "./helper-route";
 import { applyInheritance, turnBudgetForMessage } from "./turn-budget";
+import { ShadowArbiter, type ShadowRow } from "./shadow-arbiter";
 import { createSubagentTool } from "./subagent";
 import { TeamBus } from "./team/bus";
 import { createTeamTool, renderTeamStatus } from "./team/tool";
@@ -900,6 +901,16 @@ export interface EngineConfig {
    * overriding the per-model-family defaults. See reliability-policy.ts.
    */
   reliability?: Partial<ReliabilityPolicy>;
+  /**
+   * The shadow controller (`[controller] shadow`, M2).
+   *
+   * Default ON for the lead loop and always off for sub-agent loops, which
+   * construct their own `AgentLoop` and are never handed one. With it off the
+   * loop emits nothing and allocates nothing: every call site is
+   * `this.config.shadow?.observe(…)`, and `?.` does not evaluate its
+   * arguments.
+   */
+  controller?: { shadow?: boolean };
   /**
    * Preferred provider order for MID-TASK fallback (`[fallback] order` in
    * config.toml). Overrides the built-in capacity ranking head-first; unnamed
@@ -4517,6 +4528,13 @@ export class Engine {
           evidenceGate: canonicalValue as "attest" | "refuse",
         };
         return { ok: true };
+      case "shadow_controller":
+        // Read at the start of the next run, where the arbiter is built.
+        this.config.controller = {
+          ...this.config.controller,
+          shadow: canonicalValue === "true",
+        };
+        return { ok: true };
       case "sandbox_required":
         this.config.sandboxRequireOs = canonicalValue === "true";
         setRequireOsIsolation(this.config.sandboxRequireOs);
@@ -4589,6 +4607,8 @@ export class Engine {
         return String(policyForModel(this.config.model, this.config.reliability).maxTurns);
       case "evidence_gate":
         return policyForModel(this.config.model, this.config.reliability).evidenceGate;
+      case "shadow_controller":
+        return String(this.config.controller?.shadow !== false);
       case "sandbox_required":
         return String(this.config.sandboxRequireOs === true);
       case "playbook":
@@ -4977,6 +4997,32 @@ export class Engine {
     });
     const runStartedAt = new Date().toISOString();
     const runStartMs = Date.now();
+
+    // ── The shadow controller (M2) ──
+    //
+    // On for the LEAD loop unless `[controller] shadow = false`; sub-agent
+    // loops build their own `AgentLoop` and are never handed one, so they are
+    // off by construction rather than by a flag someone must remember.
+    //
+    // Its rows are rows of their OWN type, not `run_trace` wrappers, for the
+    // same reason the contract's is (`persistContract` below): `RUN_TRACE_EVENTS`
+    // is an allow-list over `AgentTurnEvent`, bound by the drift law in
+    // `tests/unit/protocol/exhaustiveness.test.ts` ("the three persistence sets
+    // name nothing that is not an event") — and a shadow decision is not an
+    // event any surface renders. `replayEvents` skips them with the documented
+    // default, exactly as it skips `contract`, `brief` and `cost`.
+    const shadow =
+      this.config.controller?.shadow === false
+        ? null
+        : new ShadowArbiter({
+            runId,
+            emit: (row: ShadowRow) => {
+              this.sessions.appendEvent(sessionId, {
+                type: row.type,
+                payload: { ...row },
+              });
+            },
+          });
 
     // Black box: scope this run and start its flight trail.
     this.runCounter++;
@@ -5421,6 +5467,13 @@ export class Engine {
         // every run with no `--acceptance`: the gate returns immediately.
         acceptanceGate: (signal) => this.runAcceptanceGate(sessionId, signal),
         jitDoctrine: (section) => this.takeJitDoctrine(sessionId, section),
+        // The arbiter, watching. It decides nothing here: the loop calls
+        // `observe` beside guards that have already acted.
+        ...(shadow ? { shadow } : {}),
+        // What the run has spent, for the snapshot's `budget.spentUsd`. The
+        // ledger's own total — rehydrated from cost rows, never reduced by a
+        // turn refund.
+        spentUsd: () => this.costTracker.getLedger().totalListCostUsd,
       },
       this.gateway,
       this.registry,
@@ -6059,6 +6112,14 @@ export class Engine {
           // A reading of the run; it must never break the run.
         }
       }
+      // ── The shadow summary ──
+      //
+      // One row per run, after the verdict: what the arbiter would have
+      // decided, how often that was what the guards did, and what it cost to
+      // ask. Written here rather than inside the loop so a run that died
+      // between boundaries still leaves the count it reached.
+      shadow?.finish();
+
       // Whatever the ledger ended at, durably — including any rung a check in
       // this run moved after the brief was last written. The contract holds
       // the SAME criterion objects, so its row is re-taken here for the same

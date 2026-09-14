@@ -155,6 +155,12 @@ export const UNSHADOWED_GUARDS: ReadonlyMap<string, string> = new Map([
   ["R4", "the same-shape streak advances inside result processing"],
   ["E9", "the loop detector answers the repeated batch; shadowing it means letting it run"],
   ["E10", "the recurrence nudge rewrites the result it read"],
+  [
+    "E11",
+    "the barren streak is advanced inside result processing, from refusal flags the site does not own",
+  ],
+  ["G1", "the only guard whose action costs real time — shadow the predicate, never the run"],
+  ["G2", "the replan nudge appends a message and zeroes verifyAttempts"],
   ["E12", "seenResults.add() happens during the read — the predicate is not idempotent"],
   ["G4w", "three writers, one reader, and an equality between counters as the invariant"],
   ["N3", "the tool pacer sleeps invisibly"],

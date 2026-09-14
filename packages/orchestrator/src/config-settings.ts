@@ -86,6 +86,17 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     live: true,
   },
   {
+    key: "shadow_controller",
+    tomlPath: "controller.shadow",
+    kind: "boolean",
+    description:
+      "Run the passive arbiter beside the loop's guards (M2). It decides nothing and changes " +
+      "nothing: it records what it WOULD have decided and where that differs from what the " +
+      "guards did. Off writes no rows at all. Applies to the next run.",
+    nameAliases: ["shadow arbiter", "shadow mode", "controller shadow"],
+    live: true,
+  },
+  {
     key: "turns",
     tomlPath: "reliability.maxTurns",
     kind: "number",

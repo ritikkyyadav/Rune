@@ -333,6 +333,18 @@ export interface RuneConfig {
     evidenceGate?: "attest" | "refuse";
   };
   /**
+   * The passive controller (M2, `docs/program/m2-shadow-controller.md`).
+   *
+   * `shadow` (default true) runs the arbiter BESIDE the loop's guards: it
+   * decides what it would have done, records where it disagrees, and changes
+   * nothing — no dispatch, no counter, no budget, no prompt. Sub-agent loops
+   * never get one. `false` turns the rows off entirely; with it off the loop
+   * allocates nothing.
+   */
+  controller?: {
+    shadow?: boolean;
+  };
+  /**
    * Tool execution settings.
    *
    * `rateLimit` is the tool pacer (tool-registry/rate-limiter.ts). Read-
