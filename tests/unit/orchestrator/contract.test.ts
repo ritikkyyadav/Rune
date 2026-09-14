@@ -506,8 +506,20 @@ describe("criterionStatus — the derivation, line by line", () => {
     // command did afterwards. With only a command string on the receipt this
     // criterion read `satisfied` while its own check was red.
     const checks: CheckRun[] = [
-      { command: "bun test export.test.ts", passed: true, at: 1, kind: "check", executionId: "chk-1" },
-      { command: "bun test export.test.ts", passed: false, at: 2, kind: "check", executionId: "chk-2" },
+      {
+        command: "bun test export.test.ts",
+        passed: true,
+        at: 1,
+        kind: "check",
+        executionId: "chk-1",
+      },
+      {
+        command: "bun test export.test.ts",
+        passed: false,
+        at: 2,
+        kind: "check",
+        executionId: "chk-2",
+      },
     ];
     const c: Criterion = { text: "a", rung: "observed", evidence: stamped() };
     expect(criterionStatus(c, checks, NOW)).toBe("failed");
@@ -519,7 +531,9 @@ describe("criterionStatus — the derivation, line by line", () => {
       "stale",
     );
     // A different HEAD says the same thing, and so does a clean tree gone dirty.
-    expect(criterionStatus(c, [], { head: "beef0000", dirty: false, digest: DIGEST })).toBe("stale");
+    expect(criterionStatus(c, [], { head: "beef0000", dirty: false, digest: DIGEST })).toBe(
+      "stale",
+    );
     expect(criterionStatus(c, [], { head: HEAD, dirty: true, digest: DIGEST })).toBe("stale");
   });
 
@@ -543,7 +557,14 @@ describe("criterionStatus — the derivation, line by line", () => {
     // F-5B left executions out of the relatedness gate. M1 made acceptance a
     // separate fact, so this rule has to carry that weight instead.
     const checks: CheckRun[] = [
-      { command: "echo done", passed: true, at: 1, kind: "execution", exitCode: 0, executionId: "chk-1" },
+      {
+        command: "echo done",
+        passed: true,
+        at: 1,
+        kind: "execution",
+        exitCode: 0,
+        executionId: "chk-1",
+      },
     ];
     const cited: Criterion = {
       text: "the exporter writes every row",
@@ -657,7 +678,12 @@ describe("the verdict reads the status, not the rung", () => {
 
   test("an optional criterion cannot hold a run back", () => {
     const required: Criterion = { text: "it ships", rung: "observed", evidence: stamped() };
-    const optional: Criterion = { text: "it is pretty", rung: null, required: false, source: "user" };
+    const optional: Criterion = {
+      text: "it is pretty",
+      rung: null,
+      required: false,
+      source: "user",
+    };
     const v = verdictOf([required, optional]);
     expect(v.kind).toBe("met");
     expect(v.criteria[1]!.required).toBe(false);
@@ -677,7 +703,10 @@ describe("the verdict reads the status, not the rung", () => {
         detail: "exit 1",
       }),
     };
-    const v = verdictOf([criterion("the exporter writes every row", "verified", "bun test"), failing]);
+    const v = verdictOf([
+      criterion("the exporter writes every row", "verified", "bun test"),
+      failing,
+    ]);
     expect(v.kind).toBe("partial");
     expect(v.kind === "partial" && v.gaps[0]).toEqual({
       criterion: "the CSV header is unchanged",
@@ -853,7 +882,10 @@ describe("what a restarted run inherits from the contract it is continuing", () 
   test("constraints, revision and the amendment history survive", () => {
     const died = amendContract(
       contract(),
-      brief({ leave: ["src/notes.md"], criteria: [{ text: "keep it", rung: null, source: "user" }] }),
+      brief({
+        leave: ["src/notes.md"],
+        criteria: [{ text: "keep it", rung: null, source: "user" }],
+      }),
       "user",
     );
     const fresh = createContract({
@@ -952,7 +984,10 @@ describe("the acceptance spec", () => {
   test("ids never collide with the read-back's own `c<n>`", () => {
     const acceptance = acceptanceCriteria([{ text: "a", command: "true" }]);
     const c = amendContract(contract(), brief({ criteria: acceptance }), "runtime");
-    const both = amendContract(c, brief({ criteria: [criterion("the exporter writes every row")] }));
+    const both = amendContract(
+      c,
+      brief({ criteria: [criterion("the exporter writes every row")] }),
+    );
     expect(new Set(both.criteria.map((x) => x.id)).size).toBe(both.criteria.length);
   });
 });

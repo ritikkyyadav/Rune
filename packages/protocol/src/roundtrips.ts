@@ -305,7 +305,12 @@ export interface DeclaredGap {
  */
 export type CompletionVerdict =
   | { kind: "met"; criteria: CriterionOutcome[]; execution?: VerdictExecution }
-  | { kind: "partial"; criteria: CriterionOutcome[]; gaps: DeclaredGap[]; execution?: VerdictExecution }
+  | {
+      kind: "partial";
+      criteria: CriterionOutcome[];
+      gaps: DeclaredGap[];
+      execution?: VerdictExecution;
+    }
   | { kind: "unmet"; criteria: CriterionOutcome[]; missing: string[]; execution?: VerdictExecution }
   | { kind: "none"; criteria: CriterionOutcome[]; reason: string; execution?: VerdictExecution };
 

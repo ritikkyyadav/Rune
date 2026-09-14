@@ -193,10 +193,7 @@ export function regions(input: RegionInput): Regions {
   // region around it.
   const cap = collapsed
     ? COMPOSER_MIN_ROWS
-    : Math.max(
-        COMPOSER_MIN_ROWS,
-        Math.min(bandRows - PANEL_MIN_ROWS, Math.floor(bandRows * 0.6)),
-      );
+    : Math.max(COMPOSER_MIN_ROWS, Math.min(bandRows - PANEL_MIN_ROWS, Math.floor(bandRows * 0.6)));
   const composerRows = Math.max(
     COMPOSER_MIN_ROWS,
     Math.min(cap, Math.floor(input.composerRows ?? COMPOSER_MIN_ROWS)),

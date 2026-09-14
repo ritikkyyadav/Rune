@@ -40,11 +40,7 @@ import { isManagedCommitSubject } from "./git-undo";
  * alone spends `verified` on the novelty of a file. A check that could not RUN
  * on the parent measured nothing there, so it establishes nothing here.
  */
-export type ParentCheckStatus =
-  | "failed"
-  | "passed"
-  | "inconclusive"
-  | "not-applicable-on-parent";
+export type ParentCheckStatus = "failed" | "passed" | "inconclusive" | "not-applicable-on-parent";
 
 export interface ParentCheckResult {
   status: ParentCheckStatus;

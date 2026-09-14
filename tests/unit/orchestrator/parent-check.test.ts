@@ -173,7 +173,7 @@ describe("couldNotRunOnParent", () => {
     ["jest", "Test Suites: 0 total\nTests:       0 total\nSnapshots:   0 total"],
     ["cargo", "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored"],
     ["go", "?   example.com/pkg\t[no test files]"],
-    ["npm script", "npm error Missing script: \"check:csv\""],
+    ["npm script", 'npm error Missing script: "check:csv"'],
     ["python", "python3: can't open file '/tmp/x/new_check.py': [Errno 2] No such file"],
     ["node --test", "node --test\nno test files found"],
     ["an unknown subcommand", "error: unknown command 'verify'"],

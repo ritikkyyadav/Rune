@@ -112,9 +112,11 @@ function contracts(engine: Engine, sessionId: string): Array<Record<string, any>
 }
 
 function terminalOf(events: AgentTurnEvent[]): Extract<AgentTurnEvent, { type: "turn_complete" }> {
-  return events.filter(
-    (e): e is Extract<AgentTurnEvent, { type: "turn_complete" }> => e.type === "turn_complete",
-  ).at(-1)!;
+  return events
+    .filter(
+      (e): e is Extract<AgentTurnEvent, { type: "turn_complete" }> => e.type === "turn_complete",
+    )
+    .at(-1)!;
 }
 
 describe("intent, verbatim", () => {
@@ -154,7 +156,6 @@ describe("intent, verbatim", () => {
       drift: amended.drift === undefined ? "none" : `${String(amended.drift).length} chars`,
     }).toEqual({ drift: "none" });
   });
-
 });
 
 describe("the shape classifier and the question with nothing to verify", () => {
@@ -183,5 +184,4 @@ describe("the shape classifier and the question with nothing to verify", () => {
       expect(verdictLine(terminal.verdict)).toBe(`[verdict] none — ${terminal.verdict.reason}`);
     }
   });
-
 });

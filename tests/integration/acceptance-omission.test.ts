@@ -99,7 +99,10 @@ function twoFeatureRepo(prefix: string): string {
       "process.exit(ok ? 0 : 1);",
     ].join("\n") + "\n";
   writeFileSync(join(dir, "check-version.mjs"), checker("api.ts", "version", "version() missing"));
-  writeFileSync(join(dir, "check-header.mjs"), checker("header.csv", "total", "total column missing"));
+  writeFileSync(
+    join(dir, "check-header.mjs"),
+    checker("header.csv", "total", "total column missing"),
+  );
   git(dir, ["init", "--initial-branch=main"]);
   git(dir, ["add", "."]);
   git(dir, ["commit", "-m", "two features asked for, neither built"]);

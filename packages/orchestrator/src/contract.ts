@@ -86,7 +86,10 @@ const POLITE_WORK_RE = new RegExp(
   `^(?:please\\s+|pls\\s+)?(?:can|could|would|will|wanna|want to)\\s+(?:you|we|u)\\s+(?:please\\s+)?(?:${WORK_VERB})\\b`,
   "i",
 );
-const IMPERATIVE_WORK_RE = new RegExp(`^(?:please\\s+|pls\\s+|now\\s+|also\\s+)?(?:${WORK_VERB})\\b`, "i");
+const IMPERATIVE_WORK_RE = new RegExp(
+  `^(?:please\\s+|pls\\s+|now\\s+|also\\s+)?(?:${WORK_VERB})\\b`,
+  "i",
+);
 const FOLLOW_ON_WORK_RE = new RegExp(
   `(?:^|[,;.]\\s*|\\s)(?:then|and then|after that|next|now|also|and)\\s+(?:please\\s+)?(?:${WORK_VERB})\\b`,
   "i",
@@ -114,13 +117,82 @@ const QUESTION_RE =
  * that asks for work and the message is work.
  */
 const CHAT_WORDS = new Set([
-  "thanks", "thank", "thanx", "thx", "ty", "you", "cheers", "appreciated", "appreciate", "it",
-  "ok", "okay", "k", "kk", "cool", "nice", "great", "perfect", "awesome", "excellent", "lovely",
-  "brilliant", "beautiful", "good", "fine", "right", "correct", "exactly", "lgtm", "got",
-  "sounds", "looks", "look", "seems", "works", "worked", "makes", "sense", "that", "this",
-  "these", "those", "all", "is", "are", "was", "were", "yes", "yep", "yeah", "yup", "sure",
-  "no", "nope", "nah", "done", "well", "much", "very", "so", "and", "now", "then", "i", "we",
-  "my", "me", "am", "happy", "glad", "love", "like", "super", "it's", "its", "one",
+  "thanks",
+  "thank",
+  "thanx",
+  "thx",
+  "ty",
+  "you",
+  "cheers",
+  "appreciated",
+  "appreciate",
+  "it",
+  "ok",
+  "okay",
+  "k",
+  "kk",
+  "cool",
+  "nice",
+  "great",
+  "perfect",
+  "awesome",
+  "excellent",
+  "lovely",
+  "brilliant",
+  "beautiful",
+  "good",
+  "fine",
+  "right",
+  "correct",
+  "exactly",
+  "lgtm",
+  "got",
+  "sounds",
+  "looks",
+  "look",
+  "seems",
+  "works",
+  "worked",
+  "makes",
+  "sense",
+  "that",
+  "this",
+  "these",
+  "those",
+  "all",
+  "is",
+  "are",
+  "was",
+  "were",
+  "yes",
+  "yep",
+  "yeah",
+  "yup",
+  "sure",
+  "no",
+  "nope",
+  "nah",
+  "done",
+  "well",
+  "much",
+  "very",
+  "so",
+  "and",
+  "now",
+  "then",
+  "i",
+  "we",
+  "my",
+  "me",
+  "am",
+  "happy",
+  "glad",
+  "love",
+  "like",
+  "super",
+  "it's",
+  "its",
+  "one",
 ]);
 // `ship` used to be in that set, which made `ship it` an acknowledgement —
 // a message asking for a deployment classified as a message asking for
@@ -453,9 +525,7 @@ export function carryForward(
   const unchanged = contractDigest(amended) === contractDigest(normalizeContract(contract));
   if (unchanged && keptHere.length === 0) return amended;
 
-  const added = stated
-    .filter((c) => !beforeByKey.has(criterionKey(c.text)))
-    .map((c) => c.text);
+  const added = stated.filter((c) => !beforeByKey.has(criterionKey(c.text))).map((c) => c.text);
   const removed = before
     .filter((c) => !protectedCriterion(c) && !statedKeys.has(criterionKey(c.text)))
     .map((c) => c.text)

@@ -54,7 +54,15 @@ function toolsBinary(): string {
 function git(root: string, args: string[]): void {
   const res = spawnSync(
     "git",
-    ["-c", "user.name=V5B", "-c", "user.email=v5b@localhost", "-c", "commit.gpgSign=false", ...args],
+    [
+      "-c",
+      "user.name=V5B",
+      "-c",
+      "user.email=v5b@localhost",
+      "-c",
+      "commit.gpgSign=false",
+      ...args,
+    ],
     { cwd: root, encoding: "utf8" },
   );
   if (res.status !== 0) throw new Error(`git ${args.join(" ")}: ${res.stderr || res.stdout}`);
@@ -309,5 +317,4 @@ describe("the rung ladder under attack", () => {
     const gaps = terminal.verdict?.kind === "partial" ? terminal.verdict.gaps : [];
     expect(gaps[0]!.why).toContain("needs_review");
   }, 60_000);
-
 });

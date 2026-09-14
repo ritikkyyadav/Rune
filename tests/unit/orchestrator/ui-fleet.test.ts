@@ -970,10 +970,7 @@ describe("the crowded initials row never shows one cell for two agents", () => {
     // The roster size that forces the collapsed initials rung.
     expect(chooseRungs(9, 0, 10)).toEqual({ rung: "line", pairs: true, initials: true });
     const roster = fleetLedger.all().map((c) => c.name);
-    expect(roster.filter((n) => n.startsWith("builder")).sort()).toEqual([
-      "builder",
-      "builder-2",
-    ]);
+    expect(roster.filter((n) => n.startsWith("builder")).sort()).toEqual(["builder", "builder-2"]);
     expect(new Set(initialsFor(roster)).size).toBe(roster.length);
     setTermWidthOverride(undefined as unknown as number);
   });
@@ -1017,7 +1014,10 @@ describe("one real tool call, through a real Engine, is one tool on the card", (
 
     let childTurn = 0;
     class ToolCallingChildProvider extends UsageProvider {
-      async *inferStream(request: InferenceRequest, opts?: StreamOpts): AsyncGenerator<StreamEvent> {
+      async *inferStream(
+        request: InferenceRequest,
+        opts?: StreamOpts,
+      ): AsyncGenerator<StreamEvent> {
         const isChild = !(request.tools ?? []).some((t) => t.name === "task");
         if (!isChild) {
           yield* super.inferStream(request);

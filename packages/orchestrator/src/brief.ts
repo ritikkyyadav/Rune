@@ -240,7 +240,10 @@ export class BriefLedger {
       return { ok: false, reason: "evidence needs a source — what ran, verbatim" };
     }
     if (rung === "verified") {
-      return { ok: false, reason: "`verified` is a parent-commit finding; this path cannot award it" };
+      return {
+        ok: false,
+        reason: "`verified` is a parent-commit finding; this path cannot award it",
+      };
     }
     if (rung) criterion.rung = rung;
     const at = this.revision?.(this.brief.touch);

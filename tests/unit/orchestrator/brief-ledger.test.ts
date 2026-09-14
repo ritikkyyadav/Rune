@@ -1008,7 +1008,11 @@ describe("a citation that does not speak to its criterion", () => {
 
   test("a set-aside citation is kept on the criterion with its reason, and is not evidence", () => {
     const ledger = new BriefLedger(scopedBrief());
-    const kept = ledger.setAside(1, { source: "node check.mjs", detail: "1 pass" }, "it never reads header.csv");
+    const kept = ledger.setAside(
+      1,
+      { source: "node check.mjs", detail: "1 pass" },
+      "it never reads header.csv",
+    );
     expect(kept.ok).toBe(true);
     expect(ledger.criteria[1]!.rung).toBeNull();
     expect(ledger.criteria[1]!.evidence?.unrelated).toBe("it never reads header.csv");
