@@ -36,6 +36,8 @@ import type {
 import { assertNeverSoft } from "@rune/protocol";
 import { formatError, formatEvent, fmtTokens } from "./events";
 import { Pulse, PULSE_WEIGHT, pulseGlyph, quietLabel } from "./pulse";
+import { deriveChildName } from "../../subagent-events";
+import { fleetLedger, type AgentCard, type CardReceipt } from "./agents-panel";
 import { renderMarkdown } from "./markdown";
 import { renderUnifiedDiff } from "../diff-render";
 import { stepReceipt, type TodoItem as SpineTodo } from "../../task-state";
@@ -136,52 +138,53 @@ interface CurrentTool {
  */
 interface FleetAgent {
   callId: string;
-  /** `task` (read-only scout) or `worker` (write-capable builder). */
-  kind: "task" | "worker";
+  /**
+   * The card this member owns in the session's ledger (./agents-panel.ts).
+   *
+   * ONE object, shared: the rung below and the right column's panel are two
+   * views of the same member and must never be able to disagree about its
+   * state, its tool count or its clock. Everything that used to be duplicated
+   * here -- `kind`, `brief`, `state`, `startedAt`, `steps`, `checks` -- lives
+   * on the card, and the card outlives this renderer, so a finished member
+   * still has somewhere to be after `turn_complete` clears the fleet.
+   */
+  card: AgentCard;
   /** Streamed argument JSON, accumulated per call -- `currentTool` only ever
    *  holds the newest, so a fleet's earlier members would otherwise be
    *  anonymous by the time they start running. */
   argsJson: string;
-  /** What this one was sent to do: its `label`, else the head of its prompt. */
-  brief: string;
-  /** `queued` until the loop actually starts it -- a fan-out wider than the
-   *  parallel ceiling waits, and a waiting scout is not a running one.
-   *  `skipped` is workflow-only: a node whose upstream did not complete never
-   *  ran, and reporting that as a failure sends the reader hunting a defect in
-   *  the one part of the graph that behaved correctly. */
-  state: "queued" | "running" | "done" | "failed" | "skipped";
-  /** When execution began / ended. Absent while queued: an unknown clock is
-   *  left blank rather than started at a convenient moment. */
-  startedAt?: number;
-  endedAt?: number;
   /** The heartbeat on screen, and the one waiting to replace it. Held to the
    *  same dwell as the rung: a row that changes four times a second is not
-   *  information, it is a flicker with a name on it. */
+   *  information, it is a flicker with a name on it. The CARD carries the
+   *  latest without the dwell -- the panel repaints at its own pace and a
+   *  four-row card has the room. */
   note: string;
   noteAt: number;
   wantNote: string;
   /**
-   * Tool calls this member has completed.
+   * This member's own liveness lives in the LEDGER, keyed by the card id
+   * (`fleetLedger.feed`), not here.
    *
-   * Counted from the child's own `tool_call_end` (P2.6) when it is carried,
-   * and only from a note otherwise. The note-based tally was a guess that had
-   * to exclude non-ASCII markers by hand so a mid-run model swap did not read
-   * as a step the sub-agent never took.
+   * The parent's `Pulse` answers "is the turn alive"; a fan-out needs "is the
+   * THIRD one alive", which is a different question with a different answer --
+   * and the one the panel's per-card cell claims to be reporting. A shared
+   * accumulator would have every row rise when any one of them moved, which is
+   * precisely the borrowed-heartbeat defect the panel exists to end. It sits on
+   * the ledger because this entry is deleted when the call lands and the card
+   * is not.
    */
-  steps: number;
-  /** Provider reroutes inside this member — invisible before the typed channel. */
-  reroutes: number;
-  /** Checks this member ran, and how many passed. Also previously invisible. */
-  checks: number;
-  checksPassed: number;
+  /** The paragraph this member is streaming into its own pane, and how many
+   *  rendered rows it currently occupies -- see childProse. Undefined between
+   *  paragraphs, which is what closes one. */
+  stream?: { thinking: boolean; text: string; rows: number };
   /**
    * Where this member sits in a workflow graph, when it is a workflow node
    * rather than an ad-hoc `task`/`worker` (P10.9).
    *
-   * An ad-hoc fan-out is genuinely a flat list — every member was dispatched at
-   * once and none of them waits on another — and grouping one would invent a
-   * structure it does not have. A workflow is levels, and the level is usually
-   * the whole explanation for why a member has not started.
+   * An ad-hoc fan-out is genuinely a flat list -- every member was dispatched
+   * at once and none of them waits on another -- and grouping one would invent
+   * a structure it does not have. A workflow is levels, and the level is
+   * usually the whole explanation for why a member has not started.
    */
   node?: WorkflowNodeContext;
 }
@@ -190,6 +193,16 @@ interface FleetAgent {
  *  a `+N more` line. Six is about where a list stops being scannable, and the
  *  footer is not allowed to become the screen. */
 const FLEET_ROWS = 6;
+
+/** What a card says before anything real has been said about it: the kind of
+ *  thing it is, and nothing else. Matched rather than compared so the two
+ *  placeholders stay one fact in one place. */
+const PLACEHOLDER_BRIEF = /^(investigating|building)$/;
+
+/** Measure a child's transcript is wrapped to. The workspace split is the main
+ *  pane's width, which is the same measure the parent's prose uses -- the pane
+ *  is a transcript, not a sidebar. */
+const CHILD_PANE_COLS = 72;
 
 /** A worker keys its heartbeats with its own id (`w1 edit_file src/x.ts`) so
  *  the old single-line rung could tell one member of a fleet from another. On
@@ -212,7 +225,80 @@ function fleetBrief(agent: FleetAgent): string {
   const label = typeof args.label === "string" ? oneLine(args.label, 44) : "";
   if (label) return label;
   const prompt = typeof args.prompt === "string" ? oneLine(args.prompt, 44) : "";
-  return prompt || agent.brief;
+  return prompt || agent.card.brief;
+}
+
+/** How much of a verdict a 40-cell card row can carry beside its rung mark. */
+const MAX_RECEIPT_CHARS = 30;
+
+/**
+ * The verdict a child event carries, or null when it carries none.
+ *
+ * This is the card's LEAD row (founder review, 2026-09-14: the panel is an
+ * audit surface), so the rule for what qualifies is strict — only an event that
+ * settles a claim. A tool that opened, a token that streamed and a provider
+ * that was swapped are all things that HAPPENED; none of them is something the
+ * member now knows, and putting them here would turn the audit row back into
+ * the activity row it replaced.
+ *
+ * The rung is the claim ladder's, unshortened: a check that ran and passed is
+ * `verified`, a hypothesis the child confirmed is `reproduced` (it reproduced
+ * the behaviour; it did not write a test that failed on the parent commit), and
+ * a refutation is `observed` — a fact with no test behind it. There is no rung
+ * for "probably", so a card cannot say one.
+ */
+function childReceipt(event: AgentTurnEvent, at: number): CardReceipt | null {
+  switch (event.type) {
+    case "verification_completed":
+      if (!event.ran) return null;
+      return {
+        rung: event.passed ? "verified" : "failure",
+        text: event.passed ? "checks pass" : "checks fail",
+        at,
+      };
+    case "step_check":
+      if (!event.ran) return null;
+      return {
+        rung: event.passed ? "verified" : "failure",
+        text: oneLine(event.passed ? event.step : `failed: ${event.step}`, MAX_RECEIPT_CHARS),
+        at,
+      };
+    case "hypothesis_updated":
+      if (event.status === "confirmed") {
+        return {
+          rung: "reproduced",
+          text: oneLine(`${event.id} confirmed`, MAX_RECEIPT_CHARS),
+          at,
+        };
+      }
+      if (event.status === "refuted") {
+        return { rung: "observed", text: oneLine(`${event.id} refuted`, MAX_RECEIPT_CHARS), at };
+      }
+      return null;
+    case "tool_call_end":
+      // A call that came back refused or errored is a fact about this member
+      // that a reader would act on, and it is the one failure the child reports
+      // without ever calling it one.
+      return event.output.success === false
+        ? {
+            rung: "failure",
+            text: oneLine(`${event.output.toolName} failed`, MAX_RECEIPT_CHARS),
+            at,
+          }
+        : null;
+    case "error":
+      return { rung: "failure", text: oneLine(event.error, MAX_RECEIPT_CHARS), at };
+    default:
+      return null;
+  }
+}
+
+/** The `name` the master wrote for this call, once its arguments have finished
+ *  streaming. Read from the partial JSON for the same reason `label` is: the
+ *  card is registered when the call OPENS, which is before any of it exists. */
+function fleetName(agent: FleetAgent): string | undefined {
+  const args = partialArgs(agent.argsJson);
+  return typeof args.name === "string" && args.name.trim() ? args.name : undefined;
 }
 
 /** Elapsed between two marks, in the rung's own words. */
@@ -816,83 +902,97 @@ export class TurnRenderer {
     // be drawn as queued rather than as an absence.
     const agent = child?.node ? this.fleetNode(callId, child.node) : this.fleet.get(callId);
     if (!agent) return;
+    const card = agent.card;
     const now = Date.now();
+    // This member's OWN liveness. Fed here, where its events actually arrive,
+    // so the cell beside its name is reporting that member and not the turn:
+    // a fan-out under one accumulator has every row rise when any one of them
+    // moves, which is the borrowed heartbeat in a prettier form.
+    fleetLedger.feed(card.id, PULSE_WEIGHT.heartbeat, now);
     if (child?.node) {
       agent.node = child.node;
       // A workflow node has a name its author chose. An ad-hoc fan-out member
       // has none until its arguments finish streaming, which is why `brief` is
       // recovered from partial JSON there and simply read here.
-      if (child.label) agent.brief = oneLine(child.label, 44);
+      if (child.label) {
+        card.brief = oneLine(child.label, 44);
+        // ...and the node id is a NAME, which is the one thing an ad-hoc
+        // member does not have until its arguments land (P4 §2.6).
+        fleetLedger.rename(card.id, child.node.node);
+      }
       // The node's own status outranks the heartbeat: a cache hit and a skip
       // never produce a sub-agent event, so nothing else would ever end them.
       if (child.node.cached || child.node.status === "completed") {
-        agent.state = "done";
-        agent.endedAt ??= now;
+        card.state = "done";
+        card.endedAt ??= now;
       } else if (child.node.status === "failed") {
-        agent.state = "failed";
-        agent.endedAt ??= now;
+        card.state = "failed";
+        card.endedAt ??= now;
       } else if (child.node.status === "skipped") {
         // Skipped is not failed. A skipped node did not run because something
         // upstream did not complete, and reading it as a failure sends the
         // reader looking for a defect in the node that behaved correctly.
-        agent.state = "skipped";
-        agent.endedAt ??= now;
+        card.state = "skipped";
+        card.endedAt ??= now;
       }
     }
+    // The name and the brief off the WIRE, which is the only path that works
+    // for every provider. `fleetBrief` recovers both by re-parsing the streamed
+    // argument JSON, and a provider that delivers a tool call's whole input at
+    // once (`tool_use_stop` with no deltas -- non-streaming providers and every
+    // gateway that buffers) emits no `tool_call_args_delta` at all, so the card
+    // would wear `investigating` and an ordinal for the length of the run. The
+    // handler sets these on the first child event it forwards, which is why
+    // §2.6 put them on `ChildAgentEvent` rather than leaving them in the args.
+    if (child && !child.node) {
+      if (child.label && PLACEHOLDER_BRIEF.test(card.brief)) {
+        card.brief = oneLine(child.label, 44);
+      }
+      fleetLedger.rename(card.id, child.name, deriveChildName(card.kind, card.brief));
+    }
+    // The child's own typed stream, now that the parent forwards the events a
+    // one-line projection has nothing to say about (agent-loop, §1.4). This is
+    // where a member's tokens, its cost and its transcript come from -- all
+    // three were computed inside the child and discarded before this.
+    if (child) this.absorbChildEvent(agent, child, now);
     if (state === "started") {
-      agent.state = "running";
-      agent.startedAt = now;
+      card.state = "running";
+      card.startedAt = now;
       return;
     }
     if (state === "settled") {
-      agent.state = ok ? "done" : "failed";
-      agent.endedAt = now;
+      card.state = ok ? "done" : "failed";
+      card.endedAt = now;
       // What it was doing a second ago stops being the news the moment it is
       // back; the row reports what it came back AS instead.
       agent.note = "";
       agent.wantNote = "";
+      card.note = "";
       return;
     }
     if (!note) return;
     const clean = stripWorkerId(note);
-    if (child) {
-      // The typed channel (P2.6). Counting from the child's own event replaces
-      // a guess: the note-based tally had to exclude non-ASCII markers by hand
-      // so a mid-run model swap did not read as a step, and a retry or a
-      // verification result inside a worker was not counted at all because
-      // the string projection never mentioned it.
-      switch (child.event.type) {
-        case "tool_call_end":
-          agent.steps++;
-          break;
-        case "fallback":
-        case "retry":
-          agent.reroutes++;
-          break;
-        case "verification_completed":
-          agent.checks++;
-          if (child.event.passed) agent.checksPassed++;
-          break;
-        case "step_check":
-          if (child.event.ran) {
-            agent.checks++;
-            if (child.event.passed) agent.checksPassed++;
-          }
-          break;
-        default:
-          break;
-      }
-    } else if (!/^[^\x00-\x7f]/.test(clean)) {
+    // The typed tallies are taken in absorbChildEvent, above this gate. They
+    // used to be taken HERE, behind `if (!note) return`, which made every count
+    // on the card depend on the parent's one-line projection of that event
+    // having been non-empty -- a rendering decision deciding an accounting one.
+    // It happened to work because `tool_call_end` projects a line; it would
+    // have silently lost the count for any event whose projection was dropped.
+    if (!child && !/^[^\x00-\x7f]/.test(clean)) {
       // No child event: a tool that reports only the string channel. The
       // marker heuristic stays for exactly that case.
-      agent.steps++;
+      card.tools++;
     }
     agent.wantNote = truncate(clean, 40);
-    if (agent.state === "queued") {
+    // The CARD takes it immediately. The dwell exists so a one-row rung does
+    // not strobe; a four-row card in a 40-cell column has the room to be
+    // current, and being current is what it is for.
+    card.note = agent.wantNote;
+    if (card.state === "queued") {
       // A heartbeat is proof it is running, whichever order the markers arrived
       // in -- the panel never needs the loop to agree with itself first.
-      agent.state = "running";
-      agent.startedAt ??= now;
+      card.state = "running";
+      card.startedAt ??= now;
     }
     // The first note goes up immediately. Only a REPLACEMENT waits its dwell:
     // there is nothing to protect on a row that has said nothing yet.
@@ -900,6 +1000,173 @@ export class TurnRenderer {
       agent.note = agent.wantNote;
       agent.noteAt = now;
     }
+  }
+
+  /**
+   * What the child's own event stream adds that a one-line note cannot.
+   *
+   * Three things, and none of them existed before the parent stopped dropping
+   * the events whose projection is null (`agent-loop.ts`, P4 §1.4):
+   *
+   *   TOKENS AND COST — `usage` carries what a provider actually billed. The
+   *   child computed both, converted them to dollars and threw them away
+   *   (`subagent.ts`, `worker.ts`), so a panel could report how long a member
+   *   took and never what it cost.
+   *
+   *   THE TRANSCRIPT — `text_delta` and `thinking_delta` are the member's
+   *   voice. They are appended to that member's own buffer in the ledger, so
+   *   `enter` over a card opens something that already has the run in it
+   *   rather than a pane that starts empty at the moment you look.
+   *
+   *   THE PULSE — fed by bytes where bytes exist, so the cell beside the name
+   *   rises with the rate of real output and not with a clock.
+   */
+  private absorbChildEvent(agent: FleetAgent, child: ChildAgentEvent, now: number): void {
+    const card = agent.card;
+    const event = child.event;
+    // The verdict, taken here rather than beside the tally below, because the
+    // tally sits behind the note gate (`if (!note) return`) and a verdict that
+    // only reached the card when its one-line projection happened to be
+    // non-empty would be a receipt with a coincidence in front of it.
+    const receipt = childReceipt(event, now);
+    if (receipt) card.receipt = receipt;
+    // The typed tallies (P2.6). Counting from the child's own event replaces a
+    // guess: the note-based tally had to exclude non-ASCII markers by hand so a
+    // mid-run model swap did not read as a step, and a retry or a verification
+    // result inside a worker was not counted at all because the string
+    // projection never mentioned it.
+    switch (event.type) {
+      case "tool_call_end":
+        card.tools++;
+        break;
+      case "fallback":
+      case "retry":
+        card.reroutes++;
+        break;
+      case "verification_completed":
+        if (event.ran) {
+          card.checks++;
+          if (event.passed) card.checksPassed++;
+        }
+        break;
+      case "step_check":
+        if (event.ran) {
+          card.checks++;
+          if (event.passed) card.checksPassed++;
+        }
+        break;
+      default:
+        break;
+    }
+    switch (event.type) {
+      case "usage": {
+        // Fresh input, cached input and output are three different prices and
+        // one number to a reader: what this member has spent of the window.
+        card.tokens +=
+          (event.inputTokens ?? 0) +
+          (event.outputTokens ?? 0) +
+          (event.cacheReadTokens ?? 0) +
+          (event.cacheCreationTokens ?? 0);
+        return;
+      }
+      case "text_delta": {
+        fleetLedger.feed(card.id, event.text.length, now);
+        this.childProse(agent, event.text, false);
+        return;
+      }
+      case "thinking_delta": {
+        // The child's thinking is visible in its pane exactly as the master's
+        // is in the transcript -- it is the same kind of evidence, and hiding
+        // it for a sub-agent is what made a fan-out feel like a black box.
+        fleetLedger.feed(card.id, event.text.length || PULSE_WEIGHT.token, now);
+        this.childProse(agent, event.text, true);
+        return;
+      }
+      case "tool_call_start": {
+        fleetLedger.feed(card.id, PULSE_WEIGHT.callback, now);
+        // The child's own tool row, drawn with the SAME flow call the parent's
+        // transcript uses. A pane that invented a second grammar for a smaller
+        // agent would be a fifth dialect (ui-grammar.test), and the one thing
+        // a sub-agent's transcript must be is recognisable as a transcript.
+        this.childRow(
+          agent,
+          F.toolRow({
+            name: verbOf(String(event.toolName ?? "tool")),
+            arg: "",
+            metric: "",
+            status: "active",
+          }),
+        );
+        return;
+      }
+      default:
+        return;
+    }
+  }
+
+  /**
+   * Streamed child prose, growing IN PLACE in that child's buffer.
+   *
+   * One row per delta would make the pane a column of fragments. The open
+   * paragraph's rows are replaced as it grows, which is how the parent's own
+   * transcript streams -- the pane is the same surface for a smaller agent.
+   */
+  private childProse(agent: FleetAgent, chunk: string, thinking: boolean): void {
+    if (!chunk) return;
+    const open = agent.stream && agent.stream.thinking === thinking ? agent.stream : undefined;
+    const body = (open?.text ?? "") + chunk;
+    const width = Math.max(20, CHILD_PANE_COLS);
+    const mark = thinking ? faint(glyph("suspected")) : muted(glyph("live"));
+    const paint = thinking ? faint : text;
+    const rows = wrap(body.trim(), width).map(
+      (line, i) => `  ${i === 0 ? mark : " "} ${paint(line)}`,
+    );
+    fleetLedger.replaceTail(agent.card.id, open?.rows ?? 0, rows);
+    agent.stream = { thinking, text: body, rows: rows.length };
+  }
+
+  /** A finished row in a child's buffer: the prose being written closes first. */
+  private childRow(agent: FleetAgent, row: string): void {
+    agent.stream = undefined;
+    fleetLedger.append(agent.card.id, [row]);
+  }
+
+  /**
+   * The rung gives the member up; the panel keeps it.
+   *
+   * `retired` is the one flag that separates the two surfaces, and it is a flag
+   * rather than a deletion because the card is where the member's tokens, its
+   * tool count and its transcript live. Deleting it at `tool_call_end` -- which
+   * is what happened before -- is why a fan-out's finished members were gone
+   * from the screen at exactly the moment there was something to compare.
+   */
+  private retireFleetMember(key: string): void {
+    const agent = this.fleet.get(key);
+    if (!agent) return;
+    const card = agent.card;
+    card.retired = true;
+    card.note = "";
+    // A member that came back without a lifecycle marker is still back: the
+    // call landed. Reporting it as `running` on the finished list would be the
+    // panel disagreeing with the transcript directly above it.
+    if (card.state === "queued" || card.state === "running") {
+      card.state = "done";
+      card.endedAt ??= Date.now();
+    }
+    this.fleet.delete(key);
+  }
+
+  /**
+   * Every member gives up its rung slot at once: a turn ended, a stream reset,
+   * verification started.
+   *
+   * The map is emptied, as it always was. What is new is that emptying it no
+   * longer destroys the members -- `turn_complete` is precisely the moment the
+   * finished section has something to say, and the old `this.fleet.clear()`
+   * made it the moment the panel went blank.
+   */
+  private retireFleet(): void {
+    for (const key of [...this.fleet.keys()]) this.retireFleetMember(key);
   }
 
   private fleetRow(agent: FleetAgent, now: number): string {
@@ -914,14 +1181,15 @@ export class TurnRenderer {
     // mixed scouts and workers whose briefs start one column apart reads as
     // ragged rather than as a column. (toolRow's own pad is 4 and never shrinks
     // a name, so this only ever adds the cell `work` is missing.)
-    const verb = (agent.kind === "worker" ? "work" : "scout").padEnd(5);
+    const card = agent.card;
+    const verb = (card.kind === "worker" ? "work" : "scout").padEnd(5);
     // A queued member has no clock to show, and `0s` beside one that started a
     // moment ago is noise pretending to be data -- the same floor the rung keeps.
-    const until = agent.endedAt ?? now;
+    const until = card.endedAt ?? now;
     const elapsed =
-      agent.startedAt == null || until - agent.startedAt < ELAPSED_AFTER_MS
+      card.startedAt == null || until - card.startedAt < ELAPSED_AFTER_MS
         ? ""
-        : span(agent.startedAt, until);
+        : span(card.startedAt, until);
     // A node that is re-running says so while it is happening. `attempts` on
     // the finished result says so afterwards, which is when it has stopped
     // being the thing you wanted to know.
@@ -929,13 +1197,13 @@ export class TurnRenderer {
       agent.node && agent.node.attempt > 1
         ? `attempt ${agent.node.attempt} of ${agent.node.attempts}`
         : "";
-    switch (agent.state) {
+    switch (card.state) {
       case "queued":
-        return F.toolRow({ name: verb, arg: agent.brief, metric: "queued", status: "none" });
+        return F.toolRow({ name: verb, arg: card.brief, metric: "queued", status: "none" });
       case "skipped":
         return F.toolRow({
           name: verb,
-          arg: agent.brief,
+          arg: card.brief,
           // Why, not just that: the reason a skipped node did not run is the
           // upstream that did not complete, and it is already on this screen.
           metric: F.receiptOf([
@@ -946,29 +1214,29 @@ export class TurnRenderer {
         });
       case "done":
       case "failed": {
-        const outcome = agent.state === "done" ? "done" : "failed";
-        const steps = agent.steps > 0 ? plural(agent.steps, "step") : "";
+        const outcome = card.state === "done" ? "done" : "failed";
+        const steps = card.tools > 0 ? plural(card.tools, "step") : "";
         // Only what the child actually reported. A member that ran no checks
         // says nothing about checks -- absent is not zero.
-        const checks = agent.checks > 0 ? `${agent.checksPassed}/${agent.checks} checks` : "";
-        const reroutes = agent.reroutes > 0 ? plural(agent.reroutes, "reroute") : "";
+        const checks = card.checks > 0 ? `${card.checksPassed}/${card.checks} checks` : "";
+        const reroutes = card.reroutes > 0 ? plural(card.reroutes, "reroute") : "";
         // A cache hit is not a fast run: it is not a run. Saying `done · 0s`
         // would claim the work happened this time, which is the one thing the
         // reader would use the number for.
         if (agent.node?.cached) {
-          return F.toolRow({ name: verb, arg: agent.brief, metric: "cached", status: "ok" });
+          return F.toolRow({ name: verb, arg: card.brief, metric: "cached", status: "ok" });
         }
         return F.toolRow({
           name: verb,
-          arg: agent.brief,
+          arg: card.brief,
           metric: F.receiptOf([outcome, retrying, steps, checks, reroutes, elapsed]),
-          status: agent.state === "done" ? "ok" : "fail",
+          status: card.state === "done" ? "ok" : "fail",
         });
       }
       default:
         return F.toolRow({
           name: verb,
-          arg: agent.brief,
+          arg: card.brief,
           metric: F.receiptOf([retrying, this.fittedNote(agent, elapsed), elapsed]),
           status: "active",
         });
@@ -990,18 +1258,23 @@ export class TurnRenderer {
     if (existing) return existing;
     const agent: FleetAgent = {
       callId: key,
-      kind: node.kind,
+      // A workflow node is the one child that arrives already named: its id was
+      // written by the graph's author, which is what §2.6 puts first in the
+      // fallback order, above anything the harness could derive.
+      card: fleetLedger.register({
+        id: key,
+        kind: node.kind,
+        brief: node.node,
+        written: node.node,
+        state: "running",
+        startedAt: Date.now(),
+        wave: node.wave,
+        workflow: node.workflow,
+      }),
       argsJson: "",
-      brief: node.node,
-      state: "running",
-      startedAt: Date.now(),
       note: "",
       noteAt: 0,
       wantNote: "",
-      steps: 0,
-      reroutes: 0,
-      checks: 0,
-      checksPassed: 0,
       node,
     };
     this.fleet.set(key, agent);
@@ -1022,7 +1295,7 @@ export class TurnRenderer {
   private fittedNote(agent: FleetAgent, elapsed: string): string {
     if (!agent.note) return "";
     // rail + mark + verb + the two-space joins around the brief and the receipt.
-    const spent = 2 + 5 + 2 + agent.brief.length + 2 + (elapsed ? elapsed.length + 3 : 0);
+    const spent = 2 + 5 + 2 + agent.card.brief.length + 2 + (elapsed ? elapsed.length + 3 : 0);
     const room = F.railWidth() - spent;
     return room >= 12 ? truncate(agent.note, room) : "";
   }
@@ -1128,11 +1401,11 @@ export class TurnRenderer {
       // graph has and a fan-out does not: "review · wave 2 of 3" answers how
       // much is left, which "4 sub-agents running" cannot.
       const graph = fleet.find((a) => a.node)?.node;
-      const noun = fleet.every((a) => a.kind === "worker") ? "worker" : "sub-agent";
+      const noun = fleet.every((a) => a.card.kind === "worker") ? "worker" : "sub-agent";
       const settled = fleet.filter(
-        (a) => a.state === "done" || a.state === "failed" || a.state === "skipped",
+        (a) => a.card.state === "done" || a.card.state === "failed" || a.card.state === "skipped",
       ).length;
-      const queued = fleet.filter((a) => a.state === "queued").length;
+      const queued = fleet.filter((a) => a.card.state === "queued").length;
       const head = graph
         ? F.receiptOf([
             graph.workflow,
@@ -1743,7 +2016,7 @@ export class TurnRenderer {
         }
         this.pending.clear();
         this.currentTool = null;
-        this.fleet.clear();
+        this.retireFleet();
         this.activity = null;
         this.updateLive();
         return;
@@ -1777,19 +2050,24 @@ export class TurnRenderer {
         // and the loop has not started a thing yet. The row says so until the
         // loop's `started` marker arrives.
         if (this.currentTool.name === "task" || this.currentTool.name === "worker") {
+          const kind = this.currentTool.name;
           this.fleet.set(this.currentTool.callId, {
             callId: this.currentTool.callId,
-            kind: this.currentTool.name,
+            // Registered at the OPENING of the call, which is before a single
+            // argument has streamed -- so the card wears an ordinal here and
+            // is renamed by `rename` once the name is actually readable. A
+            // card created later would mean a fan-out of five appearing one
+            // at a time as the model finished writing each call.
+            card: fleetLedger.register({
+              id: this.currentTool.callId,
+              kind,
+              brief: kind === "worker" ? "building" : "investigating",
+              state: "queued",
+            }),
             argsJson: "",
-            brief: this.currentTool.name === "worker" ? "building" : "investigating",
-            state: "queued",
             note: "",
             noteAt: 0,
             wantNote: "",
-            steps: 0,
-            reroutes: 0,
-            checks: 0,
-            checksPassed: 0,
           });
         }
         // The action becomes a row the moment it starts. Its result attaches
@@ -1833,7 +2111,16 @@ export class TurnRenderer {
         const member = this.fleet.get(String(event.callId ?? ""));
         if (member) {
           member.argsJson += String(event.partialJson ?? "");
-          member.brief = fleetBrief(member);
+          member.card.brief = fleetBrief(member);
+          // The NAME, the moment the arguments have finished saying it. Both
+          // halves are recovered from the same partial JSON because the card
+          // was registered when the call opened -- `rename` refuses once a real
+          // name is on screen, so this cannot renumber a row mid-run.
+          fleetLedger.rename(
+            member.card.id,
+            fleetName(member),
+            deriveChildName(member.card.kind, member.card.brief),
+          );
         }
         return;
       }
@@ -1851,10 +2138,16 @@ export class TurnRenderer {
         // A workflow ends ONE call and retires every node row it opened: those
         // rows are keyed `<callId>:<node>` because a node id is unique only
         // inside its own graph.
+        //
+        // It gives up its slot on the RUNG and keeps its card: the panel moves
+        // it to the finished section, where it stays until `c`. That is the
+        // founder's requirement and the reverse of today -- the one moment you
+        // want to compare four members is the moment three of them are back,
+        // and before this that was the moment three of them vanished.
         const endedCall = String(event.callId ?? "");
-        this.fleet.delete(endedCall);
+        this.retireFleetMember(endedCall);
         for (const key of [...this.fleet.keys()]) {
-          if (key.startsWith(`${endedCall}:`)) this.fleet.delete(key);
+          if (key.startsWith(`${endedCall}:`)) this.retireFleetMember(key);
         }
         this.currentTool = null;
         this.lastToolEndAt = Date.now();
@@ -2020,7 +2313,7 @@ export class TurnRenderer {
         this.currentTool = null;
         // Loop invariant: verification only starts once the turn's tool batch
         // is fully done -- anything still marked pending is a stale leftover.
-        this.fleet.clear();
+        this.retireFleet();
         this.activity = null;
         this.verificationRunning = true;
         this.setPhase("verify");
@@ -2200,7 +2493,7 @@ export class TurnRenderer {
 
       case "turn_complete":
         this.turnCount = Math.max(this.turnCount, Number(event.totalTurns ?? 0));
-        this.fleet.clear();
+        this.retireFleet();
         this.retrying = null;
         // A run that hit a ceiling is NOT a finished run -- remember why so
         // the closing row can say so. Before this, `stopReason` was read by
