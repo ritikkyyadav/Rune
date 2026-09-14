@@ -39,8 +39,9 @@ import { arrowRun } from "./keys";
 import { renderBanner } from "./banner";
 import * as F from "./flow";
 import { clampVisible, setTermWidthOverride, visLen } from "./render";
-import { text, faint, accent, brand, muted, withThemeBg } from "./theme";
-import { glyph } from "./glyphs";
+import { text, faint, accent, brand, muted, warn, withThemeBg } from "./theme";
+import { glyph, TERMINAL_GLYPH_MODE } from "./glyphs";
+import { ledgerRows, maskLive, savedActiveRows } from "../../first-run";
 import {
   fleetLedger,
   panelHint,
@@ -139,6 +140,10 @@ export function nextFocus(current: FrameFocus, splitOpen: boolean): FrameFocus {
  */
 const tighten = (line: string): string => (line.startsWith(" ") ? line.slice(1) : line);
 
+/** The rung, read once. `ledgerRows` takes it as an argument because
+ *  first-run.ts is engine-side and never learns what a terminal can draw. */
+const ASCII_RUNG = TERMINAL_GLYPH_MODE === "ascii";
+
 /** Exactly `rows` rows: blanks added, extras dropped from the end. */
 const padTo = (lines: string[], rows: number): string[] => {
   const out = lines.slice(0, Math.max(0, rows));
@@ -184,12 +189,36 @@ export const FRAME_METHODS = {
   bandLayout(this: Tui): boolean {
     if (this.inline) return false;
     if (this.mode === "input" || this.mode === "turn") return true;
+    if (this.mode === "setup") return this.setupInBand();
     return this.bandModal();
   },
 
   /** A picker that opens inside the workspace instead of claiming the footer. */
   bandModal(this: Tui): boolean {
     if (this.inline || this.mode !== "picker") return false;
+    return !this.regionsNow().collapsed;
+  },
+
+  /**
+   * Whether the wizard is drawn ACROSS the frame rather than as one footer block.
+   *
+   * §2.8 gives each part of setup the region it belongs to: the six steps and
+   * the saved-vs-active table are a ledger, so they go in the panel; a step's
+   * receipt is evidence, so it goes in the workspace in the same box every
+   * other tool call gets; and the question is one field, so it goes in the
+   * composer with a title. Lane E built all three and drew them stacked in the
+   * footer, which at 120 columns meant the panel and the divider blinked out of
+   * existence for the whole of setup.
+   *
+   * Collapsed is a different answer, not a smaller one. There is no second
+   * column to preserve below `PANEL_MIN_COLS`, and the footer block Lane E
+   * froze at 80x24 already puts the ledger directly above the question, where
+   * it costs no keystroke to read. Splitting there would move the ledger behind
+   * `ctrl+f` and take rows from a window that has none to give — so a collapsed
+   * window keeps exactly what it had.
+   */
+  setupInBand(this: Tui): boolean {
+    if (this.inline || this.mode !== "setup" || !this.ctx.firstRun) return false;
     return !this.regionsNow().collapsed;
   },
 
@@ -302,6 +331,16 @@ export const FRAME_METHODS = {
   panelBlock(this: Tui, r: Regions): string[] {
     const w = r.panelContentCols;
     const inset = r.collapsed ? (l: string) => l : tighten;
+    // §2.8: while the wizard is open the column IS the wizard's ledger. It
+    // displaces the agents panel and the session readout for the same reason
+    // they displace each other -- it is the more specific thing happening now,
+    // and it is the object the acceptance checks read.
+    if (this.mode === "setup" && this.ctx.firstRun) {
+      const rows = this.atWidth(w + 2, () => this.setupPanelRows(w)).map((l) =>
+        inset(`  ${clampVisible(l, w)}`),
+      );
+      return padTo(rows, r.panelRows);
+    }
     const view = fleetLedger.view(this.focus === "panel");
     // The open pane's header is refreshed from the paint path, so its clock and
     // its token count advance with the run rather than freezing at the moment
@@ -331,6 +370,130 @@ export const FRAME_METHODS = {
     }
     while (out.length < r.panelRows) out.push("");
     return out.slice(0, r.panelRows);
+  },
+
+  /**
+   * The wizard's ledger as a column: six steps, then saved vs active.
+   *
+   * Every row here comes from first-run.ts -- `steps()`, `ledgerRows`,
+   * `savedVsActive()`, `savedActiveRows`, `precedenceLine()`. That is the point:
+   * the integration test reads the same objects with no terminal at all, so the
+   * panel and the test can never disagree about what a skipped step says or
+   * which source won. What this owns is only the two headings, the rule under
+   * each, and the one indent that makes the steps read as a list inside them.
+   *
+   * Returned UNINDENTED and bounded to `w`; `panelBlock` puts the column's own
+   * gutter on afterwards, exactly as it does for the agents panel.
+   */
+  setupPanelRows(this: Tui, w: number): string[] {
+    const setup = this.ctx.firstRun;
+    if (!setup) return [];
+    const focused = this.focus === "panel";
+    const out: string[] = [];
+    const heading = (label: string, right = ""): void => {
+      out.push(F.row(focused ? accent(label) : faint(label), right ? faint(right) : "", w));
+      out.push(faint(glyph("rule").repeat(w)));
+    };
+    // The steps are a list inside a heading, so they are indented inside the
+    // column -- and `ledgerRows` is handed the NARROWER measure, so the value it
+    // elides is counted against the cells it will really have rather than
+    // against the column and then pushed over the edge by this indent.
+    const indent = "  ";
+    const inner = Math.max(8, w - indent.length);
+
+    // Restart-required is its own row, not a banner (§2.8) -- and because it
+    // is, the per-step `note` saying the same thing is dropped from the column.
+    // It is eighteen of these thirty-six cells and it is the reason a saved
+    // `custom` rendered as `cust…`: `ledgerRow` gives the note its room first
+    // and elides the VALUE, which is the one field the row exists to carry. The
+    // footer block has seventy-eight cells and keeps both. `checking...` is not
+    // this note (first-run.ts sets it only for `restartRequired`) and stays: it
+    // is transient, and it is the answer to "is it doing anything".
+    const restart = setup.restartNote();
+    const rows = setup
+      .steps()
+      .map((s) =>
+        s.restartRequired && s.note === "restart required" ? { ...s, note: undefined } : s,
+      );
+
+    heading("SETUP", setup.heading());
+    for (const row of ledgerRows(rows, inner, ASCII_RUNG)) {
+      out.push(`${indent}${faint(row)}`);
+    }
+    if (restart) out.push(`${indent}${warn(clampVisible(restart, inner))}`);
+
+    out.push("");
+    heading("SAVED vs ACTIVE");
+    const comparison = setup.savedVsActive();
+    for (const row of savedActiveRows(comparison, inner)) {
+      out.push(row === "" ? "" : `${indent}${faint(row)}`);
+    }
+    // `savedActiveRows` ends on the precedence ladder whenever a row differs --
+    // that is what naming a winner means -- so the ladder is stated in exactly
+    // one place, here as in the footer block.
+    if (!comparison.some((row) => row.differs)) {
+      out.push("");
+      out.push(`${indent}${faint(setup.precedenceLine(inner))}`);
+    }
+    return out;
+  },
+
+  /**
+   * The composer while the wizard is open: one question, one field (§2.8).
+   *
+   * The footer block stacks the ledger, the table and the receipt above the
+   * field because in that layout there is nowhere else for them. Here there is:
+   * the ledger is in the panel and the receipts are in the workspace, so this
+   * region carries the two rows that are actually input -- the question as a
+   * title, and the answer being typed, masked when the step is a secret.
+   *
+   * The block is built to fit the region rather than trimmed to it afterwards.
+   * The band keeps a block's TAIL when it overflows, and the row that would be
+   * cut off the front is the question -- a composer titled with nothing. So the
+   * hint row is given up first when the window is short, which costs a legend
+   * that is discovery rather than the sentence that says what to type.
+   */
+  bandSetupComposer(
+    this: Tui,
+    r: Regions,
+  ): { lines: string[]; caretRow: number; caretCol: number } {
+    const setup = this.ctx.firstRun!;
+    const step = setup.current();
+    const width = PANEL_COLS + 1;
+    // The ceiling the region will actually grant this block: `regions()` asked
+    // for more rows than the band has returns its own clamp, which IS the cap.
+    const cap = Math.max(COMPOSER_MIN_ROWS, this.regionsNow(r.bandRows).composerRows);
+    return this.atWidth(PANEL_COLS + 2, () => {
+      const shown = step?.secret ? maskLive(this.input, setup.maskCell()) : this.input;
+      const base = renderComposer({
+        input: shown,
+        caret: Math.min(this.caret, shown.length),
+        width,
+        status: "",
+        placeholder: this.setupBusy
+          ? "checking..."
+          : step?.secret
+            ? "paste key (masked)"
+            : "type a value, or enter to skip",
+        // Four rows of chrome: the two rules, the title, and the hint.
+        maxRows: Math.max(1, cap - 4),
+      });
+      // renderComposer owns a blank row above the field; the region's own edge
+      // does that job here, so it is dropped as the writing surface drops it.
+      const field = base.lines.slice(1);
+      const title = `  ${text(clampVisible(step ? step.question : "setup complete", width - 4))}`;
+      const lines = [field[0] ?? "", title, ...field.slice(1)];
+      const caretRow = Math.max(0, base.caretRow - 1) + 1;
+      const hint = step
+        ? `enter save ${glyph("observed")} esc skip ${glyph("observed")} ctrl+f steps`
+        : `setup complete ${glyph("observed")} enter close`;
+      if (lines.length < cap) lines.push(`  ${faint(hint)}`);
+      return {
+        lines: lines.map(tighten),
+        caretRow,
+        caretCol: base.caretCol - 1,
+      };
+    });
   },
 
   /**
@@ -420,6 +583,7 @@ export const FRAME_METHODS = {
    * so it does not read as more input.
    */
   bandComposer(this: Tui, r: Regions): { lines: string[]; caretRow: number; caretCol: number } {
+    if (this.setupInBand()) return this.bandSetupComposer(r);
     const wide = !r.collapsed;
     const width = wide ? PANEL_COLS + 1 : this.contentCols();
     // What the field may grow to. `composerPaintRows` is that ceiling, asked
@@ -429,10 +593,7 @@ export const FRAME_METHODS = {
     // give the rows up), and collapsed it is what the block may paint OVER the
     // workspace, since there is no panel to take it from. The 3 is this
     // region's chrome: two rules and the hint row. (Lane C, over lane A's seam.)
-    const maxRows = Math.max(
-      1,
-      composerPaintRows(this.regionsNow(r.bandRows), r.bandRows) - 3,
-    );
+    const maxRows = Math.max(1, composerPaintRows(this.regionsNow(r.bandRows), r.bandRows) - 3);
     // The outer measure (what `F.surfaceWidth()` sees) is always one cell
     // WIDER than the field's own `width` above -- the wide branch already
     // keeps that one-cell split (`PANEL_COLS + 2` outer vs `PANEL_COLS + 1`

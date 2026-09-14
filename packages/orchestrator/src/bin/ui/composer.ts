@@ -11,6 +11,7 @@ import {
   getSandboxCapability,
 } from "@rune/tool-registry";
 import {
+  accent,
   danger,
   faint,
   warn,
@@ -286,6 +287,46 @@ export function statusLine(s: ComposerStatus, width = process.stdout.columns || 
     if (gap >= 2) return `${left}${" ".repeat(gap)}${edge}`;
   }
   return clampVisible(badge, max);
+}
+
+/** Where the global settings file lives, as the ledger's own ladder names it. */
+export const SETUP_CONFIG_LABEL = "~/.rune/config.toml";
+
+/**
+ * The status strip while the setup wizard is open (§2.8).
+ *
+ * The ordinary strip names the model, the gear and the context meter — three
+ * measurements about a conversation that has not started. During setup none of
+ * them is the fact the reader needs, and the one they do need is the one the
+ * wizard cannot demonstrate by drawing a number: that editing configuration
+ * costs nothing, because no call is made. So the strip says exactly that, and
+ * then where the two things being edited live. The first call happens when the
+ * user sends a message, and not before.
+ *
+ * Tiers, like `statusLine`: the promise survives to the last one. Where the
+ * keys go is deliberately vague about the BACKEND — it is the OS keychain on a
+ * Mac and something else elsewhere, and the receipt names the real one once it
+ * has actually stored something. What is invariant, and what matters here, is
+ * that it is not the file named to its left.
+ */
+export function setupStatusLine(
+  width = process.stdout.columns || 80,
+  configLabel = SETUP_CONFIG_LABEL,
+): string {
+  const max = Math.max(8, Math.min(F.surfaceWidth(), width - 1));
+  const sep = ` ${faint(glyph("observed"))} `;
+  const head = `  ${accent(glyph("phase"))} ${text("setup")}`;
+  const promise = faint("no model called yet");
+  const tiers: string[][] = [
+    [head, promise, faint(`config ${configLabel}`), faint("keys are stored outside it")],
+    [head, promise, faint(`config ${configLabel}`)],
+    [head, promise],
+  ];
+  for (const parts of tiers) {
+    const row = parts.join(sep);
+    if (visLen(row) <= max) return row;
+  }
+  return clampVisible(head, max);
 }
 
 /**
@@ -630,7 +671,8 @@ function wrapSegment(
   // the rest fit on one row" check below stays O(1) per row rather than
   // O(rows) -- this runs on every keystroke (wrapComposer's own doc comment).
   const suffixCells = new Array<number>(spans.length + 1).fill(0);
-  for (let m = spans.length - 1; m >= 0; m--) suffixCells[m] = suffixCells[m + 1]! + spans[m]!.width;
+  for (let m = spans.length - 1; m >= 0; m--)
+    suffixCells[m] = suffixCells[m + 1]! + spans[m]!.width;
 
   let i = from; // buffer index the row under construction starts at
   let k = 0; // spans[k..] is what still needs to go on a row

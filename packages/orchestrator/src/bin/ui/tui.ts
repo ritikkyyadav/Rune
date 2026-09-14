@@ -100,6 +100,7 @@ import {
   MEMORY_ACTION_COUNT,
   sessionGroupLabel,
   statusLine,
+  setupStatusLine,
   modeInfo,
   permissionModeBanner,
   autoApprovedChip,
@@ -703,6 +704,11 @@ export class Tui {
   // -- input rendering --
 
   statusStr(width = this.contentCols()): string {
+    // §2.8: while the wizard is open the strip states the one fact the screen
+    // cannot otherwise prove -- that editing configuration makes no model call.
+    // The ordinary strip's fields (model, gear, context) are measurements of a
+    // conversation that has not started yet.
+    if (this.mode === "setup" && this.ctx.firstRun) return setupStatusLine(width);
     let contextPercent: number | undefined;
     try {
       contextPercent = this.ctx.engine.getContextUsage().percent;

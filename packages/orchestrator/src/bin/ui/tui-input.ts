@@ -37,7 +37,7 @@ import { text, muted, faint, info, ok, warn, danger } from "./theme";
 import { glyph, TERMINAL_GLYPH_MODE } from "./glyphs";
 import { rowsCount, SCROLL_STEP } from "./tui-frame";
 import { fleetLedger } from "./agents-panel";
-import { ledgerRows, maskLive, savedActiveRows } from "../../first-run";
+import { ledgerRows, maskLive, savedActiveRows, type StepReceipt } from "../../first-run";
 /** The rung, read once. `ledgerRows` takes it as an argument because
  * first-run.ts is engine-side and never learns what a terminal can draw. */
 const ASCII_RUNG = TERMINAL_GLYPH_MODE === "ascii";
@@ -251,10 +251,14 @@ export const INPUT_METHODS = {
         width: this.contentCols(),
         // `renderComposer` sets its status rows down exactly as it is given
         // them, so the gutter is the caller's here as it is above.
+        // The footer layout has no status strip of its own -- this block IS the
+        // footer -- so the promise the split layout puts on the strip (§2.8:
+        // "no model call to edit configuration") rides on the hint row here
+        // rather than costing a row in a window that has none to spare.
         status: body(
           faint(
             step
-              ? `enter continue ${glyph("observed")} esc cancel`
+              ? `enter continue ${glyph("observed")} esc cancel ${glyph("observed")} no model called yet`
               : `setup complete ${glyph("observed")} enter close`,
           ),
         ),
@@ -549,23 +553,62 @@ export const INPUT_METHODS = {
       void this.ctx.firstRun.answer(answer).then(
         (outcome) => {
           this.setupBusy = false;
-          this.setupReceipt = outcome.receipt;
+          this.landSetupReceipt(outcome.receipt);
           this.scheduleDraw();
         },
         (err) => {
           this.setupBusy = false;
-          this.setupReceipt = {
+          this.landSetupReceipt({
             ok: false,
             title: "setup",
             body: [],
             close: err instanceof Error ? err.message : String(err),
-          };
+          });
           this.scheduleDraw();
         },
       );
       return;
     }
     if (this.editComposer(key)) this.scheduleDraw();
+  },
+
+  /**
+   * Where a step's receipt goes once the step is answered.
+   *
+   * §2.8 puts it in the WORKSPACE, "in the same boxes every other tool call
+   * uses" -- so in the split layout it is committed to the transcript the
+   * moment it exists, which is also what makes the wizard accumulate a record:
+   * the file that was written, then the endpoint that was probed, then the one
+   * that was rejected, each still on screen while the next step is answered.
+   * The footer block could only ever show the LAST one, because it redrew the
+   * receipt from a single field.
+   *
+   * Committed and held are exclusive. A window that shrinks below
+   * `PANEL_MIN_COLS` mid-wizard falls back to the footer block, and that block
+   * draws `setupReceipt` -- so a receipt that is already in the transcript above
+   * it must not also be a field, or the shrink prints it twice.
+   *
+   * Nothing here is the secret: `StepReceipt` is redacted at the source
+   * (first-run.ts) and the provider's own 401, which echoes the key back, is
+   * redacted before it becomes a body line.
+   */
+  landSetupReceipt(this: Tui, receipt: StepReceipt): void {
+    if (!this.setupInBand()) {
+      this.setupReceipt = receipt;
+      return;
+    }
+    this.setupReceipt = null;
+    const cols = this.contentCols();
+    const lines = F.box(
+      {
+        verb: receipt.title.split(" ")[0] ?? "setup",
+        arg: receipt.title.split(" ").slice(1).join(" "),
+      },
+      F.boxOutput(receipt.body),
+      { status: receipt.ok ? "pass" : "fail", parts: [receipt.close] },
+      { width: F.measure(cols) },
+    );
+    this.print(lines.join("\n"));
   },
 
   /** Apply a pure text-editing key to the composer (insert / caret motion / deletion). Returns
