@@ -376,7 +376,21 @@ export function createReadBackTool(
       }
 
       const reply = await handler(brief);
-      const settled = reply.edited ?? brief;
+      // A brief the person EDITED is the person's statement of what done
+      // means, not the model's reading of it — so its criteria are `user`,
+      // and the next read-back cannot drop or optionalise one. Every
+      // criterion in the edited brief counts, including the ones they left
+      // alone: leaving a criterion standing in a brief you are editing is
+      // stating it.
+      const settled = reply.edited
+        ? {
+            ...reply.edited,
+            // `??=`, not an overwrite: an `evaluator` criterion that happens
+            // to be on the brief the person edited is still the runtime's, and
+            // relabelling it `user` would hand the model a way to cite it.
+            criteria: reply.edited.criteria.map((c) => ({ ...c, source: c.source ?? "user" })),
+          }
+        : brief;
       onBrief(settled);
       if (reply.accepted) {
         return done("Accepted. Work to this brief and report against these criteria.");
@@ -936,6 +950,23 @@ export function createRecordEvidenceTool(
       // against a pilot that spent three completions rewording one citation)
       // is the more valuable thing to keep intact.
       const criterion = ledger.criteria[index];
+
+      // ── An evaluator criterion is not the model's to settle ──
+      //
+      // It is the independent oracle: a check the runtime runs ITSELF at the
+      // finish gate, against a command the model never saw. A citation is the
+      // model choosing what a command is about, and letting it choose that for
+      // the acceptance test would put the one measurement it cannot influence
+      // back inside its reach. The refusal is a plain sentence, not an error:
+      // there is nothing wrong with having tried.
+      if (criterion?.source === "evaluator") {
+        return reply(
+          `Criterion ${index} "${criterion.text.slice(0, 80)}" is settled by the runtime's own ` +
+            `run, not by citation. It will be checked when this turn finishes, and the result ` +
+            `will be on the record either way. Cite a criterion you read back instead.`,
+        );
+      }
+
       const named = criterion ? criterionScope(criterion.text, ledger.snapshot) : [];
       const relation =
         criterion && lastRun?.kind !== "execution"

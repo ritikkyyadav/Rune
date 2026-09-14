@@ -26,6 +26,8 @@ import {
   contractShape,
   createContract,
   criterionStatus,
+  inheritContract,
+  priorContract,
   uncoveredCriteria,
   verdictLine,
   type TaskContract,
@@ -679,5 +681,187 @@ describe("the verdict reads the status, not the rung", () => {
       { text: "c", rung: null, required: false, source: "user" },
     ]);
     expect(uncoveredCriteria(v)).toEqual(["b"]);
+  });
+});
+
+// ─── M1: what an amendment may and may not do ───
+//
+// The model proposes criteria; it does not get to shorten the task. A
+// read-back that omits a `user` or `evaluator` criterion has that criterion
+// put back, and the attempt recorded — because a contract that successfully
+// refused to shrink is otherwise byte-identical to one nobody attacked.
+
+describe("amendments keep what the user and the evaluator stated", () => {
+  const userCriterion = (text: string): Criterion => ({ text, rung: null, source: "user" });
+
+  test("a `user` criterion the read-back omitted is kept, and the attempt recorded", () => {
+    const stated = amendContract(
+      contract(),
+      brief({ criteria: [userCriterion("the CSV header is unchanged")] }),
+      "user",
+    );
+    const narrowed = amendContract(
+      stated,
+      brief({ criteria: [criterion("the exporter writes every row")] }),
+      "model",
+    );
+    expect(narrowed.criteria.map((c) => c.text)).toEqual([
+      "the exporter writes every row",
+      "the CSV header is unchanged",
+    ]);
+    expect(narrowed.criteria[1]!.source).toBe("user");
+    const last = narrowed.amendments.at(-1)!;
+    expect(last.origin).toBe("model");
+    expect(last.kept).toEqual(["the CSV header is unchanged"]);
+    expect(last.removed).toEqual([]);
+    expect(narrowed.revision).toBe(stated.revision + 1);
+  });
+
+  test("an `evaluator` criterion is protected the same way", () => {
+    const evaluator: Criterion = {
+      text: "the exported CSV still has three columns",
+      rung: null,
+      source: "evaluator",
+      method: { kind: "command", command: "node check-columns.mjs" },
+    };
+    const stated = amendContract(contract(), brief({ criteria: [evaluator] }), "runtime");
+    const narrowed = amendContract(stated, brief({ criteria: [criterion("a")] }), "model");
+    const kept = narrowed.criteria.find((c) => c.source === "evaluator");
+    expect(kept?.method).toEqual({ kind: "command", command: "node check-columns.mjs" });
+    expect(narrowed.amendments.at(-1)!.kept).toEqual([evaluator.text]);
+  });
+
+  test("only a `user` amendment removes one", () => {
+    const stated = amendContract(
+      contract(),
+      brief({ criteria: [userCriterion("the CSV header is unchanged")] }),
+      "user",
+    );
+    const removed = amendContract(stated, brief({ criteria: [criterion("a")] }), "user");
+    expect(removed.criteria.map((c) => c.text)).toEqual(["a"]);
+    expect(removed.amendments.at(-1)!.removed).toContain("the CSV header is unchanged");
+  });
+
+  test("the model may reword its OWN criteria, and its ids do not collide", () => {
+    const first = amendContract(contract(), brief({ criteria: [criterion("drops the last row")] }));
+    const second = amendContract(first, brief({ criteria: [criterion("writes every row")] }));
+    expect(second.criteria.map((c) => c.text)).toEqual(["writes every row"]);
+    expect(second.amendments.at(-1)!.removed).toEqual(["drops the last row"]);
+    expect(new Set(second.criteria.map((c) => c.id)).size).toBe(second.criteria.length);
+    expect(second.criteria[0]!.id).not.toBe(first.criteria[0]!.id);
+  });
+
+  test("a criterion restated word for word keeps its id, source and strength", () => {
+    // Without this the protection lasted exactly one turn: a read-back that
+    // repeated a user-stated criterion verbatim downgraded it to the model's,
+    // and the NEXT read-back could drop it freely.
+    const optional: Criterion = {
+      text: "the CSV header is unchanged",
+      rung: null,
+      source: "user",
+      required: false,
+    };
+    const stated = amendContract(contract(), brief({ criteria: [optional] }), "user");
+    const restated = amendContract(
+      stated,
+      brief({ criteria: [{ text: "the CSV header is unchanged", rung: null }] }),
+      "model",
+    );
+    expect(restated.criteria[0]!.source).toBe("user");
+    expect(restated.criteria[0]!.required).toBe(false);
+    expect(restated.criteria[0]!.id).toBe(stated.criteria[0]!.id);
+  });
+
+  test("constraints are a union: the `leave` list plus everything a person stated", () => {
+    const stated = amendContract(
+      contract(),
+      brief({ leave: ["src/import.ts"], criteria: [userCriterion("the CSV header is unchanged")] }),
+      "user",
+    );
+    expect(stated.constraints).toEqual(["src/import.ts", "the CSV header is unchanged"]);
+    // A later read-back that names a different `leave` list ADDS to them; a
+    // constraint the person gave is not the model's to forget by omission.
+    const later = amendContract(stated, brief({ leave: ["docs/"], criteria: [criterion("a")] }));
+    expect(later.constraints).toContain("src/import.ts");
+    expect(later.constraints).toContain("the CSV header is unchanged");
+    expect(later.constraints).toContain("docs/");
+  });
+
+  test("the ledger's list IS the contract's list, so a kept criterion is citable", () => {
+    // The criteria the contract holds and the criteria `record_evidence`
+    // indexes into must be one array. A criterion protected on the record and
+    // invisible to the run is worse than no protection: the record says it held.
+    const stated = amendContract(
+      contract(),
+      brief({ criteria: [userCriterion("the CSV header is unchanged")] }),
+      "user",
+    );
+    const next = brief({ criteria: [criterion("the exporter writes every row")] });
+    const narrowed = amendContract(stated, next, "model");
+    expect(next.criteria).toBe(narrowed.criteria);
+    expect(next.criteria.map((c) => c.text)).toContain("the CSV header is unchanged");
+  });
+
+  test("an amendment that changes nothing and keeps nothing bumps no revision", () => {
+    const stated = amendContract(contract(), brief());
+    const again = amendContract(stated, brief({ criteria: stated.criteria as Criterion[] }));
+    expect(again.revision).toBe(stated.revision);
+    expect(again.amendments.length).toBe(stated.amendments.length);
+  });
+});
+
+describe("what a restarted run inherits from the contract it is continuing", () => {
+  test("constraints, revision and the amendment history survive", () => {
+    const died = amendContract(
+      contract(),
+      brief({ leave: ["src/notes.md"], criteria: [{ text: "keep it", rung: null, source: "user" }] }),
+      "user",
+    );
+    const fresh = createContract({
+      intent: "Carry on — same task.",
+      fixShaped: false,
+      turns: 40,
+      secondWinds: 1,
+    });
+    expect(fresh.revision).toBe(1);
+    expect(fresh.constraints).toEqual([]);
+
+    const resumed = inheritContract(fresh, died);
+    expect(resumed.intent).toBe("Carry on — same task.");
+    expect(resumed.constraints).toContain("src/notes.md");
+    expect(resumed.constraints).toContain("keep it");
+    expect(resumed.revision).toBe(died.revision);
+    expect(resumed.amendments).toEqual(died.amendments);
+  });
+
+  test("with no prior contract nothing is invented", () => {
+    const fresh = contract();
+    expect(inheritContract(fresh, null)).toEqual(fresh);
+  });
+
+  test("`priorContract` reads the newest version-1 row and defaults the M1 fields", () => {
+    const legacy = {
+      version: 1,
+      intent: "an older session's contract",
+      scope: { touch: [], leave: [] },
+      shape: "fix",
+      criteria: [],
+      budget: { turns: 80, secondWinds: 2, costUsd: null, deadlineMs: null },
+      stop: { onHalt: true, onSpendCap: true, onCriteriaMet: false },
+      createdAt: new Date().toISOString(),
+    };
+    const found = priorContract([
+      { event: { type: "brief", payload: {} } },
+      { event: { type: "contract", payload: { version: 1, contract: legacy } } },
+      { event: { type: "turn_complete", payload: {} } },
+    ]);
+    expect(found?.intent).toBe("an older session's contract");
+    // A row saved before M1 carries none of these; they are defaulted, never
+    // guessed at, and never rewritten back onto the saved session.
+    expect(found?.revision).toBe(1);
+    expect(found?.constraints).toEqual([]);
+    expect(found?.amendments).toEqual([]);
+    expect(priorContract([{ event: { type: "contract", payload: { version: 2 } } }])).toBeNull();
+    expect(priorContract([])).toBeNull();
   });
 });

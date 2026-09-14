@@ -212,6 +212,8 @@ import {
   computeVerdict,
   contractDigest,
   createContract,
+  inheritContract,
+  priorContract,
   uncoveredCriteria,
   type CompletionVerdict,
   type TaskContract,
@@ -1718,18 +1720,24 @@ export class Engine {
         (brief) => {
           this.brief = brief;
           this.ledger = new BriefLedger(brief, (files) => this.runRevision(files));
+          // The contract is AMENDED, never replaced: the read-back supplies the
+          // criteria and the scope, `intent` stays the user's own words, and
+          // `Brief.request` — verbatim by construction — is the drift check.
+          //
+          // It runs BEFORE the brief is persisted because the amendment can
+          // put criteria BACK: a `user` or `evaluator` requirement this
+          // read-back omitted is retained on both the contract and the brief's
+          // own list, and a brief persisted first would be the model's
+          // shortened version of the task.
+          if (this.contract) {
+            this.contract = amendContract(this.contract, brief, "model");
+            this.persistContract();
+          }
           // Durable from the moment it is agreed. Before this the criteria and
           // their rungs lived only in two Engine fields, so a restart discarded
           // every acceptance criterion the user had confirmed and a resumed run
           // could not know which of them were already met.
           this.persistBrief();
-          // The contract is AMENDED, never replaced: the read-back supplies the
-          // criteria and the scope, `intent` stays the user's own words, and
-          // `Brief.request` — verbatim by construction — is the drift check.
-          if (this.contract) {
-            this.contract = amendContract(this.contract, brief);
-            this.persistContract();
-          }
         },
         // The model's one revision of the task kind: the read-back is where it
         // says what it understood the work to BE, so it is the honest place
@@ -5047,8 +5055,17 @@ export class Engine {
     // they are still in force, and an empty contract would report "no criteria
     // stated" while the restored ledger held verified ones. A message after a
     // CLEAN finish starts fresh and is expected to read back again.
-    if (priorRunInterrupted && this.brief) {
-      this.contract = carryForward(this.contract, this.brief);
+    //
+    // M1: it also inherits the facts that live only on the CONTRACT — the
+    // constraints the person stated, the revision count and the amendment
+    // history. `carryForward` recovers the criteria from the restored brief;
+    // without the row below, a SIGKILL was a clean slate for exactly the
+    // fields that exist to survive one, and a `user` criterion the model had
+    // already dropped once could be dropped again with nothing on the record
+    // saying it had ever been stated.
+    if (priorRunInterrupted) {
+      this.contract = inheritContract(this.contract, priorContract(priorEvents));
+      if (this.brief) this.contract = carryForward(this.contract, this.brief, "runtime");
     }
     this.persistContract();
 

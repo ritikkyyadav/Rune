@@ -325,9 +325,39 @@ export function briefDrift(contract: TaskContract, brief: Brief): string | null 
  * are the LEDGER's — the same objects `BriefLedger.record` mutates — so a rung
  * earned after the amendment is on the contract without a second write.
  */
-export function amendContract(contract: TaskContract, brief: Brief): TaskContract {
+export function amendContract(
+  contract: TaskContract,
+  brief: Brief,
+  origin: ContractAmendment["origin"] = "model",
+): TaskContract {
   const drift = briefDrift(contract, brief);
-  return { ...carryForward(contract, brief), ...(drift ? { drift } : {}) };
+  return { ...carryForward(contract, brief, origin), ...(drift ? { drift } : {}) };
+}
+
+/** Two criteria are the same requirement when their words are. */
+function criterionKey(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/** The next free `c<n>` for a contract, so an id is never reused. */
+function nextCriterionId(existing: readonly Criterion[]): () => string {
+  let max = 0;
+  for (const c of existing) {
+    const m = /^c(\d+)$/.exec(c.id ?? "");
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return () => `c${++max}`;
+}
+
+/**
+ * A criterion the MODEL may not touch: the person stated it, or the runtime's
+ * own evaluator did.
+ *
+ * `inferred` is the read-back's own reading, and rewording it is the model's
+ * job. Everything else is somebody else's statement of what done means.
+ */
+function protectedCriterion(c: Criterion): boolean {
+  return c.source === "user" || c.source === "evaluator";
 }
 
 /**
@@ -341,11 +371,162 @@ export function amendContract(contract: TaskContract, brief: Brief): TaskContrac
  * No drift is recorded: `Brief.request` is the check on what the model read
  * back, and nothing was read back here.
  */
-export function carryForward(contract: TaskContract, brief: Brief): TaskContract {
+export function carryForward(
+  contract: TaskContract,
+  brief: Brief,
+  origin: ContractAmendment["origin"] = "model",
+): TaskContract {
+  const before = contract.criteria;
+  const stated = brief.criteria;
+  const assignId = nextCriterionId([...before, ...stated]);
+  const statedKeys = new Set(stated.map((c) => criterionKey(c.text)));
+  const beforeByKey = new Map(before.map((c) => [criterionKey(c.text), c] as const));
+
+  // ── What the model restated, with its identity preserved ──
+  //
+  // An amendment that keeps a criterion's TEXT keeps its id, its source and
+  // its strength. Without that, a read-back that repeated a user-stated
+  // criterion word for word downgraded it to the model's own — so the
+  // protection lasted exactly one turn, which is worse than no protection at
+  // all because the record says it held.
+  for (const c of stated) {
+    const prior = beforeByKey.get(criterionKey(c.text));
+    if (prior) {
+      c.id ??= prior.id;
+      c.source ??= prior.source;
+      if (prior.required !== undefined) c.required = prior.required;
+      if (prior.method !== undefined) c.method = prior.method;
+      // A rung already earned against this exact requirement is not lost to a
+      // reword of the surrounding brief.
+      if (c.rung == null && prior.rung != null) {
+        c.rung = prior.rung;
+        c.evidence ??= prior.evidence;
+      }
+    }
+    c.id ??= assignId();
+    c.source ??= "inferred";
+  }
+
+  // ── What it OMITTED, and the runtime put back ──
+  //
+  // The failure this exists for: a model that cannot meet a requirement
+  // drops it from its next read-back, and the contract it is measured
+  // against quietly becomes the work it managed to do. `kept` makes that a
+  // recorded fact rather than a missing line. Only a `user` amendment can
+  // actually remove one.
+  const kept: Criterion[] = before.filter(
+    (c) => protectedCriterion(c) && !statedKeys.has(criterionKey(c.text)),
+  );
+  const keptHere = origin === "user" ? [] : kept;
+  const criteria = [...stated, ...keptHere];
+
+  // ── Constraints ──
+  //
+  // The `leave` list plus everything a person stated. Union, never a
+  // replacement: a constraint the user gave on turn one is not the model's to
+  // forget on turn four by omitting it from a read-back.
+  const constraints = [
+    ...new Set([
+      ...(contract.constraints ?? []),
+      ...brief.leave.map((s) => String(s).trim()).filter(Boolean),
+      ...criteria.filter((c) => c.source === "user").map((c) => c.text),
+    ]),
+  ];
+
+  const amended: TaskContract = {
+    ...normalizeContract(contract),
+    scope: { touch: [...brief.touch], leave: [...brief.leave] },
+    criteria,
+    constraints,
+  };
+
+  // A revision is bumped only by a change a reader would act on — the same
+  // rule `persistContract` dedupes rows by, so the two cannot disagree about
+  // whether anything happened.
+  //
+  // With ONE addition: a read-back that omitted a protected criterion changes
+  // nothing about the contract (the runtime put it straight back) and is
+  // nevertheless the most important thing this function can report. Without
+  // this clause the attempt left no trace at all, because a contract that
+  // successfully refused to shrink is byte-identical to one nobody attacked.
+  const unchanged = contractDigest(amended) === contractDigest(normalizeContract(contract));
+  if (unchanged && keptHere.length === 0) return amended;
+
+  const added = stated
+    .filter((c) => !beforeByKey.has(criterionKey(c.text)))
+    .map((c) => c.text);
+  const removed = before
+    .filter((c) => !protectedCriterion(c) && !statedKeys.has(criterionKey(c.text)))
+    .map((c) => c.text)
+    .concat(origin === "user" ? kept.map((c) => c.text) : []);
+  const revision = (contract.revision ?? 1) + 1;
+  amended.revision = revision;
+  amended.amendments = [
+    ...(contract.amendments ?? []),
+    {
+      revision,
+      at: new Date().toISOString(),
+      origin,
+      added,
+      kept: keptHere.map((c) => c.text),
+      removed,
+    },
+  ].slice(-AMENDMENT_CAP);
+  // The criteria array the LEDGER holds must be the one the contract holds, or
+  // a rung earned after the amendment lands on an object nothing reads. The
+  // ledger reads `brief.criteria` on every access, so replacing the array is
+  // enough — and it is what puts the kept criteria back in front of
+  // `record_evidence`'s indexes as well as in front of the verdict.
+  brief.criteria = criteria;
+  return amended;
+}
+
+/** Amendments carried on the contract row. A run with more is pathological. */
+const AMENDMENT_CAP = 32;
+
+/**
+ * The newest `contract` row in a session's log, or null.
+ *
+ * A pure read, so the restart path can be tested without an Engine. Version 1
+ * rows only — a row from a future schema is not guessed at.
+ */
+export function priorContract(
+  events: Array<{ event: { type: string; payload: Record<string, unknown> } }>,
+): TaskContract | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const row = events[i]!.event;
+    if (row.type !== "contract") continue;
+    const payload = row.payload as { version?: unknown; contract?: unknown };
+    if (payload.version !== 1) continue;
+    const contract = payload.contract as TaskContract | undefined;
+    if (!contract || typeof contract !== "object" || typeof contract.intent !== "string") continue;
+    return normalizeContract(contract);
+  }
+  return null;
+}
+
+/**
+ * What a RESTARTED run inherits from the contract of the run it continues.
+ *
+ * `carryForward` recovers the criteria from the restored brief; this recovers
+ * the facts that live only on the contract — the constraints the person
+ * stated, how many times it has been amended, and by whom. Without it a
+ * SIGKILL was a clean slate for exactly the fields that exist to survive one:
+ * the next run started at revision 1 with no constraints, and a `user`
+ * criterion the model had already omitted once could be omitted again with
+ * nothing on the record saying it had ever been stated.
+ */
+export function inheritContract(
+  contract: TaskContract,
+  prior: TaskContract | null | undefined,
+): TaskContract {
+  if (!prior) return contract;
+  const before = normalizeContract(prior);
   return {
     ...contract,
-    scope: { touch: [...brief.touch], leave: [...brief.leave] },
-    criteria: brief.criteria,
+    revision: Math.max(contract.revision ?? 1, before.revision),
+    constraints: [...new Set([...before.constraints, ...(contract.constraints ?? [])])],
+    amendments: [...before.amendments].slice(-AMENDMENT_CAP),
   };
 }
 
