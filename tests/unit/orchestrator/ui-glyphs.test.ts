@@ -26,14 +26,32 @@ describe("Flow closed glyph budget", () => {
   });
 
   test("the ornamental UTF-8 vocabulary stays within twenty distinct cells", () => {
-    const definitions = [...Object.values(GLYPH_DEFINITIONS), ...PULSE_GLYPHS];
-    const ornamental = new Set(
-      definitions
-        .map((definition) => definition.utf8)
-        .filter((glyph) => /[^\x00-\x7f]/.test(glyph)),
-    );
-    expect(ornamental.size).toBeGreaterThan(0);
-    expect(ornamental.size).toBeLessThanOrEqual(20);
+    // Two budgets, counted separately, because they are two different things.
+    //
+    // The MARKS are the alphabet: sixteen to twenty cells for the whole
+    // product, each one a design decision, each one chosen at a call site. The
+    // PULSE RAMP is one instrument that happens to have eight levels — nobody
+    // picks a level, the byte rate does, and adding a level would be tuning an
+    // instrument rather than adding a word. Counting them in one set made the
+    // four box corners §2.3 adds read as overspending a budget they had not
+    // touched, and would have made the honest fix "raise the cap to 24".
+    const ornamental = (cells: readonly string[]): Set<string> =>
+      new Set(cells.filter((cell) => /[^\x00-\x7f]/.test(cell)));
+
+    const marks = ornamental(Object.values(GLYPH_DEFINITIONS).map((d) => d.utf8));
+    expect(marks.size).toBeGreaterThan(0);
+    expect(marks.size).toBeLessThanOrEqual(20);
+
+    const ramp = ornamental(PULSE_GLYPHS.map((d) => d.utf8));
+    // Eight levels, eight distinct cells: a ramp with a repeated level is a
+    // ramp that cannot show the step it repeats.
+    expect(PULSE_GLYPHS).toHaveLength(8);
+    expect(ramp.size).toBe(8);
+
+    // And the two sets never overlap. A mark that is also a pulse level reads
+    // as a rate when it means a state, which is the one confusion no amount of
+    // colour recovers.
+    for (const mark of marks) expect(ramp.has(mark)).toBe(false);
   });
 
   test("renderer literals cannot bypass the closed set", () => {

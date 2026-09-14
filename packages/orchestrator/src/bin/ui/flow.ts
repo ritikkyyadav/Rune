@@ -45,6 +45,11 @@ import {
 import { glyph } from "./glyphs";
 import { paintCode, type CodeLang } from "./code-paint";
 import { termWidth, truncate, visLen, wrap } from "./render";
+// Type only, and deliberately: the rungs a surface may render are the rungs the
+// LEDGER awards, so the union is imported from where the ledger defines it
+// rather than re-typed here, where it could quietly grow a rung the ledger has
+// no way to give. Nothing at runtime crosses this line.
+import type { ClaimRung } from "../../brief";
 
 // --- The grid ---
 // Prose sits at column 4 and work rails from the same column, so a tool call
@@ -105,18 +110,39 @@ export function measure(cap?: number): number {
 }
 
 /**
- * The whole surface, for the structural rules that divide it -- the header's two
- * rules and the hairline above the composer. Chrome is not content: a divider
- * that stops at the reading column leaves the screen looking half-drawn, and
- * the thing it is dividing is the window, not the paragraph.
+ * The surface a BLOCK's own rules divide: the hairlines above and below the
+ * composer, and the seam under a `/status` readout. Chrome is not content -- a
+ * divider that stops at the reading column leaves the block looking half-drawn
+ * -- but the thing these rules divide is the block's region, not the window,
+ * and the region already ends one cell short of whatever contains it.
+ *
+ * MARK-symmetric: a line starts at MARK and ends MARK short of the measure it
+ * is drawn at. At an 80-column window the composer's own measure is 79, so its
+ * rules run columns 3…77, which is `80x24-idle.txt` column for column; in the
+ * right column they run 81…118, which is `120x40-idle.txt`.
+ *
+ * It is deliberately NOT the header's measure. See `chromeWidth`.
  */
 export function surfaceWidth(): number {
-  // Symmetric with MARK: a line starts at MARK and ends MARK short of the
-  // window, so the frame is inset by the same amount on both sides. The old
-  // single-column right margin also sat one cell from the edge for a reason —
-  // a line that touches the last cell wraps, and a wrap desyncs the pinned
-  // region's cursor math — and four keeps that safety with room to spare.
   return Math.max(20, termWidth() - MARK.length);
+}
+
+/**
+ * The measure the FRAME's own chrome spans: the header row and its seam rule.
+ *
+ * The header divides the window, not a region inside it, so it runs to the
+ * last cell of the measure it is handed -- and the frame has already reserved
+ * the margin that keeps a line off the terminal's final column (`frameCols()`
+ * is `cols() - 1`). Taking MARK off it again bought a second right margin
+ * nobody asked for, and drew the seam two cells short of the frame it divides:
+ * lane A's 120-column capture ended it at column 117 where the design ends it
+ * at 119, and at 80 columns it ended at 77 where the design ends it at 79.
+ *
+ * The floor is the same as `surfaceWidth`'s so a very narrow window degrades
+ * the same way for both, rather than crossing over.
+ */
+export function chromeWidth(): number {
+  return Math.max(20, termWidth());
 }
 
 /**
@@ -360,12 +386,14 @@ const LOCKUP_GAP = "  ";
  * which is the only reason it can be trusted at hour four.
  */
 export function header(opts: FlowHeader): string {
-  // Budgeted to the SURFACE, not to the reading column. The header is chrome:
-  // it is divided by a rule that spans the window, so it aligns to the window
-  // it divides. Back when measure() capped at 120 this row stopped at column
-  // 120 while its rule ran to 164 -- a 44-column gap that reads as a broken
-  // right edge rather than as a chosen column.
-  const surface = surfaceWidth();
+  // Budgeted to the FRAME, not to the reading column and not to a block's own
+  // surface. The header is the window's chrome: it is divided by a rule that
+  // spans the window, so it aligns to the window it divides. Back when
+  // measure() capped at 120 this row stopped at column 120 while its rule ran
+  // to 164 -- a 44-column gap that reads as a broken right edge rather than as
+  // a chosen column; and until this line said `chromeWidth` it stopped two
+  // cells short of the frame instead (§4.1 lane A, "unfinished" item 1).
+  const surface = chromeWidth();
   // The indent is paid for out of the row's own budget. Prepending MARK to a
   // row already sized to the full measure pushes the line onto the terminal's
   // last cell, and a line that touches the last cell wraps -- which desyncs the
@@ -652,6 +680,304 @@ export function railRow(content: string): string {
   return `${rail()}${content}`;
 }
 
+// --- Boxes ---
+//
+// The second register, and the one the founder asked for by name: code and
+// commands appear in proper boxes, clearly separated from prose.
+//
+// The distinction a box draws is not decoration. PROSE IS NEVER BOXED -- it
+// starts at MARK with the agent's diamond, wraps at proseWidth(), and carries
+// no frame, because that is the agent talking. EVERYTHING A TOOL PRODUCED IS
+// BOXED, because a closed rectangle is the visible difference between "the
+// agent is saying this" and "a program printed this". The rail that used to do
+// this job (`| `, still used by the rows a box would be too heavy for) marks
+// work without framing it; you can tell at a glance where a rail begins and
+// only by reading where it ends.
+//
+// Three rows minimum, and each one has a job:
+//
+//   TITLE    the verb and the argument VERBATIM -- a path, a pattern, the
+//            command as it was run. Never a paraphrase, because the reader is
+//            checking the call, not being told about it.
+//   BODY     the tool's own output, reformatted NEVER, truncated never wrapped
+//            (whitespace is semantic in code), and capped at BOX_BODY_ROWS with
+//            a counted fold -- nothing larger enters the workspace without a
+//            keystroke.
+//   RECEIPT  one mark, the outcome in words, and the metrics: `exit 0`,
+//            `+34 -0`, `212 lines`, `1.9s`.
+//
+// The mark on the receipt is the OUTCOME of the call -- `✓` a check that came
+// back clean, `✗` work that failed, `·` a call that merely happened, `~` a
+// claim with nothing behind it. It is deliberately not the claim ladder's
+// `verified`: the ledger awards `verified` only to a test that FAILED on the
+// parent commit (brief.ts), and a receipt that spent that tick on `bun test`
+// coming back green would read more certain than the ledger it is supposed to
+// agree with. A box says `exit 0 · 17 pass`, which is quotable output, and
+// leaves the claim to the prose that cites it (see rungMark below).
+//
+// Boxes live at MARK, like every other block, and span the same measure as the
+// rows around them, so the workspace has ONE right edge whether a row is boxed
+// or not.
+
+/** Rows a box body may set down before it folds. The keel rule: nothing larger
+ *  than ~12 rows enters the stream without a keystroke -- not a diff, not a
+ *  stack trace, not a test log. The fold row is one of the twelve, so a box is
+ *  never taller than `2 + BOX_BODY_ROWS`. */
+export const BOX_BODY_ROWS = 12;
+
+/** The cells a box occupies, MARK included -- the same measure every other
+ *  content row is bounded to, so a box's right edge lands exactly where a full
+ *  tool row's would. A caller that owns a narrower region passes its cap. */
+export function boxWidth(cap?: number): number {
+  return measure(cap);
+}
+
+/** Cells available INSIDE the frame: the two edge glyphs and their one-cell
+ *  insets cost four, and MARK costs two.
+ *
+ *  There is no floor above 1 on purpose. A floor would be a second opinion
+ *  about how wide the box is, and the frame would then overrun the width it was
+ *  handed -- which is the one failure a box is not allowed, because a rectangle
+ *  that does not close has stopped being a rectangle. Every row below is built
+ *  so that `MARK + 4 + boxInner(w) === MARK.length + w`, exactly, at every
+ *  width the measure can produce. */
+export const BOX_CHROME_COLS = MARK.length + 4;
+
+export function boxInner(width = boxWidth()): number {
+  return Math.max(1, width - BOX_CHROME_COLS);
+}
+
+/** The verb column inside a box: the same stable column the rail's rows use, one
+ *  wider, because `patch` is the longest verb a box ever opens with. A stack of
+ *  boxes reads as a table without anyone drawing one. */
+export const BOX_VERB_COLS = 5;
+
+export interface BoxTitle {
+  /** `run` `read` `edit` `get` -- the same verb the row form would carry,
+   *  padded to a stable column so a stack of boxes reads as a table. */
+  verb: string;
+  /** What it acted on, verbatim: a path, a pattern, the command. */
+  arg?: string;
+  /** Teal when the argument names a file the agent is changing. */
+  argTone?: "muted" | "path";
+}
+
+export interface BoxReceipt {
+  /** How the call ended. Reuses the row grammar's status so a box and a row
+   *  can never disagree about what a mark means. */
+  status?: Status;
+  /** The outcome and its metrics, in order: `exit 0`, `17 pass`, `1.9s`. Empty
+   *  parts are dropped rather than rendered as a bare separator. */
+  parts?: Array<string | undefined | null>;
+}
+
+/** The mark a receipt carries, painted by what it means. `ok` is neutral: a
+ *  call that merely happened is not news, and a rail that awards a tick to
+ *  fifteen routine calls has spent the tick before it reaches the one that
+ *  mattered. */
+function outcomeMark(status: Status): string {
+  if (status === "pass") return ok(glyph("verified"));
+  if (status === "fail") return danger(glyph("failure"));
+  if (status === "unproven") return warn(glyph("suspected"));
+  if (status === "active") return info(glyph("selection"));
+  return faint(glyph("observed"));
+}
+
+/** A box's title row: `┌ run   bun test tests/unit ──────────┐`. The argument
+ *  gives way before the frame does -- a box that does not close has stopped
+ *  being a box. */
+export function boxTop(title: BoxTitle, width = boxWidth()): string {
+  const inner = boxInner(width);
+  // One cell of rule is the floor: the corner needs something to stand on, and
+  // a title that ran to the corner would read as a truncated row, not a frame.
+  const cap = Math.max(1, inner - 1);
+  const verb = truncate(`${title.verb.padEnd(BOX_VERB_COLS)} `, cap);
+  // The argument gives way before the frame does, and it gives way whole: with
+  // no room left for even one cell of it the title is the verb alone, which is
+  // still true, rather than a one-character stub of a path, which is not.
+  const room = cap - visLen(verb);
+  const arg = title.arg && room >= 1 ? truncate(title.arg, room) : "";
+  const painted = `${text(verb)}${arg ? (title.argTone === "path" ? info : muted)(arg) : ""}`;
+  const used = visLen(verb) + visLen(arg);
+  const rule = faint(glyph("rule").repeat(Math.max(1, inner - used)));
+  return `${MARK}${faint(glyph("boxTL"))} ${painted} ${rule}${faint(glyph("boxTR"))}`;
+}
+
+/** One body row: the tool's own line, truncated never wrapped, padded to the
+ *  measure so the closing edge holds still. The pad is inside the frame, so
+ *  stripped of colour it is trailing whitespace -- which the one-left-edge law
+ *  ignores (see tests/unit/orchestrator/ui-grammar.test.ts). */
+export function boxRow(content: string, width = boxWidth()): string {
+  const inner = boxInner(width);
+  const safe = frameSafe(content);
+  const shown = visLen(safe) > inner ? truncate(safe, inner) : safe;
+  const pad = " ".repeat(Math.max(0, inner - visLen(shown)));
+  const edge = faint(glyph("gutter"));
+  return `${MARK}${edge} ${shown}${pad} ${edge}`;
+}
+
+/**
+ * A row's content with the bytes that move the cursor taken out.
+ *
+ * Found by replaying a real session through `scripts/render-live.ts`: a command
+ * that printed HTTP headers put a bare CR inside a box body, and a CR returns
+ * the cursor to column 0 -- so the pad and the closing edge were drawn over the
+ * start of the row and the frame broke open. On the page it read as
+ * `| HTTP/1.0 200 OK` with its right edge on a line of its own.
+ *
+ * This is not reformatting the tool's output, which §2.3 forbids. A control
+ * byte is not formatting; it is an instruction to the terminal, and a box is a
+ * claim about where the cursor will be. `boxOutput` expands tabs for exactly
+ * the same reason -- a tab is the one printable character whose width the frame
+ * cannot predict. ESC survives, because the colour a caller painted is the
+ * caller's and carries no width.
+ */
+function frameSafe(content: string): string {
+  // eslint-disable-next-line no-control-regex
+  return content.replace(/\t/g, "  ").replace(/[\x00-\x08\x0a-\x1a\x1c-\x1f\x7f]/g, "");
+}
+
+/** The receipt row: `└ ✓ exit 0 · 17 pass · 1.9s ─────────┘`. */
+export function boxBottom(receipt: BoxReceipt = {}, width = boxWidth()): string {
+  const inner = boxInner(width);
+  const mark = outcomeMark(receipt.status ?? "ok");
+  const body = receiptOf(receipt.parts ?? []);
+  const head = body ? `${mark} ${body}` : mark;
+  const shown = visLen(head) > inner - 1 ? truncate(head, inner - 1) : head;
+  const used = visLen(shown);
+  return `${MARK}${faint(glyph("boxBL"))} ${shown} ${faint(glyph("rule").repeat(Math.max(1, inner - used)))}${faint(glyph("boxBR"))}`;
+}
+
+/**
+ * A tool's own lines, ready to be a box body.
+ *
+ * Reformatted NEVER -- `pytest`, `tsc` and `cargo` each chose their formatting
+ * and their users know it by sight, so all this does is expand tabs (a tab is
+ * the one character whose width the frame cannot predict) and paint the whole
+ * block secondary, which is what says "another program wrote this" without
+ * touching a single character of what it wrote. Truncation is `boxRow`'s, at
+ * the frame, where the width is known.
+ */
+export function boxOutput(lines: string[], paint: (v: string) => string = muted): string[] {
+  return lines.map((line) => paint(line.replace(/\t/g, "  ")));
+}
+
+/** The counted fold. A body that overran says by how much and which key opens
+ *  it -- never `...`, and never silently. */
+export function boxFoldRow(hidden: number): string {
+  return faint(
+    `${glyph("elision")} ${hidden} more line${hidden === 1 ? "" : "s"} ${glyph("observed")} ctrl+o`,
+  );
+}
+
+/** Cap a body at `cap` rows, the last of which states what was held back. */
+export function foldBody(rows: string[], cap = BOX_BODY_ROWS): string[] {
+  if (rows.length <= cap) return rows;
+  const shown = rows.slice(0, Math.max(0, cap - 1));
+  return [...shown, boxFoldRow(rows.length - shown.length)];
+}
+
+export interface BoxOpts {
+  /** Columns the host region owns, when it is narrower than the measure. */
+  width?: number;
+  /** Body rows before the fold. Defaults to BOX_BODY_ROWS. */
+  rows?: number;
+}
+
+/** A whole box: title, body, receipt. The body rows arrive already painted and
+ *  already content-only -- the frame is this function's, and a producer that
+ *  drew its own rail would put two left edges on the same row. */
+export function box(
+  title: BoxTitle,
+  body: string[],
+  receipt: BoxReceipt = {},
+  opts: BoxOpts = {},
+): string[] {
+  const width = opts.width ?? boxWidth();
+  return [
+    boxTop(title, width),
+    ...foldBody(body, opts.rows ?? BOX_BODY_ROWS).map((row) => boxRow(row, width)),
+    boxBottom(receipt, width),
+  ];
+}
+
+// --- The claim ladder, as a mark ---
+//
+// Four rungs and one absence, each a single cell in both modes. The rung a
+// surface renders comes from the LEDGER (brief.ts) or from the runtime's own
+// reply -- never from reading what the model wrote, which is the rule that
+// keeps the screen truthful when the model lies. There is no rung for
+// "probably": a sentence that would need one renders `~`, which is what makes
+// "likely unrelated" unwritable.
+
+/** `unproven` is not a rung the ledger can award -- it is the absence of one,
+ *  and it is rendered as the suspected tilde because that is the strongest
+ *  thing that can honestly be said about a claim with nothing behind it. */
+export type ProseRung = ClaimRung | "unproven";
+
+/** The one-cell mark for a rung. Mode-aware, so a seven-bit terminal gets the
+ *  twin rather than a multi-byte character it cannot draw. */
+export function rungMark(rung: ProseRung): string {
+  if (rung === "verified") return glyph("verified");
+  if (rung === "reproduced") return glyph("reproduced");
+  if (rung === "observed") return glyph("observed");
+  return glyph("suspected");
+}
+
+/** The rung, painted by how much weight it carries. */
+export function rungPaint(rung: ProseRung): (v: string) => string {
+  if (rung === "verified") return ok;
+  if (rung === "reproduced") return info;
+  if (rung === "unproven") return warn;
+  return muted;
+}
+
+/**
+ * Never stronger than the ledger.
+ *
+ * A surface that wants to mark a sentence passes what it would like to claim
+ * and what the ledger actually holds; the weaker of the two is what renders.
+ * With no ledger rung at all the answer is `unproven` -- the absence of
+ * evidence is not the presence of a weak claim, and it should look like an
+ * omission rather than a considered hedge.
+ */
+export function capRung(claimed: ProseRung, ledger: ProseRung | null | undefined): ProseRung {
+  const order: ProseRung[] = ["unproven", "suspected", "observed", "reproduced", "verified"];
+  if (!ledger) return "unproven";
+  return order.indexOf(claimed) <= order.indexOf(ledger) ? claimed : ledger;
+}
+
+/**
+ * Assertive prose, marked with its rung instead of the agent's diamond.
+ *
+ * The diamond says "the agent is speaking". A rung says "the agent is making a
+ * claim, and here is what stands behind it" -- so a sentence that asserts an
+ * outcome trades one for the other, in the same column, at no cost in width.
+ */
+export function claimed(
+  body: string,
+  rung: ProseRung,
+  paint: (v: string) => string = text,
+): string {
+  const lines: string[] = [];
+  let first = true;
+  for (const source of body.replace(/\r\n?/g, "\n").split("\n")) {
+    if (!source.trim()) {
+      if (!first) lines.push("");
+      continue;
+    }
+    for (const part of wrap(source, proseWidth())) {
+      lines.push(
+        first
+          ? `${MARK}${rungPaint(rung)(rungMark(rung))} ${paint(part)}`
+          : `${BODY}${paint(part)}`,
+      );
+      first = false;
+    }
+  }
+  return lines.join("\n");
+}
+
 // --- Diffs ---
 
 export interface DiffRow {
@@ -673,20 +999,35 @@ export interface DiffRow {
  * whole-line green for added, red for removed, grey context. The sign column
  * survives both registers, so the diff still reads with the colour stripped.
  */
-export function diffRows(rows: DiffRow[], lang: CodeLang = null): string[] {
-  const codeWidth = Math.max(8, verbatimWidth() - 8);
+export interface DiffOpts {
+  /** What each row begins with. The rail, by default; `""` inside a box, where
+   *  the frame is the left edge and a rail would be a second one on the same
+   *  row. */
+  indent?: string;
+  /** Cells the row may occupy after the indent. Inside a box this is
+   *  `boxInner()`, so a banded row fills the frame exactly and the closing edge
+   *  lands where the rows above and below put it. */
+  width?: number;
+}
+
+export function diffRows(rows: DiffRow[], lang: CodeLang = null, opts: DiffOpts = {}): string[] {
+  const indent = opts.indent ?? rail();
+  // The gutter, the sign and their two separating spaces cost seven cells. The
+  // rail form keeps its historic eighth cell of slack; a box asks for an exact
+  // width, and gets one.
+  const codeWidth = Math.max(8, (opts.width ?? verbatimWidth() - 1) - 7);
   const bands = bandsEnabled();
   return rows.map((r) => {
-    if (r.kind === "elide") return `${rail()}   ${faint(`${glyph("elision")} ${r.text}`)}`;
+    if (r.kind === "elide") return `${indent}   ${faint(`${glyph("elision")} ${r.text}`)}`;
     const number = faint(String(r.line ?? "").padStart(4));
     const body = truncate(r.text.replace(/\t/g, "  "), codeWidth);
     if (!bands) {
-      if (r.kind === "add") return `${rail()}${number} ${ok("+")} ${ok(body)}`;
-      if (r.kind === "remove") return `${rail()}${number} ${danger("-")} ${danger(body)}`;
-      return `${rail()}${number}   ${muted(body)}`;
+      if (r.kind === "add") return `${indent}${number} ${ok("+")} ${ok(body)}`;
+      if (r.kind === "remove") return `${indent}${number} ${danger("-")} ${danger(body)}`;
+      return `${indent}${number}   ${muted(body)}`;
     }
     if (r.kind === "context") {
-      return `${rail()}${number}   ${paintCode(body, lang, muted)}`;
+      return `${indent}${number}   ${paintCode(body, lang, muted)}`;
     }
     // The band runs the full evidence width, not just to the last glyph: a
     // ragged right edge reads as texture, one column reads as a block of
@@ -701,7 +1042,7 @@ export function diffRows(rows: DiffRow[], lang: CodeLang = null): string[] {
     const ink = bandInk(role);
     const pad = " ".repeat(Math.max(0, codeWidth - visLen(body)));
     const laid = `${ink(String(r.line ?? "").padStart(4))} ${ink(r.kind === "add" ? "+" : "-")} ${paintCode(body, lang, ink, bandPalette(role))}${pad}`;
-    return `${rail()}${r.kind === "add" ? positiveSurface(laid) : negativeSurface(laid)}`;
+    return `${indent}${r.kind === "add" ? positiveSurface(laid) : negativeSurface(laid)}`;
   });
 }
 

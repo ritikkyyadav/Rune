@@ -33,8 +33,18 @@ afterEach(() => {
   });
 });
 
-/** Every line the product paints on a fresh launch, in order. */
-function launchFrame(columns: number): string[] {
+/**
+ * Every line the product paints on a fresh launch, split by which edge it
+ * answers to.
+ *
+ * There are two, and the design says so: the header is the FRAME's chrome and
+ * runs to the last cell of the measure it is handed, while everything inside
+ * the frame — a box, the status strip, the composer's rules — is inset by MARK
+ * on both sides. At 80 columns `80x24-idle.txt` ends the header rule at column
+ * 79 and every row under it at column 77, and that two-cell step is the visible
+ * difference between the window's divider and a block's own.
+ */
+function launchParts(columns: number): { chrome: string[]; block: string[] } {
   setTermWidthOverride(columns);
   Object.defineProperty(process.stdout, "columns", { value: columns, configurable: true });
   const banner = renderBanner({
@@ -47,9 +57,14 @@ function launchFrame(columns: number): string[] {
   } as any);
   const status = statusLine({ mode: "gear-3" } as any, columns);
   const composer = renderComposer({ input: "", caret: 0, width: columns, status } as any);
-  return [...banner.split("\n"), ...composer.lines]
-    .map(stripAnsi)
-    .filter((l) => l.trim().length > 0);
+  const keep = (lines: string[]) => lines.map(stripAnsi).filter((l) => l.trim().length > 0);
+  return { chrome: keep(banner.split("\n")), block: keep(composer.lines) };
+}
+
+/** Every line the product paints on a fresh launch, in order. */
+function launchFrame(columns: number): string[] {
+  const { chrome, block } = launchParts(columns);
+  return [...chrome, ...block];
 }
 
 const startsAt = (line: string): number => line.length - line.trimStart().length;
@@ -63,27 +78,41 @@ describe("the launch frame", () => {
     }
   });
 
-  it("every painted line ends in the same column", () => {
+  it("every painted line ends on the edge its region answers to", () => {
+    // Two edges, and exactly two. The header spans the measure it is handed;
+    // everything inside the frame stops MARK short of it on the right, the
+    // same two cells it is inset by on the left. Anything that lands between
+    // those two numbers is a third edge nobody chose.
     for (const columns of [60, 80, 100, 145, 165, 220]) {
-      const lines = launchFrame(columns);
-      const widths = new Set(lines.map((l) => l.length));
-      expect(widths.size, `at ${columns} cols: ${[...widths]}`).toBe(1);
+      const { chrome, block } = launchParts(columns);
+      const chromeWidths = new Set(chrome.map((l) => l.length));
+      expect([...chromeWidths], `chrome at ${columns} cols`).toEqual([columns]);
+      const blockWidths = new Set(block.filter((l) => /[━─]/.test(l)).map((l) => l.length));
+      expect([...blockWidths], `block rules at ${columns} cols`).toEqual([columns - 2]);
+      for (const line of [...chrome, ...block]) {
+        expect(line.length, `at ${columns} cols: ${line}`).toBeLessThanOrEqual(columns);
+      }
     }
   });
 
   it("a rule is exactly as wide as the row it divides", () => {
     for (const columns of [80, 145]) {
-      const lines = launchFrame(columns);
       // The masthead's rule is two weights — heavy under the chip, hairline
       // for the rest of the window — so a rule is any line made only of the
       // alphabet's horizontals.
       const isRule = (line: string) => /^\s*[━─]+$/.test(line);
-      const rules = lines.filter(isRule);
-      const content = lines.filter((line) => !isRule(line));
-      expect(rules.length).toBeGreaterThanOrEqual(3); // header + field top + field bottom
-      for (const r of rules) {
-        expect(startsAt(r)).toBe(2);
-        expect(r.length).toBe(content[0]!.length);
+      const { chrome, block } = launchParts(columns);
+      for (const [name, lines] of [
+        ["chrome", chrome],
+        ["block", block],
+      ] as const) {
+        const rules = lines.filter(isRule);
+        const content = lines.filter((line) => !isRule(line));
+        expect(rules.length, name).toBeGreaterThanOrEqual(name === "chrome" ? 1 : 2);
+        for (const r of rules) {
+          expect(startsAt(r)).toBe(2);
+          expect(r.length, `${name} rule at ${columns}`).toBe(content[0]!.length);
+        }
       }
     }
   });
@@ -187,9 +216,14 @@ describe("full-screen behaviour", () => {
 
   it("the frame still closes on both edges at full screen", () => {
     for (const columns of [241, 400]) {
-      const lines = launchFrame(columns);
-      expect(new Set(lines.map(startsAt))).toEqual(new Set([2]));
-      expect(new Set(lines.map((l) => l.length)).size).toBe(1);
+      const { chrome, block } = launchParts(columns);
+      expect(new Set([...chrome, ...block].map(startsAt))).toEqual(new Set([2]));
+      // Still two edges at 400 columns, and still exactly two cells apart: the
+      // inset is a constant, not a share of the window, so it does not grow
+      // into a margin wide enough to read as an unfinished screen.
+      expect(new Set(chrome.map((l) => l.length))).toEqual(new Set([columns]));
+      const rules = block.filter((l) => /^\s*[━─]+$/.test(l));
+      expect(new Set(rules.map((l) => l.length))).toEqual(new Set([columns - 2]));
     }
   });
 });

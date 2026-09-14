@@ -43,6 +43,25 @@ export const GLYPH_DEFINITIONS = {
   // distinction into texture.
   ruleHeavy: { utf8: "━", ascii: "=", role: "accent" },
   selection: { utf8: "›", ascii: ">", role: "accent" },
+  // The four corners of a box, and the whole of the addition Phase 4 makes to
+  // this alphabet. A box is the visible difference between the agent talking
+  // and a program reporting: prose carries no frame, and everything a tool
+  // produced closes on both edges. The sides are the `gutter` mark the work
+  // rail already owns, so four corners is the entire cost. Each is one cell in
+  // both modes, and in `ascii` a box reads `+ run … ----+ / | … | / + exit 0 -+`
+  // -- which still frames.
+  boxTL: { utf8: "\u250c", ascii: "+", role: "dim" },
+  boxTR: { utf8: "\u2510", ascii: "+", role: "dim" },
+  boxBL: { utf8: "\u2514", ascii: "+", role: "dim" },
+  boxBR: { utf8: "\u2518", ascii: "+", role: "dim" },
+  // The two rungs of the claim ladder that were not already marks. `observed`
+  // is the middot above and `verified` the tick; these complete the set so a
+  // rung is never typed as a literal at a call site and never renders as a
+  // multi-byte character on a seven-bit terminal -- which is exactly what
+  // read-back.ts was doing with brief.ts's RUNG_GLYPH table (`.utf8`,
+  // unconditionally) until this landed.
+  suspected: { utf8: "~", ascii: "~", role: "warn" },
+  reproduced: { utf8: "=", ascii: "=", role: "dim" },
   elision: { utf8: "…", ascii: ".", role: "dim" },
   retry: { utf8: "↻", ascii: "r", role: "warn" },
 } as const satisfies Record<string, GlyphDefinition>;

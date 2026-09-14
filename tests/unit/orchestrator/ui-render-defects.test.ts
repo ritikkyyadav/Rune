@@ -69,6 +69,18 @@ function liveHarness() {
         .split("\n")
         .map((row) => row.trim())
         .filter(Boolean),
+    /**
+     * One entry per block the sink still holds.
+     *
+     * The unit an orphan is counted in. It used to be lines, because a tool
+     * call was one line — and then §2.3 gave a tool call a frame, so a call
+     * that lands correctly is now two or three lines and a line count can no
+     * longer tell "one call rendered whole" from "two calls, one orphaned".
+     */
+    blocks: () =>
+      order
+        .map((handle) => blocks.get(handle))
+        .filter((block): block is string => block != null && block.trim() !== ""),
   };
 }
 
@@ -110,10 +122,11 @@ describe("D1 -- a parallel tool batch does not orphan its rows", () => {
     );
     h.turn.finish();
 
-    // Two calls, two rows. It used to be four: the two rows the calls opened
+    // Two calls, two blocks. It used to be four: the two rows the calls opened
     // were orphaned where they stood and the finished rows were appended
-    // underneath them.
-    expect(h.rows()).toHaveLength(2);
+    // underneath them. Counted in blocks rather than lines, because a boxed
+    // call is three lines that are one call (§2.3).
+    expect(h.blocks()).toHaveLength(2);
     const out = h.output();
     expect(out.match(/src\/a\.ts/g) ?? []).toHaveLength(1);
     expect(out.match(/needle/g) ?? []).toHaveLength(1);

@@ -121,7 +121,7 @@ describe("ui/banner", () => {
     const lines = banner(120)
       .split("\n")
       .filter((line) => line.trim());
-    expect(stripAnsi(F.seamRule(F.surfaceWidth(), F.lockup("Rune").cells))).toBe(lines[1]);
+    expect(stripAnsi(F.seamRule(F.chromeWidth(), F.lockup("Rune").cells))).toBe(lines[1]);
   });
 
   it("chrome aligns to the WINDOW, so the build lands on the rule's right edge", () => {
@@ -134,25 +134,46 @@ describe("ui/banner", () => {
       const lines = banner(columns)
         .split("\n")
         .filter((line) => line.trim());
-      // Symmetric margin: MARK on the left, the same on the right.
-      expect(lines[0]!.length).toBe(Math.max(20, columns - 2));
+      // The header spans the measure it is HANDED, to that measure's last
+      // cell. It used to stop two cells short of it — MARK on the left and a
+      // matching inset on the right — which is a margin a block's own rules
+      // want and the window's chrome does not: at 120 columns the frame hands
+      // the header 119 and the design draws the seam to column 119, where the
+      // inset drew it to 117 (§4.1 lane A, "unfinished" item 1).
+      //
+      // The margin that keeps a row off the terminal's last cell has not gone
+      // anywhere; it moved to the one place that knows about it. `frameCols()`
+      // is `cols() - 1`, so a header drawn at the frame's measure already ends
+      // one cell inside the window — see the case below.
+      expect(lines[0]!.length).toBe(Math.max(20, columns));
       expect(lines[0]!.trimEnd()).toMatch(/sample-app/);
     }
   });
 
-  it("rules span the window; every line stays inside it", () => {
+  it("rules span the measure they are handed, to its last cell", () => {
     for (const columns of [44, 60, 100, 220]) {
       const lines = banner(columns)
         .split("\n")
         .filter((line) => line.trim());
       const hair = lines.at(-1)!;
       expect(hair).toMatch(/^ {2}━+─+$/);
-      expect(hair.length).toBe(Math.max(20, columns - 2));
+      expect(hair.length).toBe(Math.max(20, columns));
       // …and it is exactly as wide as the identity row it closes.
       expect(hair.length).toBe(lines[0]!.length);
-      // …while every line still stays inside the window, never touching its
-      // last cell (a full-width line wraps, and a wrap desyncs the composer).
-      for (const line of lines) expect(line.length).toBeLessThan(columns);
+    }
+  });
+
+  it("stays off the terminal's last cell at the measure the frame hands it", () => {
+    // The frame draws the header under `atWidth(frameCols())`, and
+    // `frameCols()` is `cols() - 1`. That one reserved column is the whole of
+    // the wrap protection: a line that touches the terminal's final cell wraps,
+    // and a wrap desyncs the pinned region's relative cursor math.
+    for (const windowCols of [44, 60, 80, 100, 120, 220]) {
+      const frameCols = Math.max(8, windowCols - 1);
+      const lines = banner(frameCols)
+        .split("\n")
+        .filter((line) => line.trim());
+      for (const line of lines) expect(line.length).toBeLessThan(windowCols);
     }
   });
 

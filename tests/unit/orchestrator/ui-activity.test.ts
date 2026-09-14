@@ -22,12 +22,56 @@ import { setTermWidthOverride } from "../../../packages/orchestrator/src/bin/ui/
 
 const plain = (s: string) => stripAnsi(s);
 
+/**
+ * A box, split into the three parts §2.3 gives every tool call: a title row
+ * that opens the frame and carries the verb and the argument verbatim, the
+ * tool's own lines inside it, and a receipt row that closes it and carries the
+ * outcome and the metrics.
+ *
+ * The frame is what these tests check most often, because it is the property a
+ * box has that a rail does not: it closes. A rectangle that does not close has
+ * stopped being a rectangle, and it is the failure that a width change causes
+ * and an eye does not catch.
+ */
+function boxParts(block: string): {
+  title: string;
+  body: string[];
+  /** Body rows with the frame taken off: what the tool actually printed. The
+   *  pad between the text and the right edge is the frame's, not the tool's. */
+  text: string[];
+  receipt: string;
+} {
+  const lines = plain(block).split("\n");
+  const body = lines.slice(1, -1);
+  return {
+    title: lines[0]!,
+    body,
+    text: body.map((row) => row.replace(/^ {2}[\u2502|] /, "").replace(/\s*[\u2502|]$/, "")),
+    receipt: lines.at(-1)!,
+  };
+}
+
+/** Both corners present, on both rows, ending in the same column. */
+function expectClosed(block: string): void {
+  const { title, body, receipt } = boxParts(block);
+  expect(title).toMatch(/^ {2}\u250c .+\u2510$/);
+  expect(receipt).toMatch(/^ {2}\u2514 .+\u2518$/);
+  expect(title.length).toBe(receipt.length);
+  // Every body row stands between the two side edges, at the same measure. A
+  // body row that is short is a hole in the frame; one that is long has pushed
+  // the right edge off the row it belongs to.
+  for (const row of body) {
+    expect(row).toMatch(/^ {2}\u2502 .*\u2502$/);
+    expect(row.length).toBe(title.length);
+  }
+}
+
 function tool(over: Partial<ToolActivityView>): ToolActivityView {
   return { toolName: "bash", args: {}, result: "", success: true, ...over };
 }
 
 describe("renderToolActivity — one call, one row", () => {
-  it("renders a read as a single rail row with the line count it reported", () => {
+  it("frames a read, with the span it reported in the receipt", () => {
     const out = plain(
       renderToolActivity(
         tool({
@@ -42,11 +86,19 @@ describe("renderToolActivity — one call, one row", () => {
         }),
       ),
     );
-    expect(out.split("\n")).toHaveLength(1);
-    // A read that returned takes the neutral mark. What the row is *for* is the
-    // receipt on the right — the line count — and a green tick here would only
-    // compete with it.
-    expect(out).toMatch(/^ {4}│ {3}read {2}src\/engine\.ts {2,}120 lines$/);
+    // A read produced a FILE, and a file is code: §2.3 frames it. With nothing
+    // to preview -- this result carried no content -- the box is its two
+    // structural rows and no body, which is still a frame and still says which
+    // file and how much of it.
+    expectClosed(out);
+    const { title, body, receipt } = boxParts(out);
+    expect(body).toEqual([]);
+    expect(title).toContain("read  src/engine.ts");
+    // The neutral mark, and the rung in words. A read is quotable output, so it
+    // is `observed`; the tick costs a test that failed on the parent commit and
+    // a box that spent it here would outrank the ledger.
+    expect(receipt).toContain("· observed · 120 lines");
+    expect(receipt).not.toContain("✓");
   });
 
   it("names the range when a read was partial, rather than implying the whole file", () => {
@@ -103,7 +155,7 @@ describe("renderToolActivity — one call, one row", () => {
     expect(out.split("\n")).toHaveLength(1);
   });
 
-  it("states a passing check as its verdict alone -- the print-out is the fold's", () => {
+  it("frames a passing check around the evidence that says it passed", () => {
     const out = plain(
       renderToolActivity(
         tool({
@@ -118,12 +170,22 @@ describe("renderToolActivity — one call, one row", () => {
           }),
         }),
       ),
-    ).split("\n");
-    expect(out[0]).toContain("run   bun test tests/unit/");
-    expect(out[0]).toContain("2.6s");
-    expect(out[1]).toBe("    │ │ 37 passed");
-    expect(out).toHaveLength(2);
-    expect(out.join()).not.toContain("exit_code");
+    );
+    // It used to be the tally alone: one row saying `37 passed`, with the
+    // print-out behind the fold. Inside a frame the evidence costs four rows,
+    // and four rows is the difference between being TOLD a suite passed and
+    // seeing it say so.
+    expectClosed(out);
+    const { title, body, receipt } = boxParts(out);
+    expect(title).toContain("run   bun test tests/unit/");
+    expect(body.join("\n")).toContain("37 passed in 1.9s");
+    // The metrics are the receipt's, in order: how it ended, its tally, how
+    // long it took.
+    expect(receipt).toContain("✓");
+    expect(receipt).toContain("exit 0");
+    expect(receipt).toContain("2.6s");
+    // Never the raw envelope the tool returned.
+    expect(out).not.toContain("exit_code");
   });
 
   it("shows a failed command as a signal excerpt closed by its own verdict", () => {
@@ -141,19 +203,27 @@ describe("renderToolActivity — one call, one row", () => {
           }),
         }),
       ),
-    ).split("\n");
-    expect(out[0]).toContain("run   pytest -q");
-    // The excerpt keeps the verdict-carrying lines and drops the chatter.
-    expect(out.join("\n")).toContain("FAILED tests/a.py::test_x");
-    expect(out.at(-1)).toBe("    │ 2 failed, 5 passed in 0.2s");
-    expect(out.join("\n")).not.toContain("collecting item 2\n");
-    // Contained: a failure never commits a wall.
-    expect(out.length).toBeLessThanOrEqual(12);
-    // The row above already names the command; the rail does not repeat it.
-    expect(out.filter((l) => l.includes("pytest -q"))).toHaveLength(1);
+    );
+    expectClosed(out);
+    const { title, body, receipt } = boxParts(out);
+    expect(title).toContain("run   pytest -q");
+    // The excerpt keeps the verdict-carrying lines and drops the chatter, and
+    // the runner's own last line is the body's last row -- which is where a
+    // runner puts its verdict.
+    expect(body.join("\n")).toContain("FAILED tests/a.py::test_x");
+    expect(body.at(-1)).toContain("2 failed, 5 passed in 0.2s");
+    expect(body.join("\n")).not.toContain("collecting item 2\n");
+    // Contained: a failure never commits a wall. The 12-row body cap is the
+    // keel rule -- nothing larger enters the workspace without a keystroke --
+    // and the two frame rows are on top of it.
+    expect(out.split("\n").length).toBeLessThanOrEqual(14);
+    expect(body.length).toBeLessThanOrEqual(12);
+    expect(receipt).toContain("✗");
+    // The title already names the command; nothing below repeats it.
+    expect(out.split("\n").filter((l) => l.includes("pytest -q"))).toHaveLength(1);
   });
 
-  it("prefers a runner's tally over the shell's exit code when both are known", () => {
+  it("carries the shell's exit code AND the runner's tally: two different facts", () => {
     const out = plain(
       renderToolActivity(
         tool({
@@ -168,9 +238,16 @@ describe("renderToolActivity — one call, one row", () => {
         }),
       ),
     );
-    expect(out).toContain("│ ✗ run ");
-    expect(out).toContain("│ 1 failed, 24 passed");
-    expect(out).not.toContain("exit 1");
+    // The row form had one receipt cell and had to choose; a receipt row has
+    // space for the metrics in order, and they answer different questions.
+    // `exit 1` is what the shell returned -- the fact a script branches on --
+    // and `1 failed, 24 passed` is what the runner counted.
+    expectClosed(out);
+    const { body, receipt } = boxParts(out);
+    expect(receipt).toContain("✗");
+    expect(receipt).toContain("exit 1");
+    expect(receipt).toContain("1 failed, 24 passed");
+    expect(body.join("\n")).toContain("1 failed | 1 passed (2)");
   });
 
   it("falls back to the exit code when a failed command printed nothing", () => {
@@ -187,7 +264,7 @@ describe("renderToolActivity — one call, one row", () => {
     expect(out).toContain("exit 1");
   });
 
-  it("keeps an ordinary one-line command to one row and its one line of output", () => {
+  it("keeps an ordinary one-line command to one body row", () => {
     const out = plain(
       renderToolActivity(
         tool({
@@ -196,10 +273,13 @@ describe("renderToolActivity — one call, one row", () => {
           result: JSON.stringify({ stdout: "9be117a\n", stderr: "", exit_code: 0 }),
         }),
       ),
-    ).split("\n");
-    expect(out).toHaveLength(2);
-    // The output line is verbatim output, on the output rail.
-    expect(out[1]).toBe("    │ 9be117a");
+    );
+    expectClosed(out);
+    const { body, text, receipt } = boxParts(out);
+    // One line in, one line out: reformatted never, inside the frame.
+    expect(body).toHaveLength(1);
+    expect(text[0]).toBe("9be117a");
+    expect(receipt).toContain("exit 0");
   });
 
   it("ALWAYS shows an edit's diff, with real line numbers and signed counts", () => {
@@ -214,17 +294,20 @@ describe("renderToolActivity — one call, one row", () => {
           }),
         }),
       ),
-    ).split("\n");
+    );
+    expectClosed(out);
+    const { title, text, receipt } = boxParts(out);
     // The verb column is held whether or not a row carries a mark, so an edit
     // lines up with the reads above it instead of hanging two cells left.
-    expect(out[0]).toMatch(/^ {4}│ {3}edit {2}src\/engine\.ts/);
-    expect(out[0]).toContain("edit  src/engine.ts");
-    expect(out[0]).toContain("+1 -1 | 1 hunk");
-    expect(out[1]).toBe("    │    1 - const a = 1;");
-    expect(out[2]).toBe("    │    1 + const a = 2;");
-    // An edit carries no mark at all: the diff below it is the evidence, and it
-    // does not need a tick to vouch for it.
-    expect(out[0]).not.toContain("✓");
+    expect(title).toMatch(/^ {2}\u250c edit {2}src\/engine\.ts /);
+    // The diff is banded INSIDE the frame: the frame is the left edge, and the
+    // rail that used to carry it would be a second left edge on the same row.
+    expect(text[0]).toBe("   1 - const a = 1;");
+    expect(text[1]).toBe("   1 + const a = 2;");
+    expect(receipt).toContain("+1 -1 | 1 hunk");
+    // An edit's receipt carries no tick: the diff above it is the evidence, and
+    // it does not need one to vouch for it.
+    expect(receipt).not.toContain("✓");
   });
 
   it("renders a new file as a write with its own line count", () => {
@@ -344,11 +427,14 @@ describe("renderTranscript — batch replay", () => {
     expect(plain(renderTranscript(reads))).toBe("    │ › read 3 files");
   });
 
-  it("keeps a single read as its own row", () => {
+  it("keeps a single read as its own box", () => {
     const out = plain(
       renderTranscript([L({ role: "tool", toolName: "read_file", args: { path: "only.ts" } })]),
     );
-    expect(out).toContain("│   read  only.ts");
+    // One read is worth naming; three are a burst and collapse to the chamber
+    // row above. The named one is framed like every other call.
+    expect(out).toContain("┌ read  only.ts");
+    expect(out.split("\n").at(-1)).toMatch(/^ {2}\u2514 .+\u2518$/);
   });
 
   it("interleaves prose → work → prose as three distinct blocks", () => {
@@ -360,7 +446,9 @@ describe("renderTranscript — batch replay", () => {
       ]),
     ).split("\n");
     expect(out.filter((l) => l.startsWith(`  ${STEP} `))).toHaveLength(2);
-    expect(out.some((l) => l.includes("│   run   ls"))).toBe(true);
+    // The work between them is a box, which is the whole of what separates it
+    // from the two sentences around it.
+    expect(out.some((l) => l.includes("\u250c run   ls"))).toBe(true);
   });
 
   it("spends the green tick only on a command that checked something", () => {
@@ -373,16 +461,23 @@ describe("renderTranscript — batch replay", () => {
             result: JSON.stringify({ stdout: "42 passed\n", stderr: "", exit_code: exit }),
           }),
         ),
-      ).split("\n")[0]!;
+      )
+        .split("\n")
+        .at(-1)!;
+    // The mark moved from the row's left edge to the RECEIPT, which is the row
+    // that knows how the call ended -- a title row is written before the call
+    // returns and cannot carry an outcome without lying for the duration.
+    //
     // A check that came back clean is the one routine outcome worth announcing.
-    expect(run("npx vitest run")).toContain("│ ✓ run ");
-    expect(run("bun run typecheck")).toContain("│ ✓ run ");
-    // Anything that merely ran reports itself in the receipt column instead.
-    expect(run("git status --short")).toContain("│   run ");
-    expect(run("mkdir -p dist")).toContain("│   run ");
+    expect(run("npx vitest run")).toContain("\u2514 ✓ ");
+    expect(run("bun run typecheck")).toContain("\u2514 ✓ ");
+    // Anything that merely ran takes the neutral mark: a tick spent on fifteen
+    // routine calls is a tick that has been spent before the one that mattered.
+    expect(run("git status --short")).toContain("\u2514 · ");
+    expect(run("mkdir -p dist")).toContain("\u2514 · ");
     // A failure still interrupts, checked or not.
-    expect(run("npx vitest run", 1)).toContain("│ ✗ run ");
-    expect(run("git push", 1)).toContain("│ ✗ run ");
+    expect(run("npx vitest run", 1)).toContain("\u2514 ✗ ");
+    expect(run("git push", 1)).toContain("\u2514 ✗ ");
   });
 
   it("renders a compaction note", () => {
@@ -456,7 +551,8 @@ describe("the harness envelope around a tool result", () => {
       const out = plain(
         renderToolActivity(tool({ toolName: "edit_file", args: { path: "src/a.ts" }, result })),
       );
-      expect(out, result.slice(0, 40)).toContain("│   edit  src/a.ts  +1 -1 | 1 hunk");
+      expect(out, result.slice(0, 40)).toContain("\u250c edit  src/a.ts ");
+      expect(out, result.slice(0, 40)).toContain("+1 -1 | 1 hunk");
       expect(out, result.slice(0, 40)).toContain("2 - b");
       expect(out, result.slice(0, 40)).toContain("2 + B");
     }
@@ -472,7 +568,7 @@ describe("a command that merely ran shows its first lines and its last", () => {
       result: JSON.stringify({ stdout, stderr: "", exit_code: 0, timed_out: false }),
     });
     const out = plain(renderToolActivity(view));
-    expect(out).toContain("│   run   ls -lh");
+    expect(out).toContain("\u250c run   ls -lh");
     for (const n of [1, 2, 3, 4]) expect(out).toContain(`│ row ${n}`);
     expect(out).not.toContain("row 5\n");
     expect(out).toContain("7 more lines");
@@ -492,7 +588,9 @@ describe("a command that merely ran shows its first lines and its last", () => {
         }),
       ),
     );
-    expect(out).toContain("│ 995 app.js");
+    // Reformatted never: `wc -l` right-aligns its count and the box keeps the
+    // two leading spaces it aligned with. The rail used to trim them.
+    expect(out).toContain("│   995 app.js");
     expect(out).not.toContain("more line");
   });
 });
@@ -642,8 +740,14 @@ describe("apply_patch renders a row and a diff per file", () => {
       }),
     });
     const out = plain(renderToolActivity(view));
-    expect(out).toContain("│   edit  src/a.ts  +1 -1 | 1 hunk");
-    expect(out).toContain("│   edit  src/gone.ts  -2 | deleted");
+    // One box per file, each closing on its own receipt: a patch that touched
+    // two files is two changes, and one frame around both would say otherwise.
+    expect(out).toContain("\u250c edit  src/a.ts ");
+    expect(out).toContain("+1 -1 | 1 hunk");
+    expect(out).toContain("\u250c edit  src/gone.ts ");
+    expect(out).toContain("-2 | deleted");
+    expect(out.split("\n").filter((l) => l.startsWith("  \u250c "))).toHaveLength(2);
+    expect(out.split("\n").filter((l) => l.startsWith("  \u2514 "))).toHaveLength(2);
     expect(out).toContain("1 - one");
     expect(out).not.toContain("apply_patch");
     expect(out).not.toContain('{"');

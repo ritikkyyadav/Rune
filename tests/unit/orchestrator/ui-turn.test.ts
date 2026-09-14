@@ -167,10 +167,10 @@ describe("TurnRenderer — customizer activity stream", () => {
     h.turn.finish();
     // One chamber row states the whole burst; the per-call record is the fold.
     expect(h.output()).toContain("read 1 file, listed 1 directory, ran 1 command");
-    expect(h.output()).not.toContain("│   read  src/app.ts");
-    expect(h.detail()).toContain("│   read  src/app.ts");
+    expect(h.output()).not.toContain("\u250c read  src/app.ts");
+    expect(h.detail()).toContain("\u250c read  src/app.ts");
     expect(h.detail()).toContain("│   list  src/");
-    expect(h.detail()).toContain("│   run   git status --short");
+    expect(h.detail()).toContain("\u250c run   git status --short");
   });
 
   it("keeps a short exploration burst as one row per call", () => {
@@ -179,7 +179,7 @@ describe("TurnRenderer — customizer activity stream", () => {
     h.turn.onEvent(toolEnd("list_dir", { path: "src" }));
     h.turn.onEvent({ type: "text_delta", text: "Two calls, both worth naming." });
     h.turn.finish();
-    expect(h.output()).toContain("│   read  src/app.ts");
+    expect(h.output()).toContain("\u250c read  src/app.ts");
     expect(h.output()).toContain("│   list  src/");
   });
 
@@ -302,7 +302,7 @@ describe("TurnRenderer — customizer activity stream", () => {
     );
     h.turn.onEvent({ type: "text_delta", text: "Updated the handler." });
     h.turn.finish();
-    expect(h.output()).toContain("│   edit  src/app.ts");
+    expect(h.output()).toContain("\u250c edit  src/app.ts");
     expect(h.output()).toContain("+2 -1 | 1 hunk");
     expect(h.output()).toContain("1 - old");
     expect(h.output()).toContain("1 + new");
@@ -382,7 +382,7 @@ describe("TurnRenderer — customizer activity stream", () => {
     expect(stripAnsi(h.turn.fullLog() ?? "")).not.toContain("private hidden reasoning");
   });
 
-  it("states a passing check's verdict inline and holds the print-out in the fold", () => {
+  it("frames a passing check around the evidence, with its tally on the receipt", () => {
     const h = harness();
     const result = JSON.stringify({
       stdout: "suite A passed\nsuite B passed\n42 tests passed",
@@ -393,10 +393,24 @@ describe("TurnRenderer — customizer activity stream", () => {
     h.turn.onEvent(toolEnd("bash", { command: "bun test" }, result));
     h.turn.onEvent({ type: "text_delta", text: "All checks pass." });
     h.turn.finish();
-    expect(h.output()).toContain("✓ run   bun test");
-    expect(h.output()).toContain("│ 42 passed");
-    expect(h.output()).not.toContain("suite A passed");
-    expect(h.detail()).toContain("suite A passed");
+    // The title opens the frame with the command verbatim; the tick is on the
+    // receipt, which is the row that knows how it ended.
+    expect(h.output()).toContain("\u250c run   bun test");
+    expect(h.output()).toContain("\u2514 ✓ exit 0");
+    // The runner's own last line is inside the frame; its tally is on the
+    // receipt. A passing check used to show only the tally.
+    expect(h.output()).toContain("│ 42 tests passed");
+    expect(h.output()).toContain("\u2514 ✓ exit 0 · 42 passed");
+    // The box holds the runner's opening lines too: §2.3's body is the tool's
+    // own output, and three rows of a suite saying so is the difference between
+    // being told it passed and seeing it. It used to be the tally alone, with
+    // the print-out behind the fold.
+    expect(h.output()).toContain("│ suite A passed");
+    // …and with the whole print-out on screen there is nothing left to fold.
+    // A fold offering a keystroke that reveals what is already visible is a
+    // promise the transcript cannot keep. (The cap, and what it holds back,
+    // are pinned in ui-activity.test.ts against a twelve-line print-out.)
+    expect(h.detail()).toBe("");
   });
 
   it("shows a failing check's evidence excerpt, closed by its own verdict", () => {
@@ -412,7 +426,8 @@ describe("TurnRenderer — customizer activity stream", () => {
     h.turn.onEvent({ type: "text_delta", text: "Nine failures to fix." });
     h.turn.finish();
     const out = h.output();
-    expect(out).toContain("✗ run   pytest -q");
+    expect(out).toContain("\u250c run   pytest -q");
+    expect(out).toContain("\u2514 ✗ exit 1");
     expect(out).toContain("FAILED tests/storage.py::test_round_trip");
     expect(out).toContain("9 failed, 61 passed in 0.29s");
     // The excerpt is an excerpt: the forty lines of runner chatter stay folded.
@@ -488,8 +503,8 @@ describe("renderReplay", () => {
     expect(output).not.toContain("› fix the bug"); // no longer a chevron marker
     expect(output).toContain("◇ I am reading the files.");
     // Two reads are below the chamber threshold: both worth naming.
-    expect(output).toContain("│   read  a.ts");
-    expect(output).toContain("│   read  b.ts");
+    expect(output).toContain("\u250c read  a.ts");
+    expect(output).toContain("\u250c read  b.ts");
     expect(output).toContain("1 file changed · 1 check passed");
     expect(output).toContain("Fixed and verified.");
   });
@@ -672,8 +687,9 @@ describe("TurnRenderer — a sink that can amend", () => {
     });
     // The same block, finished: no second row, no in-flight mark.
     expect(h.blocks()).toBe(1);
-    expect(h.output()).toContain("│ ✓ run   npx vitest run");
-    expect(h.output()).toContain("│ │ 12 passed");
+    expect(h.output()).toContain("\u250c run   npx vitest run");
+    expect(h.output()).toContain("\u2514 ✓ exit 0");
+    expect(h.output()).toContain("│ 12 passed");
     expect(h.output()).not.toContain("›");
   });
 
@@ -697,8 +713,9 @@ describe("TurnRenderer — a sink that can amend", () => {
     read(0);
     read(1);
     // Two paths are worth naming, and they are on screen already.
-    expect(h.output()).toContain("│   read  src/file-0.ts  10 lines");
-    expect(h.output()).toContain("│   read  src/file-1.ts  10 lines");
+    expect(h.output()).toContain("\u250c read  src/file-0.ts");
+    expect(h.output()).toContain("\u2514 · observed · 10 lines");
+    expect(h.output()).toContain("\u250c read  src/file-1.ts");
     expect(h.blocks()).toBe(2);
     read(2);
     // The third makes the run one fact: one chamber row, the calls in its fold.
@@ -716,7 +733,7 @@ describe("TurnRenderer — a sink that can amend", () => {
     expect(h.output().indexOf("read 30 files")).toBeLessThan(
       h.output().indexOf("The implementation is mapped."),
     );
-    expect(h.output()).toContain("│   read  src/file-30.ts");
+    expect(h.output()).toContain("\u250c read  src/file-30.ts");
     h.turn.finish();
   });
 
@@ -879,9 +896,12 @@ describe("TurnRenderer — the plan is set down once", () => {
       .output()
       .split("\n")
       .filter((l) => l.trim());
-    // Every row is one of: the dot (the model), the rail (an action), the diff.
+    // Every row is one of: the diamond (the model speaking), a box edge (a
+    // program reporting), or the rail an unboxed action still stands on.
+    // Nothing else may appear -- a harness-authored row would have no mark at
+    // all, which is exactly how one would sneak in.
     for (const row of rows) {
-      expect(row, row).toMatch(/^\s*(◇|│)/);
+      expect(row, row).toMatch(/^\s*(◇|│|\u250c|\u2514|\u2502)/);
     }
     expect(h.output()).not.toContain("changed");
     expect(h.output()).not.toContain("reviewed");

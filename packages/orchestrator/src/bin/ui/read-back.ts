@@ -18,7 +18,7 @@ import { truncate, wrap } from "./render";
 import { glyph } from "./glyphs";
 import * as F from "./flow";
 import type { Brief, BriefLedger } from "../../brief";
-import { RUNG_GLYPH, type ClaimRung } from "../../brief";
+import type { ClaimRung } from "../../brief";
 
 const LABEL_W = 10;
 
@@ -67,7 +67,12 @@ function closeRow(
   width: number,
   paint: (s: string) => string,
 ): string[] {
-  const mark = rung ? RUNG_GLYPH[rung].utf8 : " ";
+  // The rung's mark comes from the closed alphabet, which knows the terminal's
+  // rung. This used to read `RUNG_GLYPH[rung].utf8` -- the UTF-8 face,
+  // unconditionally -- so the close's ticks were the one place in the product
+  // that put a multi-byte character on a seven-bit terminal, and the ASCII twin
+  // brief.ts carries beside it was never asked for.
+  const mark = rung ? F.rungMark(rung) : " ";
   const head = `${F.MARK}${paint(mark)} ${text(truncate(text_, Math.max(20, width - 34)))}`;
   return [head, `${F.RAIL_IN}${faint(truncate(receipt, width - 8))}`];
 }
