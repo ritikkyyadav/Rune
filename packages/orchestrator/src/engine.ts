@@ -115,7 +115,7 @@ import type {
 import { buildGateway, providerStatus } from "./provider-registry";
 import type { EnterpriseRouteConfig } from "./provider-registry";
 import type { ProviderStatusRow, BuildGatewayOpts } from "./provider-registry";
-import { AgentLoop, abortableSleep, parseInterjection } from "./agent-loop";
+import { AgentLoop, abortableSleep, isFixShaped, parseInterjection } from "./agent-loop";
 import { renderPitfallsNote, selectPitfalls } from "./known-pitfalls";
 import type {
   PermissionCheck,
@@ -206,6 +206,15 @@ import {
   type Brief,
   type BriefHandler,
 } from "./brief";
+import {
+  amendContract,
+  carryForward,
+  computeVerdict,
+  contractDigest,
+  createContract,
+  type CompletionVerdict,
+  type TaskContract,
+} from "./contract";
 import { interpretIntent } from "./intent";
 import { createNoteHypothesisTool, createRecordDecisionTool } from "./narrative-tools";
 import { buildDecisionRecord, hasRecord } from "./decision-record";
@@ -1293,6 +1302,18 @@ export class Engine {
   /** The contract for the task in flight, and the only thing that can close it. */
   private brief?: Brief;
   private ledger?: BriefLedger;
+  /**
+   * The task contract, created by the RUNTIME at intake (Phase 5B).
+   *
+   * It exists whether or not the model ever calls `read_back`: the brief is
+   * the model's account of the request, and the contract is the runtime's.
+   * The read-back amends it; `intent` — the user's own words — never moves.
+   */
+  private contract: TaskContract | null = null;
+  /** Digest of the last persisted contract, so an unchanged one writes no row. */
+  private lastContractDigest: string | null = null;
+  /** The verdict this run's terminal event carried, for the durable row. */
+  private liveVerdict: CompletionVerdict | null = null;
 
   // ─── The lifecycle projection (Phase 2) ───
   //
@@ -1701,6 +1722,13 @@ export class Engine {
           // every acceptance criterion the user had confirmed and a resumed run
           // could not know which of them were already met.
           this.persistBrief();
+          // The contract is AMENDED, never replaced: the read-back supplies the
+          // criteria and the scope, `intent` stays the user's own words, and
+          // `Brief.request` — verbatim by construction — is the drift check.
+          if (this.contract) {
+            this.contract = amendContract(this.contract, brief);
+            this.persistContract();
+          }
         },
         // The model's one revision of the task kind: the read-back is where it
         // says what it understood the work to BE, so it is the honest place
@@ -4995,6 +5023,34 @@ export class Engine {
     taskState.setEvidenceGate(reliability.evidenceGate);
     const messageBudget = turnBudgetForMessage(userMessage, reliability.maxTurns);
 
+    // ── The task contract, at intake (Phase 5B) ──
+    //
+    // The only scope in the codebase that already holds the verbatim user
+    // message, the resolved budget, the prior events and the workspace
+    // revision — and it runs BEFORE the first model call, which is what makes
+    // the contract a harness record rather than a model artifact. There was no
+    // deterministic intake at all before this: a request became a brief only
+    // if the model chose to call `read_back`, so a run the model never read
+    // back had nothing anywhere saying what it was for.
+    //
+    // Criteria are empty here and `shape` is the mechanical guess; the
+    // read-back AMENDS both (`onBrief`). `intent` is never rewritten.
+    this.contract = createContract({
+      intent: userMessage,
+      fixShaped: isFixShaped(userMessage),
+      turns: messageBudget.maxTurns,
+      secondWinds: messageBudget.conversational ? 0 : reliability.secondWinds,
+      costUsd: this.config.maxSessionCostUsd ?? null,
+    });
+    // A run continuing one that died with work open inherits its criteria:
+    // they are still in force, and an empty contract would report "no criteria
+    // stated" while the restored ledger held verified ones. A message after a
+    // CLEAN finish starts fresh and is expected to read back again.
+    if (priorRunInterrupted && this.brief) {
+      this.contract = carryForward(this.contract, this.brief);
+    }
+    this.persistContract();
+
     // ── What an interrupted run hands forward (G6) ──
     //
     // Only a run that died WITHOUT running its close hands anything on: a run
@@ -5305,6 +5361,14 @@ export class Engine {
           if (this.brief.request && this.brief.request !== this.currentGoal()) return null;
           return { total: this.ledger.total, verified: this.ledger.met };
         },
+        // What every terminal event computes its verdict from. Unlike
+        // `ledgerStatus` this does NOT go null on brief/goal drift: a run
+        // whose read-back drifted still owes the user a verdict, and the
+        // drift is recorded on the contract rather than silencing it.
+        contractRecord: () =>
+          this.contract
+            ? { criteria: this.ledger?.criteria ?? [], checks: this.checkLog.all }
+            : null,
         jitDoctrine: (section) => this.takeJitDoctrine(sessionId, section),
       },
       this.gateway,
@@ -5450,6 +5514,10 @@ export class Engine {
         if (event.type === "turn_complete") {
           turnCount++;
           this.liveStatus = statusFromStopReason(event.stopReason);
+          // The verdict the loop computed on the state the gates saw. Kept for
+          // the durable row below rather than recomputed at teardown, where
+          // the plan and the ledger may already have moved.
+          if (event.verdict) this.liveVerdict = event.verdict;
           this.sessions.appendEvent(sessionId, {
             type: "checkpoint",
             payload: { summary: `auto-checkpoint at turn ${turnCount}` },
@@ -5881,7 +5949,15 @@ export class Engine {
       // hard throw between boundaries yields no `turn_complete` at all, and a
       // cancelled run's own terminal event can be the one that never arrives.
       if (this.liveStatus === "running") {
-        this.liveStatus = signal.aborted ? "aborted" : runError ? "provider_lost" : "end_turn";
+        // `provider_lost` is the PROVIDER's failure and nothing else. It used
+        // to be this line's answer for every run that carried an error, and
+        // four terminal exits emitted no `turn_complete` at all — so a loop
+        // detector kill, a barren-turn kill and a budget refusal all recorded
+        // as a dead network. Those three now name themselves (`loop_detected`,
+        // `barren`, `budget`); what is left here is a run that died BETWEEN
+        // boundaries and said nothing, which is `stalled`: not finished, and
+        // honest about not knowing more.
+        this.liveStatus = signal.aborted ? "aborted" : runError ? "stalled" : "end_turn";
       }
       if (this.liveStatus === "end_turn" && taskState.hasOpenTodos()) {
         this.liveStatus = "open_steps";
@@ -5896,9 +5972,39 @@ export class Engine {
       } catch {
         // The projection is a reading of the run; it must never break it.
       }
+
+      // ── The verdict, beside the terminal row ──
+      //
+      // One per run, always: a run that died before its loop could compute one
+      // gets it here, from the same three runtime records. Without the
+      // fallback the promise would hold only for the exits that survive long
+      // enough to keep it, which is the defect this phase exists to close.
+      if (this.contract) {
+        try {
+          const counts = taskState.todoCounts();
+          const verdict =
+            this.liveVerdict ??
+            computeVerdict({
+              criteria: this.ledger?.criteria ?? [],
+              checks: this.checkLog.all,
+              openSteps: counts.open,
+              totalSteps: counts.total,
+              stopReason: this.liveStatus,
+            });
+          this.sessions.appendEvent(sessionId, {
+            type: "verdict",
+            payload: { version: 1, verdict, contractDigest: contractDigest(this.contract) },
+          });
+        } catch {
+          // A reading of the run; it must never break the run.
+        }
+      }
       // Whatever the ledger ended at, durably — including any rung a check in
-      // this run moved after the brief was last written.
+      // this run moved after the brief was last written. The contract holds
+      // the SAME criterion objects, so its row is re-taken here for the same
+      // reason; the digest makes it a no-op when nothing moved.
       this.persistBrief();
+      this.persistContract();
 
       // Mark session as cleanly ended
       this.sessions.appendEvent(sessionId, {
@@ -6070,6 +6176,10 @@ export class Engine {
         this.liveChildren.clear();
         this.lastLifecycleDigest = null;
         this.lastBriefDigest = null;
+        // The contract is per MESSAGE — the next one states its own intent —
+        // and its verdict belongs to the run that earned it.
+        this.lastContractDigest = null;
+        this.liveVerdict = null;
       }
       // A spend ceiling that stops the run without saying so is indistinguishable
       // from a crash. Report it once, in the user's terms — what the limit was,
@@ -6567,6 +6677,38 @@ export class Engine {
    * held every criterion and its rung in memory and a restart discarded all
    * of it, so "user constraints survive" had nothing to survive IN.
    */
+  /**
+   * Persist the task contract, when it moved.
+   *
+   * A `contract` row, latest-wins, deduped by digest exactly as the brief is.
+   * It is written at INTAKE — before the first model call — so it is the one
+   * row a run that died on its opening turn still has, and so a replay can say
+   * what the dead run was for.
+   *
+   * It is a row of its own rather than a `run_trace` wrapper: `RUN_TRACE_EVENTS`
+   * is an allow-list over `AgentTurnEvent`, bound by the drift law in
+   * `tests/unit/protocol/exhaustiveness.test.ts` ("the three persistence sets
+   * name nothing that is not an event"), and the contract is not an event. The
+   * brief — which the same design note points at — is persisted exactly this
+   * way, and the VERDICT still travels the wrapper on `turn_complete`.
+   */
+  private persistContract(): void {
+    const sessionId = this.liveSessionId;
+    const contract = this.contract;
+    if (!sessionId || !contract) return;
+    const digest = contractDigest(contract);
+    if (digest === this.lastContractDigest) return;
+    this.lastContractDigest = digest;
+    try {
+      this.sessions.appendEvent(sessionId, {
+        type: "contract",
+        payload: { version: 1, contract },
+      });
+    } catch {
+      // The contract is a record of the run; it must never break the run.
+    }
+  }
+
   private persistBrief(): void {
     const sessionId = this.liveSessionId;
     const brief = this.ledger?.snapshot ?? this.brief;

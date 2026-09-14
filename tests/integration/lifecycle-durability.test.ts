@@ -424,6 +424,48 @@ describe("a dependent multi-step change, killed inside a tool and resumed", () =
     for (const want of DONE_WHEN) expect(criteria).toContain(want);
   });
 
+  test("the contract survives the kill: it is written before the first model call", () => {
+    // Phase 5B. The brief is the MODEL's account of the request and exists
+    // only if it chose to read back; the contract is the RUNTIME's and is
+    // written at intake, so it is the one row a run that died on its opening
+    // turn still has. This asserts it against the log as the SIGKILL left it,
+    // not the recovered one.
+    const rows = must(rowsAfterKill, "the session log as the kill left it");
+    const contracts = rows.filter((r) => r.type === "contract");
+    expect(contracts.length).toBeGreaterThan(0);
+    const first = contracts[0]!.payload as {
+      version?: number;
+      contract?: { intent?: string; criteria?: unknown[] };
+    };
+    expect(first.version).toBe(1);
+    // Verbatim, and not the model's reading of it.
+    expect(first.contract?.intent).toBe(PROMPT);
+    // It precedes every assistant message: it cannot have come from a model call.
+    const firstAssistant = rows.find((r) => r.type === "assistant_msg");
+    expect(contracts[0]!.seq).toBeLessThan(firstAssistant?.seq ?? Number.MAX_SAFE_INTEGER);
+    // …and by the end of the recovered run it carries the read-back's criteria.
+    const recovered = must(rowsAfterRecovery, "the recovered session log")
+      .filter((r) => r.type === "contract")
+      .at(-1)!.payload as { contract?: { criteria?: Array<{ text?: string }> } };
+    for (const want of DONE_WHEN) {
+      expect((recovered.contract?.criteria ?? []).map((c) => c.text)).toContain(want);
+    }
+  });
+
+  test("the run's verdict is on the log, beside the terminal row", () => {
+    const rows = must(rowsAfterRecovery, "the recovered session log");
+    const verdicts = rows.filter((r) => r.type === "verdict");
+    expect(verdicts.length).toBeGreaterThan(0);
+    const last = verdicts.at(-1)!.payload as {
+      version?: number;
+      verdict?: { kind?: string; criteria?: unknown[] };
+      contractDigest?: string;
+    };
+    expect(last.version).toBe(1);
+    expect(["met", "partial", "unmet"]).toContain(String(last.verdict?.kind));
+    expect(String(last.contractDigest ?? "").length).toBeGreaterThan(0);
+  });
+
   test("unfinished dependencies survive: the plan the kill interrupted is still on the spine", () => {
     const state = must(S.latestTaskState(rowsAfterKill), "the spine as the kill left it");
     const todos = S.todosOf(state);

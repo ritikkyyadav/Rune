@@ -175,6 +175,36 @@ describe("the lifecycle projection", () => {
         (r.event.payload as { type?: string }).type === "turn_complete",
     );
     expect(terminal.length).toBeGreaterThanOrEqual(1);
+
+    // Phase 5B: the run's own account of what it was FOR, and what it did
+    // about it. Both are rows of their own, like `brief` — the contract is not
+    // an `AgentTurnEvent` and the three persistence sets may name nothing that
+    // is not one (`tests/unit/protocol/exhaustiveness.test.ts`).
+    const types = new Set(rows.map((r) => r.event.type));
+    expect(types.has("contract")).toBe(true);
+    expect(types.has("verdict")).toBe(true);
+    const contract = rows.filter((r) => r.event.type === "contract").at(-1)!.event.payload as {
+      version: number;
+      contract: { intent: string; criteria: unknown[] };
+    };
+    expect(contract.version).toBe(1);
+    // Verbatim: the contract's intent is the user's message, never rewritten.
+    expect(contract.contract.intent).toBe("Read the config file and tell me what it says.");
+    // Nothing read back, so nothing was ever stated to be true.
+    const verdict = rows.filter((r) => r.event.type === "verdict").at(-1)!.event.payload as {
+      version: number;
+      verdict: { kind: string; missing?: string[] };
+      contractDigest: string;
+    };
+    expect(verdict.verdict.kind).toBe("unmet");
+    expect(verdict.verdict.missing).toEqual(["no criteria stated"]);
+    expect(verdict.contractDigest.length).toBeGreaterThan(0);
+    // …and it rides the terminal event too, so a client that never reads the
+    // database gets the same answer off the wire.
+    const onWire = events.find(
+      (e): e is Extract<AgentTurnEvent, { type: "turn_complete" }> => e.type === "turn_complete",
+    );
+    expect(onWire?.verdict?.kind).toBe("unmet");
   });
 
   test("the workspace revision is recorded on the run's own marker", () => {

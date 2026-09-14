@@ -15,11 +15,13 @@ import { filesChangedFrom } from "./lifecycle";
 import type { Engine } from "./engine";
 import type {
   AgentTurnEvent,
+  CompletionVerdict,
   PermissionPrompt,
   TaskLifecycle,
   UserPermissionDecision,
 } from "@rune/protocol";
 import { assertNeverSoft } from "@rune/protocol";
+import { verdictLine } from "./contract";
 
 export interface HeadlessOptions {
   /** Emit a JSON envelope instead of plain text — for machine consumers. */
@@ -64,6 +66,15 @@ export interface HeadlessResult {
    * ended without a terminal event (a thrown turn).
    */
   stopReason?: string;
+  /**
+   * What the run did against what was asked (Phase 5B).
+   *
+   * `stopReason` says how the loop ended; this says whether it finished the
+   * TASK. They are different questions and a benchmark harness was only ever
+   * given the first: a run with 0 of 6 stated criteria verified ended
+   * `end_turn`, `ok: true`, exit 0. Absent when no contract was in scope.
+   */
+  verdict?: CompletionVerdict;
   toolCalls: number;
   toolErrors: number;
   /** Workspace-relative paths the run wrote or edited. */
@@ -143,6 +154,8 @@ export async function runHeadless(
   let fatalError: string | undefined;
   // The loop's own terminal verdict. Last one wins: a turn emits exactly one.
   let stopReason: string | undefined;
+  // What the run did against the contract, off the same terminal event.
+  let verdict: CompletionVerdict | undefined;
   // The lifecycle projection, latest wins — the last one carries the ending.
   let lifecycle: TaskLifecycle | undefined;
 
@@ -233,6 +246,7 @@ export async function runHeadless(
         // Nothing about that says the task was done.
         case "turn_complete":
           stopReason = event.stopReason;
+          if (event.verdict) verdict = event.verdict;
           break;
 
         // ── The lifecycle projection ──
@@ -284,6 +298,7 @@ export async function runHeadless(
       ok: false,
       error: err instanceof Error ? err.message : String(err),
       ...(stopReason ? { stopReason } : {}),
+      ...(verdict ? { verdict } : {}),
       toolCalls,
       toolErrors,
       filesChanged: [...filesChanged],
@@ -299,10 +314,15 @@ export async function runHeadless(
   const unfinished = stopReason ? UNFINISHED_STOP[stopReason] : undefined;
   const error = fatalError ?? unfinished;
   return {
-    text,
+    // The verdict is the LAST line of the answer, so `rune -P "…"` — whose
+    // stdout is `text` verbatim — ends by saying what the run did against what
+    // was asked. Appended only when a contract was in scope; a caller driving
+    // the engine without one reads exactly what it read before.
+    text: verdict ? `${text}${text.endsWith("\n") ? "" : "\n"}${verdictLine(verdict)}` : text,
     ok: error === undefined,
     ...(error === undefined ? {} : { error }),
     ...(stopReason ? { stopReason } : {}),
+    ...(verdict ? { verdict } : {}),
     toolCalls,
     toolErrors,
     filesChanged: [...filesChanged],
@@ -339,6 +359,16 @@ export const UNFINISHED_STOP: Record<string, string | undefined> = {
   // paths used to emit no terminal event whatsoever, so the envelope carried
   // an `error` and no `stopReason` key — JSON.stringify drops undefined.
   stalled: "The run stopped because nothing new was happening; the task is not finished.",
+  // ── What the HARNESS stopped (Phase 5B) ──
+  // All three emitted no terminal event at all, so the envelope carried an
+  // `error` with no `stopReason` key and the lifecycle row read `provider_lost`
+  // — a benchmark harness could not tell a killed loop from a dead network.
+  loop_detected:
+    "The harness stopped a repeating tool loop; nothing was progressing and the task is not finished.",
+  barren:
+    "Every tool call was refused before it ran; the run could not reach the workspace and the task is not finished.",
+  budget:
+    "The request was refused before it was sent because the run was out of budget; the task is not finished.",
 };
 
 /** The exit code a result deserves. */
@@ -380,6 +410,10 @@ export function headlessEnvelope(
       // How it ended, so "cancelled", "out of turns" and "done" are three
       // different answers to a machine consumer, not one boolean.
       stopReason: r.stopReason,
+      // …and what it did against what was ASKED, which is a different
+      // question: `end_turn` with none of the stated criteria verified is a
+      // finished loop and an unfinished task.
+      verdict: r.verdict,
       toolCalls: r.toolCalls,
       toolErrors: r.toolErrors,
       filesChanged: r.filesChanged,

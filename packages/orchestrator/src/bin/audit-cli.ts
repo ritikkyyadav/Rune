@@ -19,7 +19,8 @@ import { accent, danger, dim, faint, info, ok, text, warn } from "./ui/theme";
 import { formatCacheRate } from "../cost-report";
 import { getContextLimit, UNKNOWN_MODEL_CONTEXT_LIMIT } from "../tokenizer";
 import { MODEL_PRICING } from "@rune/llm-gateway";
-import type { DecisionRecord } from "@rune/protocol";
+import type { CompletionVerdict, DecisionRecord } from "@rune/protocol";
+import { verdictLine, type TaskContract } from "../contract";
 import { buildDecisionRecord, hasRecord, renderDecisionRecordMarkdown } from "../decision-record";
 
 type Row = { seq: number; event: SessionEvent };
@@ -377,6 +378,59 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
     say(
       `  ${dim(session.workspaceRoot)} ${dim("·")} ${text(session.model)}${session.provider ? dim(` on ${session.provider}`) : ""} ${dim("·")} ${dim(`${shortTs(session.createdAt)} → ${shortTs(session.updatedAt)}`)} ${dim("·")} ${dim(`${num(rows.length)} events`)}`,
     );
+
+    // ── The contract, and the verdict it was judged against (Phase 5B) ──
+    //
+    // Both are latest-wins rows of their own. The contract exists from intake
+    // whether or not the model ever read back, so a session that died on its
+    // opening turn can still say what it was FOR; the verdict says what the
+    // run did about it. Before them a page whose purpose is evidence could
+    // report "0 of 6 criteria verified" and "finished" on the same screen.
+    const contractRow = [...rows].reverse().find((r) => r.event.type === "contract");
+    const contract = contractRow
+      ? (payloadOf(contractRow).contract as TaskContract | undefined)
+      : undefined;
+    const verdictRow = [...rows].reverse().find((r) => r.event.type === "verdict");
+    const verdict = verdictRow
+      ? (payloadOf(verdictRow).verdict as CompletionVerdict | undefined)
+      : undefined;
+    if (contract) {
+      say();
+      say(
+        `  ${text("Contract")}  ${dim(contract.shape)} ${dim("·")} ${contract.intent.replace(/\s+/g, " ").slice(0, 140)}`,
+      );
+      if (contract.drift) {
+        say(
+          `    ${warn("read back as")} ${dim(contract.drift.replace(/\s+/g, " ").slice(0, 120))}`,
+        );
+      }
+      for (const c of contract.criteria.slice(0, 12)) {
+        const mark = c.rung === "verified" ? ok("✓") : c.rung ? warn(c.rung) : dim("—");
+        say(
+          `    ${mark} ${c.text.slice(0, 100)}${c.evidence?.source ? dim(`  ${c.evidence.source.slice(0, 60)}`) : ""}`,
+        );
+      }
+    }
+    if (verdict) {
+      const paint = verdict.kind === "met" ? ok : verdict.kind === "partial" ? warn : danger;
+      say(
+        // The count only: the gaps are listed under it, and saying each one
+        // twice is the kind of page nobody reads twice.
+        `  ${text("Verdict")}  ${paint(verdict.kind)} ${dim(
+          verdictLine(verdict)
+            .replace(/^\[verdict\] \w+ — /, "")
+            .split(";")[0]!,
+        )}`,
+      );
+      if (verdict.kind === "partial") {
+        for (const g of verdict.gaps.slice(0, 6)) {
+          say(`    ${warn("gap")}${dim(":")} ${g.criterion.slice(0, 80)} ${dim(`(${g.why})`)}`);
+        }
+      } else if (verdict.kind === "unmet") {
+        for (const m of verdict.missing.slice(0, 6))
+          say(`    ${danger("missing")}${dim(":")} ${m.slice(0, 100)}`);
+      }
+    }
 
     // ── The spine ──
     const store = TaskStateStore.fromEvents(rows);
