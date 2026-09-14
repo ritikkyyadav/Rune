@@ -285,7 +285,18 @@ export const COMMAND_METHODS = {
         // you type. The full list on a 24-row window scrolled /model and
         // /login off the top before anyone read them.
         const fullRows = groups.reduce((n, [, names]) => n + 1 + names.length, 1);
-        const usable = rowsCount() - 8;
+        // Counted against the region the document lands in. `rowsCount() - 8`
+        // is the footer layout's arithmetic -- the whole window, less the
+        // header and the composer block -- and in the band those rows are
+        // already gone: the workspace is what is left after them. Measured
+        // against the window, a 36-row workspace that can hold all thirty-four
+        // rows of the full list was told it could not, and a 120x40 terminal
+        // got the compact names-only form it was wide and tall enough to
+        // outgrow. Collapsed, `workspaceRows` is smaller than the old number
+        // and the branch is the same one, so nothing at 80x24 moves.
+        const usable = this.bandLayout()
+          ? Math.max(4, this.regionsNow().workspaceRows - 2)
+          : rowsCount() - 8;
         if (width < 110 && fullRows > usable) {
           for (const [label, names] of groups) {
             const present = names.filter((name) => byName.has(name));

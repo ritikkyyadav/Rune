@@ -463,16 +463,30 @@ describe("§2.8: /help and /status are committed to the workspace", () => {
     for (const row of pane.rows) expect(visLen(row)).toBeLessThanOrEqual(r.workspaceCols);
   });
 
-  it("/help is written at the WORKSPACE's measure, not the window's", () => {
-    // The two-column layout switches on at 110 cells. At 120 columns the
-    // window is 120 and the workspace is 77, so reading `cols()` put the right
-    // column at cells 62-116 of a 78-cell pane and `bound()` clipped it away.
+  it("/help is measured against the WORKSPACE, in both directions", () => {
+    // Width: the two-column layout switches on at 110 cells. At 120 columns
+    // the window is 120 and the workspace is 77, so reading `cols()` put the
+    // right column at cells 62-116 of a 78-cell pane and `bound()` clipped it.
+    // Height: `/help`'s full list is thirty-four rows, and the compact
+    // names-only form is what it falls back to when they do not fit. The band
+    // has already paid for the header and the composer, so the count is the
+    // workspace's -- 36 rows at 120x40, which holds the whole document.
+    const FULL_ROWS = 34;
     const wide = frame(120, 40);
     expect(wide.contentCols()).toBe(77);
     expect(wide.contentCols()).toBeLessThan(110);
-    // Collapsed, the workspace IS the window, so nothing changes at 80x24.
+    expect(wide.bandLayout()).toBe(true);
+    expect(wide.regionsNow().workspaceRows - 2).toBeGreaterThanOrEqual(FULL_ROWS);
+    // The old arithmetic, which is the footer layout's and said it did not fit.
+    expect(40 - 8).toBeLessThan(FULL_ROWS);
+
+    // Collapsed, the workspace IS the window in width and SMALLER than it in
+    // height, so both branches land where they landed before: nothing at 80x24
+    // moves.
     const narrow = frame(80, 24);
     expect(narrow.contentCols()).toBe(79);
+    expect(narrow.regionsNow().workspaceRows - 2).toBeLessThan(FULL_ROWS);
+    expect(24 - 8).toBeLessThan(FULL_ROWS);
   });
 
   it("/status is committed AND permanently in the panel when idle (§2.4)", () => {
