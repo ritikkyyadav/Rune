@@ -42,6 +42,7 @@ describe("setup in the production composer", () => {
       precedenceLine: () => "flag > env > session > ~/.rune/config.toml",
       restartNote: () => undefined,
       maskCell: () => "\u2022",
+      savedVsActive: () => [],
     };
     const fake = {
       mode: "setup",
@@ -85,6 +86,7 @@ describe("setup in the production composer", () => {
       // and never learns what a terminal can draw. A UTF-8 terminal gets the
       // bullet, which is what this test is asserting below.
       maskCell: () => "•",
+      savedVsActive: () => [],
     };
     const fake = {
       mode: "setup",
@@ -101,6 +103,92 @@ describe("setup in the production composer", () => {
     expect(plain).not.toContain("1234");
     expect(plain).toContain("•".repeat(secret.length));
     for (const row of block.lines) expect(visLen(row)).toBeLessThanOrEqual(79);
+  });
+
+  // Promoted from tests/verification/v4-laneE-saved-vs-active-unrendered.test.ts
+  // (V-4 Lane E, E3), and strengthened: that spec only grepped bin/ui for a
+  // call site, so it would have passed on a call whose rows were computed and
+  // then thrown away. What §2.8 promises is a comparison ON SCREEN -- two
+  // columns, identical unless a session override is in force, and when one is,
+  // the name of the source that won. `savedVsActive()` and `savedActiveRows()`
+  // were fully implemented and fully tested in isolation; nothing under bin/ui
+  // called either, so no user action could make the comparison appear.
+  it("paints saved vs active, and names the source that won", () => {
+    const firstRun = {
+      current: () => ({
+        id: "model",
+        label: "model",
+        question: "Which model?",
+        hint: "the lineup Rune picks from",
+      }),
+      steps: () => steps,
+      heading: () => "2 of 6",
+      precedenceLine: () => "flag > env > session > ~/.rune/config.toml",
+      restartNote: () => undefined,
+      maskCell: () => "\u2022",
+      savedVsActive: () => [
+        { label: "provider", saved: "anthropic", active: "anthropic", differs: false },
+        {
+          label: "model",
+          saved: "claude-sonnet",
+          active: "gpt-oss:20b",
+          differs: true,
+          source: "env",
+        },
+      ],
+    };
+    const fake = {
+      mode: "setup",
+      ctx: { firstRun },
+      input: "",
+      caret: 0,
+      setupReceipt: null,
+      setupBusy: false,
+      contentCols: () => 79,
+    };
+    const plain = stripAnsi(
+      INPUT_METHODS.composerBlock.call(fake as never, 23).lines.join("\n"),
+    );
+    // Both columns, both values, and which source is in force.
+    expect(plain).toContain("saved");
+    expect(plain).toContain("active");
+    expect(plain).toContain("claude-sonnet");
+    expect(plain).toContain("gpt-oss:20b");
+    expect(plain).toContain("model: env outranks the file");
+    // The ladder is stated once. It used to be printed twice -- once by the
+    // table, once by the wizard's own row directly beneath it.
+    const ladder = plain.split("\n").filter((l) => l.includes("flag > env > session"));
+    expect(ladder).toHaveLength(1);
+  });
+
+  it("says so, once, when nothing is overridden", () => {
+    const firstRun = {
+      current: () => ({ id: "model", label: "model", question: "Which model?", hint: "h" }),
+      steps: () => steps,
+      heading: () => "2 of 6",
+      precedenceLine: () => "flag > env > session > ~/.rune/config.toml",
+      restartNote: () => undefined,
+      maskCell: () => "\u2022",
+      savedVsActive: () => [
+        { label: "provider", saved: "anthropic", active: "anthropic", differs: false },
+      ],
+    };
+    const fake = {
+      mode: "setup",
+      ctx: { firstRun },
+      input: "",
+      caret: 0,
+      setupReceipt: null,
+      setupBusy: false,
+      contentCols: () => 79,
+    };
+    const plain = stripAnsi(
+      INPUT_METHODS.composerBlock.call(fake as never, 23).lines.join("\n"),
+    );
+    expect(plain).toContain("nothing differs");
+    expect(plain).not.toContain("outranks the file");
+    const ladder = plain.split("\n").filter((l) => l.includes("flag > env > session"));
+    expect(ladder).toHaveLength(1);
   });
 
   it("submits a secret directly to FirstRun without history or transcript echo", async () => {

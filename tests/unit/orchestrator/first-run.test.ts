@@ -244,3 +244,67 @@ describe("saved vs active states the precedence once", () => {
     expect(run.steps().every((s: { status: string }) => s.status !== "done")).toBe(true);
   });
 });
+
+// Promoted from tests/verification/v4-laneE-unreachable-host-receipt.test.ts
+// (V-4 Lane E, E8). `answerSecret()`'s `!probe.ok` branch hardcoded one close
+// row for every probe failure, so a closed port and a 401 both told the user
+// their key was rejected. The receipt BODY was already correct ("Unable to
+// connect..."); it was the verdict row -- the one line that says what to do
+// next -- that named the wrong problem. Two different facts calling for two
+// different next actions must not render the same sentence.
+describe("a probe that never got an answer is not a rejected key", () => {
+  const scenario = (probe: () => Promise<Record<string, unknown>>) =>
+    new FirstRun({
+      env: {},
+      // The `custom` provider's endpoint sub-step is bypassed: this override is
+      // exactly what answerSecret() consults for the probe URL, so the test is
+      // isolated to the one behaviour under it.
+      endpointFor: () => "http://127.0.0.1:1/v1/models",
+      setConfig: (tomlPath: string, value: string) => ({
+        path: `<scratch, never touches disk>#${tomlPath}=${value}`,
+      }),
+      storeSecret: () => {
+        throw new Error("a failed probe must not store a secret");
+      },
+      probe,
+    } as never);
+
+  it("says the host could not be reached, and saves nothing", async () => {
+    // probeEndpoint()'s own shape for a network-level failure: status 0, empty
+    // body, the raw fetch error as statusText. This is what a real closed-port
+    // probe returned during verification.
+    const run = scenario(async () => ({
+      ok: false,
+      status: 0,
+      statusText: "Unable to connect. Is the computer able to access the url?",
+      ms: 3,
+      body: "",
+      url: "http://127.0.0.1:1/v1/models",
+    }));
+    await run.answer("openai");
+    await run.answer("gpt-verify");
+    const outcome = await run.answer("sk-any-key-0000-0000-beef");
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.receipt.close.toLowerCase()).not.toContain("key rejected");
+    expect(outcome.receipt.close.toLowerCase()).toMatch(/reach|connect|unreachable|host/);
+    expect(outcome.receipt.close).toContain("nothing was saved");
+  });
+
+  it("still says the key was rejected when the host actually answered", async () => {
+    const run = scenario(async () => ({
+      ok: false,
+      status: 401,
+      statusText: "Unauthorized",
+      ms: 12,
+      body: '{"error":{"message":"Incorrect API key provided"}}',
+      url: "http://127.0.0.1:1/v1/models",
+    }));
+    await run.answer("openai");
+    await run.answer("gpt-verify");
+    const outcome = await run.answer("sk-any-key-0000-0000-beef");
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.receipt.close).toContain("key rejected");
+  });
+});

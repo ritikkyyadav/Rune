@@ -37,7 +37,7 @@ import { text, muted, faint, info, ok, warn, danger } from "./theme";
 import { glyph, TERMINAL_GLYPH_MODE } from "./glyphs";
 import { rowsCount, SCROLL_STEP } from "./tui-frame";
 import { fleetLedger } from "./agents-panel";
-import { ledgerRows, maskLive } from "../../first-run";
+import { ledgerRows, maskLive, savedActiveRows } from "../../first-run";
 /** The rung, read once. `ledgerRows` takes it as an argument because
  * first-run.ts is engine-side and never learns what a terminal can draw. */
 const ASCII_RUNG = TERMINAL_GLYPH_MODE === "ascii";
@@ -191,6 +191,31 @@ export const INPUT_METHODS = {
       // implementation here is how the panel and the test start disagreeing
       // about what a skipped step says.
       const ledger = ledgerRows(setup.steps(), Math.max(8, cols - F.MARK.length), ASCII_RUNG);
+      // Saved vs active (§2.8): two columns, identical unless a session
+      // override is in force -- a `--provider` flag, an env var, a `/model`
+      // pick this session -- and when one is, this is the only place that
+      // names which source won. `savedVsActive()`/`savedActiveRows()` already
+      // existed, fully tested in isolation (first-run.test.ts,
+      // fresh-home-onboarding.test.ts), but nothing under bin/ui ever called
+      // either one, so no wizard screen could show the comparison no matter
+      // what was overridden -- the computation was real and the render call
+      // site was not.
+      // The whole table sits at the one MARK rung every other row here uses --
+      // its own two columns are internal alignment, not a second indent
+      // convention, which is why `savedActiveRows`'s heading row carries the
+      // word `setting` rather than a run of blanks: nothing here may trim a
+      // row's leading space without pulling that row out of its column.
+      const comparison = setup.savedVsActive();
+      const savedActive = savedActiveRows(comparison, Math.max(8, cols - F.MARK.length)).map(
+        (line) => mark(faint(line)),
+      );
+      // `savedActiveRows` already ends on the precedence ladder whenever a row
+      // differs -- that is the whole point of naming a winner -- so the wizard
+      // states the ladder in exactly one place instead of printing it twice,
+      // once under the table and once on its own row directly beneath.
+      const ladder = comparison.some((row) => row.differs)
+        ? []
+        : [body(faint(setup.precedenceLine(Math.max(8, cols - F.BODY.length))))];
       // A step's receipt is evidence, so it wears the same frame every other
       // piece of evidence wears (§2.8: "the file written, the endpoint probed,
       // the response … in the same boxes every other tool call uses"). The
@@ -213,7 +238,8 @@ export const INPUT_METHODS = {
       const head = [
         mark(`${faint("setup")}  ${text(setup.heading())}`),
         ...ledger.map((line) => mark(faint(line))),
-        body(faint(setup.precedenceLine(Math.max(8, cols - F.BODY.length)))),
+        ...savedActive,
+        ...ladder,
         ...(setup.restartNote() ? [body(warn(setup.restartNote()!))] : []),
         ...receipt,
         ...(step ? [mark(text(step.question)), body(faint(step.hint))] : []),

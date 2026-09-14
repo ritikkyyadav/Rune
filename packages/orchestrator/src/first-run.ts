@@ -911,6 +911,14 @@ export class FirstRun {
 
     if (!probe.ok) {
       // Nothing is saved. The machine is exactly as it was before the paste.
+      //
+      // `probe.status === 0` is probeEndpoint()'s own shape for "no HTTP
+      // answer at all" -- a closed port, a DNS failure, a timeout -- never a
+      // provider's verdict on the key. Reusing "key rejected" for that case
+      // told a wrong-host user to go check their key, which is not the fact
+      // on screen: two different problems calling for two different next
+      // actions must not render the same close line.
+      const unreachable = probe.status === 0;
       return {
         ok: false,
         step: step.id,
@@ -924,7 +932,9 @@ export class FirstRun {
             probe.status ? `${probe.status} ${probe.statusText}` : probe.statusText,
             ...(probe.body ? [probe.body] : []),
           ],
-          close: "key rejected · nothing was saved · enter to retry",
+          close: unreachable
+            ? "can't reach the host · nothing was saved · enter to retry"
+            : "key rejected · nothing was saved · enter to retry",
         },
       };
     }
@@ -1237,7 +1247,12 @@ export function savedActiveRows(rows: SavedActiveRow[], width: number): string[]
   const labelW = Math.max(...rows.map((r) => r.label.length), 8);
   const col = Math.max(6, Math.floor((width - labelW - 4) / 2));
   const cell = (v: string) => (v.length > col ? `${v.slice(0, col - 1)}…` : v.padEnd(col));
-  const out = [`${" ".repeat(labelW)}  ${"saved".padEnd(col)}  active`];
+  // The label column carries a heading rather than `labelW` blanks. A run of
+  // leading spaces is an indent to everything that reads a rendered row -- the
+  // three-rung ladder the TUI enforces, a copy-paste, a screen reader -- and a
+  // caller that strips it to satisfy that ladder silently pulls this row out of
+  // alignment with the two columns underneath it. A word cannot be stripped.
+  const out = [`${"setting".padEnd(labelW)}  ${"saved".padEnd(col)}  active`];
   for (const r of rows) {
     out.push(`${r.label.padEnd(labelW)}  ${cell(r.saved)}  ${cell(r.active).trimEnd()}`);
   }
@@ -1248,7 +1263,17 @@ export function savedActiveRows(rows: SavedActiveRow[], width: number): string[]
     out.push("would show here and say so.");
   } else {
     for (const r of differing) {
-      out.push(`${r.label}: ${r.source ?? "session"} outranks the file`);
+      // `config` is the file, so "config outranks the file" is a sentence that
+      // says nothing -- and it is the sentence a real session produces whenever
+      // a value in force came from a default rather than from an override. That
+      // case gets the two facts and no causal claim; the ladder line below
+      // already says how a winner is picked. (Reachable the moment the wizard
+      // paints this table, which nothing did until §2.8 was wired up.)
+      out.push(
+        r.source && r.source !== "config"
+          ? `${r.label}: ${r.source} outranks the file`
+          : `${r.label}: in force ${r.active}, in the file ${r.saved}`,
+      );
     }
     out.push(precedenceLine(width));
   }

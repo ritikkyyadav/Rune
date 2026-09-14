@@ -59,20 +59,26 @@ export function renderReadBack(brief: Brief, width = F.measure()): string {
   return rows.join("\n");
 }
 
-/** One row of the close: the criterion, its rung, and what moved it. */
-function closeRow(
-  text_: string,
-  rung: ClaimRung | null,
-  receipt: string,
-  width: number,
-  paint: (s: string) => string,
-): string[] {
-  // The rung's mark comes from the closed alphabet, which knows the terminal's
-  // rung. This used to read `RUNG_GLYPH[rung].utf8` -- the UTF-8 face,
-  // unconditionally -- so the close's ticks were the one place in the product
-  // that put a multi-byte character on a seven-bit terminal, and the ASCII twin
-  // brief.ts carries beside it was never asked for.
-  const mark = rung ? F.rungMark(rung) : " ";
+/**
+ * One row of the close: the criterion, its rung, and what moved it.
+ *
+ * The mark comes from the closed alphabet via `F.capRung` + `F.rungMark`,
+ * never from `RUNG_GLYPH[rung].utf8` directly -- that used to be read
+ * unconditionally, so the close's ticks were the one place in the product
+ * that put a multi-byte character on a seven-bit terminal, and the ASCII
+ * twin brief.ts carries beside it was never asked for. Routing through
+ * `capRung` on top of that means the row can never claim a rung stronger
+ * than what the ledger actually holds -- a `done_when` criterion IS a claim
+ * of `verified`, and `capRung` is what caps that claim down to the truth --
+ * and it is painted with the shared, tested rule (`F.rungPaint`) rather than
+ * a second copy of that rule kept here. A criterion nobody has touched
+ * renders blank, not the shared `unproven` tilde: "not attempted" is a
+ * stronger and more honest statement than the weakest claim on the ladder.
+ */
+function closeRow(text_: string, rung: ClaimRung | null, receipt: string, width: number): string[] {
+  const effective = rung ? F.capRung("verified", rung) : null;
+  const mark = effective ? F.rungMark(effective) : " ";
+  const paint = effective ? F.rungPaint(effective) : muted;
   const head = `${F.MARK}${paint(mark)} ${text(truncate(text_, Math.max(20, width - 34)))}`;
   return [head, `${F.RAIL_IN}${faint(truncate(receipt, width - 8))}`];
 }
@@ -96,8 +102,7 @@ export function renderClose(ledger: BriefLedger, width = F.measure()): string {
   );
   rows.push("");
   for (const row of close.rows) {
-    const paint = row.rung === "verified" ? (s: string) => accent(s) : (s: string) => muted(s);
-    rows.push(...closeRow(row.text, row.rung, row.receipt, width, paint));
+    rows.push(...closeRow(row.text, row.rung, row.receipt, width));
   }
   if (!done) {
     rows.push("");
