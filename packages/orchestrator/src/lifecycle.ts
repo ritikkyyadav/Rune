@@ -391,6 +391,7 @@ export function buildLifecycle(input: LifecycleInput): TaskLifecycle {
       id: child.id,
       kind: child.kind,
       status: child.status,
+      ...(child.name ? { name: child.name } : {}),
       ...(child.integration ? { integration: child.integration } : {}),
       ...(child.conflicts && child.conflicts.length > 0
         ? { conflicts: child.conflicts.slice(0, LIFECYCLE_BOUNDS.conflicts) }

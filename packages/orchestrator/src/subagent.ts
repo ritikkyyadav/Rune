@@ -37,6 +37,7 @@ import {
   type BudgetBreach,
 } from "./subagent-budget";
 import { CostTracker } from "@rune/llm-gateway";
+import { childLabel, deriveChildName } from "./subagent-events";
 
 /**
  * Dependencies the orchestrator must supply when constructing the `task` tool.
@@ -163,6 +164,14 @@ export const TASK_TOOL_SCHEMA: ToolSchema = {
           "A 2-5 word name for this investigation ('map the deploy surface'), shown " +
           "to the user on the live sub-agent panel while it runs.",
       },
+      name: {
+        type: "string",
+        description:
+          "One lowercase word naming this agent's ROLE in the fan-out: 'planner', " +
+          "'mapper', 'verifier', 'scribe'. Shown as the card title on the agents " +
+          "panel and as the header of its split-pane transcript. Distinct from " +
+          "`label`, which is the 2-5 word brief.",
+      },
       context: {
         type: "string",
         description:
@@ -270,11 +279,19 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
 
       execute: async (input: ToolCallInput): Promise<ToolCallOutput> => {
         const start = performance.now();
-        const { prompt, context, tier, effort } = input.args as {
+        // `label` and `name` were declared on the schema and read by nobody:
+        // the TUI recovered the label by re-parsing the streamed argument JSON
+        // (turn.ts fleetBrief) and every non-TUI consumer of the event stream
+        // saw the head of the prompt instead — a whole contract cut in half,
+        // which is exactly what `label` exists to avoid. Destructured here so
+        // what the master wrote is what the wire carries.
+        const { prompt, context, tier, effort, label, name } = input.args as {
           prompt: string;
           context?: string;
           tier?: ModelTier;
           effort?: string;
+          label?: string;
+          name?: string;
         };
 
         try {
@@ -336,6 +353,11 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
           bindDelegatedLoop(loop);
           const fullPrompt =
             context && context.trim().length > 0 ? `${context}\n\n${prompt}` : prompt;
+          const announcedLabel = childLabel(label, prompt);
+          const announcedName =
+            typeof name === "string" && name.trim()
+              ? name.trim()
+              : deriveChildName("task", announcedLabel);
 
           // The summary is the text written AFTER the last tool call — not the
           // sum of every delta the scout ever emitted.
@@ -411,7 +433,9 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
             // member instead of folding a fan-out into one shared heartbeat.
             input.onEvent?.({
               agentId: input.callId,
-              label: String(prompt ?? "").slice(0, 80),
+              // The model's own label, else the head of the prompt as before.
+              label: announcedLabel,
+              ...(announcedName ? { name: announcedName } : {}),
               event,
             });
             switch (event.type) {
@@ -496,6 +520,28 @@ export function createSubagentTool(deps: SubagentDeps): ToolHandler {
               stopReason = breach.kind === "cost" ? "cost_budget" : "time_budget";
               break;
             }
+          }
+          // A cancelled scout must SAY it was cancelled, on the same channel a
+          // finished one says it finished.
+          //
+          // Not a belt-and-braces duplicate: when the interrupt lands while the
+          // child's provider stream is open, the stream simply ENDS, and the
+          // loop's own terminal event for that shape is `end_turn` -- it never
+          // reaches an abort checkpoint, so it never emits `aborted`. A pane
+          // watching this child would then show a run that stopped mid-sentence
+          // and a closing line claiming it completed normally, which is the one
+          // class of lie the typed channel exists to make impossible. The stop
+          // reason is checked rather than a "did any terminal arrive" flag,
+          // because the dishonest case is the one where a terminal DID arrive
+          // wearing the wrong word.
+          if (input.signal?.aborted && stopReason !== "aborted") {
+            stopReason = "aborted";
+            input.onEvent?.({
+              agentId: input.callId,
+              label: announcedLabel,
+              ...(announcedName ? { name: announcedName } : {}),
+              event: { type: "turn_complete", stopReason: "aborted", totalTurns: turnsUsed },
+            });
           }
 
           const trimmed = finalText.trim();

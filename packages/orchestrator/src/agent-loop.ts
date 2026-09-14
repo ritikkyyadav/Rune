@@ -58,7 +58,11 @@ import { filesChangedFrom, isFileChangingTool } from "./lifecycle";
 // (and anything downstream that imports it from the agent loop) keep working.
 
 import type { AgentTurnEvent, ChildAgentEvent } from "@rune/protocol";
-import { projectChildEvent, projectWorkflowNode } from "./subagent-events";
+import {
+  childEventCarriesSurface,
+  projectChildEvent,
+  projectWorkflowNode,
+} from "./subagent-events";
 export type { AgentTurnEvent, ChildAgentEvent } from "@rune/protocol";
 
 // ─── Permission Gate ───
@@ -3226,7 +3230,39 @@ export class AgentLoop {
       };
       const progressQueue: ProgressItem[] = [];
       let progressSignal: (() => void) | null = null;
+      const MAX_UNREAD_CHILD_TEXT = 64 * 1024;
+      const OMITTED_CHILD_TEXT = "[earlier live output omitted]\n";
+      const mergeQueuedDelta = (item: ProgressItem): boolean => {
+        const incoming = item.child?.event;
+        if (incoming?.type !== "text_delta" && incoming?.type !== "thinking_delta") return false;
+        // Execution continues while this generator is suspended in its
+        // consumer. Keep one unread delta per child and phase so a slow
+        // terminal cannot turn token streaming into an unbounded queue. Never
+        // merge across another event from that child: tool boundaries and
+        // stream_reset retain their exact order.
+        for (let i = progressQueue.length - 1; i >= 0; i--) {
+          const queued = progressQueue[i]?.child;
+          if (!queued || queued.agentId !== item.child?.agentId) continue;
+          if (queued.event.type !== incoming.type) return false;
+          const joined = queued.event.text + incoming.text;
+          const bounded =
+            joined.length <= MAX_UNREAD_CHILD_TEXT
+              ? joined
+              : OMITTED_CHILD_TEXT +
+                joined.slice(-(MAX_UNREAD_CHILD_TEXT - OMITTED_CHILD_TEXT.length));
+          progressQueue[i] = {
+            ...progressQueue[i]!,
+            child: {
+              ...queued,
+              event: { ...incoming, text: bounded },
+            },
+          };
+          return true;
+        }
+        return false;
+      };
       const pushProgress = (item: ProgressItem): void => {
+        if (mergeQueuedDelta(item)) return;
         progressQueue.push(item);
         progressSignal?.();
       };
@@ -3237,9 +3273,19 @@ export class AgentLoop {
       };
       // The typed channel. `note` is projected from the child event so a
       // surface that wants only a heartbeat is unaffected, and the event
-      // itself rides along for the ones that want the truth. A child event
-      // with nothing worth a rung line (a token delta) is dropped rather
-      // than queued as an empty note.
+      // itself rides along for the ones that want the truth.
+      //
+      // The projection returning null used to DROP the event
+      // (`if (!note) return`), which is the line that made a sub-agent
+      // unwatchable: `text_delta`, `thinking_delta`, `tool_call_start` and
+      // `usage` all project to null on purpose — a one-line heartbeat that
+      // strobed on every token would be a flicker with a name on it — and
+      // dropping them meant no child prose, no child thinking and no child
+      // token count reached the parent AT ALL. A pane cannot subscribe to
+      // something the parent never received. So a silent event now rides
+      // through with an EMPTY note: the rung reads `note` and therefore still
+      // never sees a token delta, and the panel reads `child` and sees
+      // everything. `note` is the projection, not the gate (P4 §1.4, §4.1 B).
       const eventFor = (callId: string) => (child: ChildAgentEvent) => {
         // A workflow node is known by its node id everywhere else — the graph,
         // the cache key, the state file — so the rung calls it that too. Its
@@ -3250,8 +3296,8 @@ export class AgentLoop {
           // is a cache hit, a skip, or a completion: the whole workflow is ONE
           // tool call, so there is no per-node `settled` marker to say so.
           projectWorkflowNode(child.node);
-        if (!note) return;
-        pushProgress({ callId, note, child });
+        if (!note && !childEventCarriesSurface(child.event)) return;
+        pushProgress({ callId, note: note ?? "", child });
       };
 
       const planned: PlannedCall[] = [];

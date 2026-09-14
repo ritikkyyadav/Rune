@@ -65,6 +65,18 @@ export interface TaskLifecycleChild {
   id: string;
   kind: "task" | "worker";
   status: TaskLifecycleStatus;
+  /**
+   * One lowercase word naming this child's ROLE in the fan-out — `planner`,
+   * `builder`, `verifier` (P4 §2.6).
+   *
+   * The id is durable and unreadable; `label` is a 2-5 word brief and too long
+   * for a column. Neither is a name, which is why a fan-out could only ever be
+   * reported as a count: there was nothing to call the second of five workers.
+   * Written by the master through the delegation call's own `name` argument,
+   * else derived by the harness from the task shape. Absent from an older
+   * build's row, which reads as unnamed rather than as a name of "".
+   */
+  name?: string;
   /** How a worker's writes reached the lead's tree, when it had any. */
   integration?: "merged" | "retained" | "shared";
   /** Paths the merge refused, so a conflict is a field and not prose. */
@@ -356,6 +368,16 @@ export interface ChildAgentEvent {
   agentId: string;
   /** What the sub-agent was dispatched to do, for the row's left half. */
   label?: string;
+  /**
+   * One lowercase word naming this child's role — the panel's card title
+   * (P4 §2.6). See `TaskLifecycleChild.name`.
+   *
+   * Carried separately from `label` because they answer different questions: a
+   * name says WHO this is across every row it will ever own, a label says what
+   * it was asked this once. A panel that had only the label had to re-print the
+   * whole brief on every line it wanted to attribute.
+   */
+  name?: string;
   event: AgentTurnEvent;
   /**
    * Set when this sub-agent is a NODE of a running workflow (P10.9).

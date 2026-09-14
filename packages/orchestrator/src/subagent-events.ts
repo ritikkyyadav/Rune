@@ -25,6 +25,89 @@ function clip(s: string): string {
   return one.length > MAX_NOTE_CHARS ? one.slice(0, MAX_NOTE_CHARS - 1) + "…" : one;
 }
 
+/** How much of a brief a fleet row can carry before it is a paragraph. */
+const MAX_LABEL_CHARS = 80;
+
+/**
+ * What this child is announced as: the master's own `label`, else the head of
+ * its prompt (P4 §2.6).
+ *
+ * Both handlers declared `label` on their schema and neither destructured it,
+ * so `ChildAgentEvent.label` was always the prompt head. The TUI hid the defect
+ * by re-parsing the streamed argument JSON itself; every other consumer of the
+ * stream saw a contract cut off at eighty characters and had no way to know a
+ * label existed. One definition, called from both.
+ */
+export function childLabel(label: unknown, prompt: unknown): string {
+  const written = typeof label === "string" ? label.replace(/\s+/g, " ").trim() : "";
+  if (written) return written.slice(0, MAX_LABEL_CHARS);
+  return String(prompt ?? "").slice(0, MAX_LABEL_CHARS);
+}
+
+/** Words that name no subject — a fallback built from them names nothing. */
+const STOP_WORDS = new Set([
+  "the",
+  "a",
+  "an",
+  "of",
+  "for",
+  "to",
+  "in",
+  "on",
+  "and",
+  "or",
+  "this",
+  "that",
+  "its",
+  "every",
+  "all",
+  "find",
+  "build",
+  "make",
+  "write",
+  "read",
+  "map",
+  "check",
+  "run",
+  "add",
+  "fix",
+  "look",
+  "where",
+  "what",
+  "which",
+  "how",
+]);
+
+/**
+ * A name derived from the SHAPE of the task, when the master wrote none.
+ *
+ * `scout-auth`, `build-ui` — the tool's own verb plus the first word of the
+ * brief that names a subject. Derived by the harness and never by a second
+ * model call: a fan-out dispatched by a small free-route model will routinely
+ * supply no name at all, and an unnamed row is the thing this phase exists to
+ * remove. Returns "" when the brief says nothing usable; the panel's ordinal
+ * (`agent-2`) is the floor under that.
+ */
+export function deriveChildName(kind: "task" | "worker", brief: string): string {
+  const verb = kind === "worker" ? "build" : "scout";
+  const word = brief
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .find((w) => w.length > 2 && w.length <= 12 && !STOP_WORDS.has(w));
+  if (!word) return "";
+  // The panel's name column is eleven cells (agents-panel NAME_COLS) and a name
+  // clipped mid-word reads as damage, not as a name: `scout-setti` is worse
+  // than either half of it. So the verb is dropped before the subject is — the
+  // row already says `scout` or `work` in its own column, and the SUBJECT is
+  // the part that tells two members apart.
+  const prefixed = `${verb}-${word}`;
+  if (prefixed.length <= NAME_BUDGET) return prefixed;
+  return word.length <= NAME_BUDGET ? word : word.slice(0, NAME_BUDGET);
+}
+
+/** Mirrors `NAME_COLS` in bin/ui/agents-panel.ts — the panel's name column. */
+const NAME_BUDGET = 11;
+
 /**
  * The one-line projection of a child event, or null when the event says
  * nothing a heartbeat should show.
@@ -109,6 +192,30 @@ export function projectChildEvent(agentId: string, event: AgentTurnEvent): strin
 function exhaustive(event: never): null {
   void event;
   return null;
+}
+
+/**
+ * Whether a child event is worth carrying to the parent at all (P4 §1.4).
+ *
+ * The gate in agent-loop used to be `if (!note) return` — the projection's
+ * silence decided what crossed the boundary, so the whole watchable half of a
+ * sub-agent's run (its prose, its thinking, its token counts) never left the
+ * child. Opening that gate to EVERYTHING would put a child's per-token argument
+ * JSON on the parent's queue, which no surface reads and which is the one
+ * channel that genuinely scales with the size of a tool call.
+ *
+ * So the gate moves here and names what it drops, both for the same reason:
+ * nothing reads them.
+ *
+ *   `tool_call_args_delta` — a pane shows the call's NAME when it opens and its
+ *   result when it lands; the arguments arriving one fragment at a time are
+ *   volume with no reader.
+ *
+ *   `tool_progress` — a nested projection. Re-projecting one is how a
+ *   grandchild's heartbeat would arrive twice, wearing two names.
+ */
+export function childEventCarriesSurface(event: AgentTurnEvent): boolean {
+  return event.type !== "tool_call_args_delta" && event.type !== "tool_progress";
 }
 
 /**

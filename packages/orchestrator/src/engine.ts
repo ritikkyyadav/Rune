@@ -303,6 +303,7 @@ import {
   workspaceRevision,
 } from "./lifecycle";
 import type { StampedRevision } from "./lifecycle";
+import { deriveChildName } from "./subagent-events";
 
 /**
  * How long `runRevision` may reuse one `git rev-parse` + `git status` pair.
@@ -6426,6 +6427,14 @@ export class Engine {
     const declaredId = structured.task_id ?? structured.taskId;
     const id = typeof declaredId === "string" && declaredId ? declaredId : event.callId;
     const kind = event.output.toolName === "worker" ? "worker" : "task";
+    const explicitName = typeof event.args.name === "string" ? event.args.name.trim() : "";
+    const brief =
+      typeof event.args.label === "string"
+        ? event.args.label
+        : typeof event.args.prompt === "string"
+          ? event.args.prompt
+          : "";
+    const name = explicitName || deriveChildName(kind, brief);
     const status = statusFromStopReason(
       typeof child.status === "string"
         ? child.status
@@ -6454,6 +6463,7 @@ export class Engine {
       id,
       kind,
       status,
+      ...(name ? { name } : {}),
       ...(integration ? { integration } : {}),
       ...(conflicts && conflicts.length > 0 ? { conflicts } : {}),
       ...(startedAt ? { startedAt } : {}),

@@ -16,7 +16,12 @@
 import { describe, expect, test } from "bun:test";
 
 import { AGENT_TURN_EVENT_TYPES, type AgentTurnEvent } from "../../../packages/protocol/src/index";
-import { projectChildEvent } from "../../../packages/orchestrator/src/subagent-events";
+import {
+  childEventCarriesSurface,
+  childLabel,
+  deriveChildName,
+  projectChildEvent,
+} from "../../../packages/orchestrator/src/subagent-events";
 
 const NOW = "2026-09-03T00:00:00.000Z";
 
@@ -203,5 +208,74 @@ describe("the child-event projection", () => {
     });
     expect(note).not.toContain("\n");
     expect(note).not.toContain("\t");
+  });
+});
+
+// ─── P4 §1.4 — the gate that made a sub-agent unwatchable ───
+//
+// The projection's silence used to be the GATE: `agent-loop.ts` read
+// `if (!note) return`, and `text_delta`, `thinking_delta`, `tool_call_start`
+// and `usage` all project to null on purpose — a one-line heartbeat that
+// strobed on every token would be a flicker with a name on it. The
+// consequence, which nobody intended, was that no child prose, no child
+// thinking and no child token count reached the parent AT ALL. A pane cannot
+// subscribe to something the parent never received.
+//
+// `childEventCarriesSurface` is that gate, moved off the projection and given
+// its own answer: `note` says what a RUNG shows, this says what CROSSES.
+
+describe("what crosses the child boundary", () => {
+  test("a child's thinking reaches the parent even though no rung line does", () => {
+    // The two halves of the same event, and they must disagree: silent on the
+    // rung, carried on the wire. This is the one-line change the whole
+    // watch-a-sub-agent-think pane rests on.
+    expect(projectChildEvent("w1", sample("thinking_delta"))).toBeNull();
+    expect(childEventCarriesSurface(sample("thinking_delta"))).toBe(true);
+  });
+
+  test("carries the rest of the watchable stream too", () => {
+    for (const type of ["text_delta", "tool_call_start", "usage", "tool_call_end"]) {
+      expect(childEventCarriesSurface(sample(type))).toBe(true);
+    }
+  });
+
+  test("still drops the two nobody reads", () => {
+    // Argument JSON arriving one fragment at a time is the one channel that
+    // genuinely scales with the size of a tool call, and a pane shows the
+    // call's NAME when it opens and its RESULT when it lands.
+    expect(childEventCarriesSurface(sample("tool_call_args_delta"))).toBe(false);
+    // A nested tool_progress is already a projection; carrying it is how a
+    // grandchild's heartbeat arrives twice, wearing two names.
+    expect(childEventCarriesSurface(sample("tool_progress"))).toBe(false);
+  });
+
+  test("has an answer for every member of the union", () => {
+    for (const type of AGENT_TURN_EVENT_TYPES) {
+      expect(typeof childEventCarriesSurface(sample(type))).toBe("boolean");
+    }
+  });
+});
+
+describe("the label the master wrote", () => {
+  test("prefers it to the head of the prompt", () => {
+    // Both handlers declared `label` on their schema and neither read it, so
+    // `ChildAgentEvent.label` was always the prompt head. The TUI hid the
+    // defect by re-parsing the argument JSON itself; every other consumer of
+    // the stream saw a contract cut off at eighty characters.
+    expect(childLabel("map the deploy surface", "Find every lambda…")).toBe(
+      "map the deploy surface",
+    );
+    expect(childLabel(undefined, "Find every lambda behind the gateway")).toBe(
+      "Find every lambda behind the gateway",
+    );
+    expect(childLabel("  two   words\n", "x")).toBe("two words");
+  });
+
+  test("derives a name from the task shape, never from a second model call", () => {
+    expect(deriveChildName("task", "map the auth store")).toBe("scout-auth");
+    expect(deriveChildName("worker", "build the panel")).toBe("build-panel");
+    // Nothing usable is "" — the panel's ordinal is the floor under that, and
+    // inventing `scout-the` would be a name that names nothing.
+    expect(deriveChildName("task", "do it")).toBe("");
   });
 });

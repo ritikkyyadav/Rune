@@ -74,6 +74,7 @@ import {
   type WorkerWorktree,
 } from "./worker-worktree";
 import { WorkerSnapshotError } from "./worker-snapshot";
+import { childLabel, deriveChildName } from "./subagent-events";
 import type { PermissionCheck, ToolResultProcessor } from "./agent-loop";
 import { ContextEngine } from "./context-engine";
 
@@ -194,6 +195,14 @@ export const WORKER_TOOL_SCHEMA: ToolSchema = {
         description:
           "A 2-5 word name for this piece ('build the settings page'), shown to the " +
           "user on the live sub-agent panel while the worker runs.",
+      },
+      name: {
+        type: "string",
+        description:
+          "One lowercase word naming this worker's ROLE in the fan-out: 'builder', " +
+          "'wiring', 'tests'. Shown as the card title on the agents panel and as " +
+          "the header of its split-pane transcript. Distinct from `label`, which " +
+          "is the 2-5 word brief.",
       },
       context: {
         type: "string",
@@ -536,12 +545,17 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
         // Durable across a restart — see allocateWorkerId. `w1` on every process
         // start is what degraded every later worker in a repository after a crash.
         const workerId = allocateWorkerId(input.workspaceRoot, input.sessionId);
-        const { prompt, files, context, tier, effort } = input.args as {
+        // See subagent.ts: `label` and `name` were declared and destructured
+        // by nobody, so the wire carried the head of the prompt and every
+        // non-TUI consumer was blind to what the master actually wrote.
+        const { prompt, files, context, tier, effort, label, name } = input.args as {
           prompt: string;
           files: string[];
           context?: string;
           tier?: ModelTier;
           effort?: string;
+          label?: string;
+          name?: string;
         };
 
         let ownership: Ownership;
@@ -690,6 +704,11 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
           const fullPrompt =
             `Current worker workspace: ${workRoot}. Use this checkout for this follow-up; paths from earlier calls may refer to an older snapshot.\n\n` +
             (context && context.trim() ? `${context.trim()}\n\n${prompt}` : prompt);
+          const announcedLabel = childLabel(label, prompt);
+          const announcedName =
+            typeof name === "string" && name.trim()
+              ? name.trim()
+              : deriveChildName("worker", announcedLabel);
 
           // As in subagent.ts: the report is the text written AFTER the last
           // tool call, not every delta of the run concatenated. The old
@@ -757,7 +776,12 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
             // and the one-line rung note is projected from it. `onProgress` is
             // still called at the two sites below for surfaces that only take
             // the string — the projection and the legacy note are the same text.
-            input.onEvent?.({ agentId: workerId, label: String(prompt ?? "").slice(0, 80), event });
+            input.onEvent?.({
+              agentId: workerId,
+              label: announcedLabel,
+              ...(announcedName ? { name: announcedName } : {}),
+              event,
+            });
             if (event.type === "text_delta") report += event.text;
             else if (event.type === "stream_reset") report = "";
             else if (event.type === "fallback") {
@@ -809,6 +833,20 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
               stopReason = breach.kind === "cost" ? "cost_budget" : "time_budget";
               break;
             }
+          }
+          // See subagent.ts: an interrupt that lands while the provider stream
+          // is open ENDS that stream, and the loop's terminal event for that
+          // shape is `end_turn`. A worker reported as having completed normally
+          // when it was cut off mid-build is worse than a scout reported the
+          // same way -- this one was writing to a tree.
+          if (input.signal?.aborted && stopReason !== "aborted") {
+            stopReason = "aborted";
+            input.onEvent?.({
+              agentId: workerId,
+              label: announcedLabel,
+              ...(announcedName ? { name: announcedName } : {}),
+              event: { type: "turn_complete", stopReason: "aborted", totalTurns: turnsUsed },
+            });
           }
 
           const trimmed = report.trim();
