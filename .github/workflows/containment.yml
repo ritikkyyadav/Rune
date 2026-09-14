@@ -87,3 +87,63 @@ jobs:
             probe.log
           retention-days: 30
           if-no-files-found: warn
+
+  # Proves scripts/install.sh — the actual source-build path a stranger's
+  # machine takes, not the pre-built-binary download release.yml's own
+  # install-smoke job verifies post-tag. Bun and cargo come from the same
+  # setup actions every other job here uses; nothing else is pre-installed.
+  install-smoke:
+    name: Clean-machine install (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Compute the expected version (scripts/version.sh is the one source)
+        run: echo "EXPECTED_VERSION=$(bash scripts/version.sh)" >> "$GITHUB_ENV"
+
+      - name: scripts/install.sh into a scratch home
+        # A scratch $HOME with no pre-existing ~/.rune means install.sh's
+        # cross-worktree / non-fast-forward guard (install.sh:~150-181) never
+        # finds a rune-compiled.meta to compare against, so it never fires —
+        # on a genuinely clean machine there is nothing for it to refuse.
+        # That IS what "respecting" the guard means here, not
+        # RUNE_ALLOW_NON_FF_INSTALL: that override exists to push PAST a
+        # real conflict between worktrees and is never set below (see
+        # MEMORY gear-install-path-case-guard: prefer the real guard over
+        # the override even when it misfires, which this setup avoids
+        # rather than needing).
+        #
+        # No rust-cache action on this job: a warmed cargo registry would
+        # make this less of a clean-machine proof, not more, and the only
+        # thing timed here is "does it install", not "how fast".
+        env:
+          HOME: ${{ runner.temp }}/rune-clean-home
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME"
+          bash scripts/install.sh
+
+      - name: rune --version matches the tree
+        env:
+          HOME: ${{ runner.temp }}/rune-clean-home
+        run: |
+          set -euo pipefail
+          "$HOME/.rune/bin/rune" --version | tee rune-version.out
+          grep -F "Rune v${EXPECTED_VERSION}" rune-version.out
+
+      - name: rune doctor runs clean on a first-ever install
+        env:
+          HOME: ${{ runner.temp }}/rune-clean-home
+          NO_COLOR: "1"
+        run: |
+          set -euo pipefail
+          "$HOME/.rune/bin/rune" doctor | tee rune-doctor.out
+          grep -F "RUNE DOCTOR" rune-doctor.out
