@@ -1634,3 +1634,26 @@ across both full suites. Supervisor rerun: **254 / 0** across eleven suites incl
 lifecycle. Lane's gates: unit 5,665 / 0, integration 392 / 0, eval 63 / 63 at 0.27, tsc and
 prettier clean. The one thing the preload does not cover — `bun run eval` is not `bun test` —
 is closed by the supervisor in the next commit.
+
+### Addendum 23 — memory has three modes, and no clock
+
+`034fb8a`, `400c46a`, plus the two TUI hunks applied by the supervisor. The founder: "three
+options only — off, auto, manual". `[memory] mode = off | auto | manual`, default `auto` for
+the interactive CLI (an Engine built with no `memory` key stays off). **off**: nothing read,
+injected, extracted, refreshed or written, and `/memory` says how to turn it on. **auto**: the
+run-end extractor learns (zero spend, provenance-gated) and the agent may refresh the narrative
+profile itself once per session through a `memory_update` tool registered only in auto, under
+the same backup and shrink floor, recorded `origin: agent` and shown as one calm line. **manual**:
+what was promoted is still read and injected, but only `/memory update` (or `rune memory update`)
+extracts and refreshes, both halves right then, `origin: user`. The clock is gone: the startup
+refresh is a permanent no-op that says why, in the TUI, the classic CLI and the engine host, so
+no startup path can spend. Migration: `daily` / `weekly` / `3d` → `auto` with a one-line note
+heard once; `manual` → `manual`; `enabled = false` → `off` and it outranks a leftover cadence.
+`/memory daily` and `rune memory daily` are refused by name with the three-mode message; the
+only place a cadence is folded rather than refused is the `update_config` catalogue, where
+refusing a plain-language request would be worse. `/memory` and `rune memory` state the mode
+first; `rune memory off|auto|manual|mode|update` and `/config memory <mode>` work. Three
+cadence tests were replaced with mode and no-clock assertions; the backup, floor, restore and
+ten safety tests are untouched. Supervisor rerun: memory suites **247 / 0**; UI suites and the
+mode tests green after the TUI hunks; typecheck clean. Lane's gates: unit 5,695 / 0 / 5 skip,
+integration 387 / 0 / 7 skip, eval 63 / 63 at 0.27, prompt-size tests 335 / 0.
