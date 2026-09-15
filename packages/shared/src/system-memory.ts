@@ -9,8 +9,9 @@
 //   • system-memory.json — scheduling / bookkeeping metadata
 //
 // The guide is deliberately size-capped (see clampToBudget) so it stays
-// butter-smooth for small context windows. It is refreshed either manually
-// (`/memory update`) or automatically on a user-chosen cadence (the "dream").
+// butter-smooth for small context windows. It is refreshed either by the user
+// (`/memory update`) or, in `auto` mode, by the agent itself when it judges a
+// refresh worthwhile. There is no clock: see MemoryMode below.
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync } from "fs";
 import { basename, dirname, join } from "path";
@@ -18,7 +19,38 @@ import { getRuneHome } from "./paths.js";
 
 // ─── Types ───
 
-/** How the automatic refresh ("dream") is scheduled. */
+/**
+ * The one user-facing memory control. Three values, and only three — the
+ * founder withdrew the daily/weekly/3d cadence on 2026-09-15:
+ *
+ *   off     nothing is read, injected, extracted, refreshed or written
+ *   auto    Rune manages its own memory: it learns at run end (zero spend) and
+ *           may decide, at most once a session, to refresh the profile itself
+ *   manual  the person holds the switch: `/memory update` is the only thing
+ *           that extracts or refreshes; what was already learned is still read
+ *
+ * No value of this setting schedules anything on a clock.
+ */
+export type MemoryMode = "off" | "auto" | "manual";
+
+/** The three, in the order every surface presents them. */
+export const MEMORY_MODES: readonly MemoryMode[] = ["off", "auto", "manual"];
+
+/** One line each, for `/config`, the first-run wizard and `/memory`. */
+export const MEMORY_MODE_DESCRIPTIONS: Record<MemoryMode, string> = {
+  off: "nothing is remembered, read or written",
+  auto: "Rune decides when to update its memory",
+  manual: "only `/memory update` changes it",
+};
+
+/** Who asked for a profile refresh. Recorded in the sidecar, shown by `/memory`. */
+export type MemoryRefreshOrigin = "user" | "agent";
+
+/**
+ * LEGACY. How the withdrawn cadence was scheduled. Kept because a config file
+ * written before 2026-09-15 still carries `schedule`, and the loader has to be
+ * able to read it in order to migrate it (see resolveMemoryMode).
+ */
 export type MemoryScheduleKind = "manual" | "interval";
 
 export interface ParsedSchedule {
@@ -45,12 +77,43 @@ export interface SystemMemoryRefusal {
   notified?: boolean;
 }
 
+/**
+ * The one-line note left behind when a withdrawn cadence was migrated to a
+ * mode. Recorded once, shown once, and still readable afterwards — the user
+ * chose `daily` at some point and deserves to be told it no longer exists.
+ */
+export interface MemoryModeMigration {
+  at: string;
+  /** What the config or sidecar actually said, e.g. "daily" or "enabled = false". */
+  from: string;
+  /** The mode it became. */
+  mode: MemoryMode;
+  /** The sentence shown to the user. */
+  note: string;
+  /** Set once it has been shown. */
+  notified?: boolean;
+}
+
+/** The last profile refresh that actually landed — and who asked for it. */
+export interface MemoryRefreshRecord {
+  at: string;
+  origin: MemoryRefreshOrigin;
+  tokensBefore: number;
+  tokensAfter: number;
+}
+
 export interface SystemMemoryMeta {
-  /** ISO timestamp the content last changed (dream, manual add/edit). */
+  /** ISO timestamp the content last changed (refresh, manual add/edit). */
   updatedAt?: string;
-  /** ISO timestamp the automatic distillation ("dream") last ran. */
+  /** ISO timestamp the profile distillation last ran. */
   lastReflectedAt?: string;
-  /** User-chosen cadence set via `/memory <cadence>` — overrides the config default. */
+  /** Mode set live via `/memory off|auto|manual` — overrides the config default. */
+  mode?: MemoryMode;
+  /** The cadence→mode migration, recorded once (see MemoryModeMigration). */
+  modeMigration?: MemoryModeMigration;
+  /** The last refresh that landed, with its origin. */
+  lastRefresh?: MemoryRefreshRecord;
+  /** LEGACY cadence set via the withdrawn `/memory <cadence>`. Read to migrate; never written. */
   schedule?: string;
   /** Approx token size of the content at last save (for display). */
   tokens?: number;
@@ -143,6 +206,39 @@ function sanitizeMeta(raw: Record<string, unknown>): SystemMemoryMeta {
   if (typeof raw.lastReflectedAt === "string") m.lastReflectedAt = raw.lastReflectedAt;
   if (typeof raw.schedule === "string") m.schedule = raw.schedule;
   if (typeof raw.tokens === "number") m.tokens = raw.tokens;
+  {
+    const mode = parseMemoryMode(raw.mode);
+    if (mode) m.mode = mode;
+  }
+  if (raw.modeMigration && typeof raw.modeMigration === "object") {
+    const g = raw.modeMigration as Record<string, unknown>;
+    const mode = parseMemoryMode(g.mode);
+    if (
+      typeof g.at === "string" &&
+      typeof g.from === "string" &&
+      typeof g.note === "string" &&
+      mode
+    ) {
+      m.modeMigration = {
+        at: g.at,
+        from: g.from,
+        mode,
+        note: g.note,
+        ...(g.notified === true ? { notified: true } : {}),
+      };
+    }
+  }
+  if (raw.lastRefresh && typeof raw.lastRefresh === "object") {
+    const g = raw.lastRefresh as Record<string, unknown>;
+    if (typeof g.at === "string" && (g.origin === "user" || g.origin === "agent")) {
+      m.lastRefresh = {
+        at: g.at,
+        origin: g.origin,
+        tokensBefore: typeof g.tokensBefore === "number" ? g.tokensBefore : 0,
+        tokensAfter: typeof g.tokensAfter === "number" ? g.tokensAfter : 0,
+      };
+    }
+  }
   if (raw.lastRefusal && typeof raw.lastRefusal === "object") {
     const r = raw.lastRefusal as Record<string, unknown>;
     if (typeof r.at === "string" && typeof r.reason === "string") {
@@ -421,11 +517,12 @@ export function saveSystemMemoryMeta(patch: Partial<SystemMemoryMeta>): SystemMe
 }
 
 /**
- * Wipe the memory content. Keeps the user's chosen cadence (`schedule`) but
- * resets the dream bookkeeping so the next refresh rebuilds from scratch.
+ * Wipe the memory content. Keeps the user's chosen MODE but resets the refresh
+ * bookkeeping so the next update rebuilds from scratch. Clearing the profile is
+ * not a request to start being remembered again, or to stop.
  */
 export function clearSystemMemory(): void {
-  const schedule = loadSystemMemoryMeta().schedule;
+  const { mode, schedule } = loadSystemMemoryMeta();
   try {
     const p = getSystemMemoryPath();
     // A wipe is a write like any other: the copy is what makes `/memory clear`
@@ -439,13 +536,121 @@ export function clearSystemMemory(): void {
   try {
     const mp = getSystemMemoryMetaPath();
     ensureDir(mp);
-    writeFileSync(mp, JSON.stringify(schedule ? { schedule } : {}, null, 2) + "\n");
+    const kept: SystemMemoryMeta = {};
+    if (mode) kept.mode = mode;
+    if (schedule) kept.schedule = schedule;
+    writeFileSync(mp, JSON.stringify(kept, null, 2) + "\n");
   } catch {
     // ignore
   }
 }
 
-// ─── Scheduling ───
+// ─── Modes ───
+
+/**
+ * Parse a mode. Strict on purpose: only the three words (and the handful of
+ * spellings a person actually types for them) are a mode. A withdrawn cadence
+ * is NOT silently read as a mode here — resolveMemoryMode migrates it, loudly.
+ */
+export function parseMemoryMode(v: unknown): MemoryMode | undefined {
+  if (typeof v !== "string") return undefined;
+  const s = v.trim().toLowerCase();
+  if (s === "off" || s === "none" || s === "disabled" || s === "no") return "off";
+  if (s === "auto" || s === "automatic" || s === "on" || s === "yes") return "auto";
+  if (s === "manual" || s === "user") return "manual";
+  return undefined;
+}
+
+/** The mode plus its one-line description, for a surface that shows both. */
+export function describeMemoryMode(mode: MemoryMode): string {
+  return MEMORY_MODE_DESCRIPTIONS[mode];
+}
+
+/** What a legacy setting is called when the migration note names it. */
+function legacyLabel(schedule: string | undefined, enabled: boolean | undefined): string {
+  if (enabled === false) return "enabled = false";
+  return (schedule ?? "").trim() || "manual";
+}
+
+export interface ResolvedMemoryMode {
+  mode: MemoryMode;
+  /** Set when a withdrawn cadence or `enabled` flag produced this mode. */
+  migration?: { from: string; note: string };
+}
+
+/**
+ * The one resolution every surface uses: live sidecar mode → explicit config
+ * mode → migration from the withdrawn controls → the default.
+ *
+ * The migration, in full:
+ *   enabled = false            → off
+ *   schedule = daily|weekly|Nd → auto  ("cadence withdrawn; memory is now auto")
+ *   schedule = manual|off      → manual
+ *   nothing at all             → the caller's default (auto for the CLI)
+ *
+ * `enabled = false` is asked FIRST because a user who switched memory off and
+ * left a cadence behind meant the off.
+ */
+export function resolveMemoryMode(
+  cfg: { mode?: string; enabled?: boolean; schedule?: string } | undefined,
+  meta: SystemMemoryMeta | undefined,
+  fallback: MemoryMode = "auto",
+): ResolvedMemoryMode {
+  // A mode chosen live wins over anything in the file — same precedence the
+  // withdrawn cadence had, so `/memory manual` keeps meaning what it meant.
+  const live = meta?.mode;
+  if (live) return { mode: live };
+  const explicit = parseMemoryMode(cfg?.mode);
+  if (explicit) return { mode: explicit };
+  if (cfg?.enabled === false) {
+    return {
+      mode: "off",
+      migration: {
+        from: "enabled = false",
+        note: "[memory] enabled is withdrawn; memory is now off (/memory auto turns it on)",
+      },
+    };
+  }
+  // The live cadence in the sidecar is as much a user choice as the config one.
+  const schedule = (meta?.schedule ?? cfg?.schedule ?? "").trim();
+  if (schedule) {
+    const parsed = parseSchedule(schedule);
+    if (parsed.kind === "interval") {
+      return {
+        mode: "auto",
+        migration: {
+          from: legacyLabel(schedule, cfg?.enabled),
+          note: `cadence withdrawn; memory is now auto (it was ${describeSchedule(schedule)})`,
+        },
+      };
+    }
+    return {
+      mode: "manual",
+      migration: {
+        from: legacyLabel(schedule, cfg?.enabled),
+        note: "cadence withdrawn; memory is now manual (/memory update is the only thing that changes it)",
+      },
+    };
+  }
+  return { mode: fallback };
+}
+
+/** The three-mode refusal every surface prints when handed a withdrawn cadence. */
+export const MEMORY_CADENCE_REFUSAL =
+  "memory has three modes — off, auto, manual. Cadences (daily, weekly, 3d) are withdrawn: " +
+  "auto lets Rune decide when to update, manual waits for /memory update.";
+
+/** True for the words the withdrawn cadence surface used to accept. */
+export function isWithdrawnCadence(s: string): boolean {
+  const v = s.trim().toLowerCase();
+  if (!v) return false;
+  if (v === "daily" || v === "day" || v === "everyday" || v === "weekly" || v === "week") {
+    return true;
+  }
+  return /^\d+\s*(?:d\b|days?\b)/.test(v) || /^every\s+\d+/.test(v);
+}
+
+// ─── Scheduling (LEGACY — read to migrate, never written) ───
 
 /**
  * Parse a cadence string into a normalised schedule. Accepts:

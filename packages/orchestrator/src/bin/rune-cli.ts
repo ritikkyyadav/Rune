@@ -38,6 +38,14 @@ import {
   resolveInitialBrowser,
   saveBrowserState,
   getSystemMemoryPath,
+  loadSystemMemoryMeta,
+  saveSystemMemoryMeta,
+  resolveMemoryMode,
+  parseMemoryMode,
+  describeMemoryMode,
+  isWithdrawnCadence,
+  MEMORY_CADENCE_REFUSAL,
+  type MemoryMode,
   adoptLegacyEnv,
   ensureRuneHome,
   getRuneHome,
@@ -424,8 +432,8 @@ if (command === "notebook") {
 // ─── rune memory ───
 // The same store `/memory` shows, outside the TUI: what Rune remembers, where
 // each line came from, what is still in quarantine, and what the guard turned
-// away. Read-only except `forget` / `pin` / `clear`, and it never spends —
-// nothing here calls a model.
+// away. Read-only except `forget` / `pin` / `clear` / the mode, and it never
+// spends — `update` is the one deliberate exception, and it is the user asking.
 if (command === "memory") {
   const { MemoryStore, buildMemoryBlock } = await import("../memory");
   const sub = (positionals[1] as string | undefined) ?? "";
@@ -433,6 +441,43 @@ if (command === "memory") {
   const store = new MemoryStore();
   const workspace = process.cwd();
   const out = (s: string) => process.stdout.write(s + "\n");
+
+  // ── the mode: off | auto | manual, and nothing else ──
+  // Resolved from the config plus the live sidecar, so this says what a
+  // session would actually do, not what the file wishes for.
+  const readMode = (): MemoryMode =>
+    resolveMemoryMode(loadConfig(workspace).memory, loadSystemMemoryMeta()).mode;
+
+  if (isWithdrawnCadence(sub)) {
+    out(`  ${MEMORY_CADENCE_REFUSAL}`);
+    out("  rune memory off | auto | manual");
+    process.exit(1);
+  }
+  {
+    const asked = parseMemoryMode(sub === "mode" ? arg : sub);
+    if (asked) {
+      saveSystemMemoryMeta({ mode: asked, modeMigration: undefined });
+      out(`  memory: ${asked} — ${describeMemoryMode(asked)}`);
+      process.exit(0);
+    }
+    if (sub === "mode") {
+      const mode = readMode();
+      out(`  memory: ${mode} — ${describeMemoryMode(mode)}`);
+      process.exit(0);
+    }
+  }
+
+  // ── update: the extractor over the last session + one profile refresh ──
+  if (sub === "update" || sub === "refresh") {
+    const { runMemoryUpdateCli } = await import("../memory/update-cli");
+    process.exit(
+      await runMemoryUpdateCli({
+        workspace,
+        focus: (values.focus as string | undefined) ?? (arg || undefined),
+        out,
+      }),
+    );
+  }
 
   if (sub === "forget") {
     if (!arg) {
@@ -489,12 +534,27 @@ if (command === "memory") {
   const promoted = store.promoted(workspace);
   const candidates = store.candidates();
   const refusals = store.refusals();
+  const mode = readMode();
   out("");
-  out(`  What Rune remembers  ·  ${store.root}`);
+  out(`  Memory: ${mode} — ${describeMemoryMode(mode)}`);
+  if (mode === "off") {
+    out("");
+    out("  Nothing is read, written or remembered between sessions.");
+    out("  turn it on:  rune memory auto   (Rune decides when to update)");
+    out("               rune memory manual (only `rune memory update` changes it)");
+    out("");
+    process.exit(0);
+  }
+  out(`  ${store.root}`);
   out("");
   if (promoted.length === 0) {
-    out("  Nothing yet. Rune learns from what you say and what checks prove,");
-    out("  at the end of each run — never from its own account of what it did.");
+    if (mode === "manual") {
+      out("  Nothing yet. In manual mode Rune learns only when you ask it to:");
+      out("  `rune memory update` (or /memory update in a session).");
+    } else {
+      out("  Nothing yet. Rune learns from what you say and what checks prove,");
+      out("  at the end of each run — never from its own account of what it did.");
+    }
   }
   for (const e of promoted) {
     out(`  ${e.id}${e.pinned ? "*" : " "} ${e.text}`);
@@ -529,6 +589,7 @@ if (command === "memory") {
   }
   out("");
   out("  rune memory show | forget <id> | pin <id> | unpin <id> | clear");
+  out("  rune memory update [focus] | rune memory off | auto | manual");
   out("  rune memory restore [--from <stamp|path>] | rune memory backups");
   out("");
   process.exit(0);
@@ -2177,37 +2238,29 @@ async function main() {
   // ─── System Memory: discoverability hint + background "dream" ───
   {
     const mem = engine.getSystemMemory();
-    if (mem.enabled && !mem.content.trim() && mem.scheduleLabel === "manual") {
+    if (mem.mode !== "off" && !mem.content.trim()) {
       process.stdout.write(
         `  ${faint("tip: Rune can learn your style over time —")} ${info("/memory")}\n`,
       );
     }
-    // Auto-refresh in the background when the chosen cadence is due. Non-blocking;
-    // prints a subtle notice on completion. Skips silently with no provider /
-    // nothing new / when the cadence is manual.
-    void engine
-      .maybeReflectSystemMemory()
-      .then((r) => {
-        if (busy) return;
-        if (r.updated) {
-          process.stdout.write(
-            `\n  ${green("✦")} ${faint(`system memory refreshed (~${r.tokensAfter ?? 0} tokens) · /memory to view`)}\n`,
-          );
-          showPrompt();
-          return;
-        }
-        // A refused refresh is the one "nothing happened" worth saying out loud:
-        // a model tried to replace the user's profile with a stub.
-        const refusal = engine.takeSystemMemoryRefusalNotice();
-        if (refusal) {
-          process.stdout.write(
-            `\n  ${warn("!")} ${text("System memory refresh refused")} ${faint(`· ${refusal.reason}`)}\n` +
-              `  ${dim(`your ${refusal.previousBytes}-byte profile is unchanged · /memory restore lists the kept copies`)}\n`,
-          );
-          showPrompt();
-        }
-      })
-      .catch(() => {});
+    // The cadence is withdrawn: a user who had chosen one hears it once, here,
+    // rather than discovering that nothing refreshes any more.
+    const migrated = engine.takeMemoryModeNotice();
+    if (migrated) {
+      process.stdout.write(`  ${faint(`memory: ${migrated.note}`)}\n`);
+    }
+    // A refusal the user has not been told about is the one piece of memory
+    // news worth interrupting for: a model tried to replace their profile with
+    // a stub. Nothing refreshes on startup any more — see maybeReflectSystemMemory.
+    {
+      const refusal = engine.takeSystemMemoryRefusalNotice();
+      if (refusal) {
+        process.stdout.write(
+          `\n  ${warn("!")} ${text("System memory refresh refused")} ${faint(`· ${refusal.reason}`)}\n` +
+            `  ${dim(`your ${refusal.previousBytes}-byte profile is unchanged · /memory restore lists the kept copies`)}\n`,
+        );
+      }
+    }
   }
 
   showPrompt();
@@ -2941,19 +2994,24 @@ async function main() {
         const arg = rest.slice(sub.length).trim();
         const fmtTok = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 
-        // ── update / refresh (the "dream") ──
+        // ── update: the user's own hand (extractor + profile refresh) ──
         if (sub === "update" || sub === "refresh" || sub === "dream") {
           busy = true;
           spinner.start("thinking");
-          let res: Awaited<ReturnType<typeof engine.reflectSystemMemory>>;
+          let res: Awaited<ReturnType<typeof engine.updateMemoryNow>>;
           try {
-            res = await engine.reflectSystemMemory({ focus: arg || undefined, trigger: "manual" });
+            res = await engine.updateMemoryNow(sessionId, { focus: arg || undefined });
           } finally {
             spinner.stop();
             busy = false;
           }
+          if (res.learned && res.learned.promoted > 0) {
+            process.stdout.write(
+              `  ${green("✓")} ${text(`learned ${res.learned.promoted} thing(s) from this session`)}\n`,
+            );
+          }
           if (!res.updated) {
-            process.stdout.write(`  ${dim(`Memory unchanged — ${res.reason}.`)}\n\n`);
+            process.stdout.write(`  ${dim(`Profile unchanged — ${res.reason}.`)}\n\n`);
             showPrompt();
             return;
           }
@@ -3056,50 +3114,64 @@ async function main() {
           return;
         }
 
-        // ── set cadence (off | manual | daily | weekly | Nd | every N days) ──
-        if (
-          sub === "off" ||
-          sub === "manual" ||
-          sub === "daily" ||
-          sub === "weekly" ||
-          /^\d+\s*d/.test(rest) ||
-          /^every\s+\d+/.test(rest)
-        ) {
-          const res = engine.setSystemMemorySchedule(rest);
-          const verb = res.label === "manual" ? "manual (no auto-refresh)" : `auto · ${res.label}`;
-          process.stdout.write(`  ${green("✓")} ${text("memory cadence:")} ${info(verb)}\n`);
-          if (res.label !== "manual") {
-            process.stdout.write(
-              `  ${faint("Rune will refresh your profile in the background when it's due.")}\n`,
-            );
+        // ── set the mode (off | auto | manual) ──
+        if (isWithdrawnCadence(rest)) {
+          process.stdout.write(`  ${dim(MEMORY_CADENCE_REFUSAL)}\n`);
+          process.stdout.write(`  ${faint("/memory auto · /memory manual · /memory off")}\n\n`);
+          showPrompt();
+          return;
+        }
+        if (sub === "off" || sub === "auto" || sub === "manual" || sub === "on") {
+          const res = engine.setMemoryMode(sub);
+          if (!res.ok) {
+            process.stdout.write(`  ${dim(res.reason ?? "unknown mode")}\n\n`);
+            showPrompt();
+            return;
           }
-          process.stdout.write("\n");
+          process.stdout.write(
+            `  ${green("✓")} ${text("memory:")} ${info(res.mode)} ${faint(describeMemoryMode(res.mode))}\n\n`,
+          );
           showPrompt();
           return;
         }
 
-        // ── default: status + show the profile ──
+        // ── default: the mode first, then status, then the profile ──
         const mem = engine.getSystemMemory();
+        if (mem.mode === "off") {
+          process.stdout.write(`  ${bold(text("Memory"))} ${info("off")}\n`);
+          process.stdout.write(
+            `  ${dim("Nothing is read, written or remembered between sessions.")}\n`,
+          );
+          process.stdout.write(
+            `  ${faint("turn it on: /memory auto (Rune decides when to update) · /memory manual (only /memory update)")}\n\n`,
+          );
+          showPrompt();
+          return;
+        }
         process.stdout.write(
-          `  ${bold(text("System memory"))}${mem.enabled ? "" : ` ${faint("(disabled)")}`}\n`,
+          `  ${bold(text("Memory"))} ${info(mem.mode)} ${faint(mem.modeDescription)}\n`,
         );
         const last = mem.meta.updatedAt ? relTime(mem.meta.updatedAt) : "never";
-        const dreamt = mem.meta.lastReflectedAt ? relTime(mem.meta.lastReflectedAt) : "never";
+        const refreshed = mem.meta.lastRefresh
+          ? `${relTime(mem.meta.lastRefresh.at)} (${mem.meta.lastRefresh.origin === "agent" ? "by Rune" : "by you"})`
+          : mem.meta.lastReflectedAt
+            ? relTime(mem.meta.lastReflectedAt)
+            : "never";
         process.stdout.write(
-          `  ${faint(`cadence: ${mem.scheduleLabel} · ~${fmtTok(mem.tokens)}/${fmtTok(mem.maxTokens)} tokens · updated ${last} · dreamed ${dreamt}`)}\n\n`,
+          `  ${faint(`~${fmtTok(mem.tokens)}/${fmtTok(mem.maxTokens)} tokens · updated ${last} · refreshed ${refreshed}`)}\n`,
         );
+        const migrated = engine.takeMemoryModeNotice();
+        if (migrated) process.stdout.write(`  ${dim(migrated.note)}\n`);
+        process.stdout.write("\n");
         if (!mem.content.trim()) {
           process.stdout.write(`  ${dim("Empty — Rune hasn't built your profile yet.")}\n`);
           process.stdout.write(
-            `  ${dim("Seed it with ")}${info("/memory update")}${dim(", jot a note with ")}${info("/memory add <…>")}${dim(",")}\n`,
-          );
-          process.stdout.write(
-            `  ${dim("or enable auto-updates with ")}${info("/memory weekly")}${dim(" (or daily / 3d).")}\n\n`,
+            `  ${dim("Seed it with ")}${info("/memory update")}${dim(", jot a note with ")}${info("/memory add <…>")}${dim(".")}\n\n`,
           );
         } else {
           for (const line of mem.content.split("\n")) process.stdout.write(`  ${text(line)}\n`);
           process.stdout.write(
-            `\n  ${faint("update: /memory update · note: /memory add <…> · edit: /memory edit · cadence: /memory daily|3d|weekly|manual")}\n\n`,
+            `\n  ${faint("update: /memory update · note: /memory add <…> · edit: /memory edit · mode: /memory off|auto|manual")}\n\n`,
           );
         }
         showPrompt();

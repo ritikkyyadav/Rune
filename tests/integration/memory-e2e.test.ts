@@ -253,6 +253,59 @@ describe("Engine memory (end-to-end, fake provider)", () => {
     expect(JSON.stringify(after.messages)).toContain("I want unsugared facts and no padding");
   }, 30_000);
 
+  // ─── The three modes, through a real run ───
+  //
+  // The unit suite (tests/unit/orchestrator/memory-modes.test.ts) walks the
+  // whole semantics table against the Engine's API. These two are the wiring
+  // claims only a run can settle: that the run-end hook obeys the mode, and
+  // that `manual` is a real choice rather than a slower `auto`.
+
+  test("manual: a whole run learns nothing, but what was learned before is injected", async () => {
+    // A fact the user approved of in some earlier session.
+    const seed = new MemoryStore(join(home, "memory"));
+    seed.observe({
+      kind: "person",
+      text: "I want unsugared facts and no padding",
+      source: "user-said",
+      sessionId: "seed",
+      scope: "global",
+    });
+    seed.setPinned(seed.all()[0]!.id, true);
+
+    const port = serve([sseText("done")]);
+    const engine = makeEngine(dir, port, { mode: "manual" });
+    const sid = engine.createSession();
+    await drain(engine, sid, "no, always run typecheck before you claim a fix");
+    engine.close();
+
+    // Manual holds the switch: a whole run, with a textbook correction in it,
+    // adds nothing. (`/memory update` doing both halves is asserted against a
+    // scripted gateway in tests/unit/orchestrator/memory-modes.test.ts.)
+    const after = new MemoryStore(join(home, "memory")).all();
+    expect(after).toHaveLength(1);
+    expect(after[0]!.text).toBe("I want unsugared facts and no padding");
+    // …and the earlier fact is still doing its job.
+    expect(bodies[0]!).toContain("I want unsugared facts and no padding");
+  }, 30_000);
+
+  test("a legacy cadence in the config runs no clock and still learns", async () => {
+    const port = serve([sseText("done")]);
+    // `schedule = "daily"` is the withdrawn control. It migrates to auto: the
+    // run-end extractor works, and nothing at all is refreshed on a timer —
+    // there is exactly one request in `bodies`, the run's own.
+    const engine = makeEngine(dir, port, { schedule: "daily" });
+    expect(engine.memoryMode()).toBe("auto");
+    const sid = engine.createSession();
+    await drain(engine, sid, "no, always run typecheck before you claim a fix");
+    expect((await engine.maybeReflectSystemMemory()).updated).toBe(false);
+    engine.close();
+
+    expect(new MemoryStore(join(home, "memory")).promoted(dir).map((e) => e.text)).toContain(
+      "no, always run typecheck before you claim a fix",
+    );
+    expect(bodies).toHaveLength(1);
+  }, 30_000);
+
   test("learning off still injects what is already there", async () => {
     // Two switches, two meanings. `enabled = false` is "memory is off";
     // `learn = false` is "stop adding to it" — a user who has curated a profile

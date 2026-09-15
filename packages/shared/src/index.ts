@@ -172,6 +172,11 @@ export {
 } from "./tiers.js";
 export { type LogLevel, type Logger, createLogger, nullLogger } from "./logger.js";
 export {
+  type MemoryMode,
+  type MemoryRefreshOrigin,
+  type MemoryModeMigration,
+  type MemoryRefreshRecord,
+  type ResolvedMemoryMode,
   type MemoryScheduleKind,
   type ParsedSchedule,
   type SystemMemoryMeta,
@@ -197,6 +202,13 @@ export {
   saveSystemMemory,
   saveSystemMemoryMeta,
   clearSystemMemory,
+  MEMORY_MODES,
+  MEMORY_MODE_DESCRIPTIONS,
+  MEMORY_CADENCE_REFUSAL,
+  parseMemoryMode,
+  describeMemoryMode,
+  resolveMemoryMode,
+  isWithdrawnCadence,
   parseSchedule,
   describeSchedule,
   isReflectionDue,

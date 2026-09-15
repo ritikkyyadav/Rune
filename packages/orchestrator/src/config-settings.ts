@@ -57,6 +57,34 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     live: true,
   },
   {
+    key: "memory",
+    tomlPath: "memory.mode",
+    kind: "enum",
+    values: ["off", "auto", "manual"],
+    valueAliases: {
+      none: "off",
+      disabled: "off",
+      no: "off",
+      on: "auto",
+      yes: "auto",
+      automatic: "auto",
+      autonomous: "auto",
+      user: "manual",
+      // The withdrawn cadence, folded in rather than refused: someone asking
+      // for "daily" is asking for Rune to keep the profile current, which is
+      // what `auto` is now. There is no clock behind any of these.
+      daily: "auto",
+      weekly: "auto",
+      "3d": "auto",
+    },
+    description:
+      "What Rune remembers between sessions. off = nothing is read or written · auto = Rune " +
+      "decides when to update its memory · manual = only /memory update changes it. There is " +
+      "no schedule: no value of this refreshes memory on a clock.",
+    nameAliases: ["memory mode", "long-term memory", "remember", "profile"],
+    live: true,
+  },
+  {
     key: "parallel",
     tomlPath: "subagents.maxParallel",
     kind: "number",

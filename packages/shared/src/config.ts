@@ -618,12 +618,30 @@ export interface RuneConfig {
    * personalised context. Stored at ~/.rune/system-memory.md (see shared/system-memory.ts).
    */
   memory?: {
-    /** Inject the memory into the system prompt. Default true. */
+    /**
+     * THE memory control. `off` | `auto` | `manual`, default `auto`:
+     *
+     *   off     nothing is read, injected, extracted, refreshed or written
+     *   auto    Rune manages its own memory — it learns at run end (zero spend)
+     *           and may refresh the profile itself, at most once a session
+     *   manual  only `/memory update` extracts or refreshes; what was already
+     *           learned is still read and injected
+     *
+     * Nothing here schedules anything on a clock. A live choice via
+     * `/memory off|auto|manual` overrides this.
+     */
+    mode?: "off" | "auto" | "manual";
+    /**
+     * COMPATIBILITY, read-only. `enabled = false` migrates to `mode = "off"`.
+     * The settings catalog no longer offers it.
+     * @deprecated use `mode`
+     */
     enabled?: boolean;
     /**
-     * Automatic-refresh cadence: `manual` (no auto refresh) | `daily` | `weekly` | `3d` (every
-     * N days). A live choice via `/memory <cadence>` overrides this. Default `manual` — the
-     * dream never spends credits until the user opts in.
+     * COMPATIBILITY, read-only. The withdrawn refresh cadence (`daily` |
+     * `weekly` | `3d`): an interval migrates to `mode = "auto"`, `manual` to
+     * `mode = "manual"`. Rune never writes this field and never runs a clock.
+     * @deprecated use `mode`
      */
     schedule?: string;
     /**
@@ -634,10 +652,10 @@ export interface RuneConfig {
     /** Hard cap on the memory size in tokens — keeps it butter-smooth for tiny models. Default 1500. */
     maxTokens?: number;
     /**
-     * Learn autonomously at run end — the deterministic extractor that proposes
-     * candidates from the user's own words, machine-verified outcomes, and facts
-     * seen in two sessions. Zero model calls; see docs/program/memory-autonomous.md.
-     * Default true. `enabled = false` turns this off too: off means off.
+     * COMPATIBILITY, read-only. Run-end learning is now a property of the mode
+     * (`auto` learns, `manual` and `off` do not), so this can only narrow:
+     * `learn = false` in `auto` behaves as `manual` for extraction.
+     * @deprecated use `mode`
      */
     learn?: boolean;
     /** Hard bound on the structured store (~/.rune/memory). Default 500 entries. */
@@ -854,11 +872,13 @@ const DEFAULT_CONFIG: RuneConfig = {
     save: true,
   },
   memory: {
-    enabled: true,
-    schedule: "manual",
+    // One setting, three values, no clock. `enabled`, `schedule` and `learn`
+    // are deliberately absent from the defaults: they are compatibility fields
+    // now, and a default that set them would migrate every fresh install into
+    // a mode nobody chose.
+    mode: "auto",
     model: "cheapest",
     maxTokens: 1500,
-    learn: true,
     maxEntries: 500,
   },
   team: {
@@ -1018,6 +1038,8 @@ function applyEnvOverrides(config: Record<string, unknown>): void {
       setNested(c, "research.autoApprove", process.env.RUNE_RESEARCH_AUTO_APPROVE === "true"),
     RUNE_RESEARCH_SAVE: (c) =>
       setNested(c, "research.save", process.env.RUNE_RESEARCH_SAVE !== "false"),
+    RUNE_MEMORY_MODE: (c) => setNested(c, "memory.mode", process.env.RUNE_MEMORY_MODE!),
+    // Compatibility, same migration as the config fields (see resolveMemoryMode).
     RUNE_MEMORY_ENABLED: (c) =>
       setNested(c, "memory.enabled", process.env.RUNE_MEMORY_ENABLED !== "false"),
     RUNE_MEMORY_SCHEDULE: (c) => setNested(c, "memory.schedule", process.env.RUNE_MEMORY_SCHEDULE!),

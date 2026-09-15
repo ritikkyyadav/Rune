@@ -94,9 +94,11 @@ import {
   restoreSystemMemory,
   listSystemMemoryBackups,
   clearSystemMemory as clearSystemMemoryStore,
-  effectiveSchedule,
-  describeSchedule,
-  isReflectionDue,
+  parseSchedule,
+  resolveMemoryMode,
+  describeMemoryMode,
+  parseMemoryMode,
+  MEMORY_CADENCE_REFUSAL,
   estimateMemoryTokens,
   clampToBudget,
   createLogger,
@@ -122,6 +124,9 @@ import type {
   SystemMemoryMeta,
   SystemMemoryRefusal,
   SystemMemoryBackup,
+  MemoryMode,
+  MemoryRefreshOrigin,
+  MemoryModeMigration,
 } from "@rune/shared";
 import { buildGateway, providerStatus } from "./provider-registry";
 import type { EnterpriseRouteConfig } from "./provider-registry";
@@ -165,6 +170,7 @@ import {
   MemoryStore,
   MEMORY_BLOCK_HEADING,
   captureRunMemory,
+  createMemoryUpdateTool,
   countInjected,
   guardMemoryNarrative,
   memoryBlockFor,
@@ -1144,13 +1150,20 @@ export interface EngineConfig {
     index?: string;
     allowUnsandboxedTools?: boolean | string[];
   };
-  /** System Memory ("dreaming") — evergreen profile config (enabled/schedule/model/maxTokens). */
+  /**
+   * Memory config. ONE user-facing setting — `mode`: off | auto | manual
+   * (default auto). `enabled`, `schedule` and `learn` are read-only
+   * compatibility fields the loader still accepts and migrates.
+   */
   memory?: {
+    mode?: string;
+    /** @deprecated migrates to `mode = "off"`. */
     enabled?: boolean;
+    /** @deprecated cadence withdrawn 2026-09-15; migrates to `mode`. */
     schedule?: string;
     model?: string;
     maxTokens?: number;
-    /** Learn autonomously at run end (deterministic, zero model calls). */
+    /** @deprecated run-end learning is a property of the mode. */
     learn?: boolean;
     maxEntries?: number;
   };
@@ -1245,6 +1258,9 @@ const DEFAULT_ENGINE_CONFIG: EngineConfig = {
 // environment snapshot + ALAN.md/CLAUDE.md/AGENTS.md at turn start.
 
 const SYSTEM_PROMPT = AGENT_DOCTRINE;
+
+/** The one name `syncMemoryUpdateTool` registers and unregisters. */
+const MEMORY_UPDATE_TOOL_NAME = "memory_update";
 
 // ─── System Memory ("dreaming") helpers ───
 //
@@ -1512,8 +1528,10 @@ export class Engine {
   // BYOP: credentials resolved by the auth layer (keychain / OAuth). Seeded at
   // boot and refreshed on login/logout; handed into every gateway (re)build.
   private resolvedCredentials: Record<string, ResolvedCredential> = {};
-  // Guards against overlapping System Memory "dreams" (auto + manual at once).
+  // Guards against overlapping System Memory refreshes (agent + user at once).
   private memoryReflecting = false;
+  // Sessions in which the agent has already spent its one `memory_update`.
+  private readonly memoryToolUsed = new Set<string>();
   // Black box: null when disabled (tests, embedders). Created BEFORE the
   // gateway so gatewayOpts() can hand the tap into every (re)build.
   private recorder: Recorder | null = null;
@@ -2038,6 +2056,12 @@ export class Engine {
         readSetting: (key) => this.readConfigSetting(key),
       }),
     );
+
+    // memory_update: the agent's own hand on its memory, and ONLY in `auto` —
+    // the mode where the user handed Rune that judgement. In `manual` and `off`
+    // the tool is not registered at all, so a model cannot be tempted by a
+    // schema it is not allowed to use, and the prompt carries none of its bytes.
+    this.syncMemoryUpdateTool();
 
     // ── Org policy: load + verify BEFORE the broker exists. A managed machine
     // with a tampered/unsigned policy refuses to start — running unpoliced is
@@ -4189,50 +4213,167 @@ export class Engine {
     };
   }
 
-  // ─── System Memory ("dreaming") ───
+  // ─── System Memory — three modes, and no clock ───
   //
   // An evergreen, narrative profile of the user and their codebases, stored at
-  // ~/.rune/system-memory.md (see @rune/shared system-memory.ts) and injected into
-  // every session's system prompt. Small by design so even tiny models load it
-  // cheaply. Refreshed manually (`/memory update`) or automatically on a cadence.
+  // ~/.rune/system-memory.md (see @rune/shared system-memory.ts) and injected
+  // into every session's system prompt. Small by design so even tiny models
+  // load it cheaply.
+  //
+  // `[memory] mode` is the ONE control, and it has three values (2026-09-15,
+  // the founder, withdrawing the daily/weekly/3d cadence):
+  //
+  //   off     nothing read, injected, extracted, refreshed or written
+  //   auto    the run-end extractor learns (zero spend), and the AGENT may
+  //           refresh the profile itself, at most once a session
+  //   manual  `/memory update` is the only thing that extracts or refreshes;
+  //           what was already promoted is still read and injected
+  //
+  // Nothing schedules a refresh on a clock in any mode. `maybeReflectSystemMemory`
+  // below is the former cadence entry point and is now a permanent no-op.
+
+  /**
+   * The mode in force: the live sidecar choice, then `[memory] mode`, then the
+   * migration off the withdrawn controls, then `auto`.
+   *
+   * One exception, kept deliberately: an Engine built with NO `memory` key at
+   * all — the eval harness, every SDK caller, every test that builds an Engine
+   * to measure something else — is `off` for the learned store. It used to
+   * write to the REAL ~/.rune/memory: one `bun run eval` put 30 entries into
+   * the founder's own profile, scoped to temp workspaces that no longer exist.
+   * A store that fills up from other people's test runs is not a memory of the
+   * user. The narrative profile keeps the reading it has always had (injected
+   * unless switched off), because that file is the user's own writing.
+   */
+  memoryMode(): MemoryMode {
+    return resolveMemoryMode(this.config.memory, loadSystemMemoryMeta()).mode;
+  }
 
   /** Resolved memory config with defaults applied. */
   private memoryConfig(): {
+    mode: MemoryMode;
+    /** The narrative profile may be read and injected. */
     enabled: boolean;
-    schedule: string;
     model: string;
     maxTokens: number;
     /** The autonomous store may be read and injected (opt-in at the boundary). */
     learned: boolean;
+    /** The run-end extractor may run on its own — `auto` only. */
     learn: boolean;
   } {
     const m = this.config.memory ?? {};
-    // `enabled` keeps the meaning it has had since the narrative profile
-    // shipped: on unless explicitly switched off. The dream, its cadence and
-    // the prefix block all read it, and an embedder that says nothing still
-    // gets them — changing that would be a silent behavior change to a
-    // subsystem this lane was asked to extend, not to re-decide.
-    const enabled = m.enabled !== false;
-    // The LEARNED store is the new thing, and it is opt-in at the Engine
-    // boundary exactly like the notebook two fields down. An embedder that
-    // says nothing about memory — the eval harness, every SDK caller, every
-    // test that builds an Engine to measure something else — writes nothing and
-    // is injected nothing. It used to write to the REAL ~/.rune/memory: one
-    // `bun run eval` put 30 entries into the founder's own profile, scoped to
-    // temp workspaces that no longer exist. A store that fills up from other
-    // people's test runs is not a memory of the user.
+    const mode = this.memoryMode();
+    const enabled = mode !== "off";
     const learned = this.config.memory !== undefined && enabled;
     return {
+      mode,
       enabled,
       learned,
-      schedule: m.schedule ?? "manual",
       model: m.model ?? "cheapest",
       maxTokens: m.maxTokens && m.maxTokens > 0 ? m.maxTokens : 1500,
-      // `enabled = false` means off, not "off for injection". A store that kept
-      // filling up while the user believed memory was disabled would be the
-      // worst possible reading of that switch.
-      learn: learned && m.learn !== false,
+      // Only `auto` learns on its own. `manual` still READS what was promoted —
+      // a fact the user already approved of does not become useless because
+      // they took the wheel — but it grows only on `/memory update`.
+      // The withdrawn `learn = false` can still narrow, never widen.
+      learn: learned && mode === "auto" && m.learn !== false,
     };
+  }
+
+  /**
+   * Switch modes live. Persisted to the meta sidecar (which outranks the config
+   * default) and applied immediately: the `memory_update` tool appears in `auto`
+   * and is taken away everywhere else, in this session, not the next one.
+   */
+  setMemoryMode(mode: string): { ok: boolean; mode: MemoryMode; reason?: string } {
+    const parsed = parseMemoryMode(mode);
+    if (!parsed) {
+      return { ok: false, mode: this.memoryMode(), reason: MEMORY_CADENCE_REFUSAL };
+    }
+    // The migration note is spent: the user has just made the choice themselves.
+    saveSystemMemoryMeta({ mode: parsed, modeMigration: undefined });
+    this.config.memory = { ...(this.config.memory ?? {}), mode: parsed };
+    this.syncMemoryUpdateTool();
+    return { ok: true, mode: parsed };
+  }
+
+  /** off → auto → manual → off. What a one-key cycle on the `/memory` panel does. */
+  cycleMemoryMode(): MemoryMode {
+    const order: MemoryMode[] = ["off", "auto", "manual"];
+    const next = order[(order.indexOf(this.memoryMode()) + 1) % order.length]!;
+    this.setMemoryMode(next);
+    return next;
+  }
+
+  /**
+   * The cadence→mode migration, returned ONCE (reading it marks it notified),
+   * so a user who chose `daily` is told the cadence is gone rather than left to
+   * notice that nothing refreshes any more. Recorded on first resolution.
+   */
+  takeMemoryModeNotice(): MemoryModeMigration | undefined {
+    const meta = loadSystemMemoryMeta();
+    const recorded = meta.modeMigration;
+    if (recorded) {
+      if (recorded.notified) return undefined;
+      saveSystemMemoryMeta({ modeMigration: { ...recorded, notified: true } });
+      return recorded;
+    }
+    const resolved = resolveMemoryMode(this.config.memory, meta);
+    if (!resolved.migration) return undefined;
+    const note: MemoryModeMigration = {
+      at: new Date().toISOString(),
+      from: resolved.migration.from,
+      mode: resolved.mode,
+      note: resolved.migration.note,
+      notified: true,
+    };
+    saveSystemMemoryMeta({ modeMigration: note });
+    return note;
+  }
+
+  /**
+   * Register or unregister `memory_update` to match the mode. Called once at
+   * construction and again on every live mode change, so the tool a model can
+   * see is always the tool the user's setting allows.
+   */
+  private syncMemoryUpdateTool(): void {
+    try {
+      const want = this.memoryMode() === "auto";
+      const have = this.registry.get(MEMORY_UPDATE_TOOL_NAME) !== undefined;
+      if (want && !have) {
+        this.registry.register(
+          createMemoryUpdateTool({
+            refresh: (sessionId, focus) => this.agentRequestedMemoryUpdate(sessionId, focus),
+          }),
+        );
+      } else if (!want && have) {
+        this.registry.unregister(MEMORY_UPDATE_TOOL_NAME);
+      }
+    } catch {
+      // Memory is an amenity. A registry that will not take the tool is not a
+      // reason to fail a session.
+    }
+  }
+
+  /**
+   * The `memory_update` tool's body. Once per session, `auto` only, and through
+   * the same save (backup + shrink floor) every other refresh goes through.
+   */
+  private async agentRequestedMemoryUpdate(
+    sessionId: string,
+    focus?: string,
+  ): Promise<{ updated: boolean; reason?: string; tokensBefore?: number; tokensAfter?: number }> {
+    if (this.memoryMode() !== "auto") {
+      return {
+        updated: false,
+        reason: "memory is not in auto mode — only the user can update it (/memory update)",
+      };
+    }
+    if (this.memoryToolUsed.has(sessionId)) {
+      return { updated: false, reason: "memory_update has already run once this session" };
+    }
+    // Claimed BEFORE the await: two parallel tool calls must not both get in.
+    this.memoryToolUsed.add(sessionId);
+    return this.reflectSystemMemory({ focus, trigger: "auto", origin: "agent" });
   }
 
   // ─── Autonomous memory (docs/program/memory-autonomous.md) ───
@@ -4310,9 +4451,16 @@ export class Engine {
       stopReason?: string;
     },
     retroLessons: ReadonlyArray<{ kind: string; title: string; body: string; evidence?: string }>,
-  ): void {
+    /**
+     * `/memory update` in `manual` mode: the user asked for exactly this, right
+     * now, so the mode's "nothing on its own" does not apply. `off` still means
+     * off — the caller checks that before it gets here.
+     */
+    opts: { onUserCommand?: boolean } = {},
+  ): { proposed: number; stored: number; promoted: number } {
+    const none = { proposed: 0, stored: 0, promoted: 0 };
     const cfg = this.memoryConfig();
-    if (!cfg.learn) return;
+    if (!(opts.onUserCommand ? cfg.learned : cfg.learn)) return none;
     try {
       const userMessages: string[] = [];
       for (const { event } of this.sessions.getEvents(sessionId, 0)) {
@@ -4321,7 +4469,7 @@ export class Engine {
         if (isHarnessAuthoredTurn(p)) continue;
         if (typeof p.content === "string" && p.content.trim()) userMessages.push(p.content);
       }
-      captureRunMemory(this.memoryStore(), {
+      const r = captureRunMemory(this.memoryStore(), {
         sessionId,
         workspace: this.config.workspaceRoot,
         userMessages,
@@ -4331,8 +4479,10 @@ export class Engine {
           .map((c) => ({ command: c.command, passed: c.passed })),
         retroLessons,
       });
+      return { proposed: r.proposed, stored: r.stored, promoted: r.promoted };
     } catch {
       // Memory is an amenity. It may never break a run.
+      return none;
     }
   }
 
@@ -4341,29 +4491,50 @@ export class Engine {
     content: string;
     meta: SystemMemoryMeta;
     enabled: boolean;
+    /** The mode in force — the first thing every surface states. */
+    mode: MemoryMode;
+    /** Its one-line description. */
+    modeDescription: string;
+    /**
+     * COMPATIBILITY: the mode, under the name the cadence used to have, so a
+     * surface that has not been rewritten yet says "auto" rather than "daily".
+     * @deprecated read `mode`
+     */
     schedule: string;
+    /** @deprecated read `mode` */
     scheduleLabel: string;
     tokens: number;
     maxTokens: number;
   } {
     const cfg = this.memoryConfig();
     const { content, meta } = loadSystemMemory();
-    const schedule = effectiveSchedule(meta, cfg.schedule);
     return {
       content,
       meta,
       enabled: cfg.enabled,
-      schedule,
-      scheduleLabel: describeSchedule(schedule),
+      mode: cfg.mode,
+      modeDescription: describeMemoryMode(cfg.mode),
+      schedule: cfg.mode,
+      scheduleLabel: cfg.mode,
       tokens: estimateMemoryTokens(content),
       maxTokens: cfg.maxTokens,
     };
   }
 
-  /** Set the auto-refresh cadence live (persisted to the meta sidecar, overrides config). */
+  /**
+   * COMPATIBILITY for the surfaces that still speak cadence. A cadence is no
+   * longer a thing that can be set: an interval means "let Rune decide" and
+   * becomes `auto`, `manual` stays manual, `off` is off. Nothing here starts a
+   * clock. New code calls `setMemoryMode`.
+   *
+   * @deprecated use setMemoryMode
+   */
   setSystemMemorySchedule(schedule: string): { schedule: string; label: string } {
-    saveSystemMemoryMeta({ schedule });
-    return { schedule, label: describeSchedule(schedule) };
+    const direct = parseMemoryMode(schedule);
+    const mode: MemoryMode =
+      direct ?? (parseSchedule(schedule).kind === "interval" ? "auto" : "manual");
+    this.setMemoryMode(mode);
+    return { schedule: mode, label: mode };
   }
 
   /** Replace the whole memory (desktop save / post-$EDITOR round-trip). Clamps to budget. */
@@ -4511,7 +4682,14 @@ export class Engine {
    * itself (infer() does no fallback). Always feeds the existing profile so re-runs
    * refine rather than duplicate. No-ops when there is nothing new to learn from.
    */
-  async reflectSystemMemory(opts: { focus?: string; trigger?: "manual" | "auto" } = {}): Promise<{
+  async reflectSystemMemory(
+    opts: {
+      focus?: string;
+      trigger?: "manual" | "auto";
+      /** Who asked. Defaults from `trigger`; recorded in the sidecar. */
+      origin?: MemoryRefreshOrigin;
+    } = {},
+  ): Promise<{
     updated: boolean;
     reason?: string;
     tokensBefore: number;
@@ -4521,10 +4699,23 @@ export class Engine {
     refused?: SystemMemoryRefusal;
   }> {
     const cfg = this.memoryConfig();
+    const origin: MemoryRefreshOrigin = opts.origin ?? (opts.trigger === "auto" ? "agent" : "user");
     const { content: existing, meta } = loadSystemMemory();
     const tokensBefore = estimateMemoryTokens(existing);
     const unchanged = { updated: false as const, tokensBefore, tokensAfter: tokensBefore };
 
+    // `off` is off on every path into the refresh, not just the ones with a UI.
+    if (cfg.mode === "off") {
+      return { ...unchanged, reason: "memory is off — /memory auto or /memory manual turns it on" };
+    }
+    // In `manual` the person holds the switch: an agent-originated refresh is
+    // refused even if something managed to call for one.
+    if (origin === "agent" && cfg.mode !== "auto") {
+      return {
+        ...unchanged,
+        reason: "memory is in manual mode — only /memory update refreshes it",
+      };
+    }
     if (this.memoryReflecting) {
       return { ...unchanged, reason: "a memory refresh is already running" };
     }
@@ -4579,6 +4770,9 @@ export class Engine {
           updatedAt: now,
           lastReflectedAt: now,
           tokens: tokensAfter,
+          // Who did this, on the record. A profile that changed while the user
+          // was not looking should be able to say whose idea it was.
+          lastRefresh: { at: now, origin, tokensBefore, tokensAfter },
           foldedSeqBySession: { ...(meta.foldedSeqBySession ?? {}), ...digest.foldedSeqBySession },
         },
         { lastReflectedAt: now },
@@ -4597,9 +4791,15 @@ export class Engine {
   }
 
   /**
-   * Run the automatic dream IF it's due (interval cadence elapsed) and a provider
-   * is configured. Cheap + safe to call on every startup — returns quickly when
-   * nothing is due. Callers typically run this in the background (don't await).
+   * THE CLOCK, REMOVED. This was the startup cadence check ("is a dream due?").
+   * There is no cadence any more — off, auto and manual, and none of the three
+   * is a timer — so it answers the same thing every time and spends nothing.
+   *
+   * Kept, rather than deleted, because it is called from the startup path of
+   * both front ends and from the engine host, and a no-op that says why is a
+   * kinder migration than a missing method. In `auto` the AGENT decides, in
+   * session, through `memory_update`; in `manual` the user decides through
+   * `/memory update`.
    */
   async maybeReflectSystemMemory(): Promise<{
     updated: boolean;
@@ -4608,13 +4808,56 @@ export class Engine {
     tokensAfter?: number;
     refused?: SystemMemoryRefusal;
   }> {
+    return {
+      updated: false,
+      reason:
+        this.memoryMode() === "off"
+          ? "memory is off"
+          : "memory is never refreshed on a clock — auto lets Rune decide, manual waits for /memory update",
+    };
+  }
+
+  /**
+   * `/memory update` and `rune memory update`: the user's own hand, in both
+   * `auto` and `manual`. One command does both halves of an update — the
+   * deterministic extractor over THIS session (which `manual` otherwise never
+   * runs), then the profile refresh — because "update my memory" is one thing
+   * to a person and two things only to this file.
+   */
+  async updateMemoryNow(
+    sessionId: string,
+    opts: { focus?: string } = {},
+  ): Promise<{
+    mode: MemoryMode;
+    /** What the extractor did over this session, when it ran. */
+    learned?: { proposed: number; stored: number; promoted: number };
+    updated: boolean;
+    reason?: string;
+    tokensBefore: number;
+    tokensAfter: number;
+    content?: string;
+    refused?: SystemMemoryRefusal;
+  }> {
     const cfg = this.memoryConfig();
-    if (!cfg.enabled) return { updated: false, reason: "memory disabled" };
-    if (this.memoryReflecting) return { updated: false, reason: "already running" };
-    const meta = loadSystemMemoryMeta();
-    const schedule = effectiveSchedule(meta, cfg.schedule);
-    if (!isReflectionDue(meta, schedule)) return { updated: false, reason: "not due" };
-    return this.reflectSystemMemory({ trigger: "auto" });
+    if (cfg.mode === "off") {
+      const tokens = estimateMemoryTokens(loadSystemMemory().content);
+      return {
+        mode: "off",
+        updated: false,
+        reason: "memory is off — /memory auto or /memory manual turns it on",
+        tokensBefore: tokens,
+        tokensAfter: tokens,
+      };
+    }
+    const learned = cfg.learned
+      ? this.captureMemory(sessionId, { verdictKind: "none" }, [], { onUserCommand: true })
+      : undefined;
+    const refresh = await this.reflectSystemMemory({ ...opts, trigger: "manual", origin: "user" });
+    return {
+      mode: cfg.mode,
+      ...(learned ? { learned } : {}),
+      ...refresh,
+    };
   }
 
   /**
@@ -4623,7 +4866,8 @@ export class Engine {
    * in-session requests when they conflict.
    */
   private buildSystemMemoryBlock(): string {
-    if (this.config.memory?.enabled === false) return "";
+    // `off` is off: the profile is not even read, let alone injected.
+    if (this.memoryMode() === "off") return "";
     // GUARDED, and clamped, on the way IN.
     //
     // V7 finding 2: this file is `messages[0]` of every future session — the
@@ -4854,6 +5098,10 @@ export class Engine {
         this.setSubagentMode(canonicalValue as SubagentMode);
         return { ok: true };
       }
+      case "memory": {
+        const r = this.setMemoryMode(canonicalValue);
+        return r.ok ? { ok: true } : { ok: false, reason: r.reason };
+      }
       default:
         return { ok: false, reason: `no live handler for "${key}"` };
     }
@@ -4932,6 +5180,10 @@ export class Engine {
         return isLspAutoFeedbackEnabled() ? "true" : "false";
       case "subagents":
         return this.config.subagents?.mode ?? "auto";
+      case "memory":
+        // The mode in FORCE — a live `/memory manual` outranks the config file,
+        // and "what is my memory set to" means the one that is running.
+        return this.memoryMode();
       default:
         return undefined;
     }

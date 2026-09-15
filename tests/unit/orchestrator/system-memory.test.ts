@@ -114,11 +114,14 @@ describe("engine/system-memory — manual edits", () => {
     engine.close();
   });
 
-  it("setSystemMemorySchedule is reflected by getSystemMemory", () => {
+  it("a withdrawn cadence set through the compatibility shim lands on a mode", () => {
     const engine = makeEngine();
+    // `weekly` used to mean "refresh every 7 days". There is no clock now, so
+    // it means what the person wanted: let Rune keep it current.
     engine.setSystemMemorySchedule("weekly");
-    const mem = engine.getSystemMemory();
-    expect(mem.scheduleLabel).toBe("weekly");
+    expect(engine.getSystemMemory().mode).toBe("auto");
+    engine.setSystemMemorySchedule("manual");
+    expect(engine.getSystemMemory().mode).toBe("manual");
     engine.close();
   });
 });
@@ -168,28 +171,36 @@ describe("engine/system-memory — the dream (reflect)", () => {
   });
 });
 
-describe("engine/system-memory — maybeReflect scheduling", () => {
-  it("does NOT auto-run on the default manual cadence", async () => {
-    const engine = makeEngine();
+// ─── There is no clock ───
+//
+// `maybeReflectSystemMemory` WAS the cadence check, called on every startup by
+// both front ends and the engine host. The founder withdrew the cadence on
+// 2026-09-15: off, auto and manual, and none of the three is a timer. These two
+// tests are the guarantee that no startup path can spend a credit again.
+
+describe("engine/system-memory — the clock is gone", () => {
+  it("never refreshes on startup, even in auto with activity waiting", async () => {
+    const engine = makeEngine({ mode: "auto" });
     seedSession(engine, "build something");
     (engine as unknown as { gateway: unknown }).gateway = fakeGateway("# profile");
     const res = await engine.maybeReflectSystemMemory();
     expect(res.updated).toBe(false);
-    expect(res.reason).toBe("not due");
+    expect(res.reason).toMatch(/never refreshed on a clock/i);
     expect(loadSystemMemory().content).toBe("");
     engine.close();
   });
 
-  it("auto-runs once an interval cadence is set and due", async () => {
-    const engine = makeEngine();
+  it("a legacy cadence in the config does not resurrect it", async () => {
+    const engine = makeEngine({ schedule: "daily" });
     seedSession(engine, "ship a feature");
     (engine as unknown as { gateway: unknown }).gateway = fakeGateway(
       "# profile\n- ships features",
     );
-    engine.setSystemMemorySchedule("daily"); // never reflected → due now
+    // The cadence migrates to a MODE, and the mode runs nothing on a timer.
+    expect(engine.getSystemMemory().mode).toBe("auto");
     const res = await engine.maybeReflectSystemMemory();
-    expect(res.updated).toBe(true);
-    expect(loadSystemMemory().content).toContain("ships features");
+    expect(res.updated).toBe(false);
+    expect(loadSystemMemory().content).toBe("");
     engine.close();
   });
 });

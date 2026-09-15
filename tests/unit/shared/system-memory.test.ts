@@ -22,6 +22,10 @@ import {
   profileShrinkReason,
   restoreSystemMemory,
   saveRefreshedSystemMemory,
+  resolveMemoryMode,
+  parseMemoryMode,
+  describeMemoryMode,
+  MEMORY_MODES,
 } from "../../../packages/shared/src/system-memory";
 
 let dir: string;
@@ -360,5 +364,64 @@ describe("shared/system-memory — profileShrinkReason in isolation", () => {
     expect(profileShrinkReason("x".repeat(3976), "x".repeat(326))).toMatch(/400-byte floor/);
     expect(profileShrinkReason("x".repeat(1000), "x".repeat(499))).toMatch(/less than half/);
     expect(profileShrinkReason("x".repeat(900), "x".repeat(399))).toMatch(/400-byte floor/);
+  });
+});
+
+// ─── The mode, in the sidecar ───
+
+describe("shared/system-memory — the three modes", () => {
+  it("round-trips a mode and a migration note through the sidecar", () => {
+    saveSystemMemoryMeta({
+      mode: "manual",
+      modeMigration: {
+        at: "2026-09-15T00:00:00Z",
+        from: "daily",
+        mode: "auto",
+        note: "cadence withdrawn",
+      },
+    });
+    const meta = loadSystemMemoryMeta();
+    expect(meta.mode).toBe("manual");
+    expect(meta.modeMigration?.from).toBe("daily");
+    expect(meta.modeMigration?.notified).toBeUndefined();
+  });
+
+  it("drops a mode it does not recognise rather than inventing one", () => {
+    writeFileSync(getSystemMemoryMetaPath(), JSON.stringify({ mode: "daily" }));
+    expect(loadSystemMemoryMeta().mode).toBeUndefined();
+    // …and the resolution falls through to the migration, which knows what
+    // `daily` used to mean.
+    expect(resolveMemoryMode({ schedule: "daily" }, loadSystemMemoryMeta()).mode).toBe("auto");
+  });
+
+  it("records who refreshed the profile", () => {
+    saveSystemMemory("# a profile that is long enough to survive the floor", {
+      lastRefresh: {
+        at: "2026-09-15T00:00:00Z",
+        origin: "agent",
+        tokensBefore: 0,
+        tokensAfter: 12,
+      },
+    });
+    expect(loadSystemMemoryMeta().lastRefresh?.origin).toBe("agent");
+    writeFileSync(
+      getSystemMemoryMetaPath(),
+      JSON.stringify({ lastRefresh: { at: "x", origin: "the cat" } }),
+    );
+    expect(loadSystemMemoryMeta().lastRefresh).toBeUndefined();
+  });
+
+  it("clearing the profile keeps the mode — a wipe is not a setting change", () => {
+    saveSystemMemoryMeta({ mode: "manual" });
+    saveSystemMemory("# something to wipe", {});
+    clearSystemMemory();
+    expect(loadSystemMemory().content).toBe("");
+    expect(loadSystemMemoryMeta().mode).toBe("manual");
+  });
+
+  it("every mode has a description, and there are three of them", () => {
+    expect(MEMORY_MODES).toEqual(["off", "auto", "manual"]);
+    for (const m of MEMORY_MODES) expect(describeMemoryMode(m).length).toBeGreaterThan(0);
+    expect(parseMemoryMode("weekly")).toBeUndefined();
   });
 });

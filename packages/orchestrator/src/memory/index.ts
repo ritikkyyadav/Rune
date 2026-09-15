@@ -40,6 +40,12 @@ export {
   countInjected,
   MEMORY_BLOCK_HEADING,
 } from "./inject";
+export {
+  createMemoryUpdateTool,
+  MEMORY_UPDATE_TOOL_SCHEMA,
+  type MemoryUpdateResult,
+  type MemoryUpdateToolDeps,
+} from "./update-tool";
 export * from "./types";
 
 import { MemoryStore } from "./store";

@@ -32,6 +32,9 @@ import {
   savePrefs,
   saveLastModel,
   saveBrowserState,
+  describeMemoryMode,
+  isWithdrawnCadence,
+  MEMORY_CADENCE_REFUSAL,
 } from "@rune/shared";
 import type { CustomEndpoint } from "@rune/shared";
 import type { ReasoningEffort } from "@rune/llm-gateway";
@@ -883,15 +886,22 @@ export const COMMAND_METHODS = {
           return true;
         }
 
-        // -- update / refresh (the "dream") --
+        // -- update: the user's own hand, in auto AND manual --
+        // One command, both halves: the deterministic extractor over THIS
+        // session (which manual mode otherwise never runs) and the profile
+        // refresh, right now.
         if (sub === "update" || sub === "refresh" || sub === "dream") {
-          this.print(`  ${faint("Dreaming -- distilling your profile...")}`);
-          const r = await engine.reflectSystemMemory({
+          this.print(`  ${faint("Updating your memory...")}`);
+          const r = await engine.updateMemoryNow(this.ctx.sessionId, {
             focus: subArg || undefined,
-            trigger: "manual",
           });
+          if (r.learned && r.learned.promoted > 0) {
+            this.print(
+              `  ${ok(glyph("verified"))} ${muted(`learned ${r.learned.promoted} thing${r.learned.promoted === 1 ? "" : "s"} from this session`)}`,
+            );
+          }
           if (!r.updated) {
-            this.print(`  ${muted(`Memory unchanged -- ${r.reason}.`)}`);
+            this.print(`  ${muted(`Profile unchanged -- ${r.reason}.`)}`);
             return true;
           }
           const preview = (r.content ?? "")
@@ -993,29 +1003,52 @@ export const COMMAND_METHODS = {
           return true;
         }
 
-        // -- set cadence (off | manual | daily | weekly | Nd | every N days) --
-        if (
-          sub === "off" ||
-          sub === "manual" ||
-          sub === "daily" ||
-          sub === "weekly" ||
-          /^\d+\s*d/.test(arg) ||
-          /^every\s+\d+/.test(arg)
-        ) {
-          const r = engine.setSystemMemorySchedule(arg);
-          const verb = r.label === "manual" ? "manual (no auto-refresh)" : `auto | ${r.label}`;
-          this.print(`  ${ok(glyph("verified"))} ${muted("memory cadence:")} ${info(verb)}`);
+        // -- set the mode (off | auto | manual) --
+        // Three, and only three. A cadence is refused by name rather than
+        // quietly reinterpreted: the user asked for a clock and there isn't one.
+        if (isWithdrawnCadence(sub === "every" ? arg : sub)) {
+          this.print(`  ${warn(glyph("failure"))} ${muted(MEMORY_CADENCE_REFUSAL)}`);
+          this.print(`  ${faint("/memory auto | /memory manual | /memory off")}`);
+          return true;
+        }
+        if (sub === "off" || sub === "auto" || sub === "manual" || sub === "on") {
+          const r = engine.setMemoryMode(sub);
+          if (!r.ok) {
+            this.print(`  ${warn(glyph("failure"))} ${muted(r.reason ?? "unknown mode")}`);
+            return true;
+          }
+          this.print(
+            `  ${ok(glyph("verified"))} ${muted("memory:")} ${info(r.mode)} ${faint(describeMemoryMode(r.mode))}`,
+          );
           return true;
         }
 
-        // -- default: status + show the profile --
+        // -- default: the mode first, then status, then the profile --
         const mem = engine.getSystemMemory();
+        if (mem.mode === "off") {
+          this.print(
+            [
+              `  ${bold(text("Memory"))} ${info("off")}`,
+              `  ${muted("Nothing is read, written or remembered between sessions.")}`,
+              `  ${faint("turn it on: /memory auto (Rune decides when to update) | /memory manual (only /memory update)")}`,
+            ].join("\n"),
+          );
+          return true;
+        }
         const last = mem.meta.updatedAt ? this.relTime(mem.meta.updatedAt) : "never";
-        const dreamt = mem.meta.lastReflectedAt ? this.relTime(mem.meta.lastReflectedAt) : "never";
+        const refreshed = mem.meta.lastRefresh
+          ? `${this.relTime(mem.meta.lastRefresh.at)} (${mem.meta.lastRefresh.origin === "agent" ? "by Rune" : "by you"})`
+          : mem.meta.lastReflectedAt
+            ? this.relTime(mem.meta.lastReflectedAt)
+            : "never";
         const head = [
-          `  ${bold(text("System memory"))}${mem.enabled ? "" : ` ${faint("(disabled)")}`}`,
-          `  ${faint(`cadence: ${mem.scheduleLabel} | ~${fmtTok(mem.tokens)}/${fmtTok(mem.maxTokens)} tokens | updated ${last} | dreamed ${dreamt}`)}`,
+          `  ${bold(text("Memory"))} ${info(mem.mode)} ${faint(mem.modeDescription)}`,
+          `  ${faint(`~${fmtTok(mem.tokens)}/${fmtTok(mem.maxTokens)} tokens | updated ${last} | refreshed ${refreshed}`)}`,
         ];
+        // A withdrawn cadence, said out loud once: the user chose `daily` at
+        // some point and should hear that it no longer exists.
+        const migrated = engine.takeMemoryModeNotice();
+        if (migrated) head.push(`  ${muted(migrated.note)}`);
         // A refresh the floor turned away stays on the panel until a later one
         // succeeds: the user should be able to come back and look at the day a
         // model nearly replaced their profile with a stub.
@@ -1059,7 +1092,9 @@ export const COMMAND_METHODS = {
           learned.push("", `  ${faint("forget: /memory forget <id> | pin: /memory pin <id>")}`);
         }
         if (!store.learning) {
-          learned.push(`  ${faint("autonomous learning is off ([memory] learn = false)")}`);
+          learned.push(
+            `  ${faint(mem.mode === "manual" ? "manual mode -- nothing is learned until you run /memory update" : "autonomous learning is off")}`,
+          );
         }
 
         if (!mem.content.trim()) {
@@ -1072,7 +1107,7 @@ export const COMMAND_METHODS = {
                     `  ${muted("Empty -- Rune hasn't learned anything about you yet.")}`,
                     `  ${faint("It learns from what you say and what checks prove, at the end of each run.")}`,
                   ]),
-              `  ${faint("Seed it: /memory update | note: /memory add <...> | auto: /memory weekly")}`,
+              `  ${faint("Seed it: /memory update | note: /memory add <...> | mode: /memory off|auto|manual")}`,
             ].join("\n"),
           );
           return true;
@@ -1084,7 +1119,7 @@ export const COMMAND_METHODS = {
             ...mem.content.split("\n").map((l) => `  ${text(l)}`),
             ...learned,
             "",
-            `  ${faint("update: /memory update | note: /memory add <...> | cadence: /memory daily|3d|weekly|manual")}`,
+            `  ${faint("update: /memory update | note: /memory add <...> | mode: /memory off|auto|manual")}`,
           ].join("\n"),
         );
         return true;
