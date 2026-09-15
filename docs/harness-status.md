@@ -1404,3 +1404,17 @@ the defaults turn learning on, so the founder's own sessions learn; evals and SD
 not. `rm -rf ~/.rune/memory && bun run eval` was verified not to recreate it. Unit
 **5,351 / 0**, integration **366 / 0** by the lane. Recorded here because a rule that was
 broken and quietly repaired is worth less than one broken and written down.
+
+### Addendum 14 — installed: the single column, the breathing mark, and memory, on the founder's binary
+
+`bash scripts/install.sh`, no override, from `ba1f3f6`: **Rune v0.4.1-dev+ba1f3f6**, CLI
+`8133a6b242aeb24408f16bd11198bcec8854c7fc73e49d466765d7b46eacde3e`, native unchanged. On the
+binary: doctor's build line reads STALE only because the docs commit `c956273` followed the
+build (the code is identical); tools-smoke green; a pty capture of the installed binary at
+120×40 shows the single column — header, the transcript at full width, the agents strip,
+the composer at the bottom (`ui-single-frames/installed-120x40-*.txt`); `~/.rune/memory`
+does not exist until the founder's first real session writes a learned entry. The founder's
+three asks of 2026-09-15 are therefore implemented, tested and installed; the memory's topic
+filter and the indicator's phrases are the two things only real use will grade, and
+`rune memory` is the scorecard for the first. Gates for this tree: Addendum 13's eval and the
+lanes' suites; the full gate list will be rerun once the M4 and adapter lanes land.

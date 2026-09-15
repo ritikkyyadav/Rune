@@ -288,5 +288,25 @@
       "live frontend or corpus runs (no budget)",
       "M3's second branch, M4, M6, Phase 6, Phase 7"
     ]
+  },
+  "afterFounderAsks": {
+    "date": "2026-09-15",
+    "commits": "1eee25d, c2862b8 (UI), 44111d2, ca23537, 36f3d31, 1e2834a, ba1f3f6 (memory)",
+    "gatesAt": "6696fa2 fast set + eval (eval red \u2192 fixed in ba1f3f6, rerun 63/63 at 0.27)",
+    "gates": {
+      "unit": "5,356 ran / 0 fail (404 files)",
+      "integration": "371 ran / 0 fail (61 files)",
+      "lifecycle": "47 / 0",
+      "typecheck": "15/15",
+      "lint": "7/7",
+      "prettier": "clean",
+      "eval": "63/63 at 0.27 after ba1f3f6; 62/63 at 0.32 before"
+    },
+    "installed": {
+      "version": "Rune v0.4.1-dev+ba1f3f6",
+      "cliSha256": "8133a6b242aeb24408f16bd11198bcec8854c7fc73e49d466765d7b46eacde3e",
+      "frames": ".codex/audit-20260910/handoff/m0/ui-single-frames/installed-120x40-{idle,typed}.txt"
+    },
+    "incident": "the mock eval wrote 30 learned-memory entries into the founder's real ~/.rune/memory before ba1f3f6 made the store opt-in at the Engine boundary; backed up and removed; recorded in harness-status Addendum 13"
   }
 }
