@@ -361,6 +361,20 @@ describe("a runner that measured nothing (V7 finding 9)", () => {
     expect(assertedNothing("")).toBe(false);
   });
 
+  test("TAP states both counts, so the same question is asked of it (V8 finding 19)", () => {
+    // `node --test`, `tap` and `tape` print `# tests N` and `# asserts N`.
+    // The property was bun-scoped, and the record read as though finding 9 were
+    // closed generally; it is closed for every runner that says what it
+    // asserted, which is these and bun, and for no others — because there is
+    // nothing in the others' output to read.
+    const tapEmpty = "TAP version 13\nok 1 - it works\n1..1\n# tests 1\n# pass 1\n# asserts 0";
+    const tapReal = "TAP version 13\nok 1 - it works\n1..1\n# tests 1\n# pass 1\n# asserts 4";
+    expect(assertedNothing(tapEmpty)).toBe(true);
+    expect(assertedNothing(tapReal)).toBe(false);
+    // A TAP runner that reports no assertion line is not judged, same rule.
+    expect(assertedNothing("TAP version 13\nok 1 - it works\n# tests 1\n# pass 1")).toBe(false);
+  });
+
   test("the shell's JSON envelope is read the same way", () => {
     expect(assertedNothing(JSON.stringify({ stdout: EMPTY, stderr: "" }))).toBe(true);
     expect(assertedNothing(JSON.stringify({ stdout: REAL, stderr: "" }))).toBe(false);

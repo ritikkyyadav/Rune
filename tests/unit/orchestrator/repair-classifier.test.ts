@@ -158,6 +158,31 @@ describe("missing_dependency — the `not-applicable` vocabulary", () => {
 
   test("exit 127 alone is enough — the shell's own word for it", () => {
     expect(classOf(check("", 127))).toBe("missing_dependency");
+    // …when the output says nothing. It never said anything here.
+    expect(classOf(check("some banner\nnothing measured", 127))).toBe("missing_dependency");
+  });
+
+  test("exit 127 does not outrank a measurement in the output (V8 finding 17)", () => {
+    // `missingDependency` opened with `if (exitCode === EXIT_NO_COMMAND) return
+    // true`, read BEFORE the output, so no evidence in the output could
+    // overturn it. A check that exits 127 while printing a complete assertion
+    // failure classified `missing_dependency` / `report_only`: with that key in
+    // `[controller] authority` it bought no repair turn, and the run finished
+    // saying the runner was not available about a runner that ran and found the
+    // bug. That is V7 finding 4's own shape, moved to the exit code.
+    const measured = classify(
+      check("3 pass\n2 fail\nerror: expect(received).toBe(expected)\n\nExpected: 4\nReceived: 5", 127), // prettier-ignore
+    );
+    expect(measured?.cls).toBe("check_failed");
+    expect(measured?.response).toBe("repair_turn");
+    expect(classOf(check("not ok 3 - the total column is present\n# fail 1", 127))).toBe(
+      "check_failed",
+    );
+    // And the ordering rule still wins: a runner that says it is missing is
+    // missing, whatever else it printed and whatever it exited with.
+    expect(classOf(check("1 fail, 0 pass\nbash: bun: command not found", 127))).toBe(
+      "missing_dependency",
+    );
   });
 
   test("R9 — `bun: command not found` buys NO retry and NO repair turn", () => {

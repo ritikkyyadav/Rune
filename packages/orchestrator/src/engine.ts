@@ -6146,6 +6146,12 @@ export class Engine {
                     // acceptance the model never sees (V7 finding 19).
                     id: criterion.id ?? `a${index + 1}`,
                     outputTail: criterion.evidence?.detail ?? "",
+                    // NOT for printing — `acceptanceRepromptBody` never prints
+                    // it. It is there so the body can recognise the criterion
+                    // in the OUTPUT TAIL and withhold that line, because a
+                    // person's check script normally echoes the criterion on
+                    // failure and the tail is the oracle's own words (V8 #18).
+                    text: criterion.text,
                   },
                 ]
               : [],

@@ -995,6 +995,12 @@ export function ranZeroTests(command: string, output: string | undefined): boole
 /** A runner that reports its assertion count, and the count itself. */
 const RAN_TESTS = /(?:^|\n)Ran \d+ tests? across \d+ files?\./;
 const ASSERTION_COUNT = /(?:^|\n)\s*(\d+) expect\(\) calls/;
+// TAP — `node --test`, `tap`, `tape` — states both counts in its summary, so
+// the same question can be asked of it (V8 finding 19). Every other runner in
+// the corpus (pytest, jest, vitest, cargo, go) reports tests and not
+// assertions, so there is nothing in its output to read and it is not judged.
+const TAP_TESTS = /(?:^|\n)#\s*tests\s+(\d+)/i;
+const TAP_ASSERTS = /(?:^|\n)#\s*asserts\s+(\d+)/i;
 
 /**
  * Whether a runner collected tests, ran them green, and ASSERTED NOTHING.
@@ -1016,6 +1022,11 @@ const ASSERTION_COUNT = /(?:^|\n)\s*(\d+) expect\(\) calls/;
  */
 export function assertedNothing(output: string | undefined): boolean {
   const text = checkOutputText(output);
+  const tapTests = TAP_TESTS.exec(text);
+  if (tapTests !== null && Number(tapTests[1]) > 0) {
+    const asserts = TAP_ASSERTS.exec(text);
+    if (asserts !== null) return Number(asserts[1]) === 0;
+  }
   if (!RAN_TESTS.test(text)) return false;
   const stated = ASSERTION_COUNT.exec(text);
   return stated === null || Number(stated[1]) === 0;

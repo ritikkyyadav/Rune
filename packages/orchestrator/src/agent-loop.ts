@@ -216,7 +216,7 @@ export interface AgentLoopConfig {
    * Absent for every caller with no acceptance configured, and for every
    * sub-agent loop.
    */
-  failedAcceptance?: () => ReadonlyArray<{ id: string; outputTail: string }>;
+  failedAcceptance?: () => ReadonlyArray<{ id: string; outputTail: string; text?: string }>;
   /**
    * Just-in-time doctrine, wired by the engine in "jit" delivery mode: returns
    * a section's verbatim text exactly ONCE per session at its first moment of
@@ -1221,6 +1221,28 @@ interface LoopSnapshot {
   aborted?: boolean;
 }
 
+/**
+ * A line of check output, or a criterion, reduced to the sentence it states.
+ *
+ * Runner decoration (`(fail)`, a TAP `not ok 3 -`, a leading bullet), case and
+ * trailing punctuation come off, so "the total column is missing" and
+ * "(fail) The total column is missing." compare equal. Used to keep the
+ * acceptance re-prompt from echoing the oracle's own words back at the model
+ * (V8 finding 18).
+ */
+function normalizeCriterionEcho(line: string): string {
+  return line
+    .replace(/^[\s>\u00b7*\-+]*/, "")
+    .replace(/^(?:not ok|ok)\s+\d+\s*-?\s*/i, "")
+    .replace(/^[\u2713\u2717\u00d7\u2714\u274c]\s*/u, "")
+    .replace(/^\((?:fail|failed|pass|passed|error)\)\s*/i, "")
+    .replace(/^(?:FAIL|PASS|ERROR|AssertionError):?\s*/i, "")
+    .replace(/[\s.!:;]+$/, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 export class AgentLoop {
   private config: AgentLoopConfig;
   private gateway: LlmGateway;
@@ -1741,8 +1763,25 @@ export class AgentLoop {
    * wording, "naming the criterion text", was wrong and is corrected there.
    */
   private acceptanceRepromptBody(
-    failed: ReadonlyArray<{ id: string; outputTail: string }>,
+    failed: ReadonlyArray<{ id: string; outputTail: string; text?: string }>,
   ): string {
+    // ── The tail is not the oracle's words (V8 finding 18) ──
+    //
+    // The body prints the id and the output tail, never the criterion text —
+    // and the tail is what the ORACLE printed, and a person's check script
+    // normally echoes the criterion on failure. So the separation the spec
+    // asserts is not one the harness gets for free: any tail line that IS a
+    // criterion's statement is replaced by a marker. Compared on the text
+    // stripped of case, punctuation and runner decoration, because a check
+    // prints `(fail) the total column is missing` for `the total column is
+    // missing` and that is the same sentence.
+    const spoken = failed
+      .map((row) => normalizeCriterionEcho(row.text ?? ""))
+      .filter((text) => text.length >= 12);
+    const redact = (line: string): string | null =>
+      spoken.some((text) => normalizeCriterionEcho(line) === text)
+        ? "    [a line stating the criterion itself — withheld]"
+        : null;
     const lines = [
       "Stop — the acceptance stated for this task does not pass on your changes.",
       "This is the person's own statement of what done means; it was not inferred, and it is",
@@ -1757,7 +1796,7 @@ export class AgentLoop {
       if (tail) {
         lines.push("  what it printed (last lines):");
         for (const line of tail.slice(-ACCEPTANCE_TAIL_CHARS).split("\n").slice(-12)) {
-          lines.push(`    ${line}`);
+          lines.push(redact(line) ?? `    ${line}`);
         }
       }
       lines.push("");

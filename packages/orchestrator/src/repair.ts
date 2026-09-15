@@ -186,14 +186,47 @@ const MISSING_RUNNER = new RegExp(
 const EXIT_NO_COMMAND = 127;
 
 /**
+ * A line only a runner that RAN can print: its own count, or its own verdict.
+ *
+ * V8 finding 17. `missingDependency` opened with `if (exitCode ===
+ * EXIT_NO_COMMAND) return true`, read BEFORE the output, so no evidence in the
+ * output could overturn it. A check that exits 127 while printing a complete
+ * assertion failure classified `missing_dependency` / `report_only`: it bought
+ * no repair turn and the run reported the runner was absent about a runner that
+ * ran and found the bug. That is V7 finding 4's own shape, moved from the
+ * vocabulary to the exit code — and 127 is reachable with real output, because
+ * a runner's own harness can exit 127 and a `&&` chain carries the last status.
+ *
+ * Anchored to what a RUNTIME prints about a measurement, never to words a test
+ * name or a diff could contain.
+ */
+const MEASURED = new RegExp(
+  [
+    "^\\s*\\d+ (?:pass|fail|passed|failed|skipped|tests?|assertions?)\\b",
+    "^\\s*(?:tests?|suites?|assertions?):\\s*\\d+",
+    "^\\s*expected:\\s",
+    "^\\s*received:\\s",
+    "\\bexpect\\(received\\)",
+    "^\\s*assertionerror\\b",
+    "^\\s*(?:ok|not ok) \\d+\\b",
+    "^\\s*#\\s*(?:pass|fail|asserts)\\s+\\d+",
+    "^\\s*(?:FAIL|PASS)\\s+\\S+\\.(?:[cm]?[jt]sx?|py|rb|go|rs)\\b",
+  ].join("|"),
+  "im",
+);
+
+/**
  * Whether this check output says the runner never ran.
  *
  * Exported because it is the `not-applicable` half of the class table and the
  * corpus tests it directly; `classify` reads it first.
  */
 export function missingDependency(exitCode: number, output: string): boolean {
-  if (exitCode === EXIT_NO_COMMAND) return true;
+  // The output first, always: the shell's word for "I could not find that" is
+  // a strong signal and it is not evidence ABOUT the check, and a runner that
+  // printed a measurement measured something whatever it exited with.
   if (MISSING_RUNNER.test(output)) return true;
+  if (exitCode === EXIT_NO_COMMAND) return !MEASURED.test(output);
   return couldNotRunOnParent(output);
 }
 

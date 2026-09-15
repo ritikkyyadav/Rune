@@ -131,7 +131,7 @@ interface RunOptions {
   verifyResults?: VerifyResult[];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   permission?: any;
-  failedAcceptance?: Array<{ text: string; outputTail: string }>;
+  failedAcceptance?: Array<{ id?: string; text?: string; outputTail: string }>;
   /** The mutation: every failure is `transport`, whatever it was. */
   forceTransport?: boolean;
   opts?: Record<string, unknown>;
@@ -556,6 +556,35 @@ describe("acceptance — one re-prompt naming the criterion, then partial", () =
     // it: quoting it teaches a model to satisfy the command, not the criterion.
     expect(asked[0]).not.toContain("bun test");
     expect(asked[0]).not.toContain("$ ");
+  });
+
+  test("a tail line that IS the criterion is withheld (V8 finding 18)", async () => {
+    // V7 finding 19 is properly closed — the body prints the id and the tail,
+    // never the criterion text. But the tail is what the ORACLE printed, and a
+    // person's check script normally echoes the criterion on failure, so the
+    // separation the corrected spec asserts is not one the harness got for
+    // free. A tail line that states the criterion is replaced by a marker;
+    // everything the check said ABOUT THE WORK still goes through.
+    const out = await runLoop({
+      script: EDIT_THEN_FINISH,
+      authority: ["acceptance"],
+      failedAcceptance: [
+        {
+          id: "a1",
+          text: HIDDEN_TEXT,
+          outputTail:
+            `(fail) ${HIDDEN_TEXT}\n` +
+            `AssertionError: expected 3 rows, got 0\n  at import.test.ts:41`,
+        },
+      ],
+    });
+    const asked = gateMessages(out.messages, "acceptance stated for this task");
+    expect(asked.length).toBe(1);
+    expect(asked[0]).not.toContain(HIDDEN_TEXT);
+    expect(asked[0]).toContain("withheld");
+    // The evidence survives: the repair turn still has what it needs.
+    expect(asked[0]).toContain("expected 3 rows, got 0");
+    expect(asked[0]).toContain("acceptance criterion a1 failed");
   });
 
   test("the second finish is not re-prompted, whatever happens", async () => {
