@@ -1039,28 +1039,16 @@ export class Tui {
       );
     }
     const mem = engine.getSystemMemory();
-    if (mem.enabled && !mem.content.trim() && mem.scheduleLabel === "manual") {
+    if (mem.mode !== "off" && !mem.content.trim()) {
       this.print(`  ${faint("tip: Rune can learn your style over time --")} ${info("/memory")}`);
     }
-    void engine
-      .maybeReflectSystemMemory()
-      .then((r) => {
-        if (r.updated) {
-          this.print(
-            `  ${ok(glyph("verified"))} ${muted(`system memory refreshed (~${r.tokensAfter ?? 0} tokens) | /memory to view`)}`,
-          );
-          return;
-        }
-        // A refused refresh is the one "nothing happened" worth saying out
-        // loud: a model tried to replace the user's profile with a stub.
-        const refusal = engine.takeSystemMemoryRefusalNotice();
-        if (refusal) {
-          this.print(
-            `  ${warn(glyph("failure"))} ${muted(`system memory refresh refused -- ${refusal.reason}`)}\n  ${faint(`your ${refusal.previousBytes}-byte profile is unchanged | /memory restore lists the kept copies`)}`,
-          );
-        }
-      })
-      .catch(() => {});
+    // The cadence is withdrawn: a user who had chosen one hears it once, here,
+    // rather than discovering that nothing refreshes any more. No startup
+    // refresh runs — `maybeReflectSystemMemory()` is a permanent no-op now.
+    const migrated = engine.takeMemoryModeNotice();
+    if (migrated) {
+      this.print(`  ${faint(`memory: ${migrated.note}`)}`);
+    }
     this.scheduleDraw();
   }
 
@@ -1930,20 +1918,11 @@ export class Tui {
   }
 
   memoryCycleCadence(): void {
-    const order = ["manual", "daily", "3d", "weekly"];
-    const label = this.ctx.engine.getSystemMemory().scheduleLabel;
-    const curToken =
-      label === "daily"
-        ? "daily"
-        : label === "weekly"
-          ? "weekly"
-          : label === "every 3 days"
-            ? "3d"
-            : "manual";
-    const next = order[(order.indexOf(curToken) + 1) % order.length]!;
-    const r = this.ctx.engine.setSystemMemorySchedule(next);
+    // The cadence is withdrawn (2026-09-15): memory has three modes — off,
+    // auto, manual — and this key cycles them. The name stays for the keymap.
+    const mode = this.ctx.engine.cycleMemoryMode();
     this.memorySel = 1;
-    this.memoryNote = r.label === "manual" ? "auto-update off (manual)" : `auto-update ${r.label}`;
+    this.memoryNote = `memory ${mode}`;
     this.scheduleDraw();
   }
 
