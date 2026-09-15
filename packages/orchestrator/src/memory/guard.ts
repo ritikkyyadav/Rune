@@ -26,6 +26,16 @@ import { MAX_TEXT_CHARS, type MemoryRefusal } from "./types";
  *
  * Deliberately over-inclusive on the imperative side. A refused true fact costs
  * the user one `/memory add`; an accepted weakening costs them the guard.
+ *
+ * V7 finding 5: the first draft of these rules was a corpus of the phrasings
+ * they were written FROM, so every one of eight ordinary paraphrases of the
+ * same four boundaries walked past — "I prefer you not ask before pushing"
+ * missed `asking` because that rule wanted a literal `don't/never/stop`
+ * immediately before `ask`. The second alternative in each rule below is the
+ * paraphrase half, and `memory-guard.test.ts` now holds BOTH corpora: the
+ * shapes, the paraphrases, and the ten true facts that must still survive
+ * them. A rule widened without re-running the survivors is how a guard turns
+ * into a filter that refuses the user's real preferences.
  */
 const WEAKENING_PATTERNS: ReadonlyArray<{ rule: string; re: RegExp }> = [
   {
@@ -34,15 +44,15 @@ const WEAKENING_PATTERNS: ReadonlyArray<{ rule: string; re: RegExp }> = [
   },
   {
     rule: "permissions",
-    re: /\b(?:auto[-\s]?approve|approve\s+everything|allow\s+everything|grant\s+(?:all|every)|skip\s+(?:the\s+)?(?:permission|approval|confirm\w*)|no\s+(?:permission|approval)\s+(?:needed|required)|bypass\s+(?:the\s+)?(?:permission|broker)|yolo\s*mode)\b/i,
+    re: /\b(?:auto[-\s]?approve|approve\s+everything|allow\s+everything|grant\s+(?:all|every)|skip\s+(?:the\s+)?(?:permission|approval|confirm\w*)|no\s+(?:permission|approval)\s+(?:needed|required)|bypass\s+(?:the\s+)?(?:permission|broker)|yolo\s*mode)\b|\b(?:never|don'?t|do\s+not|stop|no\s+need\s+to)\b[^.]{0,30}\b(?:permission|approval|confirmation)s?\s*(?:prompt|dialog|request)?\b|\b(?:approvals?|permissions?|confirmations?)\b[^.]{0,30}\b(?:automatic(?:ally)?|by\s+default|granted\s+by\s+default)\b/i,
   },
   {
     rule: "asking",
-    re: /\b(?:(?:don'?t|do\s+not|never|stop)\s+(?:bother\s+)?(?:ask(?:ing)?|confirm(?:ing)?|check(?:ing)?\s+with\s+me|prompt(?:ing)?\s+me)|without\s+asking|no\s+need\s+to\s+ask|just\s+do\s+it\s+without)\b/i,
+    re: /\b(?:(?:don'?t|do\s+not|never|stop)\s+(?:bother\s+)?(?:ask(?:ing)?|confirm(?:ing)?|check(?:ing)?\s+with\s+me|prompt(?:ing)?\s+me)|without\s+asking|no\s+need\s+to\s+ask|just\s+do\s+it\s+without)\b|\b(?:not|never|don'?t|do\s+not|didn'?t|stop|avoid)\b(?:\s+\w+){0,3}\s+ask(?:ing|s)?\b/i,
   },
   {
     rule: "verification",
-    re: /\b(?:skip|no\s+need\s+for|don'?t\s+(?:bother\s+)?(?:run|running|writ\w+)|never\s+run)\b[^.]{0,40}\b(?:tests?|typecheck|lint|verif\w+|check\w*|gates?)\b|--no-verify|\bassume\s+(?:it\s+)?(?:works|passes|passed)\b|\b(?:tests?|checks?)\s+(?:are\s+)?(?:optional|a\s+waste|unnecessary)\b/i,
+    re: /\b(?:skip|no\s+need\s+for|don'?t\s+(?:bother\s+)?(?:run|running|writ\w+)|never\s+run)\b[^.]{0,40}\b(?:tests?|typecheck|lint|verif\w+|check\w*|gates?)\b|--no-verify|\bassume\s+(?:it\s+)?(?:works|passes|passed)\b|\b(?:tests?|checks?)\s+(?:are\s+)?(?:optional|a\s+waste|unnecessary)\b|\btrust\s+(?:the\s+|your\s+)?(?:tests?|checks?|results?)\b[^.]{0,40}\b(?:yourself|your\s+own|you\s+write|own)\b|\b(?:one|a\s+single)\s+(?:green\s+)?(?:run|pass|test\s+run)\b[^.]{0,50}\b(?:enough|sufficient|suffices)\b|\b(?:don'?t|do\s+not|never|no\s+need\s+to)\b(?:\s+\w+){0,4}\s+re-?(?:run|check|verify|test)\b/i,
   },
   {
     rule: "budget",
@@ -54,7 +64,7 @@ const WEAKENING_PATTERNS: ReadonlyArray<{ rule: string; re: RegExp }> = [
   },
   {
     rule: "git-safety",
-    re: /\b(?:force[-\s]?push|push\s+(?:straight\s+)?to\s+(?:main|master)|git\s+push\s+(?:--force|-f)\b|reset\s+--hard|git\s+stash|--force-with-lease)\b|\b(?:it'?s\s+)?(?:fine|ok(?:ay)?|safe)\s+to\s+push\b/i,
+    re: /\b(?:force[-\s]?push|push\s+(?:straight\s+)?to\s+(?:main|master)|git\s+push\s+(?:--force|-f)\b|reset\s+--hard|git\s+stash|--force-with-lease)\b|\b(?:it'?s\s+)?(?:fine|ok(?:ay)?|safe)\s+to\s+push\b|\b(?:you|rune)\s+(?:should\s+|can\s+|just\s+)?(?:push|merge)\b[^.]{0,40}\byourself\b|\bpush\b[^.]{0,40}\b(?:when|once|as\s+soon\s+as)\s+the\s+(?:tests?|checks?|suite|gates?)\b/i,
   },
   {
     rule: "override",
@@ -161,6 +171,78 @@ export function isMemorySafe(text: string): boolean {
   return guardMemoryText(text).ok;
 }
 
+/** What `guardMemoryNarrative` kept, and what it turned away. */
+export interface NarrativeVerdict {
+  /** The content, minus every line a rule refused. */
+  text: string;
+  /** One entry per dropped line: the rule, and a clipped sample (never for a
+   *  secret, for the same reason `MemoryRefusal` withholds it). */
+  dropped: MemoryRefusal[];
+}
+
+/**
+ * The same guard over the NARRATIVE profile (`~/.rune/system-memory.md`).
+ *
+ * V7 findings 2 and 17. The structured store is guarded on the way in and on
+ * the way out; the narrative was guarded nowhere, and it lands somewhere
+ * strictly worse — `messages[0]`, the cacheable system prefix of every future
+ * session. One `cat >` outside the workspace put whatever the model liked
+ * there, presented as Rune's own evergreen knowledge of the user.
+ *
+ * The unit is a LINE, not the document: a profile is paragraphs of legitimate
+ * prose and refusing the whole file because one line was poisoned would throw
+ * away the user's real profile to stop an attack on it. The shape rules
+ * (`too-long`, `multiline`) are deliberately NOT applied — a narrative IS
+ * multi-line prose — so what stands here is exactly the part that matters:
+ * the weakening rules, the credential shapes, and the artefact shapes.
+ */
+export function guardMemoryNarrative(content: string): NarrativeVerdict {
+  const raw = content ?? "";
+  if (!raw.trim()) return { text: "", dropped: [] };
+  const kept: string[] = [];
+  const dropped: MemoryRefusal[] = [];
+  for (const line of raw.split("\n")) {
+    const refusal = refuseNarrativeLine(line);
+    if (refusal) dropped.push(refusal);
+    else kept.push(line);
+  }
+  return {
+    text: kept
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim(),
+    dropped,
+  };
+}
+
+function refuseNarrativeLine(line: string): MemoryRefusal | undefined {
+  const trimmed = line.trim();
+  if (!trimmed) return undefined;
+  for (const re of SECRET_PATTERNS) {
+    if (re.test(trimmed)) return { rule: "secret", reason: "contains something credential-shaped" };
+  }
+  for (const { rule, re } of WEAKENING_PATTERNS) {
+    if (re.test(trimmed)) {
+      return {
+        rule,
+        reason: `would weaken the ${rule} guard — the profile may not carry an instruction that lowers a boundary`,
+        sample: clip(trimmed),
+      };
+    }
+  }
+  for (const { rule, re } of ARTEFACT_PATTERNS) {
+    if (rule === "code") continue; // a profile may legitimately name a command
+    if (re.test(trimmed)) {
+      return {
+        rule,
+        reason: "looks like file contents or tool output, not a fact",
+        sample: clip(trimmed),
+      };
+    }
+  }
+  return undefined;
+}
+
 function refuse(rule: string, reason: string, sample?: string): GuardVerdict {
   return { ok: false, refusal: sample ? { rule, reason, sample } : { rule, reason } };
 }
@@ -176,6 +258,11 @@ export const GUARD_RULES: readonly string[] = [
   "too-long",
   "multiline",
   "secret",
+  // Emitted by the store's READ path rather than by `guardMemoryText`: a file
+  // whose provenance does not read, or whose id its own content does not
+  // derive. Named here because `/memory` prints the diary these land in.
+  "provenance",
+  "forged-id",
   ...ARTEFACT_PATTERNS.map((p) => p.rule),
   ...WEAKENING_PATTERNS.map((p) => p.rule),
 ];

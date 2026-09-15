@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import {
   escapesSandbox,
   mechanicalBreaker,
+  isSelfProtectionPath,
   routeContainment,
   shellGuardrailChange,
   type ContainmentContext,
@@ -285,6 +286,26 @@ describe("the five breaker gaps the corpus found", () => {
     expect(shellGuardrailChange(bash("echo x > .rune/hooks/pre-tool.sh"))).toContain(
       "through the shell",
     );
+  });
+
+  test("memory is one of Rune's controls (V7 findings 1, 2, 17)", () => {
+    // What every future session is BRIEFED with is a control surface, and it
+    // was not on the list: `CONTROL_SUBDIRS` knew skills, plugins, hooks,
+    // commands and policy, so `cat > ~/.rune/memory/entries/a.json` — a write
+    // that mints a pinned entry presented to every later run as the user's own
+    // correction — was an ordinary out-of-workspace write in 4th gear, while
+    // `cat > ~/.rune/config.toml` was correctly refused.
+    expect(isSelfProtectionPath(ROOT, "~/.rune/memory/entries/a.json")).toBe(true);
+    expect(isSelfProtectionPath(ROOT, "~/.rune/system-memory.md")).toBe(true);
+    expect(isSelfProtectionPath(ROOT, "~/.rune/system-memory.json")).toBe(true);
+    expect(shellGuardrailChange(bash("cat > ~/.rune/memory/entries/a.json"))).toContain(
+      "through the shell",
+    );
+    expect(shellGuardrailChange(bash("echo x >> ~/.rune/system-memory.md"))).toContain(
+      "through the shell",
+    );
+    // And reading them is still not breaking them.
+    expect(shellGuardrailChange(bash("cat ~/.rune/system-memory.md"))).toBeUndefined();
   });
 
   test("reading the rules is not breaking them", () => {

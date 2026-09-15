@@ -16,7 +16,15 @@
 // message into a candidate. Not a filter over the model's prose — an absence of
 // any reader for it.
 
-import { MAX_TEXT_CHARS, type MemoryCandidate, type MemoryKind, type MemoryScope } from "./types";
+import { guardMemoryText } from "./guard";
+import {
+  MAX_TEXT_CHARS,
+  type MemoryCandidate,
+  type MemoryKind,
+  type MemoryRefusal,
+  type MemoryScope,
+} from "./types";
+import { normalizeText } from "./store";
 
 /** What the engine hands over at run end. Deliberately plain data — the
  *  extractor knows nothing about the Engine, and the tests drive it directly. */
@@ -43,6 +51,18 @@ export interface RunMemoryInput {
 
 export interface Extraction {
   candidates: MemoryCandidate[];
+  /**
+   * What the guard turned away before it ever became a proposal.
+   *
+   * V7 finding 5. The guard used to stand only in front of the STORE, so a
+   * weakening line was proposed, refused, and counted as a proposal — which
+   * made "the extractor proposed eight things and stored none" the same
+   * number as "the extractor proposed eight things". A candidate that cannot
+   * be stored was never a candidate; it is a refusal, and it is reported as
+   * one. `captureRunMemory` still writes every one of these to the store's
+   * diary, so nothing is lost by moving the gate earlier.
+   */
+  refusals: MemoryRefusal[];
   /** Why a source was skipped wholesale (e.g. the run did not succeed). */
   notes: string[];
 }
@@ -151,6 +171,7 @@ export function outcomeAllowsPositiveLessons(outcome: RunMemoryInput["outcome"])
 /** The whole extraction for one run. */
 export function extractFromRun(input: RunMemoryInput): Extraction {
   const notes: string[] = [];
+  const refusals: MemoryRefusal[] = [];
   const candidates: MemoryCandidate[] = [
     ...extractUserPreferences(input.userMessages, input.sessionId),
   ];
@@ -210,7 +231,15 @@ export function extractFromRun(input: RunMemoryInput): Extraction {
     });
   }
 
-  return { candidates, notes };
+  // The guard, here rather than only at the store's door. A line it refuses is
+  // not a proposal that failed; it is a refusal, and the count has to say so.
+  const kept: MemoryCandidate[] = [];
+  for (const candidate of candidates) {
+    const verdict = guardMemoryText(normalizeText(candidate.text));
+    if (verdict.ok) kept.push(candidate);
+    else refusals.push(verdict.refusal!);
+  }
+  return { candidates: kept, refusals, notes };
 }
 
 function clipCommand(cmd: string): string {

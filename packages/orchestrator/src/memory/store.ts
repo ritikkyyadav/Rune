@@ -52,6 +52,8 @@ export interface StoreResult {
 export class MemoryStore {
   private readonly dir: string;
   private readonly entriesDir: string;
+  /** Files already reported to the refusal diary, so a read loop says it once. */
+  private readonly reported = new Set<string>();
 
   constructor(dir?: string) {
     this.dir = dir ?? getMemoryStoreDir();
@@ -295,12 +297,23 @@ export class MemoryStore {
   }
 
   private readFile(path: string): MemoryEntry | null {
+    let read: MemoryEntry | { refusal: MemoryRefusal } | null;
     try {
       if (!existsSync(path)) return null;
-      return sanitize(JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>);
+      read = sanitize(JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>);
     } catch {
       return null;
     }
+    if (read === null) return null;
+    if (!("refusal" in read)) return read;
+    // Said once per file per process: `all()` runs on every render, and a
+    // diary that repeats the same line two hundred times is one nobody reads.
+    const key = `${path}:${read.refusal.rule}`;
+    if (!this.reported.has(key)) {
+      this.reported.add(key);
+      this.logRefusal(read.refusal);
+    }
+    return null;
   }
 }
 
@@ -360,43 +373,98 @@ const KINDS: ReadonlySet<string> = new Set(["person", "working", "project", "les
 const STATUSES: ReadonlySet<string> = new Set(["candidate", "promoted", "superseded"]);
 const SOURCES: ReadonlySet<string> = new Set(Object.keys(SOURCE_RANK));
 
-/** A hand-edited or half-written file must not become a malformed entry in
- *  memory. Anything that does not read as an entry is simply not one. */
-function sanitize(raw: Record<string, unknown>): MemoryEntry | null {
+/**
+ * What a file on disk has to be before the store will call it an entry.
+ *
+ * V7 finding 1, and it is the whole reason this function is not just a shape
+ * check any more. `observe` guards what the RUNTIME writes; the entries
+ * directory is an ordinary directory outside the workspace, and `bash` is not
+ * workspace-scoped, so one `cat >` minted an entry the guard had explicitly
+ * refused — marked `user-corrected`, the most trusted provenance the store
+ * has, and `pinned` so `prune` would never drop it — and every future session
+ * was briefed with it as the user's own words.
+ *
+ * So the READ path asks everything the write path asks, and the answer is the
+ * same either way:
+ *
+ *   · the text is normalised and CLAMPED, so a 5,000-character document is
+ *     not read back whole past a 200-character cap;
+ *   · the guard runs, so a line it refused is not an entry however it got
+ *     onto the disk;
+ *   · the id must RE-DERIVE from the content — `entryId(kind, scope, text)` —
+ *     which is what makes a hand-written file provably not a store write: the
+ *     id is the content, and a forger who fixes the id has to write text the
+ *     guard already passed;
+ *   · the provenance must be one of the five sources spelled out, and
+ *     `verified-outcome` must carry the evidence that is what makes it
+ *     verified rather than claimed (the same rule `readyToPromote` applies —
+ *     a store that promotes on a field the read path never checked is a store
+ *     with the check on the wrong side of the door).
+ *
+ * A file that fails any of them is not an entry. It is left on disk, because
+ * the user can `cat` and `rm` their own memory and deleting their file to
+ * protect them is a worse surprise than ignoring it, and the refusal is
+ * logged so `/memory` can say what was turned away and why.
+ */
+function sanitize(raw: Record<string, unknown>): MemoryEntry | { refusal: MemoryRefusal } | null {
   if (typeof raw.id !== "string" || !raw.id) return null;
   if (typeof raw.text !== "string" || !raw.text.trim()) return null;
   if (typeof raw.kind !== "string" || !KINDS.has(raw.kind)) return null;
   const status =
     typeof raw.status === "string" && STATUSES.has(raw.status) ? raw.status : "candidate";
   const prov = (raw.provenance ?? {}) as Record<string, unknown>;
-  const source =
-    typeof prov.source === "string" && SOURCES.has(prov.source) ? prov.source : "observed";
+  // No silent downgrade to `observed`: a row whose provenance does not read is
+  // a row with no provenance, and provenance is the whole contract here.
+  if (typeof prov.source !== "string" || !SOURCES.has(prov.source)) {
+    return { refusal: { rule: "provenance", reason: `entry ${raw.id} states no known source` } };
+  }
+  const source = prov.source as MemorySource;
+  const evidence = typeof prov.evidence === "string" ? prov.evidence.trim() : "";
+  if (source === "verified-outcome" && !evidence) {
+    return {
+      refusal: {
+        rule: "provenance",
+        reason: `entry ${raw.id} claims a verified outcome with no evidence`,
+      },
+    };
+  }
   const sessionIds = Array.isArray(prov.sessionIds)
     ? prov.sessionIds.filter((s): s is string => typeof s === "string")
     : [];
-  const scope =
+  const scope: MemoryScope =
     raw.scope &&
     typeof raw.scope === "object" &&
     typeof (raw.scope as { workspace?: unknown }).workspace === "string"
       ? { workspace: (raw.scope as { workspace: string }).workspace }
       : "global";
+  const text = normalizeText(raw.text);
+  const verdict = guardMemoryText(text);
+  if (!verdict.ok) return { refusal: verdict.refusal! };
+  if (entryId(raw.kind as MemoryKind, scope, text) !== raw.id) {
+    return {
+      refusal: {
+        rule: "forged-id",
+        reason: `entry ${raw.id} is not the id its own content derives — it was not written by the store`,
+      },
+    };
+  }
   return {
     id: raw.id,
     kind: raw.kind as MemoryKind,
     status: status as MemoryStatus,
-    text: raw.text,
+    text,
     provenance: {
-      source: source as MemorySource,
+      source,
       sessionIds,
       at: typeof prov.at === "string" ? prov.at : new Date(0).toISOString(),
       ...(typeof prov.lastSeenAt === "string" ? { lastSeenAt: prov.lastSeenAt } : {}),
-      ...(typeof prov.evidence === "string" ? { evidence: prov.evidence } : {}),
+      ...(evidence ? { evidence } : {}),
     },
     confidence: typeof raw.confidence === "number" ? raw.confidence : 0.5,
     observedCount: typeof raw.observedCount === "number" ? raw.observedCount : 1,
     ...(raw.pinned === true ? { pinned: true } : {}),
     ...(typeof raw.expiresAt === "string" ? { expiresAt: raw.expiresAt } : {}),
-    scope: scope as MemoryScope,
+    scope,
     ...(typeof raw.supersededBy === "string" ? { supersededBy: raw.supersededBy } : {}),
     ...(typeof raw.supersedes === "string" ? { supersedes: raw.supersedes } : {}),
   };

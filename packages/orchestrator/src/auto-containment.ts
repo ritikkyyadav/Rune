@@ -286,9 +286,25 @@ const CONNECTOR_WRITE_VERB_RE =
 // commands rather than one tool's arguments.
 
 const CONTROL_DIRS = new Set([".rune", ".gear", ".alan"]);
+// `system-memory.md` and its `.json` sidecar are on this list for the reason
+// V7 finding 17 gives: the narrative profile is rendered into `messages[0]` of
+// every future session, so a shell line that rewrites it rewrites what every
+// later run is briefed with. That is a change to Rune's own controls by any
+// reading — it outranks `config.toml`, which at least only binds this machine.
 const CONTROL_FILE_RE =
-  /^(?:config\.toml|hooks\.json|mcp\.json|sandbox\.json|loop\.md|org\.pub|policy(?:[._-].*)?\.(?:json|toml)|(?:secrets?|keys?|credentials?)(?:[._-].*)?\.(?:json|toml|txt|env))$/i;
-const CONTROL_SUBDIRS = new Set(["skills", "plugins", "hooks", "commands", "policy", "policies"]);
+  /^(?:config\.toml|hooks\.json|mcp\.json|sandbox\.json|loop\.md|org\.pub|system-memory\.(?:md|json)|policy(?:[._-].*)?\.(?:json|toml)|(?:secrets?|keys?|credentials?)(?:[._-].*)?\.(?:json|toml|txt|env))$/i;
+// `memory` is the structured store (`~/.rune/memory/entries/*.json`). Same
+// reasoning: an entry promotes into every future session's briefing, marked
+// with whatever provenance the file claims.
+const CONTROL_SUBDIRS = new Set([
+  "skills",
+  "plugins",
+  "hooks",
+  "commands",
+  "policy",
+  "policies",
+  "memory",
+]);
 
 /**
  * Rune's own control surface: config, hooks, MCP wiring, skills, plugins,

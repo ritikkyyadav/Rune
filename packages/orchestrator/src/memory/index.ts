@@ -9,7 +9,14 @@
 // Design: docs/program/memory-autonomous.md
 
 export { MemoryStore, entryId, normalizeText } from "./store";
-export { guardMemoryText, isMemorySafe, GUARD_RULES, type GuardVerdict } from "./guard";
+export {
+  guardMemoryText,
+  guardMemoryNarrative,
+  isMemorySafe,
+  GUARD_RULES,
+  type GuardVerdict,
+  type NarrativeVerdict,
+} from "./guard";
 export {
   extractFromRun,
   extractUserPreferences,
@@ -72,8 +79,12 @@ export function captureRunMemory(
     notes: [],
   };
   try {
-    const { candidates, notes } = extractFromRun(input);
-    const refusals: MemoryRefusal[] = [];
+    const { candidates, notes, refusals: preRefusals } = extractFromRun(input);
+    // The extractor's own refusals still reach the diary: moving the guard
+    // earlier changed WHEN a weakening line is turned away, not whether the
+    // user can read that it was.
+    const refusals: MemoryRefusal[] = [...preRefusals];
+    for (const refusal of preRefusals) store.logRefusal(refusal, now);
     let stored = 0;
     for (const candidate of candidates) {
       const r = store.observe(candidate, now);

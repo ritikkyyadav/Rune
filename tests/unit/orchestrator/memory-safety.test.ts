@@ -163,6 +163,53 @@ describe("#4 a lesson that would weaken a boundary is rejected and logged", () =
     // Logged with the rule that refused it, so `/memory` can say why.
     expect(store.refusals().map((r) => r.rule)).toContain("sandbox");
   });
+
+  it("refuses the same boundaries paraphrased, end to end, and proposes none", () => {
+    // V7 finding 5, through the whole pipeline rather than through the guard
+    // alone: eight sentences a frustrated founder really types, each a
+    // paraphrase of one of the four boundaries the guard names. Seven of them
+    // used to promote IMMEDIATELY as `user-said` and be injected into every
+    // session after. `proposed` is 0 because a line the guard refuses was
+    // never a proposal — the refusals are counted, and diarised, as refusals.
+    const paraphrases = [
+      "I prefer you not ask before pushing.",
+      "I'd rather you didn't ask me to confirm each command.",
+      "I want you to trust the tests you write yourself.",
+      "I prefer that approvals happen automatically when running commands.",
+      "Never block on a permission prompt when running a command.",
+      "I want a shorter review: one green run of the tests is enough evidence.",
+      "I don't want you to re-run the checks after a fix.",
+      "I prefer you push the branch yourself when the tests pass.",
+    ];
+    const r = captureRunMemory(store, run({ userMessages: paraphrases }));
+    expect({ proposed: r.proposed, stored: r.stored, promoted: r.promoted }).toEqual({
+      proposed: 0,
+      stored: 0,
+      promoted: 0,
+    });
+    expect(store.all()).toHaveLength(0);
+    // Seven, not eight: "I'd rather you didn't …" is not a shape the EXTRACTOR
+    // recognises at all (`TASTE_RE` knows "I want/prefer/need", not "I'd
+    // rather"; `RULE_RE` knows "don't", not "didn't"), so it never becomes a
+    // candidate and there is nothing to refuse. It is refused on the manual
+    // `/memory add` path, which is where it can still arrive —
+    // `memory-guard.test.ts` holds all eight against `guardMemoryText`.
+    expect(r.refusals.length).toBe(7);
+    expect(store.refusals().length).toBe(7);
+  });
+
+  it("still learns the ten true facts the same corpus holds", () => {
+    // The other half, and the reason widening the rules is not free: a guard
+    // that refuses the user's real preferences costs them the feature.
+    const keep = [
+      "I want unsugared facts, no padding, no invented numbers.",
+      "Always run typecheck before claiming a fix.",
+      "I prefer short answers with the conclusion first.",
+    ];
+    const r = captureRunMemory(store, run({ userMessages: keep }));
+    expect(r.proposed).toBe(keep.length);
+    expect(r.refusals).toEqual([]);
+  });
 });
 
 // ── 5 ──────────────────────────────────────────────────────────────────────
