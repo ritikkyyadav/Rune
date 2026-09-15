@@ -578,6 +578,13 @@ export interface RuneConfig {
      * history under the reader's hands). `RUNE_LAYOUT` overrides it.
      */
     layout?: "single" | "split";
+    /**
+     * What Rune calls you on the working row -- `boss`, `chief`, your name.
+     * A few of the lines Rune's voice says while it works carry an address
+     * (`on it, boss`); with no callsign those lines drop it (`on it`). At
+     * most sixteen characters. Applied at launch and by `/config`.
+     */
+    callsign?: string;
   };
   /**
    * Model tiers — route work by weight instead of hardcoding one model.

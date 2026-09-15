@@ -588,6 +588,74 @@ export function between(from: SlotName, to: SlotName, amount: number): (value: s
   return (value: string) => fmt(role, value);
 }
 
+/**
+ * A painter part-way between two slots, CONTINUOUSLY.
+ *
+ * `between` snaps at the halfway mark, which is a step, and a step is what the
+ * working mark's colour breath was made of: four tints, three visible jumps a
+ * half-breath, and each jump read as a strobe. In truecolor this mixes the two
+ * pigments in RGB and paints the mix, so a value that moves by 0.04 a frame
+ * moves the colour by 0.04 a frame and the eye reads a breath rather than a
+ * sequence. Where the terminal cannot take a 24-bit foreground -- 256 colours,
+ * ANSI-16, a follow-terminal theme -- it is `between`, honestly stepped.
+ *
+ * The ends are the slots' own painters, not a mix that happens to land on
+ * them: `text` at 1.0 still inherits the user's foreground, which is the one
+ * rule in this file with no exceptions.
+ */
+export function blendPaint(
+  from: SlotName,
+  to: SlotName,
+  amount: number,
+): (value: string) => string {
+  const t = Math.min(1, Math.max(0, amount));
+  if (!COLOR_CAPABLE || active.useNativeColors || DEPTH !== "truecolor") {
+    return between(from, to, t);
+  }
+  if (t <= 0) return (value: string) => fmtSlot(from, value);
+  if (t >= 1) return (value: string) => fmtSlot(to, value);
+  const [r, g, b] = mixRgb(pigmentFor(from).rgb, pigmentFor(to).rgb, t);
+  return (value: string) => `\x1b[38;2;${r};${g};${b}m${terminalText(value)}${RESET}`;
+}
+
+/**
+ * The wordmark's pill: the letters set in the theme's own text pigment, bold,
+ * on a ground that is the terminal's background pulled a third of the way
+ * toward the identity pigment.
+ *
+ * `heavy` (above) is the full-strength version -- the accent as the ground,
+ * ink chosen for contrast -- and at the top of every frame, for hours, it is
+ * too much ink: a saturated block is the brightest thing on the screen and the
+ * eye keeps returning to it. A TINTED ground gives the letters the same thing
+ * a chip gives them -- a cell that is ink rather than paper, the only genuine
+ * weight a terminal sells -- while staying a shade the eye can rest on. The
+ * founder's brief, 2026-09-15: "much more appealing and attractive, but easy
+ * on the eyes."
+ *
+ * Contrast is measured, not assumed: if the text pigment cannot read on the
+ * mixed ground (a theme whose text and accent are close), the pill falls back
+ * to `heavy`, whose ink is chosen by contrast. Follow-terminal themes and
+ * ANSI-16 hosts know no background to mix from and take reverse video.
+ */
+export const lockupChip = (value: string): string => {
+  const safe = terminalText(value);
+  if (!COLOR_CAPABLE) return safe;
+  if (active.useNativeColors || DEPTH === "ansi16") return `\x1b[7m\x1b[1m${safe}${RESET}`;
+  const accentRgb = pigmentFor(ROLE_SLOT.accent).rgb;
+  const ground = mixRgb(active.bg.rgb, accentRgb, active.appearance === "dark" ? 0.34 : 0.2);
+  const ink = pigmentFor("text").rgb;
+  if (contrastRatio(ink, ground) < 3) return heavy(value);
+  const fill =
+    DEPTH === "truecolor"
+      ? `\x1b[48;2;${ground[0]};${ground[1]};${ground[2]}m`
+      : `\x1b[48;5;${nearestAnsi256(ground)}m`;
+  const fg =
+    DEPTH === "truecolor"
+      ? `\x1b[38;2;${ink[0]};${ink[1]};${ink[2]}m`
+      : `\x1b[38;5;${nearestAnsi256(ink)}m`;
+  return `${fill}${fg}\x1b[1m${safe}${RESET}`;
+};
+
 export const paper = body;
 export const vermillion = danger;
 export const brass = warn;

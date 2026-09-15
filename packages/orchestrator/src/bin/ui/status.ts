@@ -164,10 +164,14 @@ export function renderStatus(s: StatusView): string {
   // called itself "the header, expanded" disagreed with the row pinned at the
   // top of the same window.
   const mark = F.lockup(PRODUCT_NAME);
+  // Same geometry as flow.header: the pill's own left pad is the second cell
+  // of the indent, so the R lands on column 2 and the heavy rule ends under
+  // the pill's right edge.
+  const gutter = F.MARK.slice(0, -1);
   return [
     "",
-    `${F.MARK}${F.row(mark.text, F.versionTag(s.version ?? PRODUCT_VERSION), surface - F.MARK.length)}`,
-    F.seamRule(surface, mark.cells),
+    `${gutter}${F.row(mark.text, F.versionTag(s.version ?? PRODUCT_VERSION), surface - gutter.length)}`,
+    F.seamRule(surface, mark.cells - 1),
     ...kvRows.map((row) => `${F.MARK}${row.trimStart()}`),
     F.hairline(surface),
     "",

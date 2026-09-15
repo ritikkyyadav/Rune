@@ -93,6 +93,8 @@ import {
   loadConfig,
   DEFAULT_UI_LAYOUT,
   parseUiLayout,
+  getCallsign,
+  setCallsign,
   saveSystemMemory,
   saveSystemMemoryMeta,
   saveRefreshedSystemMemory,
@@ -5110,6 +5112,11 @@ export class Engine {
       case "helper":
         this.config.helperRoute = canonicalValue;
         return { ok: true };
+      case "callsign":
+        // The working row's voice reads the shared store on every frame, so
+        // the next line it composes carries the new name.
+        setCallsign(canonicalValue);
+        return { ok: true };
       case "lsp": {
         const on = canonicalValue === "true";
         this.config.lspAutoFeedback = on;
@@ -5159,6 +5166,8 @@ export class Engine {
         // which does not compile — `ui` is on RuneConfig, not EngineConfig.
         return parseUiLayout(loadConfig(this.config.workspaceRoot).ui?.layout) ?? DEFAULT_UI_LAYOUT;
       }
+      case "callsign":
+        return getCallsign();
       case "sandbox_required":
         return String(this.config.sandboxRequireOs === true);
       case "playbook":

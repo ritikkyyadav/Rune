@@ -317,8 +317,10 @@ columns. Left, deliberately:
   starts on a default free model, and today that default (`openrouter/minimax/minimax-m3:free`) is
   retired, so the first request 404s. Say which model was substituted and why, and never substitute a
   model the health table already knows is gone — UI pass — Claude
-- `packages/orchestrator/src/bin/ui/banner.ts` — the header shows the absolute workspace path and no
-  branch; OpenCode shows `path:branch`. Shorten with `~` and add the branch — UI pass — Claude
+- (done 2026-09-15) `packages/orchestrator/src/bin/ui/banner.ts` — the header shows the absolute workspace path and no
+  branch; OpenCode shows `path:branch`. Shorten with `~` and add the branch — UI pass — Claude.
+  The branch now follows the path in every checkout (`~/Project/Alantests · gear/phase-0-stabilize`);
+  a linked worktree keeps the `worktree <branch>` form.
 - `packages/orchestrator/src/bin/rune-cli.ts` — `-p` is `--provider` and `-P` is `--print`. Claude
   Code's `-p` is print, so `rune -p "do this"` from habit sets the provider to the prompt, falls into
   the interactive session and says "Goodbye." on a closed stdin. Either swap the letters or refuse a

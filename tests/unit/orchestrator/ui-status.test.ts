@@ -28,7 +28,7 @@ describe("ui/status renderStatus", () => {
     expect(mark.length).toBe(F.surfaceWidth());
     // …carried on the header's two-tone rule, at the header's own width.
     expect(lines[lines.indexOf(mark) + 1]).toBe(
-      stripAnsi(F.seamRule(F.surfaceWidth(), F.lockup("Rune").cells)),
+      stripAnsi(F.seamRule(F.surfaceWidth(), F.lockup("Rune").cells - 1)),
     );
     // And no dash rules anywhere: a dash rule reads as texture, a hairline as
     // structure, and this card was the last place still drawing them.

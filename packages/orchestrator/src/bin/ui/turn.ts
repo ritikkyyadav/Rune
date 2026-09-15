@@ -3,7 +3,7 @@
 // Complete -> Answer. Keep private reasoning private, but never hide the actual
 // actions or evidence that explain what the agent did.
 
-import { accent, bold, danger, faint, muted, ok, stripAnsi, text, warn } from "./theme";
+import { accent, bold, danger, faint, muted, ok, quiet, stripAnsi, text, warn } from "./theme";
 import { glyph } from "./glyphs";
 import { truncate, wrap } from "./render";
 import * as F from "./flow";
@@ -38,6 +38,7 @@ import { formatError, formatEvent, fmtTokens } from "./events";
 import { Pulse, PULSE_WEIGHT, quietLabel } from "./pulse";
 import {
   elapsedWord,
+  isBareKind,
   workingKindForTool,
   workingMark,
   workingPhrase,
@@ -46,6 +47,7 @@ import {
   type WorkingKind,
   type WorkingState,
 } from "./working";
+import { voiceLine } from "./voice";
 import { deriveChildName } from "../../subagent-events";
 import { fleetLedger, type AgentCard, type CardReceipt } from "./agents-panel";
 import { renderMarkdown } from "./markdown";
@@ -744,6 +746,10 @@ export class TurnRenderer {
   /** The live rung's current frame and when it went up -- see steadyFrame. */
   private frame: SteadyFrame = { kind: "working", phrase: "working", detail: "" };
   private frameAt = 0;
+  /** When the rung's KIND last changed -- the voice walks off this clock, so
+   *  its line moves with the work (a read becoming an edit) and not with a
+   *  timer of its own. See ./voice.ts. */
+  private kindSince = Date.now();
   /** The state the rung is *trying* to move to, and when it first appeared. */
   private want: SteadyFrame = { kind: "working", phrase: "working", detail: "" };
   private wantSince = 0;
@@ -817,7 +823,19 @@ export class TurnRenderer {
    *  the same sentence without re-deriving it from the events. */
   workingState(): WorkingState {
     const frame = this.steadyFrame();
-    return { kind: frame.kind, phrase: frame.phrase, elapsedMs: Date.now() - this.startedAt };
+    const now = Date.now();
+    const elapsedMs = now - this.startedAt;
+    return {
+      kind: frame.kind,
+      phrase: frame.phrase,
+      elapsedMs,
+      voice: voiceLine({
+        kind: frame.kind,
+        elapsedMs,
+        phaseMs: now - this.kindSince,
+        seed: this.startedAt,
+      }),
+    };
   }
 
   liveLines(): string[] {
@@ -843,19 +861,31 @@ export class TurnRenderer {
         ? ""
         : elapsedWord(state.elapsedMs ?? 0);
     const dot = ` ${glyph("observed")} `;
-    // One row: the mark, the phrase, the clock, whatever is measurably in
-    // flight, and the receipt. The detail used to be a second row, the
-    // streaming prose a third to sixth, and the block was pinned to the
-    // tallest it had been so the transcript would stop jumping -- three timing
-    // constants to stop it strobing, which was the code admitting the block
-    // moved too much. Prose streams into the transcript now (see settleProse),
-    // so the rung has one sentence to say and says it once.
-    // The phrase shimmers -- quiet, with a four-cell brighter window easing
-    // left to right every 1.6s and resting for 0.4s. The clock does not: a
-    // number that moves under the eye is a number you re-read.
-    const lit = paintPhrase(phrase, state.elapsedMs ?? 0, { kind: state.kind });
+    // One row: the mark, the voice, the phrase, the clock, whatever is
+    // measurably in flight, and the receipt. The detail used to be a second
+    // row, the streaming prose a third to sixth, and the block was pinned to
+    // the tallest it had been so the transcript would stop jumping -- three
+    // timing constants to stop it strobing, which was the code admitting the
+    // block moved too much. Prose streams into the transcript now (see
+    // settleProse), so the rung has one sentence to say and says it once.
+    //
+    // The VOICE leads (`having a look around`) and takes the shimmer -- a soft
+    // glow easing across it once a breath. The PHRASE is the fact beside it
+    // (`reading turn.ts`), set quiet; it is the part a developer reads, and it
+    // is exactly what the row said before the voice arrived. A window too
+    // narrow for both keeps the fact. The clock does not shimmer: a number
+    // that moves under the eye is a number you re-read.
+    const voice = F.proseWidth() >= 72 ? (state.voice ?? "").trim() : "";
+    // A bare word is not a fact worth a column beside a voice that already
+    // says it: `okay, geared up · working` says `working` twice.
+    const fact = voice && isBareKind(state.kind) ? "" : phrase;
+    const lit = voice
+      ? fact
+        ? `${paintPhrase(voice, state.elapsedMs ?? 0, { kind: state.kind })}${faint(dot)}${quiet(fact)}`
+        : paintPhrase(voice, state.elapsedMs ?? 0, { kind: state.kind })
+      : paintPhrase(phrase, state.elapsedMs ?? 0, { kind: state.kind });
     const said = clock ? `${lit}${faint(dot)}${faint(clock)}` : lit;
-    const spent = phrase.length + clock.length + 4;
+    const spent = (voice ? voice.length + 3 : 0) + fact.length + clock.length + 4;
     const head = frame.detail
       ? `${said}${faint(dot)}${faint(truncate(frame.detail, Math.max(20, F.proseWidth() - spent)))}`
       : said;
@@ -1542,6 +1572,7 @@ export class TurnRenderer {
     const saysLess = want.kind === "working" && !want.detail;
     const saidMore = this.frame.kind !== "working" || Boolean(this.frame.detail);
     if (saysLess && saidMore && now - this.wantSince < SETTLE_MS) return this.frame;
+    if (want.kind !== this.frame.kind) this.kindSince = now;
     this.frame = want;
     this.frameAt = now;
     return this.frame;

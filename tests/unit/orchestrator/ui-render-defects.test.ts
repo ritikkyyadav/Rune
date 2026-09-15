@@ -326,9 +326,17 @@ describe("D5 -- fenced code continues at a word boundary", () => {
   it("does not split a command mid-token", () => {
     // 72 - 4 of indent = 68 columns, which is exactly where the founder's
     // answer split `http.server` in two.
-    const rows = renderMarkdown(fence, { width: 72, indent: "    " }).map((row) =>
-      stripAnsi(row).trim(),
-    );
+    // Fenced code is framed now (the founder, 2026-09-15); the frame's edges
+    // are stripped so the claim stays about the code, not the box.
+    const rows = renderMarkdown(fence, { width: 72, indent: "    " })
+      .map((row) => stripAnsi(row).trim())
+      .filter((row) => row.startsWith("\u2502"))
+      .map((row) =>
+        row
+          .replace(/^\u2502 /, "")
+          .replace(/ \u2502$/, "")
+          .trim(),
+      );
     expect(rows.some((row) => row.endsWith("http.serv"))).toBe(false);
     expect(rows.some((row) => row.startsWith("er 8765"))).toBe(false);
     // The token survives whole on one row; the break moved to the space.
@@ -343,7 +351,16 @@ describe("D5 -- fenced code continues at a word boundary", () => {
       indent: "",
     }).map((row) => stripAnsi(row));
     for (const row of rows) expect(visLen(row)).toBeLessThanOrEqual(40);
-    expect(rows.join("").replace(/\s/g, "")).toContain(blob);
+    // The frame closes at the column on every row, and the blob survives
+    // whole once the edges are taken off.
+    const body = rows.filter((row) => row.startsWith("\u2502"));
+    expect(body.length).toBeGreaterThan(1);
+    expect(
+      body
+        .map((row) => row.replace(/^\u2502 /, "").replace(/ \u2502$/, ""))
+        .join("")
+        .replace(/\s/g, ""),
+    ).toContain(blob);
   });
 });
 

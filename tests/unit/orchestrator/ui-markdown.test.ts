@@ -23,18 +23,27 @@ describe("renderMarkdown — block structure", () => {
     expect(out[1]).toMatch(/-+/);
   });
 
-  it("sets fenced code as code, without drawing a box around it", () => {
+  it("frames fenced code the way the rail frames a tool's record", () => {
+    // The founder, 2026-09-15, put the framed diffs and the unframed answer
+    // side by side and named which one was right. Code in an answer is a
+    // record being quoted, and a record closes on both edges: the same
+    // corners, rule and gutter as flow.box, with the language on the top rule.
     const md = "Run this:\n\n```bash\ncd atlas-studio\npython3 -m http.server 8000\n```\nDone.";
     const out = plain(renderMarkdown(md, { width: 60, indent: "" }));
     const joined = out.join("\n");
     expect(joined).not.toContain("```");
-    expect(joined).toContain("bash"); // the language stays as a label
-    expect(joined).toContain("cd atlas-studio");
-    expect(joined).toContain("python3 -m http.server 8000");
-    // No frame: a blank line and a change of weight already separate code.
-    expect(joined).not.toContain("╭─");
-    expect(joined).not.toContain("╰─");
-    expect(joined).not.toContain("│");
+    expect(out[2]).toMatch(/^┌ bash ─+┐$/); // the language is the frame's label
+    expect(out[3]).toMatch(/^│ cd atlas-studio\s+│$/);
+    expect(out[4]).toMatch(/^│ python3 -m http\.server 8000\s+│$/);
+    expect(out[5]).toMatch(/^└─+┘$/);
+    // Every row of the frame is the same width: the box closes.
+    expect(new Set(out.slice(2, 6).map((l) => l.length)).size).toBe(1);
+    expect(out[out.length - 1]).toBe("Done.");
+  });
+
+  it("labels an unlabelled fence `code`, so the frame still says what it holds", () => {
+    const out = plain(renderMarkdown("```\nx = 1\n```", { width: 40, indent: "" }));
+    expect(out[0]).toMatch(/^┌ code ─+┐$/);
   });
 
   it("never eats an underscore inside an identifier", () => {
@@ -56,9 +65,11 @@ describe("renderMarkdown — block structure", () => {
     expect(out).toBe("This is really important, and very so.");
   });
 
-  it("ends an unterminated fence without leaving anything dangling", () => {
+  it("closes the frame of a fence the model never terminated", () => {
     const out = plain(renderMarkdown("```\ncode", { width: 60, indent: "" }));
-    expect(out.join("\n")).toBe("code");
+    expect(out).toHaveLength(3);
+    expect(out[1]).toMatch(/^│ code\s+│$/);
+    expect(out[2]).toMatch(/^└─+┘$/);
   });
 
   it("renders list items with real bullets and hanging indents", () => {

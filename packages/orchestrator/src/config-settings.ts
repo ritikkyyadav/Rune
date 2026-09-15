@@ -556,6 +556,20 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     nameAliases: ["ui layout", "frame", "panel layout"],
     live: false,
   },
+  {
+    key: "callsign",
+    tomlPath: "ui.callsign",
+    kind: "text",
+    placeholder: "boss | chief | your name | (empty for none)",
+    description:
+      "What Rune calls you on the working row while it works -- a few of its lines carry an " +
+      "address (`on it, boss`); with no callsign those lines drop it. At most sixteen " +
+      "characters.",
+    nameAliases: ["call sign", "nickname", "name", "what rune calls me", "address"],
+    validate: (v) =>
+      v.length > 16 ? "keep it to sixteen characters -- a name, not a sentence" : undefined,
+    live: true,
+  },
 ] as const;
 
 /** The canonical true/false aliases every boolean setting accepts. */

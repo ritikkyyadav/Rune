@@ -220,9 +220,13 @@ export function renderBanner(opts: BannerOptions): string {
   // The branch is resolved only when it has something to say. In the main
   // checkout it names a fact the row does not print, and a `git branch` per
   // frame to reach it -- even a cached one -- is work done for nothing.
-  const worktree = workspaceIsLinkedWorktree(opts.workspace)
-    ? (opts.branch ?? workspaceBranch(opts.workspace)) || ""
-    : "";
+  // The branch is resolved in EVERY checkout now (founder, 2026-09-15: the
+  // location reads "the parent folder, then the worktree"), through the same
+  // non-blocking cache as before -- one `git branch --show-current` every
+  // five seconds, off the render path, so a branch switch mid-session
+  // reaches the header without a restart and no frame waits on git.
+  const branch = (opts.branch ?? workspaceBranch(opts.workspace)) || "";
+  const linked = workspaceIsLinkedWorktree(opts.workspace);
 
   return flowHeader({
     name: PRODUCT_NAME,
@@ -230,6 +234,7 @@ export function renderBanner(opts: BannerOptions): string {
     workspace: shortPath(opts.workspace),
     // A detached worktree still says it is a worktree. That is the half of the
     // sentence that matters; the branch is the qualifier.
-    worktree: workspaceIsLinkedWorktree(opts.workspace) ? worktree || "detached" : undefined,
+    worktree: linked ? branch || "detached" : undefined,
+    branch: !linked && branch ? branch : undefined,
   });
 }

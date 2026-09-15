@@ -775,14 +775,18 @@ export function renderToolActivity(v: ToolActivityView): string {
               return closing || summary ? [...excerpt, closing || summary] : excerpt;
             })()
           : commandBody(lines, INLINE_HEAD);
-      return F.box({ verb: name, arg: command }, F.boxOutput(shown, failed ? danger : muted), {
-        status: failed ? "fail" : checked ? "pass" : "ok",
-        parts: [
-          timedOut ? "timed out" : exit != null ? `exit ${exit}` : "",
-          tallyOf(summary),
-          elapsed(v.durationMs),
-        ],
-      }).join("\n");
+      return F.box(
+        { verb: name, arg: command },
+        F.boxOutput(shown, failed ? F.failurePaint : muted),
+        {
+          status: failed ? "fail" : checked ? "pass" : "ok",
+          parts: [
+            timedOut ? "timed out" : exit != null ? `exit ${exit}` : "",
+            tallyOf(summary),
+            elapsed(v.durationMs),
+          ],
+        },
+      ).join("\n");
     }
 
     case "web_search": {
@@ -1118,7 +1122,7 @@ export function renderToolDetail(v: ToolActivityView): string | null {
       const clipped = F.clip(all, DETAIL_HEAD, DETAIL_TAIL);
       return F.box(
         { verb: VERB.bash!, arg: command },
-        F.boxOutput(closing ? [...clipped, closing] : clipped, failed ? danger : muted),
+        F.boxOutput(closing ? [...clipped, closing] : clipped, failed ? F.failurePaint : muted),
         {
           status: failed ? "fail" : checked ? "pass" : "ok",
           parts: [

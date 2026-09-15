@@ -107,10 +107,18 @@ describe("ui/banner", () => {
     expect(output).not.toContain("1st gear");
   });
 
-  it("says nothing about the branch in the main checkout", () => {
-    // The row is silent until you are somewhere that can surprise you. A branch
-    // on every line is a line you stop reading.
-    expect(row(100, { branch: "gear/phase-0-stabilize" })).not.toContain("gear/phase-0-stabilize");
+  it("names the branch beside the path in the main checkout", () => {
+    // The founder, 2026-09-15: the location reads "the parent folder, then
+    // the worktree" -- the path, then what it is checked out as, the way the
+    // terminal's own sidebar names the tab. The row used to stay silent here
+    // on the theory that an unsurprising fact was not worth a column; what
+    // the founder saw was not silence, it was a missing field.
+    const line = row(100, { branch: "gear/phase-0-stabilize" });
+    expect(line).toContain("~/Projects/sample-app");
+    expect(line).toContain("gear/phase-0-stabilize");
+    expect(line.indexOf("sample-app")).toBeLessThan(line.indexOf("gear/phase-0-stabilize"));
+    // ...and without the worktree word: this is the main checkout.
+    expect(line).not.toContain("worktree");
   });
 
   it("the rule changes tone under the last cell of the wordmark", () => {
@@ -121,7 +129,10 @@ describe("ui/banner", () => {
     const lines = banner(120)
       .split("\n")
       .filter((line) => line.trim());
-    expect(stripAnsi(F.seamRule(F.chromeWidth(), F.lockup("Rune").cells))).toBe(lines[1]);
+    // One cell short of the pill: its left pad hangs in the gutter (see
+    // flow.header), so the heavy rule starts under the R and ends under the
+    // pill's right edge.
+    expect(stripAnsi(F.seamRule(F.chromeWidth(), F.lockup("Rune").cells - 1))).toBe(lines[1]);
   });
 
   it("chrome aligns to the WINDOW, so the build lands on the rule's right edge", () => {

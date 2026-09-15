@@ -78,6 +78,13 @@ import {
 import { GLYPH_DEFINITIONS, PULSE_GLYPHS } from "../../../packages/orchestrator/src/bin/ui/glyphs";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
 import { visLen } from "../../../packages/orchestrator/src/bin/ui/render";
+import { OPENING, VOICE, address } from "../../../packages/orchestrator/src/bin/ui/voice";
+
+/** Whether a rung carries one of a voice set's lines. A bare kind (working,
+ *  answering, waiting, compacting) shows Rune's voice in place of the word --
+ *  see ui/voice.ts -- so the word itself is no longer what the rung says. */
+const voiced = (rung: string, set: readonly string[]): boolean =>
+  set.some((line) => rung.includes(address(line, "")));
 
 const RAMP = PULSE_GLYPHS.map((g) => g.utf8);
 const ASCII_RAMP = PULSE_GLYPHS.map((g) => g.ascii);
@@ -105,7 +112,7 @@ describe("the curve", () => {
     expect(breathEase(HALF_BREATH_FRAMES) - breathEase(HALF_BREATH_FRAMES - 1)).toBeLessThan(0.02);
     // ...and genuinely fast in the middle, or it is not eased, it is stalled.
     const mid = HALF_BREATH_FRAMES / 2;
-    expect(breathEase(mid + 1) - breathEase(mid)).toBeGreaterThan(0.1);
+    expect(breathEase(mid + 1) - breathEase(mid)).toBeGreaterThan(0.05);
   });
 
   it("rises monotonically through a half-breath and falls back monotonically", () => {
@@ -166,13 +173,16 @@ describe("the frame rate", () => {
   it("is 90ms a frame -- 11.1fps, under the 12fps ceiling", () => {
     expect(FRAME_MS).toBe(90);
     expect(1000 / FRAME_MS).toBeLessThanOrEqual(MAX_FPS);
-    // Twelve frames a half-breath, 2.16s a breath: the rate of calm breathing,
-    // which is the entire design brief for this curve.
-    expect(HALF_BREATH_FRAMES).toBe(12);
-    expect(BREATH_FRAMES).toBe(24);
-    expect(BREATH_MS).toBe(2160);
-    expect(BREATH_MS).toBeGreaterThanOrEqual(1800);
-    expect(BREATH_MS).toBeLessThanOrEqual(2600);
+    // Twenty-four frames a half-breath: a 4.32s breath, fourteen a minute --
+    // a calm person at rest, which is the entire design brief for this curve.
+    // Twelve was twenty-eight a minute, and the founder read it as "too fast,
+    // not soothing, totally jittery" (2026-09-15).
+    expect(HALF_BREATH_FRAMES).toBe(24);
+    expect(BREATH_FRAMES).toBe(48);
+    expect(BREATH_MS).toBe(4320);
+    // Twelve to sixteen breaths a minute: 3.75s to 5s.
+    expect(BREATH_MS).toBeGreaterThanOrEqual(3750);
+    expect(BREATH_MS).toBeLessThanOrEqual(5000);
   });
 
   it("is the same clock the repaint tick runs on", () => {
@@ -270,13 +280,17 @@ describe("the shimmer", () => {
   const PHRASE = "reading turn.ts"; // 15 cells
   const frames = (ms: number) => Math.floor(ms / FRAME_MS);
 
-  it("eases in and out over 1.6s, then rests for 0.4s", () => {
-    expect(SHIMMER_SWEEP_MS).toBe(1600);
-    expect(SHIMMER_PAUSE_MS).toBe(400);
-    expect(SHIMMER_CYCLE_MS).toBe(2000);
-    expect(SHIMMER_CELLS).toBe(4);
+  it("sweeps for two thirds of a breath, rests for the last third, and cycles once a breath", () => {
+    // One clock for the row: the glow crosses the words while the bar rises
+    // and rests while it falls. Unrelated clocks (1.6s + 0.4s against a 2.16s
+    // breath) put the highlight at a different moment of every breath, which
+    // is what "preprogrammed" looks like when you cannot say why.
+    expect(SHIMMER_SWEEP_MS).toBe(2880);
+    expect(SHIMMER_PAUSE_MS).toBe(1440);
+    expect(SHIMMER_CYCLE_MS).toBe(BREATH_MS);
+    expect(SHIMMER_CELLS).toBe(6);
     expect(SHIMMER_CELLS).toBeGreaterThanOrEqual(3);
-    expect(SHIMMER_CELLS).toBeLessThanOrEqual(4);
+    expect(SHIMMER_CELLS).toBeLessThanOrEqual(6);
     // Same family as the breath -- half a raised cosine -- so the two motions
     // on one row are one idea of smooth at two rates.
     expect(shimmerEase(0)).toBeCloseTo(0, 10);
@@ -288,7 +302,7 @@ describe("the shimmer", () => {
 
   it("enters from off the left edge and leaves off the right, monotonically", () => {
     const heads: number[] = [];
-    for (let f = 0; f <= frames(SHIMMER_SWEEP_MS); f++) {
+    for (let f = 0; f * FRAME_MS < SHIMMER_SWEEP_MS; f++) {
       const win = shimmerWindowAt(f * FRAME_MS, PHRASE.length);
       expect(win, `frame ${f}`).not.toBeNull();
       heads.push(win!.head);
@@ -333,7 +347,7 @@ describe("the shimmer", () => {
     // Over a whole sweep every cell of the phrase is lit at some point, and
     // the phrase is never destroyed by the split.
     const lit = new Set<number>();
-    for (let f = 0; f <= frames(SHIMMER_SWEEP_MS); f++) {
+    for (let f = 0; f * FRAME_MS < SHIMMER_SWEEP_MS; f++) {
       const win = shimmerWindowAt(f * FRAME_MS, PHRASE.length)!;
       for (let i = win.start; i < win.end; i++) lit.add(i);
       expect(
@@ -556,7 +570,8 @@ const call = (callId: string, toolName: string, args?: Record<string, unknown>) 
 describe("the rung says what the events say", () => {
   it("opens on working, with nothing in flight", () => {
     const h = rungHarness();
-    expect(h.rung()).toContain("working");
+    expect(h.turn.workingState().kind).toBe("working");
+    expect(voiced(h.rung(), OPENING)).toBe(true);
     // And it opens on Rune's mark, not the borrowed one.
     expect(h.rung()).not.toContain("✻");
     expect(RAMP.some((cell) => h.rung().includes(cell))).toBe(true);
@@ -587,8 +602,10 @@ describe("the rung says what the events say", () => {
       h.turn.onEvent(event as never);
     }
     await sleep(DWELL + 60);
-    // `asking` was a fragment hanging off `working`. This is the sentence.
-    expect(h.rung()).toContain("waiting for you");
+    // `asking` was a fragment hanging off `working`. This is the sentence --
+    // in Rune's voice, because the state is about the reader.
+    expect(h.turn.workingState().kind).toBe("waiting");
+    expect(voiced(h.rung(), VOICE.waiting)).toBe(true);
     expect(h.rung()).not.toContain("asking");
     // ...and the mark holds still at the mid bar while a person is the one
     // holding things up.
@@ -602,7 +619,8 @@ describe("the rung says what the events say", () => {
       message: "provider rejected the prompt as over-limit — force-compacting (attempt 1)",
     } as never);
     await sleep(DWELL + 60);
-    expect(h.rung()).toContain("compacting");
+    expect(h.turn.workingState().kind).toBe("compacting");
+    expect(voiced(h.rung(), VOICE.compacting)).toBe(true);
     // The compaction LANDING ends the state. Nothing else does -- no timer,
     // no guess about how long a compaction ought to take.
     h.turn.onEvent({
@@ -612,15 +630,17 @@ describe("the rung says what the events say", () => {
       limitTokens: 200_000,
     } as never);
     await sleep(DWELL + 60);
-    expect(h.rung()).not.toContain("compacting");
+    expect(h.turn.workingState().kind).not.toBe("compacting");
+    expect(voiced(h.rung(), VOICE.compacting)).toBe(false);
   });
 
   it("says answering only once prose has actually streamed", async () => {
     const h = rungHarness();
-    expect(h.rung()).not.toContain("answering");
+    expect(h.turn.workingState().kind).not.toBe("answering");
     h.turn.onEvent({ type: "text_delta", text: "The loop breaks on the wrong event." } as never);
     await sleep(DWELL + 60);
-    expect(h.rung()).toContain("answering");
+    expect(h.turn.workingState().kind).toBe("answering");
+    expect(voiced(h.rung(), VOICE.answering)).toBe(true);
   });
 
   it("leads with the fan-out rather than with whichever member streamed last", async () => {

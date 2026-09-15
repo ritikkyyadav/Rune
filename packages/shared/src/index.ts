@@ -223,6 +223,7 @@ export {
   clampToBudget,
 } from "./system-memory.js";
 export { type UiLayout, DEFAULT_UI_LAYOUT, parseUiLayout, resolveUiLayout } from "./ui-layout.js";
+export { CALLSIGN_MAX, cleanCallsign, getCallsign, setCallsign } from "./ui-callsign.js";
 export * from "./session.js";
 export {
   type RunState,

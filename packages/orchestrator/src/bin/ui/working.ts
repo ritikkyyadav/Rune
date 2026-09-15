@@ -19,13 +19,18 @@
 // second derivative. Three things move here, and each of them is eased:
 //
 //   1. The mark BREATHES: the bar eases up the ramp and back down on a raised
-//      cosine, ▁→█→▁, twelve frames a half-breath at 90ms a frame, so a whole
-//      breath is 2.16s. Height and colour are taken from the SAME eased value,
-//      so they crest together: `dim` at the trough, `accent` at the top.
-//   2. The phrase SHIMMERS: it is painted quiet, and a four-cell brighter
-//      window sweeps across it left to right, eased in and out over 1.6s, then
-//      rests for 0.4s before the next pass. That rest is the difference
-//      between a shimmer and a barber's pole.
+//      cosine, ▁→█→▁, twenty-four frames a half-breath at 90ms a frame, so a
+//      whole breath is 4.32s -- fourteen a minute, a calm person at rest.
+//      Height and colour are taken from the SAME eased value, so they crest
+//      together: `faint` at the trough, `accent` at the top -- and in
+//      truecolor the colour is the mix itself, not four named steps.
+//   2. The phrase SHIMMERS: it is painted quiet, and a soft glow sweeps across
+//      it left to right, eased in and out over two thirds of a breath, then
+//      rests for the last third -- one clock with the mark, so the row has one
+//      rhythm. That rest is the difference between a shimmer and a barber's
+//      pole. In truecolor the glow is a raised-cosine bump six cells wide,
+//      each cell painted by its distance from the centre; elsewhere it is a
+//      window of `text` over `quiet`.
 //   3. Nothing else does. The clock does not shimmer — a number that moves
 //      under the eye is a number you re-read — and a run that is finished,
 //      waiting on a person, or not running at all holds perfectly still.
@@ -41,7 +46,7 @@
 // while it does; that word says whether it still is. A single cell carrying
 // both could say neither, which is what the original byte-driven ramp proved.
 
-import { accent, colorEnabled, dim, faint, quiet, text } from "./theme";
+import { accent, blendPaint, colorEnabled, dim, faint, quiet, text, truecolor } from "./theme";
 import { PULSE_GLYPHS, TERMINAL_GLYPH_MODE, glyph, type GlyphMode } from "./glyphs";
 
 /**
@@ -87,6 +92,14 @@ export interface WorkingState {
   phrase?: string;
   /** Milliseconds since the turn started. Omitted where there is no clock. */
   elapsedMs?: number;
+  /**
+   * Rune's own voice, composed by `voice.ts` from the kind and how long it has
+   * been true -- `having a look around`, `still on it, this one's chunky`.
+   * Leads the row when present; the phrase then follows it as the fact
+   * (`reading turn.ts`), so nothing the row used to say is lost. Absent on
+   * surfaces with no turn behind them (the aborting row, the rest row).
+   */
+  voice?: string;
 }
 
 /** The word, lower-case, for a state with nothing to name. */
@@ -115,6 +128,17 @@ const INTRANSITIVE: ReadonlySet<WorkingKind> = new Set<WorkingKind>([
   "compacting",
   "done",
 ]);
+
+/**
+ * Whether a kind's phrase is a bare word with nothing to name -- `working`,
+ * `answering`, `waiting for you`, `compacting`. Beside a voice that already
+ * says it (`okay, geared up`, `over to you`) such a word is the same fact
+ * twice, so the row keeps the voice alone; a kind with a subject keeps both,
+ * because `reading turn.ts` is information the voice does not carry.
+ */
+export function isBareKind(kind: WorkingKind): boolean {
+  return INTRANSITIVE.has(kind);
+}
 
 /**
  * Map a tool name onto the verb that describes running it.
@@ -199,11 +223,22 @@ export const FRAME_MS = 90;
  *  reading as flicker. */
 export const MAX_FPS = 12;
 
-/** Twelve frames from trough to crest: 1.08s up, 1.08s down. */
-export const HALF_BREATH_FRAMES = 12;
+/**
+ * Twenty-four frames from trough to crest: 2.16s up, 2.16s down.
+ *
+ * It was twelve -- a 2.16s breath, which is twenty-eight breaths a minute, the
+ * rate of someone who has just run up the stairs. The founder read it as
+ * "too fast, not soothing, totally jittery", and the number agrees with them:
+ * a calm adult at rest breathes twelve to sixteen times a minute, so a whole
+ * breath here is 4.32s. Eight ramp levels over twenty-four frames also means
+ * each level is held for three frames, which is what stops the bar reading as
+ * a ticker.
+ */
+export const HALF_BREATH_FRAMES = 24;
 
-/** A whole breath, in frames -- 24 at 90ms is 2.16s, the rate of a calm
- *  person's breathing, which is the entire design brief for this curve. */
+/** A whole breath, in frames -- 48 at 90ms is 4.32s, fourteen breaths a
+ *  minute, the rate of a calm person's breathing, which is the entire design
+ *  brief for this curve. */
 export const BREATH_FRAMES = HALF_BREATH_FRAMES * 2;
 
 /** A whole breath, in milliseconds. */
@@ -335,26 +370,46 @@ export function workingMark(
 ): string {
   if (!isBreathing(state.kind)) return workingRestMark(mode);
   const f = ((Math.floor(frame) % BREATH_FRAMES) + BREATH_FRAMES) % BREATH_FRAMES;
-  return TINT[breathTint(f)](rampGlyph(rampIndex(f), mode));
+  const bar = rampGlyph(rampIndex(f), mode);
+  // In truecolor the tint is the SAME eased value, unquantised: the pigment
+  // slides from the faint slot to the accent over the half-breath instead of
+  // stepping through four names. The four-tint ramp stays for every terminal
+  // that cannot take a mixed pigment, and for the tests, which state the
+  // colour at a frame by name.
+  if (truecolor) return blendPaint("faint", "info", breathEase(f))(bar);
+  return TINT[breathTint(f)](bar);
 }
 
 // ─── The shimmer ───
 
-/** How long one pass across the phrase takes. */
-export const SHIMMER_SWEEP_MS = 1600;
+/**
+ * How long one pass across the phrase takes: two thirds of a breath.
+ *
+ * The sweep and the breath used to run on unrelated clocks (1.6s + 0.4s
+ * against 2.16s), so the highlight crossed the words at a different moment of
+ * every breath and the row never settled into a rhythm -- which is what
+ * "preprogrammed" looks like when you cannot say why. The cycle is now
+ * exactly one breath: the glow leaves the left edge as the bar starts to rise
+ * and is off the right edge by the time it crests, then rests through the
+ * fall. One clock, one motion at two rates.
+ */
+export const SHIMMER_SWEEP_MS = Math.round((BREATH_MS * 2) / 3);
 
-/** How long the phrase rests, fully quiet, before the next pass. Without this
- *  the window reappears on the left the instant it leaves on the right, and a
- *  loop with no rest in it is a barber's pole. */
-export const SHIMMER_PAUSE_MS = 400;
+/** How long the phrase rests, fully quiet, before the next pass -- the last
+ *  third of the breath. Without this the window reappears on the left the
+ *  instant it leaves on the right, and a loop with no rest in it is a
+ *  barber's pole. */
+export const SHIMMER_PAUSE_MS = BREATH_MS - SHIMMER_SWEEP_MS;
 
-/** Sweep plus rest. */
+/** Sweep plus rest: one breath. */
 export const SHIMMER_CYCLE_MS = SHIMMER_SWEEP_MS + SHIMMER_PAUSE_MS;
 
-/** How wide the brighter window is. Four cells: narrow enough to read as a
- *  highlight travelling over the words, wide enough to be visible at all on a
- *  short phrase like `working`. */
-export const SHIMMER_CELLS = 4;
+/** How wide the brighter window is. Six cells: in truecolor the glow is a
+ *  raised-cosine bump this wide, so only its middle two cells are ever fully
+ *  lit and the edges fade -- a highlight, not a stencil. On a stepped
+ *  terminal it is the whole window, which is still narrow enough to read as
+ *  light travelling over the words. */
+export const SHIMMER_CELLS = 6;
 
 /**
  * Ease-in-out for the sweep: the window accelerates off the left margin,
@@ -393,6 +448,31 @@ export function shimmerWindowAt(
   length: number,
   opts: { cells?: number; sweepMs?: number; cycleMs?: number } = {},
 ): ShimmerWindow | null {
+  const cells = Math.max(1, Math.floor(opts.cells ?? SHIMMER_CELLS));
+  const exact = shimmerHeadAt(elapsedMs, length, opts);
+  if (exact == null) return null;
+  const head = Math.round(exact);
+  return {
+    head,
+    start: Math.max(0, Math.min(length, head)),
+    end: Math.max(0, Math.min(length, head + cells)),
+  };
+}
+
+/**
+ * The window's left edge as a REAL number, or `null` during the rest.
+ *
+ * The rounded head above is what a stepped terminal paints, one cell at a
+ * time. The truecolor glow reads this unrounded one, so the bump's centre
+ * moves by a fraction of a cell each frame and the brightness of every cell
+ * under it changes a little -- which is the difference between light passing
+ * over the words and a stencil being dragged across them.
+ */
+export function shimmerHeadAt(
+  elapsedMs: number,
+  length: number,
+  opts: { cells?: number; sweepMs?: number; cycleMs?: number } = {},
+): number | null {
   if (length <= 0) return null;
   const cells = Math.max(1, Math.floor(opts.cells ?? SHIMMER_CELLS));
   const sweep = Math.max(1, Math.floor(opts.sweepMs ?? SHIMMER_SWEEP_MS));
@@ -400,12 +480,29 @@ export function shimmerWindowAt(
   const t = Math.max(0, elapsedMs) % cycle;
   if (t >= sweep) return null; // the rest between passes
   const travel = length + cells;
-  const head = Math.round(-cells + shimmerEase(t / sweep) * travel);
-  return {
-    head,
-    start: Math.max(0, Math.min(length, head)),
-    end: Math.max(0, Math.min(length, head + cells)),
-  };
+  return -cells + shimmerEase(t / sweep) * travel;
+}
+
+/**
+ * How lit one cell of the phrase is under the glow: 0 quiet, 1 fully `text`.
+ *
+ * A raised-cosine bump centred on the middle of the window, `cells` wide, so
+ * the light has a soft edge on both sides and no cell ever switches on --
+ * it warms as the bump approaches and cools as it passes.
+ */
+export function shimmerGlow(
+  elapsedMs: number,
+  length: number,
+  index: number,
+  opts: { cells?: number; sweepMs?: number; cycleMs?: number } = {},
+): number {
+  const head = shimmerHeadAt(elapsedMs, length, opts);
+  if (head == null) return 0;
+  const cells = Math.max(1, Math.floor(opts.cells ?? SHIMMER_CELLS));
+  const centre = head + cells / 2;
+  const distance = Math.abs(index + 0.5 - centre) / (cells / 2);
+  if (distance >= 1) return 0;
+  return (1 + Math.cos(Math.PI * distance)) / 2;
 }
 
 export interface ShimmerSegment {
@@ -464,6 +561,30 @@ export function paintPhrase(
   const painted = opts.color ?? colorEnabled;
   const moving = isBreathing(opts.kind ?? "working");
   if (!painted || mode === "ascii" || !moving) return quiet(phrase);
+  if (truecolor && opts.color !== false) {
+    // The glow: every cell painted by its own distance from the bump's centre,
+    // quantised to eight steps so neighbours at the same brightness share one
+    // escape and a thirty-character phrase costs a handful of sequences, not
+    // thirty. Eight steps over the soft edge is under the eye's threshold at
+    // these pigments; the motion is in the bump moving, not in the steps.
+    const parts: string[] = [];
+    let run = "";
+    let level = -1;
+    const flush = () => {
+      if (run) parts.push(blendPaint("muted", "text", level / 8)(run));
+      run = "";
+    };
+    for (let i = 0; i < phrase.length; i++) {
+      const next = Math.round(shimmerGlow(elapsedMs, phrase.length, i, opts) * 8);
+      if (next !== level) {
+        flush();
+        level = next;
+      }
+      run += phrase[i]!;
+    }
+    flush();
+    return parts.join("");
+  }
   return shimmerSegments(phrase, elapsedMs, opts)
     .map((part) => (part.bright ? text(part.text) : quiet(part.text)))
     .join("");
@@ -493,15 +614,27 @@ export function workingRow(
   const elapsed = state.elapsedMs ?? 0;
   const frame = breathFrame(elapsed, opts.frameMs);
   const mark = workingMark(state, frame, opts.mode);
-  const phrase = paintPhrase(workingPhrase(state), elapsed, {
-    kind: state.kind,
-    mode: opts.mode,
-    color: opts.color,
-  });
+  const paint = { kind: state.kind, mode: opts.mode, color: opts.color };
+  // The voice, when there is one, is the sentence and takes the shimmer; the
+  // phrase is then the fact beside it, set quiet. With no voice the phrase is
+  // the sentence, exactly as before.
+  const voice = (state.voice ?? "").trim();
+  const fact = workingPhrase(state);
+  // A bare word is not a fact worth a column beside a voice that already
+  // says it: `okay, geared up · working` says `working` twice.
+  const said = voice
+    ? isBareKind(state.kind)
+      ? paintPhrase(voice, elapsed, paint)
+      : `${paintPhrase(voice, elapsed, paint)}${faint(sep(opts.mode))}${quiet(fact)}`
+    : paintPhrase(fact, elapsed, paint);
   const clock =
     state.kind === "waiting" || state.elapsedMs == null ? "" : elapsedWord(state.elapsedMs);
-  const sep = ` ${glyph("observed", opts.mode ?? TERMINAL_GLYPH_MODE)} `;
-  return clock ? `${mark} ${phrase}${faint(sep)}${faint(clock)}` : `${mark} ${phrase}`;
+  return clock ? `${mark} ${said}${faint(sep(opts.mode))}${faint(clock)}` : `${mark} ${said}`;
+}
+
+/** The row's separator: the grammar's own middot, spaced. */
+function sep(mode: GlyphMode = TERMINAL_GLYPH_MODE): string {
+  return ` ${glyph("observed", mode)} `;
 }
 
 /** The phrase and clock without the mark, unpainted, for surfaces that paint

@@ -31,6 +31,7 @@ import {
   danger,
   faint,
   info,
+  lockupChip,
   muted,
   negativeSurface,
   bandInk,
@@ -289,9 +290,19 @@ export interface FlowHeader {
    *  field exists to answer. */
   workspace?: string;
   /** The branch a LINKED git worktree is checked out on. Absent in the main
-   *  checkout, which is the point: the row says nothing until you are somewhere
-   *  that can surprise you. */
+   *  checkout; when present it is announced with the word, because a linked
+   *  worktree is the one place a path can mislead you about what you are on. */
   worktree?: string;
+  /**
+   * The branch the workspace is checked out on, in ANY checkout. Absent
+   * outside a git repository or on a detached head. The founder, 2026-09-15:
+   * the location should read "the parent folder, then the worktree" -- the
+   * path first and what it is checked out as beside it, the way the terminal's
+   * own sidebar names the tab. The row used to stay silent in the main
+   * checkout on the theory that a fact you could not be surprised by was not
+   * worth a column; it was not silence the founder saw, it was a missing field.
+   */
+  branch?: string;
 }
 
 // --- The masthead ---
@@ -334,12 +345,23 @@ export interface FlowHeader {
  * measure a painted string without stripping it again.
  */
 export function lockup(name: string): { text: string; cells: number } {
-  // The wordmark IS the logo: the name, set the way Savoir sets its letters --
-  // bold, WHITE, wide-tracked (a space between each letter) -- and nothing else.
-  // No gear, no chip. Clean type is the mark. The blue lives in the seam rule
-  // beneath it and in the one accent the grammar uses, not in the wordmark.
-  const letters = name.toUpperCase().split("").join(" ");
-  return { text: bold(text(letters)), cells: visLen(letters) };
+  // The wordmark is the name, set the way Savoir sets its letters -- bold,
+  // wide-tracked (a space between each letter) -- on a PILL: the terminal's
+  // own ground pulled a third of the way toward the identity blue, with the
+  // letters in the theme's text pigment (see theme.lockupChip). No gear.
+  //
+  // The clean-type version that preceded this was right in principle and
+  // thin on the screen: `SGR 1` asks a terminal for weight and a host with no
+  // bold face answers with nothing, which is what the founder saw --
+  // "that thinner written Rune, I don't like that". A cell that is ink rather
+  // than paper is the one genuine weight a terminal sells, and a tinted pill
+  // is that weight at a strength the eye can rest on for a whole session; a
+  // solid accent block (theme.heavy) is the same idea at a strength it cannot.
+  //
+  // The two padding cells are part of the mark: a pill that starts flush
+  // against its first letter reads as a highlight, not a lockup.
+  const letters = ` ${name.toUpperCase().split("").join(" ")} `;
+  return { text: lockupChip(letters), cells: visLen(letters) };
 }
 
 /** The build, for the far right of a masthead. Quiet: it is the least urgent
@@ -394,11 +416,20 @@ export function header(opts: FlowHeader): string {
   // a chosen column; and until this line said `chromeWidth` it stopped two
   // cells short of the frame instead (§4.1 lane A, "unfinished" item 1).
   const surface = chromeWidth();
-  // The indent is paid for out of the row's own budget. Prepending MARK to a
-  // row already sized to the full measure pushes the line onto the terminal's
-  // last cell, and a line that touches the last cell wraps -- which desyncs the
-  // relative cursor math for the pinned region below it.
-  const budget = surface - MARK.length;
+  // The indent is paid for out of the row's own budget. Prepending the gutter
+  // to a row already sized to the full measure pushes the line onto the
+  // terminal's last cell, and a line that touches the last cell wraps -- which
+  // desyncs the relative cursor math for the pinned region below it.
+  //
+  // The gutter here is ONE cell, not MARK's two: the pill's own left pad is
+  // the second. A pill's ground hangs outside its type the way a chip's does,
+  // so the letter R lands on column 2 with everything else on the screen (the
+  // one-left-edge law, ui-frame.test.ts) and the tint reaches one cell into
+  // the margin, which is where a pill's edge belongs. The heavy rule beneath
+  // is shortened by that same cell so it still ends under the pill's right
+  // edge.
+  const gutter = MARK.slice(0, -1);
+  const budget = surface - gutter.length;
 
   const mark = lockup(opts.name);
   const version = versionTag(opts.version);
@@ -422,12 +453,24 @@ export function header(opts: FlowHeader): string {
   // directory you are in.
   const floor = opts.workspace ? Math.min(room, tailSegment(opts.workspace).length) : 0;
 
-  // What the worktree clause may spend, and how it shortens. The branch is the
-  // qualifier; the word is the warning -- so the branch goes first and the word
-  // survives on any window that can hold it at all.
+  // What the branch clause may spend, and how it shortens. In a linked
+  // worktree the word is the warning and the branch the qualifier, so the
+  // word survives on any window that can hold it at all. In the main
+  // checkout the clause is the branch alone, and a branch too long for its
+  // room keeps its END -- `…/phase-0-stabilize` says which branch,
+  // `gear/pha…` does not.
   const forClause = room - floor - SEP.length;
-  const full = opts.worktree ? `worktree ${opts.worktree}` : "";
-  const clause = full.length <= forClause ? full : "worktree".length <= forClause ? "worktree" : "";
+  const full = opts.worktree ? `worktree ${opts.worktree}` : (opts.branch ?? "");
+  const clause =
+    full.length <= forClause
+      ? full
+      : opts.worktree
+        ? "worktree".length <= forClause
+          ? "worktree"
+          : ""
+        : forClause >= 6
+          ? pathTail(full, forClause)
+          : "";
 
   const path = opts.workspace
     ? pathTail(opts.workspace, room - (clause ? clause.length + SEP.length : 0))
@@ -436,8 +479,8 @@ export function header(opts: FlowHeader): string {
 
   return [
     "",
-    `${MARK}${row(`${mark.text}${location ? LOCKUP_GAP + location : ""}`, version, budget)}`,
-    seamRule(surface, mark.cells),
+    `${gutter}${row(`${mark.text}${location ? LOCKUP_GAP + location : ""}`, version, budget)}`,
+    seamRule(surface, mark.cells - 1),
   ].join("\n");
 }
 
@@ -860,6 +903,23 @@ export function boxBottom(receipt: BoxReceipt = {}, width = boxWidth()): string 
  */
 export function boxOutput(lines: string[], paint: (v: string) => string = muted): string[] {
   return lines.map((line) => paint(line.replace(/\t/g, "  ")));
+}
+
+/**
+ * The painter for the body of a command that FAILED: the lines that carry
+ * the verdict in the danger tint, everything else in the same secondary tone
+ * a passing command gets.
+ *
+ * It used to paint the whole body red. A vite build that exited 1 because a
+ * grep after it found nothing showed twelve lines of perfectly healthy build
+ * log in the colour of an error, and the one warning worth reading was the
+ * same red as the line saying `11 modules transformed`. Red is a signal; a
+ * block of it is a background. The receipt row still says `exit 1` in the
+ * danger tint, so nothing about the outcome is softened -- only the
+ * evidence is left legible.
+ */
+export function failurePaint(line: string): string {
+  return SIGNAL.test(line) ? danger(line) : muted(line);
 }
 
 /** The counted fold. A body that overran says by how much and which key opens

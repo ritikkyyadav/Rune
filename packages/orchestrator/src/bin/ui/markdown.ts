@@ -13,7 +13,6 @@ import {
   text,
   muted,
   faint,
-  info,
   warn,
   line as lineColor,
   colorEnabled,
@@ -260,8 +259,25 @@ export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
   const out: string[] = [];
   const src = md.replace(/\r\n?/g, "\n").split("\n");
 
-  const codeRow = (plainText: string, painted: string): string =>
-    codeSurface(`${painted}${" ".repeat(Math.max(0, width - plainText.length))}`);
+  // The code frame, drawn at THIS renderer's width rather than borrowed from
+  // flow.box: an answer is set at the prose measure with its own indent, and
+  // a frame that spanned the box measure instead would overhang the
+  // paragraphs it sits between. Same corners, same rule, same gutter, so a
+  // fenced block in an answer and an `edit` box in the rail read as one
+  // family. Two cells each side for the edge and its space.
+  const codeInner = Math.max(8, width - 4);
+  const codeTop = (label: string): string => {
+    const shown = label.slice(0, Math.max(1, codeInner - 1));
+    const rule = glyph("rule").repeat(Math.max(1, width - 4 - shown.length));
+    return `${faint(glyph("boxTL"))} ${faint(shown)} ${faint(rule)}${faint(glyph("boxTR"))}`;
+  };
+  const codeLine = (plainText: string, painted: string): string => {
+    const pad = " ".repeat(Math.max(0, codeInner - plainText.length));
+    const edge = faint(glyph("gutter"));
+    return `${edge} ${codeSurface(`${painted}${pad}`)} ${edge}`;
+  };
+  const codeBottom = (): string =>
+    `${faint(glyph("boxBL"))}${faint(glyph("rule").repeat(Math.max(1, width - 2)))}${faint(glyph("boxBR"))}`;
 
   let inFence = false;
   let fenceMark = "```";
@@ -286,16 +302,24 @@ export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
       inFence = true;
       fenceMark = fence[1]!.startsWith("~") ? "~~~" : "```";
       blank();
-      // The language is a label, not a frame. A box around code buys nothing a
-      // blank line and a change of weight does not already buy.
+      // Code in an answer is FRAMED, the way everything a tool produced is
+      // framed (flow.ts, `box`): a left edge, a right edge, the label on the
+      // top rule. This used to be the label alone on a line of its own, and
+      // on the screen that was the word `bash` standing between two
+      // paragraphs with the command under it in the same column as the
+      // prose -- the founder, 2026-09-15, put the framed diffs and the
+      // unframed answer side by side and named which one was right. The
+      // frame is the visible difference between the agent talking and a
+      // record being quoted, and code in an answer is a record.
       const langRaw = fence[2] ?? "";
       fenceLang = langOfLabel(langRaw);
-      if (langRaw) emit(faint(langRaw));
+      emit(codeTop(langRaw || "code"));
       continue;
     }
     if (inFence) {
       if (raw.trim().startsWith(fenceMark)) {
         inFence = false;
+        emit(codeBottom());
         blank();
         continue;
       }
@@ -315,14 +339,18 @@ export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
       // hanging it off the edge is worse than splitting it.
       let ln = raw.replace(/\t/g, "  ");
       do {
-        let take = width;
-        if (ln.length > width) {
-          const space = ln.lastIndexOf(" ", width);
-          if (space > Math.floor(width * 0.66)) take = space;
+        let take = codeInner;
+        if (ln.length > codeInner) {
+          const space = ln.lastIndexOf(" ", codeInner);
+          if (space > Math.floor(codeInner * 0.66)) take = space;
         }
         const chunk = ln.slice(0, take);
-        if (fenceLang) emit(paintCode(chunk, fenceLang, text));
-        else emit(chunk.trimStart().startsWith("#") ? muted(chunk) : text(chunk));
+        const painted = fenceLang
+          ? paintCode(chunk, fenceLang, text)
+          : chunk.trimStart().startsWith("#")
+            ? muted(chunk)
+            : text(chunk);
+        emit(codeLine(chunk, painted));
         ln = ln.slice(take).replace(/^ /, "");
       } while (ln.length > 0);
       continue;
@@ -414,6 +442,10 @@ export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
     }
     for (const ln of wrapInline(para, width, "", tone)) emit(ln);
   }
+
+  // A fence the model never closed still closes its frame: an open box at the
+  // end of an answer would read as a box that lost its bottom edge.
+  if (inFence) emit(codeBottom());
 
   // Trim leading/trailing blanks.
   while (out.length && out[0]!.trim() === "") out.shift();

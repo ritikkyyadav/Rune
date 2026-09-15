@@ -78,7 +78,9 @@ describe("TurnRenderer — customizer activity stream", () => {
     // phrase is Rune's own lower-case strip voice, and the resting word is
     // `working` -- not a borrowed `Thinking` (founder, 2026-09-15 evening;
     // see ui/working.ts).
-    expect(h.preview()).toContain("working");
+    // (The word itself is now Rune's voice -- `on my way`, `leave it with
+    // me` -- see ui/voice.ts; the kind is what the rung is holding.)
+    expect(h.turn.workingState().kind).toBe("working");
     expect(h.preview()).not.toContain("Thinking");
     expect((h.previews.at(-1) ?? []).length).toBeLessThanOrEqual(2);
 
