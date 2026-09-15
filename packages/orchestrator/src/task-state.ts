@@ -438,6 +438,65 @@ export function isReportStep(content: string): boolean {
   return REPORT_STEP_RE.test(content);
 }
 
+/**
+ * The architecture fields a step carries, or nothing (Phase 5 F4).
+ *
+ * Pulled out because it is used three times and because it is the one place
+ * the rule "the runtime never invents them" lives: this copies what is there
+ * and synthesises nothing. `dependsOn` is clamped to real 1-based positions by
+ * the tool's normaliser; here it is only copied.
+ */
+function architectureFields(item: TodoItem | undefined): Partial<TodoItem> {
+  if (!item) return {};
+  return {
+    ...(item.interface ? { interface: item.interface } : {}),
+    ...(item.invariant ? { invariant: item.invariant } : {}),
+    ...(item.migration ? { migration: item.migration } : {}),
+    ...(item.acceptance ? { acceptance: item.acceptance } : {}),
+    ...(item.dependsOn && item.dependsOn.length > 0 ? { dependsOn: [...item.dependsOn] } : {}),
+  };
+}
+
+/**
+ * Steps a submission marks completed while a step they declare a dependency on
+ * is still open (Phase 5 F4).
+ *
+ * This is not an evidence judgement and is not gated by the evidence mode: it
+ * is a structural contradiction in the plan itself. "Step 3 is done" and "step
+ * 3 is built on step 1, which is not done" cannot both be true, and a ledger
+ * that records both is worth nothing to the person reading it afterwards.
+ * Positions are 1-based within the submitted list, which the model rewrites
+ * whole on every call.
+ */
+export function openDependencies(items: readonly TodoItem[]): Array<{
+  index: number;
+  content: string;
+  /** The open steps it named, as 1-based positions with their text. */
+  open: Array<{ at: number; content: string }>;
+}> {
+  const out: Array<{
+    index: number;
+    content: string;
+    open: Array<{ at: number; content: string }>;
+  }> = [];
+  for (let index = 0; index < items.length; index++) {
+    const item = items[index]!;
+    if (item.status !== "completed" || !item.dependsOn?.length) continue;
+    const open: Array<{ at: number; content: string }> = [];
+    for (const at of item.dependsOn) {
+      // A self-reference is a typo, not a dependency, and refusing it would
+      // make a step unclosable forever. A FORWARD reference is a real
+      // violation: "step 2 is done and rests on step 3, which is not" is the
+      // same contradiction written backwards.
+      if (at < 1 || at > items.length || at === index + 1) continue;
+      const dep = items[at - 1]!;
+      if (dep.status !== "completed") open.push({ at, content: dep.content });
+    }
+    if (open.length > 0) out.push({ index, content: item.content, open });
+  }
+  return out;
+}
+
 export function stepReceipt(item: TodoItem): string {
   if (item.unproven === "check_failed") return "unproven — last check failed";
   if (item.unproven && item.unprovenReason) return `unproven — ${item.unprovenReason}`;
@@ -497,7 +556,7 @@ export type SetTodosVerdict =
          * the things that did not happen, so a `/check/` test over the prose
          * reads a no-evidence refusal as a failed check.
          */
-        kind: "no_evidence" | "check_failed";
+        kind: "no_evidence" | "check_failed" | "open_dependency";
       }>;
       notes: string[];
     };
@@ -860,6 +919,7 @@ export class TaskStateStore {
         content: t.content.slice(0, 300),
         ...(["inspect", "change", "verify"].includes(t.kind ?? "") ? { kind: t.kind } : {}),
         status: t.status === "in_progress" || t.status === "completed" ? t.status : "pending",
+        ...architectureFields(t),
       }));
     let seenActive = false;
     let demoted = 0;
@@ -877,6 +937,33 @@ export class TaskStateStore {
       );
     }
 
+    // ── Dependency order (Phase 5 F4) ──
+    // Checked BEFORE any evidence is weighed, and refused whatever the
+    // evidence mode is: a step closing over a dependency that is still open is
+    // a contradiction inside the plan, not a shortage of receipts. It is also
+    // always the model's to fix — reopen the close, or close the dependency
+    // first — so it is refused every time rather than once.
+    if (enforce) {
+      const violations = openDependencies(cleaned);
+      if (violations.length > 0) {
+        this.touch();
+        return {
+          accepted: false,
+          refused: violations.map((v) => ({
+            index: v.index,
+            content: v.content,
+            kind: "open_dependency" as const,
+            reason: `it depends on ${v.open
+              .map((o) => `step ${o.at} ("${o.content.slice(0, 60)}")`)
+              .join(" and ")}, which ${v.open.length === 1 ? "is" : "are"} still open.`,
+          })),
+          notes: [
+            "A step cannot be completed before the steps it is built on. Close the dependency first, or say why the dependency was wrong and rewrite the plan.",
+          ],
+        };
+      }
+    }
+
     const oldByKey = new Map(this.state.todos.map((t) => [todoKey(t.content), t] as const));
     const newKeys = new Set(cleaned.map((t) => todoKey(t.content)));
     const oldOpen = this.state.todos.filter((t) => t.status !== "completed");
@@ -886,7 +973,7 @@ export class TaskStateStore {
       index: number;
       content: string;
       reason: string;
-      kind: "no_evidence" | "check_failed";
+      kind: "no_evidence" | "check_failed" | "open_dependency";
     }> = [];
     const completed: TodoItem[] = [];
     const next: TodoItem[] = cleaned.map((t, index) => {
@@ -896,6 +983,11 @@ export class TaskStateStore {
         content: t.content,
         status: t.status,
         ...(t.kind || prev?.kind ? { kind: t.kind ?? prev?.kind } : {}),
+        // What the model said THIS time wins; what it said last time survives
+        // a submission that simply did not repeat it. The runtime adds
+        // nothing of its own here.
+        ...architectureFields(prev),
+        ...architectureFields(t),
       };
       if (prev?.evidence) item.evidence = structuredClone(prev.evidence);
       if (prev?.unproven && t.status === "completed" && prev.status === "completed") {

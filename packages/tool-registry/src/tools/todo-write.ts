@@ -144,7 +144,29 @@ export function normalizeTodoItems(
         }
       }
 
-      normalized.push({ content: content as string, status, ...(kind ? { kind } : {}) });
+      // ── The architecture fields (Phase 5 F4) ──
+      // Carried through verbatim when the model supplies them, dropped
+      // silently when it does not. Never synthesised here: an interface the
+      // tool invented is not a contract the model agreed to.
+      const plain = (key: string): string | undefined => {
+        const value = obj[key];
+        return typeof value === "string" && value.trim() ? value.trim().slice(0, 400) : undefined;
+      };
+      const dependsOn = Array.isArray(obj.dependsOn)
+        ? obj.dependsOn
+            .map((d) => (typeof d === "number" ? d : Number.parseInt(String(d ?? ""), 10)))
+            .filter((d) => Number.isInteger(d) && d >= 1 && d <= items.length)
+        : undefined;
+      normalized.push({
+        content: content as string,
+        status,
+        ...(kind ? { kind } : {}),
+        ...(plain("interface") ? { interface: plain("interface") } : {}),
+        ...(plain("invariant") ? { invariant: plain("invariant") } : {}),
+        ...(plain("migration") ? { migration: plain("migration") } : {}),
+        ...(plain("acceptance") ? { acceptance: plain("acceptance") } : {}),
+        ...(dependsOn && dependsOn.length > 0 ? { dependsOn } : {}),
+      });
       continue;
     }
 
@@ -194,6 +216,31 @@ export const TODO_WRITE_SCHEMA: ToolSchema = {
               type: "string",
               enum: ["pending", "in_progress", "completed"],
               description: "Current status of the item.",
+            },
+            interface: {
+              type: "string",
+              description:
+                "Architecture work only: the exact signature, export, route or schema this step exposes for later steps to call. Write it only where it is real.",
+            },
+            invariant: {
+              type: "string",
+              description: "Architecture work only: what must remain true once this step lands.",
+            },
+            migration: {
+              type: "string",
+              description:
+                "Architecture work only: how existing data or callers move across this step.",
+            },
+            acceptance: {
+              type: "string",
+              description:
+                "Architecture work only: the command or observable event that settles this step.",
+            },
+            dependsOn: {
+              type: "array",
+              items: { type: "integer" },
+              description:
+                "Architecture work only: the earlier steps this one is built on, as 1-based positions in THIS list. A step whose dependency is still open cannot be marked completed.",
             },
           },
           required: ["content", "status"],

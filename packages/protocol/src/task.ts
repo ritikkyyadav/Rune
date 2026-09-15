@@ -89,6 +89,35 @@ export interface TodoItem {
   owner?: string;
   /** When the owner claimed it. Used to reclaim a step whose owner died. */
   claimedAt?: string;
+  /**
+   * ── The architecture fields (Phase 5 F4) ──
+   *
+   * Present only when the MODEL supplied them, on the steps where they are
+   * real. The runtime never invents one: an interface the harness made up
+   * would be a contract nobody agreed to, and the dependency check below reads
+   * these fields as facts.
+   *
+   * They exist because the failure a plan is supposed to prevent is not a
+   * vague one — it is step 3's test failing on an interface step 1 never
+   * actually exposed, discovered at the end of a long change. A plan that
+   * names what each step EXPOSES can be checked for that; a plan of prose
+   * cannot.
+   */
+  /** The exact signature/export/route/schema this step exposes to later steps. */
+  interface?: string;
+  /** What must remain true once this step lands. */
+  invariant?: string;
+  /** How existing data or callers move across this step. */
+  migration?: string;
+  /** The command or observable event that settles this step. */
+  acceptance?: string;
+  /**
+   * Earlier steps this one is built on, as 1-based positions in the SAME list
+   * (the model rewrites the whole list on every call, so positions are
+   * unambiguous within one submission). A step whose dependency is still open
+   * cannot be marked completed.
+   */
+  dependsOn?: number[];
 }
 
 // ─── The narrative: how a decision was reached (P11.1) ───

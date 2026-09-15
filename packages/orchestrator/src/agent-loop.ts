@@ -1897,6 +1897,8 @@ export class AgentLoop {
     // clarify nudge when a brand-new project starts with zero questions asked.
     let planNudges = 0;
     let replanNudges = 0;
+    /** Phase 5 F4: one replan per run for a step failing on an upstream interface. */
+    let interfaceReplans = 0;
     let greenfieldNudges = 0;
     let toolCallsThisRun = 0;
     let verifyStillFailing = false;
@@ -4402,6 +4404,67 @@ export class AgentLoop {
                   passed: check.passed,
                   report: check.report,
                 };
+                // ── The late architectural inconsistency (Phase 5 F4) ──
+                // The step that just failed its check is built on an earlier
+                // step that declared an INTERFACE. That is the exact shape the
+                // architecture plan exists to catch: step 3's check failing
+                // because step 1 did not expose what step 3 assumed. Patching
+                // step 3 is the wrong repair, so this goes through the same
+                // replan path a repeatedly-failing verification does — the
+                // interface is fixed at its own step, and the plan is
+                // restated. One per run, like every other nudge.
+                if (!check.passed && interfaceReplans < 1) {
+                  // Every step this submission is closing, not just the one
+                  // the check was scoped to: the model closes several at once,
+                  // and the one resting on an interface is rarely the first.
+                  const upstream = unchecked
+                    .flatMap(({ item: closing }) => closing.dependsOn ?? [])
+                    .map((at) => items![at - 1])
+                    .filter((dep): dep is TodoItem => !!dep?.interface);
+                  if (upstream.length > 0) {
+                    interfaceReplans++;
+                    latchEffort("a step failed on an earlier step's interface");
+                    this.report(
+                      "loop.replan_nudge",
+                      "warn",
+                      "architecture.interface",
+                      `"${step.slice(0, 60)}" failed its check and depends on an interface step — demanded a replan`,
+                    );
+                    yield {
+                      type: "replanning",
+                      reason: "a step failed on an earlier step's declared interface",
+                      trigger: "verification",
+                    };
+                    this.appendMessage(
+                      {
+                        role: "user",
+                        content: [
+                          {
+                            type: "text",
+                            text:
+                              `The check for "${step.slice(0, 80)}" failed, and that step is built on ` +
+                              `an earlier step that declared an interface: ` +
+                              upstream
+                                .map(
+                                  (dep) => `"${dep.content.slice(0, 60)}" exposes ${dep.interface}`,
+                                )
+                                .join("; ") +
+                              ". Before patching this step, check whether that interface is actually " +
+                              "what this step assumed. If it is not, fix it AT ITS OWN STEP and rewrite " +
+                              "the plan with todo_write, saying in one line what the earlier assumption " +
+                              "really was. If the interface is correct, say so and fix this step.",
+                          },
+                        ],
+                      },
+                      "nudge:interface-replan",
+                    );
+                    yield {
+                      type: "notice",
+                      message:
+                        "A step failed on an earlier step's interface — asking for a re-plan.",
+                    };
+                  }
+                }
               }
             }
             // ── The refutation inference (P11.1) ──
