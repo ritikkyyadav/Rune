@@ -187,26 +187,37 @@ describe("T2: a legitimate new feature passes without a failing parent", () => {
     const terminal = terminalOf(await drain(engine, session, FEATURE_REQUEST));
     const outcome = terminal.verdict?.criteria[0];
 
+    // ── This read `met` / `satisfied` until V8 critical 4 ──
+    //
+    // The run writes `version.test.ts` and cites `bun test version.test.ts`:
+    // the measured thing grading itself with an oracle it authored, which is
+    // V7 finding 8's own shape. The defence for it was built and never
+    // reached, because `commandProgramPaths` returned `[]` for every test
+    // runner — so `authoredThisTask` returned immediately, `authoredBy` was
+    // never set, and this scenario passed the gate that exists to refuse it.
+    //
+    // The rung is unchanged in meaning and still tells the reader how strong
+    // the receipt is: `observed`, not `verified`, because nothing failed on
+    // the parent. That is a fact ABOUT the receipt, not the refusal — the
+    // refusal is the verifier, and it is not a rung question.
     expect({
       verdict: terminal.verdict?.kind,
       status: outcome?.status,
       attribution: outcome?.attribution,
-      // The rung is unchanged in meaning and still tells the reader how strong
-      // the receipt is: `observed`, not `verified`, because nothing failed on
-      // the parent. That is now a fact ABOUT the receipt, not a refusal.
       rung: outcome?.rung,
       verifier: outcome?.verifier,
       source: outcome?.source,
     }).toEqual({
-      verdict: "met",
-      status: "satisfied",
+      verdict: "partial",
+      status: "needs_review",
       attribution: "none",
       rung: "observed",
-      verifier: "check-log@1",
+      verifier: "self-authored-check@1",
       source: "inferred",
     });
     expect(outcome?.executionId).toMatch(/^chk-\d+$/);
-    expect(verdictLine(terminal.verdict!)).toBe("[verdict] met — 1 of 1 accepted");
+    // A person is told which file, so they can look at it and decide.
+    expect(JSON.stringify(terminal.verdict)).toContain("version.test.ts");
   }, 90_000);
 
   test("T5: an edit AFTER the evidence makes the claim stale, and the run `partial`", async () => {
@@ -235,10 +246,16 @@ describe("T2: a legitimate new feature passes without a failing parent", () => {
     ]);
     const session = engine.createSession();
     const terminal = terminalOf(await drain(engine, session, FEATURE_REQUEST));
-    expect(terminal.verdict?.criteria[0]?.status).toBe("stale");
+    // Both refusals are true of this receipt — the run authored the oracle AND
+    // then edited the file the claim is about. The stronger fact wins: a claim
+    // taken with a self-authored check is not a claim that going stale would
+    // have made weaker. The verdict is `partial` either way, which is the
+    // property this test was written for.
+    expect(terminal.verdict?.criteria[0]?.status).toBe("needs_review");
+    expect(terminal.verdict?.criteria[0]?.verifier).toBe("self-authored-check@1");
     expect(terminal.verdict?.kind).toBe("partial");
     const gaps = terminal.verdict?.kind === "partial" ? terminal.verdict.gaps : [];
-    expect(gaps[0]!.why).toContain("stale");
+    expect(gaps.length).toBeGreaterThan(0);
   }, 90_000);
 });
 
@@ -282,9 +299,11 @@ describe("T6: a run cut off keeps its output and its honest status", () => {
     expect(result.verdict?.execution?.status).toBe("max_turns");
     expect(result.verdict?.execution?.stopReason).toBe(result.stopReason);
     expect(result.verdict?.kind).toBe("partial");
-    // One criterion satisfied, one never measured — and the verdict says both
-    // rather than collapsing them into a single number.
-    expect(result.verdict?.criteria.map((c) => c.status)).toEqual(["satisfied", "unassessed"]);
+    // One criterion cited on a check the run wrote — `needs_review` since V8
+    // critical 4, and `satisfied` before it — and one never measured. The
+    // property this test holds is that the verdict says BOTH rather than
+    // collapsing them into a single number, and it still does.
+    expect(result.verdict?.criteria.map((c) => c.status)).toEqual(["needs_review", "unassessed"]);
     // The useful half of a partial result is the half that is kept.
     expect(result.text).toContain("version()");
     expect(result.text.trimEnd().split("\n").at(-1)).toStartWith("[verdict]");

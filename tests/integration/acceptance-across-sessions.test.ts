@@ -374,9 +374,14 @@ describe("a check the task itself produced settles nothing, however long ago", (
 
   test("a test file that asserts nothing settles nothing", async () => {
     // `bun test mine.test.ts` collects one test, passes, and makes no
-    // assertion — the runner's own count says so by omitting the line. A
-    // legitimate new test that DOES assert still settles what it reads; that
-    // is `acceptance-new-feature.test.ts`'s T2, and it is unchanged.
+    // assertion — the runner's own count says so by omitting the line.
+    //
+    // Two refusals are true of this receipt now, and the run is refused by
+    // whichever fires: it asserted nothing, AND the run wrote the file it ran.
+    // The second is the stronger fact and it is read first. Until V8 critical 4
+    // it could not fire at all — `commandProgramPaths` returned `[]` for every
+    // test runner, so the self-authored witness was never asked about a check
+    // run by `bun test`, which is how every check in this repo is run.
     const { dir, home } = repo("v7-empty-test-", ".rune/\n");
     git(dir, ["init", "--initial-branch=main"]);
     git(dir, ["add", "."]);
@@ -400,6 +405,6 @@ describe("a check the task itself produced settles nothing, however long ago", (
 
     expect(readFileSync(join(dir, "api.ts"), "utf8")).toBe(ORIGINAL_API);
     expect(outcomes[0]?.status).toBe("needs_review");
-    expect(outcomes[0]?.verifier).toBe("no-measurement@1");
+    expect(outcomes[0]?.verifier).toBe("self-authored-check@1");
   }, 120_000);
 });
