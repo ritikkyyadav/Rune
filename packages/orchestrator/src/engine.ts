@@ -199,6 +199,7 @@ import {
   BriefLedger,
   CHECK_SOURCE_TOOL,
   CheckLog,
+  stampOf,
   createReadBackTool,
   createRecordEvidenceTool,
   // From `brief.ts`, where it is defined — NOT from the UI layer's `activity`
@@ -1408,6 +1409,9 @@ export class Engine {
    *  The only thing a criterion's rung is ever derived from. */
   private readonly checkLog = new CheckLog({
     authoredThisRun: (paths) => this.authoredThisRun(paths),
+    // Un-memoised, on purpose: evidence is dated by when the CHECK ran, and a
+    // memo dates it by when the last measurement was taken.
+    revisionNow: () => this.runRevision(this.brief?.touch, { fresh: true }),
   });
   private contextEngine: ContextEngine;
   /** Providers whose model catalog has already supplied real context windows. */
@@ -5530,7 +5534,10 @@ export class Engine {
                 // files the evidence was stamped against — otherwise the two
                 // digests are of different file sets and every claim reads
                 // stale.
-                revision: this.runRevision(this.brief?.touch),
+                // Fresh: the verdict's `now` is the other half of every
+                // staleness comparison, and a memoised `now` makes the answer
+                // depend on how long the last checks took.
+                revision: this.runRevision(this.brief?.touch, { fresh: true }),
               }
             : null,
         // The independent oracle, at the finish gate. Absent in effect for
@@ -6169,7 +6176,7 @@ export class Engine {
               stopReason: this.liveStatus,
               shape: this.contract.shape,
               wrote: taskState.writtenFiles.length > 0,
-              revision: this.runRevision(this.brief?.touch),
+              revision: this.runRevision(this.brief?.touch, { fresh: true }),
             });
           // What was never measured at all, on the contract rather than only
           // inside the verdict's prose: a required criterion with no bound
@@ -6842,6 +6849,7 @@ export class Engine {
           ? verdict.summary
           : `the acceptance command did not run here: ${verdict.summary || "nothing was collected"}`,
         executionId: run.executionId!,
+        ...stampOf(run.revision),
         verifier: "acceptance-command@1",
         ...(ranAtAll ? { result: verdict.passed ? ("passed" as const) : ("failed" as const) } : {}),
         env: envFingerprint(),
@@ -6874,10 +6882,23 @@ export class Engine {
     return undefined;
   }
 
-  private runRevision(files?: readonly string[]): StampedRevision {
+  /**
+   * The workspace revision, scoped to `files`.
+   *
+   * `fresh` bypasses the memo. The memo exists so stamping a record on every
+   * tool call does not spawn two git processes per call, and it is exactly
+   * wrong for EVIDENCE: a stamp taken from a memo says the tree was as it was
+   * up to `REVISION_MEMO_MS` ago, which made a verdict depend on how long the
+   * checks took (M5's false negative — a check with `sleep 3` in front of it
+   * turned a correct run into `stale`). Every check-time stamp asks fresh;
+   * the ordinary per-record stamp still uses the memo.
+   */
+  private runRevision(files?: readonly string[], opts?: { fresh?: boolean }): StampedRevision {
     if (!this.liveRevision) return { head: null, dirty: false };
     const now = Date.now();
-    if (!this.revisionMemo || now - this.revisionMemo.at > REVISION_MEMO_MS) {
+    if (opts?.fresh) {
+      this.revisionMemo = { at: now, value: workspaceRevision(this.config.workspaceRoot) };
+    } else if (!this.revisionMemo || now - this.revisionMemo.at > REVISION_MEMO_MS) {
       this.revisionMemo = { at: now, value: workspaceRevision(this.config.workspaceRoot) };
     }
     const digest = workspaceDigest(this.config.workspaceRoot, files);

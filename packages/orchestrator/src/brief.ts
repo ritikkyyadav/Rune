@@ -98,6 +98,7 @@ const UNRECOGNISED_CHECK_NEXT_STEP =
 // owns the shapes and they are re-exported here.
 export type { Criterion, Brief, ClaimRung, Evidence, BriefDecision } from "@rune/protocol";
 import type { Brief, ClaimRung, Criterion, Evidence } from "@rune/protocol";
+import type { StampedRevision } from "./lifecycle";
 
 /** Why a criterion refused to move. Returned rather than thrown — a rejected
  *  claim is information for the surface, not an exception. */
@@ -190,7 +191,11 @@ export class BriefLedger {
     // Scoped to the files the brief says the work is in: on a dirty tree HEAD
     // cannot date a claim, and their content digest is the only thing that
     // can say the tree moved under it.
-    const at = this.revision?.(this.brief.touch);
+    //
+    // Evidence that ARRIVES stamped keeps its own stamp (V6 finding 4): it was
+    // dated when the check ran, and re-dating it here would date the
+    // measurement by when the model got round to citing it.
+    const at = alreadyStamped(evidence) ? undefined : this.revision?.(this.brief.touch);
     criterion.evidence = at
       ? {
           ...evidence,
@@ -251,7 +256,7 @@ export class BriefLedger {
       };
     }
     if (rung) criterion.rung = rung;
-    const at = this.revision?.(this.brief.touch);
+    const at = alreadyStamped(evidence) ? undefined : this.revision?.(this.brief.touch);
     criterion.evidence = at
       ? {
           ...evidence,
@@ -526,6 +531,24 @@ export interface CheckRun {
    * names the file so the receipt can say which one.
    */
   authoredBy?: string;
+  /**
+   * The workspace revision AT THE MOMENT THIS RAN (V6 finding 4).
+   *
+   * `BriefLedger.record` used to stamp the evidence at CITATION time, so every
+   * edit between the green run and the citation was invisible: a model could
+   * fix a file, run the check green, revert the fix, and then cite — the stamp
+   * was taken against the reverted tree, the verdict read the same reverted
+   * tree, nothing "moved", and the criterion derived `satisfied` at rung
+   * `verified` for a change that was no longer there.
+   *
+   * Taken un-memoised, here, for checks only. The memo behind `runRevision`
+   * exists so stamping every tool call does not spawn two git processes; a
+   * memo is exactly wrong for evidence, because it dates a measurement by
+   * when the last measurement was taken (M5's `REVISION_MEMO_MS` false
+   * negative: a check that took three seconds made the verdict depend on how
+   * long the checks took).
+   */
+  revision?: StampedRevision;
 }
 
 /**
@@ -575,6 +598,8 @@ export class CheckLog {
   constructor(
     private readonly runtime?: {
       authoredThisRun?: (paths: readonly string[]) => string | undefined;
+      /** The workspace revision RIGHT NOW, un-memoised, scoped to the brief. */
+      revisionNow?: () => StampedRevision;
     },
   ) {}
 
@@ -594,10 +619,15 @@ export class CheckLog {
       (run.kind ?? "check") === "check"
         ? this.runtime?.authoredThisRun?.(commandProgramPaths(run.command))
         : undefined;
+    const revision =
+      (run.kind ?? "check") === "check"
+        ? (run.revision ?? this.runtime?.revisionNow?.())
+        : undefined;
     const recorded: CheckRun = {
       ...run,
       executionId: `chk-${++this.seq}`,
       ...(authoredBy ? { authoredBy } : {}),
+      ...(revision ? { revision } : {}),
     };
     this.runs.push(recorded);
     return recorded;
@@ -647,6 +677,22 @@ export class CheckLog {
   }
 }
 
+/** One `CheckRun`'s revision, as the fields evidence carries it in. */
+export function stampOf(revision: StampedRevision | undefined): Partial<Evidence> {
+  if (!revision) return {};
+  return {
+    ...(revision.head ? { head: revision.head } : {}),
+    dirty: revision.dirty,
+    ...(revision.digest ? { digest: revision.digest } : {}),
+  };
+}
+
+/** Whether a piece of evidence already says which tree it was taken against. */
+function alreadyStamped(evidence: Evidence): boolean {
+  const e = evidence as Evidence & { head?: string; dirty?: boolean; digest?: string };
+  return e.head != null || e.digest != null || e.dirty != null;
+}
+
 export type RungVerdict =
   { ok: true; rung: ClaimRung; evidence: Evidence } | { ok: false; reason: string };
 
@@ -679,6 +725,10 @@ export function rungForCommand(log: CheckLog, command: string): RungVerdict {
   // and a summary, so "which run of `bun test` was this" and "did anyone
   // record a failure" were both unanswerable from the record itself.
   const base: Evidence = {
+    // The stamp comes off the RUN, so the claim is dated to the tree the check
+    // actually saw. `BriefLedger.record` leaves an evidence that arrives
+    // stamped alone.
+    ...stampOf(last.revision),
     source: normalizeCommand(command),
     detail: last.summary,
     ...(last.executionId ? { executionId: last.executionId } : {}),

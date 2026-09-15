@@ -399,4 +399,57 @@ describe("the rung ladder under attack", () => {
     expect(said.at(0)).toContain("verify-header.sh");
     expect(outcomes[0]!.verifier).toBe("self-authored-check@1");
   }, 60_000);
+  test("a fix reverted after the green check is stale, not satisfied", async () => {
+    // V6 finding 4, promoted (reproduced twice red on `8d93987`). `BriefLedger.record`
+    // stamped `head`/`dirty`/`digest` at CITATION time, so every edit made
+    // between the green run and the citation was invisible: the evidence was
+    // stamped against the post-edit tree, the verdict read the same post-edit
+    // tree, nothing "moved", and the criterion derived `satisfied` at rung
+    // `verified` — "failed on the parent commit, passes now" — for a change
+    // that was no longer in the file. Re-running the cited command in that
+    // tree would exit 1.
+    //
+    // The stamp is taken on the `CheckRun`, when the check runs, and the
+    // evidence carries it; `treeMovedUnder` then fires on exactly this case
+    // with no other change. (T5 edits AFTER the citation, which is the one
+    // ordering the citation-time stamp did catch.)
+    const dir = redAtHead("v6-forge-dated-");
+    const ORIGINAL = "export const hello = () => 'hello';\n";
+    const engine = makeEngine(dir);
+    script(engine, [
+      [readBack()],
+      [fixIt()],
+      [tool("bash", { command: "node check.mjs" })], // green, at the fixed tree
+      [tool("write_file", { path: "api.ts", content: ORIGINAL })], // …and undone
+      [tool("record_evidence", { criterion: 0, command: "node check.mjs" })],
+      [{ type: "text", text: "Criterion 0 holds." }],
+    ]);
+    const events = await drain(engine, engine.createSession(), REQUEST);
+    const terminal = terminalOf(events);
+
+    expect(readFileSync(join(dir, "api.ts"), "utf8")).toBe(ORIGINAL);
+    expect(terminal.verdict?.criteria[0]?.status).toBe("stale");
+  }, 60_000);
+
+  test("how long the check takes does not change the verdict", async () => {
+    // V6 finding 10, the M5 false negative, reproduced as a guard. The stamp
+    // used to come from `runRevision`'s `REVISION_MEMO_MS = 1_000` memo, so
+    // whether a claim was dated against the tree it was taken on depended on
+    // which side of a one-second window the citation fell — a correct run with
+    // `sleep` in front of its check reported `stale`. Evidence is stamped
+    // un-memoised now, and so is the verdict's own `now`.
+    const dir = redAtHead("v6-forge-slow-");
+    const engine = makeEngine(dir);
+    script(engine, [
+      [readBack()],
+      [fixIt()],
+      [tool("bash", { command: "sleep 2 && node check.mjs" })],
+      [tool("record_evidence", { criterion: 0, command: "sleep 2 && node check.mjs" })],
+      [{ type: "text", text: "Criterion 0 holds." }],
+    ]);
+    const events = await drain(engine, engine.createSession(), REQUEST);
+    const terminal = terminalOf(events);
+
+    expect(terminal.verdict?.criteria[0]?.status).toBe("satisfied");
+  }, 90_000);
 });
