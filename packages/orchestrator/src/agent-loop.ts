@@ -207,6 +207,15 @@ export interface AgentLoopConfig {
    */
   jitDoctrine?: (section: JitDoctrineSection) => string | null;
   /**
+   * What Rune remembers about this user and this workspace, wired by the
+   * engine. Returns the labelled memory block exactly ONCE per session and
+   * null afterwards — the same once-per-session contract as `jitDoctrine`, and
+   * for the same reason: it lands in cached history instead of being re-billed
+   * on every turn. Null in `full` doctrine delivery, where memory ships in the
+   * prefix the user asked for.
+   */
+  memoryBlock?: () => string | null;
+  /**
    * Per-request reasoning-effort routing. "conservative" runs ordinary turns
    * one notch below the thinkingEffort ceiling and LATCHES back to the ceiling
    * for the rest of the run on the first sign of difficulty (verification
@@ -1981,6 +1990,14 @@ export class AgentLoop {
     // Design and delegation advice must arrive before the first decision.
     // The tool-result path remains a fallback for work discovered mid-run.
     this.routeJitDoctrine(userMessage);
+    // ── What Rune remembers, once per session ──
+    // Before the first decision, for the same reason the design advice is: a
+    // preference that arrives after the plan is written is a preference the
+    // run has already ignored. It goes in as a note rather than into the
+    // prefix so the prompt's cacheable head does not grow by a variable block
+    // that changes whenever the user corrects something.
+    const remembered = this.config.memoryBlock?.();
+    if (remembered) this.injectHarnessNote(remembered);
     // ── Pre-flight: the browser this run does not have (Phase 5 F2) ──
     // Said BEFORE the first completion, not at the finish gate. A frontend
     // run planned around screenshots it can never take is the expensive

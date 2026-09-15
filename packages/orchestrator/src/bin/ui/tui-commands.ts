@@ -934,6 +934,34 @@ export const COMMAND_METHODS = {
           return true;
         }
 
+        // ── the autonomous store: forget / pin / unpin ──
+        // A memory the user cannot delete is a memory they have to live with,
+        // so these come before the cadence switches: correcting the store is
+        // the common case, changing how often it dreams is the rare one.
+        if (sub === "forget" || sub === "pin" || sub === "unpin") {
+          const id = subArg.split(/\s+/)[0] ?? "";
+          if (!id) {
+            this.print(`  ${warn("Usage:")} ${info(`/memory ${sub} <id>`)}`);
+            return true;
+          }
+          if (sub === "forget") {
+            const gone = engine.forgetMemory(id);
+            this.print(
+              gone
+                ? `  ${ok(glyph("verified"))} ${muted("forgotten:")} ${faint(id)}`
+                : `  ${danger(glyph("failure"))} ${muted(`no memory with id ${id}`)}`,
+            );
+            return true;
+          }
+          const entry = engine.pinMemory(id, sub === "pin");
+          this.print(
+            entry
+              ? `  ${ok(glyph("verified"))} ${muted(sub === "pin" ? "pinned:" : "unpinned:")} ${text(entry.text)}`
+              : `  ${danger(glyph("failure"))} ${muted(`no memory with id ${id}`)}`,
+          );
+          return true;
+        }
+
         // -- set cadence (off | manual | daily | weekly | Nd | every N days) --
         if (
           sub === "off" ||
@@ -957,11 +985,47 @@ export const COMMAND_METHODS = {
           `  ${bold(text("System memory"))}${mem.enabled ? "" : ` ${faint("(disabled)")}`}`,
           `  ${faint(`cadence: ${mem.scheduleLabel} | ~${fmtTok(mem.tokens)}/${fmtTok(mem.maxTokens)} tokens | updated ${last} | dreamed ${dreamt}`)}`,
         ];
+        // ── what the run learned on its own ──
+        // Shown with ids and provenance, because the only way to trust a
+        // learned memory is to be able to see where it came from and delete it.
+        const store = engine.getMemoryEntries();
+        const learned: string[] = [];
+        if (store.promoted.length) {
+          learned.push("", `  ${bold(text("Learned"))} ${faint(`(${store.promoted.length})`)}`);
+          for (const e of store.promoted.slice(0, 12)) {
+            const mark = e.pinned ? "*" : " ";
+            learned.push(
+              `  ${faint(e.id)}${mark} ${text(e.text)} ${faint(`[${e.kind} | ${e.provenance.source}]`)}`,
+            );
+          }
+        }
+        if (store.candidates.length) {
+          learned.push(
+            "",
+            `  ${muted(`${store.candidates.length} in quarantine -- not injected until promoted`)}`,
+          );
+        }
+        if (store.refusals.length) {
+          const rules = [...new Set(store.refusals.map((r) => r.rule))].join(", ");
+          learned.push(`  ${muted(`${store.refusals.length} refused by the guard (${rules})`)}`);
+        }
+        if (learned.length) {
+          learned.push("", `  ${faint("forget: /memory forget <id> | pin: /memory pin <id>")}`);
+        }
+        if (!store.learning) {
+          learned.push(`  ${faint("autonomous learning is off ([memory] learn = false)")}`);
+        }
+
         if (!mem.content.trim()) {
           this.print(
             [
               ...head,
-              `  ${muted("Empty -- Rune hasn't built your profile yet.")}`,
+              ...(learned.length
+                ? learned
+                : [
+                    `  ${muted("Empty -- Rune hasn't learned anything about you yet.")}`,
+                    `  ${faint("It learns from what you say and what checks prove, at the end of each run.")}`,
+                  ]),
               `  ${faint("Seed it: /memory update | note: /memory add <...> | auto: /memory weekly")}`,
             ].join("\n"),
           );
@@ -972,6 +1036,7 @@ export const COMMAND_METHODS = {
             ...head,
             "",
             ...mem.content.split("\n").map((l) => `  ${text(l)}`),
+            ...learned,
             "",
             `  ${faint("update: /memory update | note: /memory add <...> | cadence: /memory daily|3d|weekly|manual")}`,
           ].join("\n"),

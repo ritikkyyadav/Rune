@@ -309,6 +309,7 @@ if (values.help) {
         `                                  --record prints the Decision Record instead: objective, decision, how we got here\n` +
         `    rune cost [session|last]      Run economics: completions split work vs governance, fresh tokens per call, cache ratio, list estimate\n` +
         `    rune evolve [sub]             Self-evolution — status | scorecard [--by model|workspace] [--days N] | lessons | tune | gardener [--run]\n` +
+        `    rune memory [sub]             What Rune remembers about you — show | forget <id> | pin <id> | clear\n` +
         `    rune notebook [sub]           Learned tactics notebook — list | show <id> | rm <id> | export\n` +
         `    rune skill [sub]              Your own skills — add <path> [--user] | list | remove <name>\n` +
         `    rune telemetry [sub]          Opt-in diagnostics — status | on | off | preview | reset (off by default)\n\n` +
@@ -415,6 +416,92 @@ if (command === "mcp") {
 if (command === "notebook") {
   const { runNotebook } = await import("./notebook-cli");
   runNotebook(positionals as string[], values as Record<string, unknown>);
+  process.exit(0);
+}
+// ─── rune memory ───
+// The same store `/memory` shows, outside the TUI: what Rune remembers, where
+// each line came from, what is still in quarantine, and what the guard turned
+// away. Read-only except `forget` / `pin` / `clear`, and it never spends —
+// nothing here calls a model.
+if (command === "memory") {
+  const { MemoryStore, buildMemoryBlock } = await import("../memory");
+  const sub = (positionals[1] as string | undefined) ?? "";
+  const arg = (positionals[2] as string | undefined) ?? "";
+  const store = new MemoryStore();
+  const workspace = process.cwd();
+  const out = (s: string) => process.stdout.write(s + "\n");
+
+  if (sub === "forget") {
+    if (!arg) {
+      out("  usage: rune memory forget <id>");
+      process.exit(1);
+    }
+    out(store.remove(arg) ? `  forgotten: ${arg}` : `  no memory with id ${arg}`);
+    process.exit(0);
+  }
+  if (sub === "pin" || sub === "unpin") {
+    if (!arg) {
+      out(`  usage: rune memory ${sub} <id>`);
+      process.exit(1);
+    }
+    const entry = store.setPinned(arg, sub === "pin");
+    out(
+      entry
+        ? `  ${sub === "pin" ? "pinned" : "unpinned"}: ${entry.text}`
+        : `  no memory with id ${arg}`,
+    );
+    process.exit(0);
+  }
+  if (sub === "clear") {
+    store.clear();
+    out("  memory cleared");
+    process.exit(0);
+  }
+
+  const promoted = store.promoted(workspace);
+  const candidates = store.candidates();
+  const refusals = store.refusals();
+  out("");
+  out(`  What Rune remembers  ·  ${store.root}`);
+  out("");
+  if (promoted.length === 0) {
+    out("  Nothing yet. Rune learns from what you say and what checks prove,");
+    out("  at the end of each run — never from its own account of what it did.");
+  }
+  for (const e of promoted) {
+    out(`  ${e.id}${e.pinned ? "*" : " "} ${e.text}`);
+    out(
+      `             ${e.kind} · ${e.provenance.source} · seen in ${e.provenance.sessionIds.length} session(s)${e.provenance.evidence ? ` · ${e.provenance.evidence}` : ""}`,
+    );
+  }
+  if (candidates.length) {
+    out("");
+    out(`  ${candidates.length} in quarantine (not injected until promoted):`);
+    for (const e of candidates.slice(0, 10)) {
+      out(`  ${e.id}  ${e.text}  [${e.provenance.source}]`);
+    }
+  }
+  if (refusals.length) {
+    out("");
+    out(`  ${refusals.length} refused by the guard:`);
+    for (const r of refusals.slice(-5)) out(`    ${r.rule}: ${r.reason}`);
+  }
+  if (sub === "show" || sub === "block") {
+    const block = buildMemoryBlock(store.all(), { workspace, maxTokens: 1500 });
+    out("");
+    out("  ── what gets injected ──");
+    out(
+      block
+        ? block
+            .split("\n")
+            .map((l) => "  " + l)
+            .join("\n")
+        : "  (nothing)",
+    );
+  }
+  out("");
+  out("  rune memory show | forget <id> | pin <id> | unpin <id> | clear");
+  out("");
   process.exit(0);
 }
 if (command === "telemetry") {

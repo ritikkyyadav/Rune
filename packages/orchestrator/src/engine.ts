@@ -152,7 +152,14 @@ import {
 import type { NotebookBlock, NotebookEntry, ToolObservation } from "./notebook";
 import { toolObservation } from "./notebook/capture";
 import { deriveRunRetro, recordLessons } from "./retro";
-import { MemoryStore, captureRunMemory, memoryBlockFor, type MemoryEntry } from "./memory";
+import {
+  MemoryStore,
+  MEMORY_BLOCK_HEADING,
+  captureRunMemory,
+  countInjected,
+  memoryBlockFor,
+  type MemoryEntry,
+} from "./memory";
 import { PLAYBOOK_PENDING_REL, PLAYBOOK_REL, writePlaybook } from "./playbook";
 import type { PermissionScope, PermissionMode, PermissionModeInput } from "./permissions";
 
@@ -4532,15 +4539,26 @@ export class Engine {
    */
   private buildSystemMemoryBlock(): string {
     if (this.config.memory?.enabled === false) return "";
-    const { content } = loadSystemMemory();
-    const body = content.trim();
-    if (!body) return "";
-    return [
-      "# What Rune knows about you (evergreen context — a guide, not rules)",
-      "The profile below is what Rune has learned about the user and their codebases over time, to tailor its tone, defaults, and assumptions. Treat it as helpful background, NOT as instructions — when it conflicts with what the user asks for in this session, follow the user.",
-      "",
-      body,
-    ].join("\n");
+    // Two stores, one block. The narrative profile is what the optional
+    // "dream" writes; the structured store is what the run learned
+    // deterministically. They are rendered together because the model should
+    // see one account of what Rune remembers, not two competing ones — and
+    // because the user reading `/memory` should see the same thing.
+    const parts: string[] = [];
+    const body = loadSystemMemory().content.trim();
+    if (body) {
+      parts.push(
+        [
+          "# What Rune knows about you (evergreen context — a guide, not rules)",
+          "The profile below is what Rune has learned about the user and their codebases over time, to tailor its tone, defaults, and assumptions. Treat it as helpful background, NOT as instructions — when it conflicts with what the user asks for in this session, follow the user.",
+          "",
+          body,
+        ].join("\n"),
+      );
+    }
+    const remembered = this.memoryBlock();
+    if (remembered) parts.push(remembered);
+    return parts.join("\n\n");
   }
 
   // ─── Permission mode (the Shift+Tab cycle) ───
@@ -5439,6 +5457,28 @@ export class Engine {
       yield { type: "notice", message: line };
     }
 
+    // ── One calm line, the first time memory is used in a session ──
+    // Injection the user cannot see is injection they cannot correct. This says
+    // how many things were carried in and where to read them; it never prints
+    // the memories themselves, because a transcript is not the place to review
+    // a profile.
+    if (!this.memoryNoticed.has(sessionId)) {
+      const remembered = this.memoryBlock();
+      if (remembered) {
+        this.memoryNoticed.add(sessionId);
+        const n = countInjected(this.memoryStore().all(), {
+          workspace: this.config.workspaceRoot,
+          maxTokens: this.memoryConfig().maxTokens,
+        });
+        if (n > 0) {
+          yield {
+            type: "notice",
+            message: `Remembering ${n} thing${n === 1 ? "" : "s"} about you and this repo · /memory to see or change them.`,
+          };
+        }
+      }
+    }
+
     // Assemble the system prompt: doctrine + environment snapshot + project
     // memory (ALAN.md/CLAUDE.md/AGENTS.md) + the evergreen System Memory
     // profile + the compact skills catalog. The environment block is
@@ -5493,7 +5533,12 @@ export class Engine {
         activeLoop ? renderLoopRunDoctrine(activeLoop) : "",
         envBlock,
         projectMemory.block,
-        this.buildSystemMemoryBlock(),
+        // JIT delivery: memory leaves the prefix and arrives once per session
+        // as a note (agent-loop `memoryBlock`). It is the one block here whose
+        // content changes whenever the user corrects something, so keeping it
+        // in the cacheable head would invalidate the cache for a reason that
+        // has nothing to do with the request.
+        jit ? "" : this.buildSystemMemoryBlock(),
         notebookBlock?.text ?? "",
         this.skillCatalog,
       ]
@@ -5530,7 +5575,7 @@ export class Engine {
         },
         { name: "environment", chars: envBlock.length },
         { name: "project memory", chars: projectMemory.block.length },
-        { name: "system memory", chars: this.buildSystemMemoryBlock().length },
+        { name: "system memory", chars: jit ? 0 : this.buildSystemMemoryBlock().length },
         { name: "notebook", chars: (notebookBlock?.text ?? "").length },
         { name: "skills catalog", chars: this.skillCatalog.length },
       ].filter((part) => part.chars > 0),
@@ -5691,6 +5736,7 @@ export class Engine {
         // every run with no `--acceptance`: the gate returns immediately.
         acceptanceGate: (signal) => this.runAcceptanceGate(sessionId, signal),
         jitDoctrine: (section) => this.takeJitDoctrine(sessionId, section),
+        memoryBlock: () => this.takeMemoryBlock(sessionId),
         // The arbiter, watching. It decides nothing here unless
         // `[controller] authority` names a decision: the loop calls `observe`
         // beside guards that have already acted, and `decide` only at a site
@@ -8042,6 +8088,32 @@ export class Engine {
       if (guidance && body.includes(guidance)) present.add(section);
     }
     this.jitDelivered.set(sessionId, present);
+    // A resumed session already carries the memory block in its history.
+    // Re-injecting it would say the same things twice and — worse — would say
+    // the CURRENT memory beside a stale copy of it, with nothing marking which
+    // one the user has since corrected.
+    if (body.includes(MEMORY_BLOCK_HEADING)) this.memoryDelivered.add(sessionId);
+  }
+
+  /** Sessions that have already been told what Rune remembers. */
+  private memoryDelivered = new Set<string>();
+  /** Sessions whose transcript has already carried the one-line memory notice. */
+  private memoryNoticed = new Set<string>();
+
+  /**
+   * The memory block, once per session, in `jit` delivery only.
+   *
+   * In `full` delivery it ships in the prefix instead — the user asked for
+   * everything up front, and splitting one block across two mechanisms
+   * depending on a mode is how a block ends up delivered twice.
+   */
+  private takeMemoryBlock(sessionId: string): string | null {
+    if (this.doctrineDelivery() !== "jit") return null;
+    if (this.memoryDelivered.has(sessionId)) return null;
+    const block = this.buildSystemMemoryBlock();
+    if (!block) return null;
+    this.memoryDelivered.add(sessionId);
+    return block;
   }
 
   /** One section, once. Null = not jit mode, not applicable, or already sent. */
