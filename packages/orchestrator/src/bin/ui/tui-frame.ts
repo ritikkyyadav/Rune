@@ -70,6 +70,11 @@ import {
   type RenderedBlock,
 } from "./composer";
 
+/** How long a window drag has to go quiet before the wrapped blocks of the
+ *  transcript are set down again at the new measure. The frame itself repaints
+ *  on every SIGWINCH; only the re-render waits. */
+export const RESIZE_REFLOW_SETTLE_MS = 150;
+
 /** Which region the keys act on. Lanes B and C read this off the controller. */
 export type FrameFocus = "composer" | "panel" | "workspace" | "child";
 
@@ -998,6 +1003,20 @@ export const FRAME_METHODS = {
       setTermWidthOverride(this.contentCols());
       this.viewport.invalidate();
       this.scheduleDraw();
+      // The rows follow the window once it has stopped moving. Every frame of
+      // the drag re-clips the stored rows (above); the blocks that WRAP -- the
+      // answers, their tables, the user's own messages -- are set down again
+      // at the new measure when the drag has been quiet for a moment, through
+      // the same amend path a streaming answer uses (tui.ts reflowTranscript).
+      if (this.reflowTimer) clearTimeout(this.reflowTimer);
+      this.reflowTimer = setTimeout(() => {
+        this.reflowTimer = null;
+        try {
+          this.reflowTranscript();
+        } catch {
+          /* the rows keep their old width; the next resize tries again */
+        }
+      }, RESIZE_REFLOW_SETTLE_MS);
     } catch {
       /* next resize/keypress repaints */
     }

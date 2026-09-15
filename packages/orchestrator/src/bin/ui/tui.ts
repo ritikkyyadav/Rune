@@ -294,6 +294,24 @@ export class Tui {
   /** False for the default fixed-chrome layout; true only through --inline / RUNE_INLINE. */
   readonly inline: boolean;
   transcript: string[] = []; // fixed layout: themed lines, self-managed scrollback window
+  /**
+   * How to set a committed block down again at a new width, by handle.
+   *
+   * Rows are stored rendered, at the measure the window had when they
+   * landed. That is the right trade for a transcript (a row never re-wraps
+   * under the reader's hands), and the wrong one at the moment the window
+   * changes size: an answer wrapped at 160 columns is clipped at 100, and one
+   * wrapped at 100 sits in the left half of 160. A block committed with a
+   * `reflow` closure is re-rendered here after a resize settles (see
+   * reflowTranscript), in place, through the same amend path a streaming
+   * answer uses. Blocks without one -- tool boxes, receipts, chrome -- keep
+   * their rows: they truncate rather than wrap by design, so the frame's
+   * clip is the right thing for them.
+   */
+  reflows = new Map<BlockHandle, () => string>();
+  /** The measure the transcript's reflowable blocks were last set at. */
+  reflowCols = 0;
+  reflowTimer: ReturnType<typeof setTimeout> | null = null;
   /** Blocks that hold more than they show, openable in place -- see ./folds. */
   folds = new FoldLedger();
   /** Every committed block's rows, so the renderer can amend one in place --
@@ -846,7 +864,7 @@ export class Tui {
     }
   }
 
-  print(block: string, detail?: string): BlockHandle | undefined {
+  print(block: string, detail?: string, reflow?: () => string): BlockHandle | undefined {
     if (this.inline) {
       // Inline: completed blocks flow into the terminal's native scrollback above the pinned
       // composer (the terminal owns scrolling from here). printAbove redraws the composer after.
@@ -871,6 +889,10 @@ export class Tui {
     const start = this.transcript.length - added;
     // The block's identity, so the renderer can amend it in place later.
     const handle = this.blocks.register(start, added);
+    if (reflow) {
+      this.reflows.set(handle, reflow);
+      if (!this.reflowCols) this.reflowCols = this.contentCols();
+    }
     // A block that holds more than it shows registers its two forms with the
     // fold ledger.
     if (detail) this.registerFold(raw, start, detail);
@@ -890,10 +912,14 @@ export class Tui {
    * correction is the fold's: a splice at or below the reader's window
    * changes the distance between their content and the tail.
    */
-  amend(handle: BlockHandle, block: string, detail?: string): void {
+  amend(handle: BlockHandle, block: string, detail?: string, reflow?: () => string): void {
     if (this.inline) return;
     const region = this.blocks.get(handle);
     if (!region) return;
+    if (reflow) {
+      this.reflows.set(handle, reflow);
+      if (!this.reflowCols) this.reflowCols = this.contentCols();
+    }
     const top = this.transcript.length - this.scroll - this.frameZones().bodyRows;
     const raw = block ? block.split("\n") : [];
     const start = region.start;
@@ -923,6 +949,39 @@ export class Tui {
    * and the tail, and without the correction the view visibly lurches by the
    * size of the fold.
    */
+  /**
+   * Set every reflowable block down again at the window's current measure.
+   *
+   * Called once a resize has settled (handleResize), not on every SIGWINCH of
+   * a drag: the frame repaints and re-clips on every one of those already, and
+   * re-rendering a long answer sixty times a second would be the CPU a
+   * keypress waits behind. Blocks are re-rendered in buffer order through
+   * `amend`, which keeps the ledgers and the reader's scroll position honest
+   * for each splice. A block the buffer has since trimmed is forgotten.
+   */
+  reflowTranscript(): void {
+    if (this.inline) return;
+    const cols = this.contentCols();
+    if (cols === this.reflowCols) return;
+    this.reflowCols = cols;
+    const order = [...this.reflows.entries()]
+      .map(([handle, render]) => ({ handle, render, region: this.blocks.get(handle) }))
+      .sort((a, b) => (a.region?.start ?? -1) - (b.region?.start ?? -1));
+    for (const { handle, render, region } of order) {
+      if (!region) {
+        this.reflows.delete(handle);
+        continue;
+      }
+      let block: string;
+      try {
+        block = render();
+      } catch {
+        continue; // a block that cannot re-render keeps its rows
+      }
+      this.amend(handle, block);
+    }
+  }
+
   toggleFold(region: FoldRegion): void {
     const top = this.transcript.length - this.scroll - this.frameZones().bodyRows;
     const splice = this.folds.toggle(region);
@@ -1141,6 +1200,7 @@ export class Tui {
    *  the way a per-frame absolute address does. No background is painted. */
   resetTranscript(): void {
     this.transcript = [];
+    this.reflows.clear();
     this.folds.clear();
     this.blocks.clear();
     this.scroll = 0;
@@ -1264,9 +1324,9 @@ export class Tui {
       this.print(
         `  ${warn(glyph("retry"))} ${bold(text("Loop"))} ${info(scheduledLoop.id)} ${faint(`| iteration ${scheduledLoop.runCount + 1} | ${scheduledLoop.cadence}`)}`,
       );
-      this.print(userBlock(raw));
+      this.print(userBlock(raw), undefined, () => userBlock(raw));
     } else if (raw.startsWith("/")) this.print(`  ${info(glyph("selection"))} ${text(raw)}`);
-    else this.print(userBlock(raw));
+    else this.print(userBlock(raw), undefined, () => userBlock(raw));
 
     if (!scheduledLoop && raw.startsWith("/")) {
       const handled = await this.handleSlash(raw);
@@ -1705,7 +1765,7 @@ export class Tui {
    *  work inside the rail, each turn's final answer outside it. */
   printTranscriptLines(lines: TranscriptLine[]): void {
     if (lines.length === 0) return;
-    this.print(renderReplay(lines));
+    this.print(renderReplay(lines), undefined, () => renderReplay(lines));
   }
 
   /**
@@ -2686,7 +2746,7 @@ export class Tui {
         const steered = !raw.startsWith("/") && this.ctx.engine.interject(raw);
         if (steered) {
           this.history.push(raw);
-          this.print(userBlock(raw));
+          this.print(userBlock(raw), undefined, () => userBlock(raw));
           this.print(`  ${info("->")} ${faint("folded into the running task")}`);
         } else {
           this.queued.push(raw);
@@ -2736,12 +2796,12 @@ export class Tui {
     // edit chips, the plan's final state, the record line, and the answer.
     const turn = new TurnRenderer(
       {
-        commit: (block, detail) => this.print(block, detail),
+        commit: (block, detail, reflow) => this.print(block, detail, reflow),
         // The fixed viewport owns its buffer, so a row can be amended after
         // it lands; --inline writes to the terminal's scrollback and cannot.
         amend: this.inline
           ? undefined
-          : (handle, block, detail) => this.amend(handle, block, detail),
+          : (handle, block, detail, reflow) => this.amend(handle, block, detail, reflow),
         preview: (lines) => {
           this.turnPreview = lines;
           this.scheduleDraw();
@@ -3330,12 +3390,12 @@ export class Tui {
 
     const turn = new TurnRenderer(
       {
-        commit: (block, detail) => this.print(block, detail),
+        commit: (block, detail, reflow) => this.print(block, detail, reflow),
         // The fixed viewport owns its buffer, so a row can be amended after
         // it lands; --inline writes to the terminal's scrollback and cannot.
         amend: this.inline
           ? undefined
-          : (handle, block, detail) => this.amend(handle, block, detail),
+          : (handle, block, detail, reflow) => this.amend(handle, block, detail, reflow),
         preview: (lines) => {
           this.turnPreview = lines;
           this.scheduleDraw();

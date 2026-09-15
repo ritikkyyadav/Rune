@@ -76,8 +76,16 @@ export interface TurnSink {
    *  that owns its buffer (the fixed viewport) offers it as the block's
    *  in-place expansion. A sink that writes to real scrollback ignores it;
    *  ctrl+r's work log still carries everything. A sink that can amend
-   *  returns the block's handle. */
-  commit(block: string, detail?: string): BlockHandle | void;
+   *  returns the block's handle.
+   *
+   *  `reflow`, when given, re-renders the same block at whatever measure the
+   *  process has when it is called. A sink that owns its buffer keeps it and
+   *  calls it after the window is resized, so a block that wraps -- an
+   *  answer, its tables, a user's own message -- is set again at the new
+   *  width instead of staying wrapped at the old one and clipped. Rows are
+   *  stored rendered; this is the only way a stored row can follow the
+   *  window. */
+  commit(block: string, detail?: string, reflow?: () => string): BlockHandle | void;
   /**
    * Replace a committed block in place. This is the contract that lets a row
    * land the moment a call STARTS and finish when the call ends, a burst of
@@ -86,7 +94,7 @@ export interface TurnSink {
    * it. Only a sink that owns its buffer (the fixed viewport) offers it;
    * without it the renderer commits at the end, as it always did.
    */
-  amend?(handle: BlockHandle, block: string, detail?: string): void;
+  amend?(handle: BlockHandle, block: string, detail?: string, reflow?: () => string): void;
   /** Replace the small live focus above the composer. */
   preview?(lines: string[] | null): void;
 }
@@ -2928,10 +2936,15 @@ export class TurnRenderer {
     if (answer) {
       // The answer was streaming into the transcript already; it takes its
       // final form in place. Otherwise it is committed now, as it always was.
+      // ...and it carries its own source, so the sink can set it again at a
+      // new width: the answer is the block that wraps, and its tables are
+      // laid out to the measure (markdown.ts), so it is the block a resize
+      // has to re-render.
+      const reflow = () => responseBlock(answer);
       if (this.live && this.proseRef && this.proseRef.handle >= 0 && this.sink.amend) {
-        this.sink.amend(this.proseRef.handle, responseBlock(answer));
+        this.sink.amend(this.proseRef.handle, responseBlock(answer), undefined, reflow);
       } else {
-        this.sink.commit(responseBlock(answer));
+        this.sink.commit(responseBlock(answer), undefined, reflow);
       }
     } else if (aborted) {
       if (this.proseRef && this.proseRef.handle >= 0) this.amendBlock(this.proseRef, "");

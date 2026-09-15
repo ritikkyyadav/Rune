@@ -244,6 +244,161 @@ export function wrapInline(
   return lines.length ? lines : [""];
 }
 
+// -- tables --
+
+type CellAlign = "left" | "right" | "center";
+
+/** A source line that is a table row: pipes on the outside, or at least one
+ *  pipe between two cells. The separator row (`|---|:--:|`) counts. */
+export function isTableRow(raw: string): boolean {
+  const t = raw.trim();
+  if (!t.includes("|")) return false;
+  if (/^\|.*\|$/.test(t)) return true;
+  return /\S\s*\|\s*\S/.test(t) && !t.startsWith("`");
+}
+
+/** The separator under a header: cells of dashes with optional colons. */
+export function isTableSeparator(raw: string): boolean {
+  const t = raw.trim().replace(/^\|/, "").replace(/\|$/, "");
+  return t.split("|").every((cell) => /^\s*:?-+:?\s*$/.test(cell));
+}
+
+/** The cells of a row, outer pipes dropped, `\|` and pipes inside backticks
+ *  kept as text. */
+export function splitTableRow(raw: string): string[] {
+  let t = raw.trim();
+  if (t.startsWith("|")) t = t.slice(1);
+  if (t.endsWith("|") && !t.endsWith("\\|")) t = t.slice(0, -1);
+  const cells: string[] = [];
+  let cur = "";
+  let inCode = false;
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i]!;
+    if (ch === "\\" && t[i + 1] === "|") {
+      cur += "|";
+      i++;
+      continue;
+    }
+    if (ch === "`") inCode = !inCode;
+    if (ch === "|" && !inCode) {
+      cells.push(cur.trim());
+      cur = "";
+      continue;
+    }
+    cur += ch;
+  }
+  cells.push(cur.trim());
+  return cells;
+}
+
+function alignOf(cell: string): CellAlign {
+  const t = cell.trim();
+  if (t.startsWith(":") && t.endsWith(":")) return "center";
+  if (t.endsWith(":")) return "right";
+  return "left";
+}
+
+/** The visible width of a cell, markup removed, before any wrapping. */
+function cellWidth(cell: string): number {
+  return parseInline(cell).reduce((n, seg) => n + seg.t.length, 0);
+}
+
+/**
+ * Column widths that fit the measure.
+ *
+ * Every column starts at its natural width -- the widest cell in it. When
+ * the row is wider than the measure, the WIDEST column gives up a cell at a
+ * time until the row fits, down to a floor of eight cells: the long prose
+ * column is the one that wraps, and the `Score` column keeps its number on
+ * one line. A table so wide that every column is at the floor is still set
+ * down at the floor and cut by the frame, which is the failure a reader can
+ * see, rather than dropped.
+ */
+export function fitColumns(natural: number[], available: number, gap: number): number[] {
+  const widths = natural.map((w) => Math.max(1, w));
+  const floors = widths.map((w) => Math.min(w, 8));
+  const total = () => widths.reduce((a, b) => a + b, 0) + gap * Math.max(0, widths.length - 1);
+  while (total() > available) {
+    let pick = -1;
+    for (let i = 0; i < widths.length; i++) {
+      if (widths[i]! > floors[i]! && (pick < 0 || widths[i]! > widths[pick]!)) pick = i;
+    }
+    if (pick < 0) break;
+    widths[pick]!--;
+  }
+  return widths;
+}
+
+function padCell(line: string, width: number, align: CellAlign): string {
+  const gap = Math.max(0, width - stripAnsi(line).length);
+  if (align === "right") return " ".repeat(gap) + line;
+  if (align === "center") {
+    const left = Math.floor(gap / 2);
+    return " ".repeat(left) + line + " ".repeat(gap - left);
+  }
+  return line + " ".repeat(gap);
+}
+
+/**
+ * A table block as rows of aligned columns.
+ *
+ *     Agent         Score   Position
+ *     ───────────────────────────────────────────
+ *     Claude Code     100   Reference baseline
+ *     Rune             78   Strong safety, auditability, routing
+ *                           and verification; behind on proven
+ *                           model quality
+ *
+ * Columns are divided by a faint gutter; the header is set bold with a rule
+ * under it; a cell longer than its column wraps within the column, and the
+ * row grows to the tallest cell. No outer frame: a table is a grid, not a
+ * quotation, and a box around a grid is two frames fighting.
+ */
+export function renderTable(rows: string[], width: number, tone: MarkdownTone): string[] {
+  const parsed = rows.map(splitTableRow);
+  let aligns: CellAlign[] = [];
+  let header: string[] | null = null;
+  let body = parsed;
+  if (rows.length >= 2 && isTableSeparator(rows[1]!)) {
+    header = parsed[0]!;
+    aligns = parsed[1]!.map(alignOf);
+    body = parsed.slice(2);
+  }
+  const cols = Math.max(header?.length ?? 0, ...body.map((r) => r.length), 1);
+  const square = (r: string[]) => [...r, ...Array<string>(Math.max(0, cols - r.length)).fill("")];
+  const all = [...(header ? [square(header)] : []), ...body.map(square)];
+  while (aligns.length < cols) aligns.push("left");
+  const natural = Array.from({ length: cols }, (_, c) =>
+    Math.max(1, ...all.map((r) => cellWidth(r[c]!))),
+  );
+  const GAP = 3; // ` │ `
+  const widths = fitColumns(natural, Math.max(cols, width), GAP);
+  const divider = ` ${lineColor(glyph("gutter"))} `;
+  const tableWidth = Math.min(width, widths.reduce((a, b) => a + b, 0) + GAP * (cols - 1));
+
+  const out: string[] = [];
+  const setRow = (cells: string[], rowTone: MarkdownTone) => {
+    const lines = cells.map((cell, c) =>
+      cell.trim() ? wrapInline(cell, widths[c]!, "", rowTone) : [""],
+    );
+    const height = Math.max(...lines.map((l) => l.length));
+    for (let k = 0; k < height; k++) {
+      const parts = lines.map((l, c) => padCell(l[k] ?? "", widths[c]!, aligns[c]!));
+      // The last column is not padded to its width: trailing spaces are dead
+      // cells and, on a narrow frame, the first thing to be cut.
+      parts[parts.length - 1] = parts[parts.length - 1]!.replace(/\s+$/, "");
+      // An empty last cell would leave the divider's trailing space dangling.
+      out.push(parts[parts.length - 1] ? parts.join(divider) : parts.join(divider).trimEnd());
+    }
+  };
+  if (header) {
+    setRow(header, "headline");
+    out.push(lineColor(glyph("rule").repeat(Math.max(1, tableWidth))));
+  }
+  for (const r of body) setRow(r, tone);
+  return out;
+}
+
 // -- block-level rendering --
 
 /** Render a markdown document to themed terminal lines. */
@@ -410,13 +565,38 @@ export function renderMarkdown(md: string, opts: MarkdownOpts = {}): string[] {
       continue;
     }
 
-    // -- table rows: keep mono alignment, tint the frame --
-    if (/^\s*\|.*\|\s*$/.test(raw)) {
-      if (/^\s*\|[\s\-:|]+\|\s*$/.test(raw)) {
-        emit(lineColor(t.slice(0, width)));
-      } else {
-        emit(TONE_PAINT[tone](t.slice(0, width)).replace(/\|/g, lineColor("|")));
-      }
+    // -- tables: laid out as columns, fitted to the measure --
+    //
+    // A table used to be set down one source row at a time, pipes and all,
+    // cut at the column: `| **Rune** | **78** | Strong safety, auditab` --
+    // the markers unparsed, the last cell lost off the right edge, and the
+    // columns not aligned because nothing had measured them. The founder,
+    // 2026-09-15: "how badly it has structured the data". A table is the one
+    // block whose whole meaning is its geometry, so it is the one block this
+    // renderer lays out: every row of the block is read first, the columns
+    // are measured, squeezed to the measure where they must be, and each
+    // cell wraps INSIDE its column with the same inline styling prose gets.
+    if (isTableRow(raw)) {
+      const rows: string[] = [];
+      let end = li;
+      while (end < src.length && isTableRow(src[end]!)) rows.push(src[end++]!);
+      for (const ln of renderTable(rows, width, tone)) emit(ln);
+      li = end - 1;
+      continue;
+    }
+
+    // -- setext headings: a title with `===` or `---` under it --
+    // Models write these as often as `#` headings, and this renderer used to
+    // set the title as a paragraph and the underline as a forty-cell rule --
+    // a heading that read as a sentence followed by a fence.
+    const under = src[li + 1] ?? "";
+    if (/^\s*(=+|-{2,})\s*$/.test(under) && !/^\s*[-*+]\s/.test(raw)) {
+      const title = t.replace(/\*\*|__|~~|`/g, "").trim();
+      blank();
+      emit(bold(text(title.slice(0, width))));
+      emit(lineColor("-".repeat(Math.max(4, Math.min(title.length, width)))));
+      lastBlank = false;
+      li++;
       continue;
     }
 

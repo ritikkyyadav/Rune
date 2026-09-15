@@ -7,6 +7,7 @@ import {
   type TurnSink,
 } from "../../../packages/orchestrator/src/bin/ui/turn";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
+import { setTermWidthOverride } from "../../../packages/orchestrator/src/bin/ui/render";
 import type { TranscriptLineView } from "../../../packages/orchestrator/src/bin/ui/activity";
 
 function harness() {
@@ -918,5 +919,37 @@ describe("TurnRenderer — the plan is set down once", () => {
     expect(h.output()).not.toContain("changed");
     expect(h.output()).not.toContain("reviewed");
     expect(h.output()).not.toContain("/rewind");
+  });
+});
+
+describe("the answer carries its own reflow", () => {
+  // Rows are stored rendered. The founder resized the window and the answer
+  // stayed wrapped at the old width, its tables clipped (2026-09-15 night).
+  // The contract that fixes it: the answer is committed with a closure that
+  // renders the same block at whatever measure the process has when it is
+  // called, so the viewport can set it down again after a resize.
+  it("commits the answer with a closure that re-renders at the current measure", () => {
+    const seen: Array<{ block: string; reflow?: () => string }> = [];
+    const turn = new TurnRenderer(
+      { commit: (block, _detail, reflow) => void seen.push({ block, reflow }) },
+      { getCost: () => 0 },
+    );
+    const long = "word ".repeat(40).trim();
+    turn.onEvent({ type: "text_delta", text: long } as never);
+    setTermWidthOverride(120);
+    turn.finish();
+    const answer = seen.find((s) => stripAnsi(s.block).includes("word word"));
+    expect(answer).toBeDefined();
+    expect(typeof answer!.reflow).toBe("function");
+    const wide = stripAnsi(answer!.reflow!())
+      .split("\n")
+      .filter((l) => l.trim());
+    setTermWidthOverride(60);
+    const narrow = stripAnsi(answer!.reflow!())
+      .split("\n")
+      .filter((l) => l.trim());
+    setTermWidthOverride(null);
+    expect(narrow.length).toBeGreaterThan(wide.length);
+    for (const line of narrow) expect(line.length).toBeLessThanOrEqual(60);
   });
 });

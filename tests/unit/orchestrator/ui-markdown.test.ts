@@ -124,3 +124,106 @@ describe("inline styling", () => {
     expect(out.join("")).toBe("x".repeat(100));
   });
 });
+
+// ─── Tables ───
+//
+// The founder, 2026-09-15 night, on an audit answer whose tables were set down
+// as raw pipes and cut at the right edge: "how badly it has structured the
+// data ... solve it properly". A table is the one block whose meaning IS its
+// geometry, so it is measured and laid out: columns fitted to the measure, the
+// widest column wrapping inside itself, the header ruled, the markers parsed.
+
+import {
+  fitColumns,
+  renderTable,
+  splitTableRow,
+} from "../../../packages/orchestrator/src/bin/ui/markdown";
+
+describe("renderMarkdown — tables", () => {
+  const audit = [
+    "| Agent | Score | Position |",
+    "|---|---:|---|",
+    "| Claude Code | **100** | Reference baseline |",
+    "| Codex | **90** | Strongest hosted/cloud workflow |",
+    "| **Rune** | **78** | Strong safety, auditability, routing and verification; behind on proven model quality, ecosystem maturity and cloud execution |",
+  ].join("\n");
+
+  it("lays the columns out, parses the markers, and rules the header", () => {
+    const out = plain(renderMarkdown(audit, { width: 100, indent: "" }));
+    // No source pipes and no bold markers survive.
+    expect(out.join("\n")).not.toContain("|");
+    expect(out.join("\n")).not.toContain("**");
+    expect(out[0]).toMatch(/^Agent\s+│\s+Score\s+│\s+Position$/);
+    expect(out[1]).toMatch(/^─+$/);
+    // Every cell of a column starts in the same column of the screen.
+    const gutter = (line: string) => line.indexOf("│");
+    const first = gutter(out[0]!);
+    for (const line of out.slice(2)) expect(gutter(line), line).toBe(first);
+  });
+
+  it("right-aligns a `---:` column so the numbers line up on their last digit", () => {
+    const out = plain(renderMarkdown(audit, { width: 100, indent: "" }));
+    const score = (line: string) => line.split("│")[1]!;
+    expect(score(out[2]!).trimEnd().endsWith("100")).toBe(true);
+    expect(score(out[3]!).trimEnd().endsWith("90")).toBe(true);
+    expect(score(out[2]!).trimEnd().length).toBe(score(out[3]!).trimEnd().length);
+  });
+
+  it("wraps the widest column inside itself instead of cutting the row", () => {
+    const out = plain(renderMarkdown(audit, { width: 72, indent: "" }));
+    for (const line of out) expect(line.length, line).toBeLessThanOrEqual(72);
+    const joined = out.join("\n");
+    expect(joined).toContain("cloud execution"); // the tail of the long cell survives
+    expect(joined).toContain("Reference baseline");
+    // The long cell continues on rows of its own, under its column: the
+    // first two columns of a continuation row are blank.
+    const continuation = out.find((line) => /^\s+│\s+│\s+\S/.test(line));
+    expect(continuation).toBeDefined();
+  });
+
+  it("keeps a short column whole while the long one wraps", () => {
+    const widths = fitColumns([11, 5, 120], 60, 3);
+    expect(widths[0]).toBe(11);
+    expect(widths[1]).toBe(5);
+    expect(widths[2]).toBe(60 - 11 - 5 - 6);
+  });
+
+  it("stops squeezing at the floor rather than dropping a column", () => {
+    const widths = fitColumns([40, 40, 40], 20, 3);
+    expect(widths).toEqual([8, 8, 8]);
+  });
+
+  it("splits cells on pipes but not inside code or after a backslash", () => {
+    expect(splitTableRow("| a | `x | y` | c \\| d |")).toEqual(["a", "`x | y`", "c | d"]);
+  });
+
+  it("sets a table with no header as body rows", () => {
+    const out = plain(renderTable(["| a | b |", "| c | d |"], 40, "primary"));
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatch(/^a\s+│\s+b$/);
+  });
+
+  it("sits between paragraphs without swallowing them", () => {
+    const md = `Before.\n\n${audit}\n\nAfter.`;
+    const out = plain(renderMarkdown(md, { width: 100, indent: "" }));
+    expect(out[0]).toBe("Before.");
+    expect(out[out.length - 1]).toBe("After.");
+  });
+});
+
+describe("renderMarkdown — setext headings", () => {
+  it("sets a title with a line of dashes under it as a heading, not a paragraph and a rule", () => {
+    const out = plain(renderMarkdown("Rune audit\n----------\n\nBody.", { width: 60, indent: "" }));
+    expect(out[0]).toBe("Rune audit");
+    expect(out[1]).toBe("-".repeat("Rune audit".length));
+    expect(out[out.length - 1]).toBe("Body.");
+    expect(out.join("\n")).not.toContain("-".repeat(40));
+  });
+
+  it("does not leave a dangling divider on an empty last cell", () => {
+    const out = plain(
+      renderMarkdown("| a | b |\n|---|---|\n| **Total** | |", { width: 40, indent: "" }),
+    );
+    expect(out[2]).toBe("Total │");
+  });
+});
