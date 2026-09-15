@@ -1,61 +1,60 @@
-// ─── The working indicator: a calm mark, a whole phrase, and the clock ───
+// ─── The working indicator: Rune's own pulse, given motion ───
 //
-// Founder, 2026-09-15: the old indicator "does not look satisfying — make it
-// soothing and calm, give it proper character, the whole text and a pulse, the
-// way Codex and Claude Code have."
+// Founder, 2026-09-15 evening, on the version this replaces: "you actually
+// copied Claude Code and built the exact same interface. I don't want that. I
+// wanted that pulse design only, and something very soothing — a smooth
+// animation, the kind of effect Claude Code and Codex both have while they are
+// working — implemented correctly, not copied from some other CLI."
 //
-// What it replaced was one bright accent cell off the block ramp (`▄`) and a
-// two-word telegram: `▄ working · asking`. Three things were wrong with it and
-// only one of them was the glyph.
+// So the correction is precise, and it cuts the other way from the last one.
+// What went out is the BORROWED PART: a six-petalled florette and a capitalised
+// gerund (`✻ Thinking · 12s`) are another product's indicator, and no amount of
+// re-deriving them here makes them ours. What comes back is Rune's own pulse —
+// the bar ramp `▁▂▃▄▅▆▇█` this codebase has drawn since the beginning, in
+// Rune's own lower-case strip voice (`working`, `reading turn.ts`).
 //
-//   1. The cell CHANGED SHAPE, eight levels of it, driven by the byte rate. A
-//      shape that jumps between ▁ and █ four times a second is not a pulse, it
-//      is a flicker, and it was drawn in the accent colour — the one colour the
-//      grammar reserves for things that matter.
-//   2. `working` is not a state, it is the absence of one. It was true of a
-//      grep, of a 90-second test run and of four sub-agents alike.
-//   3. `asking` is a fragment. It reads as an adjective on `working` rather
-//      than as the sentence it actually is: the run is waiting for YOU.
+// What those tools actually have, and what the previous version did not, is not
+// a glyph and not a phrase. It is MOTION WITH EASING. A shape that steps is
+// busy; a shape that eases is calm, and the difference is entirely in the
+// second derivative. Three things move here, and each of them is eased:
 //
-// So: one mark that never changes shape, a whole phrase that names what is
-// actually happening, and the elapsed clock.
+//   1. The mark BREATHES: the bar eases up the ramp and back down on a raised
+//      cosine, ▁→█→▁, twelve frames a half-breath at 90ms a frame, so a whole
+//      breath is 2.16s. Height and colour are taken from the SAME eased value,
+//      so they crest together: `dim` at the trough, `accent` at the top.
+//   2. The phrase SHIMMERS: it is painted quiet, and a four-cell brighter
+//      window sweeps across it left to right, eased in and out over 1.6s, then
+//      rests for 0.4s before the next pass. That rest is the difference
+//      between a shimmer and a barber's pole.
+//   3. Nothing else does. The clock does not shimmer — a number that moves
+//      under the eye is a number you re-read — and a run that is finished,
+//      waiting on a person, or not running at all holds perfectly still.
 //
-//     ✻ Thinking · 12s
-//     ✻ Reading turn.ts · 40s
-//     ✻ Running checks · 1m 05s
-//     ✻ Waiting for you
-//     ✻ Done · 1m 58s
+// Two invariants make this safe to put on screen for an hour at a time, and
+// both are tested rather than asserted in prose: the per-frame step in the
+// ramp is at most ONE level and in the colour ramp at most ONE tint (nothing
+// jumps, because a jump is a strobe), and the frame rate is capped at 12fps.
 //
-// The BREATH is colour, not shape: muted → text → accent → text → muted, one
-// step every 700ms, so a full breath is 3.5 seconds and the mark spends two of
-// its five steps at rest. Nothing on screen moves; the mark warms and cools.
-// That is the whole difference between calm and busy, and it is also what
-// makes the indicator honest under NO_COLOR — where the colour is gone, the
-// PHRASE and the clock still say everything the row has to say, which is the
-// rule the rest of this product already keeps (nothing carried by colour
-// alone).
-//
-// What this module is NOT: a liveness detector. `pulse.ts` still owns that,
-// and it still cannot lie — the `quiet 31s` word beside this row is fed by
-// real output and stops when the bytes stop. This row says what the run is
-// DOING; that one says whether it is still doing it. Keeping them separate is
-// deliberate: the previous design made one cell carry both, and so the cell
-// could say neither.
+// What this module is still NOT: a liveness detector. `pulse.ts` owns that, it
+// is fed by real bytes, and the `quiet 31s` word beside this row stops when the
+// output stops. This row says what the run is DOING and moves on a wall clock
+// while it does; that word says whether it still is. A single cell carrying
+// both could say neither, which is what the original byte-driven ramp proved.
 
-import { accent, faint, muted, text } from "./theme";
-import { glyph, TERMINAL_GLYPH_MODE, type GlyphMode } from "./glyphs";
+import { accent, colorEnabled, dim, faint, quiet, text } from "./theme";
+import { PULSE_GLYPHS, TERMINAL_GLYPH_MODE, glyph, type GlyphMode } from "./glyphs";
 
 /**
  * What the run is doing, as a closed set.
  *
  * Every member is reachable from an event the transcript ALREADY reads — a
  * tool call opening, a verification notice, a fan-out, a compaction notice,
- * the stream of prose, the turn ending. There is deliberately no member for
- * "busy" or "processing": a phrase nothing can produce is a phrase that will
- * eventually be produced by everything.
+ * the stream of prose, the turn ending. `working` is the resting member and
+ * the only vague one, and it is vague on purpose: it is what the row says when
+ * nothing more specific is true, which is exactly the claim it can support.
  */
 export type WorkingKind =
-  | "thinking"
+  | "working"
   | "reading"
   | "editing"
   | "running"
@@ -70,7 +69,8 @@ export interface WorkingState {
   /** The subject, when the event carried one: a path, a pattern, a command. */
   target?: string;
   /**
-   * A phrase the caller already composed from the event, used VERBATIM.
+   * A phrase the caller already composed from the event, used verbatim apart
+   * from its first letter.
    *
    * This exists for one caller and one reason: the live tool label
    * (`turn.ts`'s `liveToolLabel`) has been writing whole, careful phrases for
@@ -78,34 +78,36 @@ export interface WorkingState {
    * critically `Running the necessary command` while a command's arguments are
    * still streaming, which is what stops the row typing a path out letter by
    * letter. Re-deriving a verb from the tool name here would have thrown that
-   * away and replaced it with `Running run`. So the kind still decides how the
-   * mark behaves and what the closed set contains; the phrase, where the event
-   * already produced one, is the one the event produced.
+   * away and replaced it with `running run`. So the kind still decides how the
+   * mark behaves and what the closed set contains; the words, where the event
+   * already produced them, are the event's own -- down-cased at the boundary
+   * (see `workingPhrase`), because the strip speaks in lower case and a
+   * capital in the middle of a chrome row is a title, not a sentence.
    */
   phrase?: string;
   /** Milliseconds since the turn started. Omitted where there is no clock. */
   elapsedMs?: number;
 }
 
-/** The verb, capitalised, for a state with nothing to name. */
+/** The word, lower-case, for a state with nothing to name. */
 const PHRASE: Record<WorkingKind, string> = {
-  thinking: "Thinking",
-  reading: "Reading",
-  editing: "Editing",
-  running: "Running",
-  delegating: "Delegating",
-  answering: "Answering",
+  working: "working",
+  reading: "reading",
+  editing: "editing",
+  running: "running",
+  delegating: "delegating",
+  answering: "answering",
   // The one phrase that is a sentence rather than a verb, because the state it
   // names is about the reader and not about the machine.
-  waiting: "Waiting for you",
-  compacting: "Compacting",
-  done: "Done",
+  waiting: "waiting for you",
+  compacting: "compacting",
+  done: "done",
 };
 
 /** Kinds that read as a bare verb with no object -- adding one would be
  *  inventing a subject the event never carried. */
 const INTRANSITIVE: ReadonlySet<WorkingKind> = new Set<WorkingKind>([
-  "thinking",
+  "working",
   "answering",
   "waiting",
   // A compaction has exactly one subject -- this conversation -- so naming it
@@ -118,7 +120,7 @@ const INTRANSITIVE: ReadonlySet<WorkingKind> = new Set<WorkingKind>([
  * Map a tool name onto the verb that describes running it.
  *
  * Read from the SAME tool names the transcript's own verb table uses
- * (activity.ts), so a row that says `Reading turn.ts` is above a rail that
+ * (activity.ts), so a row that says `reading turn.ts` is above a rail that
  * will say `read turn.ts` a moment later. A tool this does not know is
  * `running`, which is literally true of any call and claims nothing more.
  */
@@ -145,7 +147,7 @@ export function workingKindForTool(toolName: string): WorkingKind {
     case "ask_user":
       return "waiting";
     case "todo_write":
-      return "thinking";
+      return "working";
     default:
       return "running";
   }
@@ -161,108 +163,349 @@ export function elapsedWord(ms: number): string {
   return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
 }
 
+/** Lower-case the first letter only. A path, a command and a flag keep their
+ *  case -- `checking with npx vitest run` is the whole point of taking the
+ *  caller's phrase, and `Checking With Npx` would have thrown it away. */
+function downcaseFirst(value: string): string {
+  return value ? value[0]!.toLowerCase() + value.slice(1) : value;
+}
+
 /** The phrase alone: the verb, and the subject when the event carried one. */
 export function workingPhrase(state: WorkingState): string {
   const given = (state.phrase ?? "").trim();
-  if (given) return given;
+  if (given) return downcaseFirst(given);
   const verb = PHRASE[state.kind];
   const target = (state.target ?? "").trim();
   if (!target || INTRANSITIVE.has(state.kind)) return verb;
   return `${verb} ${target}`;
 }
 
-// ─── The breath ───
+// ─── The frame clock ───
 
 /**
- * One step of the breath, in milliseconds.
+ * One animation frame, in milliseconds.
  *
- * The founder's floor is 600ms and the ceiling 800ms; 700 sits in the middle
- * and divides the 125ms repaint tick evenly enough that no step is ever missed
- * or doubled. A full breath is `BREATH_TINTS.length * BREATH_MS` = 3.5s.
+ * 90ms is 11.1fps, under the 12fps ceiling this indicator is allowed, and it
+ * is the number the whole motion is quantised to: the repaint tick runs at the
+ * same period (tui.ts), so every frame this module computes is a frame the
+ * screen actually shows. A repaint slower than the frame clock would sample
+ * the curve unevenly and put back exactly the stepping the easing exists to
+ * remove.
  */
-export const BREATH_MS = 700;
+export const FRAME_MS = 90;
 
-/** The ramp, as tint NAMES. Muted at both ends, so the mark rests at the
- *  bottom of the breath for two steps out of five rather than snapping back. */
-export const BREATH_TINTS = ["muted", "text", "accent", "text", "muted"] as const;
+/** The ceiling, stated so a future edit to FRAME_MS trips a test rather than
+ *  a reader's eye. Motion above this stops reading as motion and starts
+ *  reading as flicker. */
+export const MAX_FPS = 12;
+
+/** Twelve frames from trough to crest: 1.08s up, 1.08s down. */
+export const HALF_BREATH_FRAMES = 12;
+
+/** A whole breath, in frames -- 24 at 90ms is 2.16s, the rate of a calm
+ *  person's breathing, which is the entire design brief for this curve. */
+export const BREATH_FRAMES = HALF_BREATH_FRAMES * 2;
+
+/** A whole breath, in milliseconds. */
+export const BREATH_MS = BREATH_FRAMES * FRAME_MS;
+
+/** Which frame of the breath a moment is on: 0 at the trough, 12 at the crest. */
+export function breathFrame(elapsedMs: number, frameMs: number = FRAME_MS): number {
+  const step = Math.max(1, Math.floor(frameMs));
+  const ticks = Math.floor(Math.max(0, elapsedMs) / step);
+  return ((ticks % BREATH_FRAMES) + BREATH_FRAMES) % BREATH_FRAMES;
+}
+
+/**
+ * The easing: a raised cosine over the breath, 0 at the trough and 1 at the
+ * crest.
+ *
+ * Raised cosine and not linear, and not a cubic: it is the only curve whose
+ * first derivative is zero at BOTH ends, so the bar comes to rest at the top
+ * and at the bottom instead of arriving and reversing. That pause at each end
+ * is what the eye reads as breathing rather than as oscillation.
+ *
+ * It is also what bounds the step. The steepest the curve ever gets is
+ * π/BREATH_FRAMES ≈ 0.131 per frame, so the ramp (seven intervals) moves at
+ * most 0.92 of a level per frame and the tint ramp (three intervals) at most
+ * 0.40 -- and a rounded value can therefore never move by more than one.
+ */
+export function breathEase(frame: number): number {
+  // Folded to the rising half and then eased, rather than eased over the whole
+  // period. Mathematically the same curve; numerically it is the only version
+  // that is EXACTLY symmetric, because `cos(3pi/2)` is not zero in binary
+  // floating point and the crest sits on a rounding boundary -- frames 6 and
+  // 18 landed one ramp level apart, which is a visible hitch on the way down.
+  const f = ((Math.floor(frame) % BREATH_FRAMES) + BREATH_FRAMES) % BREATH_FRAMES;
+  const rising = f <= HALF_BREATH_FRAMES ? f : BREATH_FRAMES - f;
+  return (1 - Math.cos((Math.PI * rising) / HALF_BREATH_FRAMES)) / 2;
+}
+
+/** The bar's height, as an index into the ramp: 0 (`▁`) at the trough, 7
+ *  (`█`) at the crest. */
+export function rampIndex(frame: number): number {
+  const eased = breathEase(frame);
+  return Math.round(eased * (PULSE_GLYPHS.length - 1));
+}
+
+/**
+ * The colour ramp, as tint NAMES, faintest first.
+ *
+ * Four intensities is everything a theme actually owns: `dim` is the faint
+ * slot (rails, gutters, elisions), `quiet` the muted slot, `text` the user's
+ * own foreground, and `accent` the one colour the grammar reserves for things
+ * that matter. Colour is taken from the same eased value as the height, so the
+ * mark does not warm on a schedule of its own -- it is bright BECAUSE it is
+ * tall.
+ */
+export const BREATH_TINTS = ["dim", "quiet", "text", "accent"] as const;
 export type BreathTint = (typeof BREATH_TINTS)[number];
 
-// `muted` is theme.ts's `muted`/`faint` (both the faint slot), which is the ink
-// every other "quieter than body" call in this product lands on -- so the
-// bottom of the breath is a colour the reader has already learned means
-// background, and the top is the accent they have learned means look here.
-const TINT: Record<BreathTint, (s: string) => string> = {
-  muted,
-  text,
-  accent,
-};
+const TINT: Record<BreathTint, (s: string) => string> = { dim, quiet, text, accent };
 
-/**
- * Which step of the breath a given moment is on.
- *
- * Driven by wall-clock and NOT by the output rate, which is the one thing this
- * shares with a spinner and the reason it is safe to: it carries no claim
- * about liveness. `quiet 31s` beside it does, fed by real bytes, and a stalled
- * run therefore reads as a calm mark next to the word `quiet` -- which is
- * exactly right, and is what a hurrying spinner could never say.
- */
-export function breathStep(elapsedMs: number, cadenceMs: number = BREATH_MS): number {
-  const step = Math.max(1, Math.floor(cadenceMs));
-  const ticks = Math.floor(Math.max(0, elapsedMs) / step);
-  return ticks % BREATH_TINTS.length;
+/** Where in the colour ramp a frame lands. */
+export function tintIndex(frame: number): number {
+  return Math.round(breathEase(frame) * (BREATH_TINTS.length - 1));
 }
 
-/** The tint a step lands on. */
-export function breathTint(step: number): BreathTint {
-  const n = BREATH_TINTS.length;
-  return BREATH_TINTS[((Math.floor(step) % n) + n) % n]!;
+/** The tint a frame lands on. */
+export function breathTint(frame: number): BreathTint {
+  return BREATH_TINTS[tintIndex(frame)]!;
 }
 
 /**
- * The mark, painted for this step of the breath.
+ * One cell of the ramp.
  *
- * A settled state does not breathe: `done` is finished and `waiting` is
- * waiting on a person, and a mark that went on pulsing through either would be
- * reporting activity that is not happening.
+ * The UTF-8 blocks only where the terminal has told us its cells are one
+ * column wide. An ambiguous-width locale gets the ASCII twin for the same
+ * reason `contextBar` does: a block that renders double-width eats its
+ * neighbour, and a row that is one cell too long is worse than a row drawn in
+ * punctuation. The twins are a ramp too -- `_ . , - = + * #` climbs -- so the
+ * motion survives a seven-bit terminal even though the colour does not.
  */
-export function workingMark(state: WorkingState, step: number, mode?: GlyphMode): string {
-  const mark = glyph("working", mode ?? TERMINAL_GLYPH_MODE);
-  if (state.kind === "done") return muted(mark);
-  if (state.kind === "waiting") return accent(mark);
-  return TINT[breathTint(step)](mark);
+export function rampGlyph(index: number, mode: GlyphMode = TERMINAL_GLYPH_MODE): string {
+  const n = PULSE_GLYPHS.length;
+  const level = PULSE_GLYPHS[Math.min(n - 1, Math.max(0, Math.round(index)))]!;
+  return mode === "utf8" ? level.utf8 : level.ascii;
+}
+
+/**
+ * Where the bar sits when it is not breathing: the middle of the ramp.
+ *
+ * Not the trough. `▁` is an underscore's worth of ink, and a finished run
+ * whose mark had shrunk to nothing would read as an error rather than as a
+ * rest. The mid bar is the cell this indicator used before any of this, held
+ * still and painted `dim` -- which is what "at rest" has to look like for the
+ * motion beside it to mean anything.
+ */
+export const REST_INDEX = 3;
+
+/**
+ * Does this state move?
+ *
+ * `done` is finished, `waiting` is waiting on a person, and a mark that went
+ * on breathing through either would be reporting activity that is not
+ * happening -- the exact failure the byte-fed pulse was built to stop. Idle is
+ * the third case and it is handled by the caller: no turn, no tick, no frames.
+ */
+export function isBreathing(kind: WorkingKind): boolean {
+  return kind !== "done" && kind !== "waiting";
+}
+
+/** The mark at rest: the mid bar, dim, not moving. */
+export function workingRestMark(mode: GlyphMode = TERMINAL_GLYPH_MODE): string {
+  return dim(rampGlyph(REST_INDEX, mode));
+}
+
+/** The bare rest cell, unpainted, for callers that tint the whole row. */
+export function workingRestGlyph(mode: GlyphMode = TERMINAL_GLYPH_MODE): string {
+  return rampGlyph(REST_INDEX, mode);
+}
+
+/**
+ * The mark, painted for this frame of the breath.
+ *
+ * Height and tint move together off one eased value, which is the difference
+ * between a breath and two animations sharing a cell.
+ */
+export function workingMark(
+  state: WorkingState,
+  frame: number,
+  mode: GlyphMode = TERMINAL_GLYPH_MODE,
+): string {
+  if (!isBreathing(state.kind)) return workingRestMark(mode);
+  const f = ((Math.floor(frame) % BREATH_FRAMES) + BREATH_FRAMES) % BREATH_FRAMES;
+  return TINT[breathTint(f)](rampGlyph(rampIndex(f), mode));
+}
+
+// ─── The shimmer ───
+
+/** How long one pass across the phrase takes. */
+export const SHIMMER_SWEEP_MS = 1600;
+
+/** How long the phrase rests, fully quiet, before the next pass. Without this
+ *  the window reappears on the left the instant it leaves on the right, and a
+ *  loop with no rest in it is a barber's pole. */
+export const SHIMMER_PAUSE_MS = 400;
+
+/** Sweep plus rest. */
+export const SHIMMER_CYCLE_MS = SHIMMER_SWEEP_MS + SHIMMER_PAUSE_MS;
+
+/** How wide the brighter window is. Four cells: narrow enough to read as a
+ *  highlight travelling over the words, wide enough to be visible at all on a
+ *  short phrase like `working`. */
+export const SHIMMER_CELLS = 4;
+
+/**
+ * Ease-in-out for the sweep: the window accelerates off the left margin,
+ * crosses the phrase at speed, and decelerates off the right.
+ *
+ * Same family as the breath -- half a raised cosine -- so the two motions on
+ * this row are the same motion at two rates rather than two different ideas of
+ * what smooth means.
+ */
+export function shimmerEase(p: number): number {
+  const t = Math.min(1, Math.max(0, p));
+  return (1 - Math.cos(Math.PI * t)) / 2;
+}
+
+export interface ShimmerWindow {
+  /** The window's left edge, unclipped: it starts at `-SHIMMER_CELLS` (fully
+   *  off the left) and ends at `length` (fully off the right), so the bright
+   *  patch enters and leaves rather than appearing mid-word. */
+  head: number;
+  /** The visible span, clipped to the phrase: `[start, end)`. Empty while the
+   *  window is still entering or has already left. */
+  start: number;
+  end: number;
+}
+
+/**
+ * Where the bright window is at a given moment, or `null` during the rest.
+ *
+ * Driven off the same wall clock as the breath, and off the turn's own
+ * `elapsedMs` rather than `Date.now()`, so two surfaces drawing the same state
+ * in the same frame shimmer in step and a test can state the window's position
+ * at 0ms, 800ms and 1700ms without a fake timer.
+ */
+export function shimmerWindowAt(
+  elapsedMs: number,
+  length: number,
+  opts: { cells?: number; sweepMs?: number; cycleMs?: number } = {},
+): ShimmerWindow | null {
+  if (length <= 0) return null;
+  const cells = Math.max(1, Math.floor(opts.cells ?? SHIMMER_CELLS));
+  const sweep = Math.max(1, Math.floor(opts.sweepMs ?? SHIMMER_SWEEP_MS));
+  const cycle = Math.max(sweep, Math.floor(opts.cycleMs ?? SHIMMER_CYCLE_MS));
+  const t = Math.max(0, elapsedMs) % cycle;
+  if (t >= sweep) return null; // the rest between passes
+  const travel = length + cells;
+  const head = Math.round(-cells + shimmerEase(t / sweep) * travel);
+  return {
+    head,
+    start: Math.max(0, Math.min(length, head)),
+    end: Math.max(0, Math.min(length, head + cells)),
+  };
+}
+
+export interface ShimmerSegment {
+  text: string;
+  bright: boolean;
+}
+
+/**
+ * The phrase, split into the part under the window and the parts either side.
+ *
+ * Returned as data rather than as painted bytes because that is the only way
+ * the sweep can be tested at all: the suite runs with NO_COLOR, where the
+ * theme emits no escapes and every frame would be byte-identical.
+ */
+export function shimmerSegments(
+  phrase: string,
+  elapsedMs: number,
+  opts: { cells?: number; sweepMs?: number; cycleMs?: number } = {},
+): ShimmerSegment[] {
+  if (!phrase) return [];
+  const win = shimmerWindowAt(elapsedMs, phrase.length, opts);
+  if (!win || win.end <= win.start) return [{ text: phrase, bright: false }];
+  const parts: ShimmerSegment[] = [];
+  if (win.start > 0) parts.push({ text: phrase.slice(0, win.start), bright: false });
+  parts.push({ text: phrase.slice(win.start, win.end), bright: true });
+  if (win.end < phrase.length) parts.push({ text: phrase.slice(win.end), bright: false });
+  return parts;
+}
+
+/**
+ * The phrase, painted.
+ *
+ * Quiet everywhere, `text` under the window -- one step up the same ramp the
+ * mark climbs, never `accent`, because two accents on one row is two things
+ * claiming to be the most important.
+ *
+ * The shimmer is OFF wherever it cannot be seen, and that is not merely a
+ * saving: the repaint tick keys on the rendered row, so a phrase that
+ * "shimmers" with no colour to shimmer in would repaint the whole frame eleven
+ * times a second to redraw identical bytes. Off under NO_COLOR, off on a
+ * seven-bit terminal, and off for any state that is not moving.
+ */
+export function paintPhrase(
+  phrase: string,
+  elapsedMs: number,
+  opts: {
+    kind?: WorkingKind;
+    color?: boolean;
+    mode?: GlyphMode;
+    cells?: number;
+    sweepMs?: number;
+    cycleMs?: number;
+  } = {},
+): string {
+  const mode = opts.mode ?? TERMINAL_GLYPH_MODE;
+  const painted = opts.color ?? colorEnabled;
+  const moving = isBreathing(opts.kind ?? "working");
+  if (!painted || mode === "ascii" || !moving) return quiet(phrase);
+  return shimmerSegments(phrase, elapsedMs, opts)
+    .map((part) => (part.bright ? text(part.text) : quiet(part.text)))
+    .join("");
 }
 
 /**
  * The whole row: the mark, the phrase, and the clock.
  *
- *     ✻ Reading turn.ts · 40s
+ *     ▄ reading turn.ts · 40s
  *
  * The separator is the grammar's own middot (`observed`), so this row is
  * punctuated like every receipt beside it. The clock is dropped when there is
- * nothing to time -- `Waiting for you` is not more informative for carrying
- * the number of seconds it has been true.
+ * nothing to time -- `waiting for you` is not more informative for carrying
+ * the number of seconds it has been true -- and it is painted `faint` and
+ * never shimmered, because a number moving under the eye is a number you
+ * re-read.
  */
 export function workingRow(
   state: WorkingState,
-  opts: { cadenceMs?: number; mode?: GlyphMode } = {},
+  opts: { frameMs?: number; mode?: GlyphMode; color?: boolean } = {},
 ): string {
-  // The breath is phased off the turn's OWN clock, not off `Date.now()`: two
-  // surfaces drawing the same state in the same frame then show the same step,
-  // and a test can state the colour at 0ms, 700ms and 1400ms without a fake
-  // timer. A state with no clock does not breathe, so there is nothing to phase.
-  const step = breathStep(state.elapsedMs ?? 0, opts.cadenceMs);
-  const mark = workingMark(state, step, opts.mode);
-  const phrase = workingPhrase(state);
+  // Phased off the turn's OWN clock, not off `Date.now()`: two surfaces
+  // drawing the same state in the same frame show the same frame of the
+  // breath, and a test can state the height at 0ms, 540ms and 1080ms without a
+  // fake timer. A state with no clock does not move, so there is nothing to
+  // phase.
+  const elapsed = state.elapsedMs ?? 0;
+  const frame = breathFrame(elapsed, opts.frameMs);
+  const mark = workingMark(state, frame, opts.mode);
+  const phrase = paintPhrase(workingPhrase(state), elapsed, {
+    kind: state.kind,
+    mode: opts.mode,
+    color: opts.color,
+  });
   const clock =
     state.kind === "waiting" || state.elapsedMs == null ? "" : elapsedWord(state.elapsedMs);
   const sep = ` ${glyph("observed", opts.mode ?? TERMINAL_GLYPH_MODE)} `;
-  return clock
-    ? `${mark} ${muted(phrase)}${faint(sep)}${faint(clock)}`
-    : `${mark} ${muted(phrase)}`;
+  return clock ? `${mark} ${phrase}${faint(sep)}${faint(clock)}` : `${mark} ${phrase}`;
 }
 
-/** The phrase and clock without the mark, for surfaces that paint their own
- *  (the panel card, whose first cell is the selection rung). */
+/** The phrase and clock without the mark, unpainted, for surfaces that paint
+ *  their own (the panel card, whose first cell is the selection rung). */
 export function workingText(state: WorkingState): string {
   const clock =
     state.kind === "waiting" || state.elapsedMs == null ? "" : elapsedWord(state.elapsedMs);

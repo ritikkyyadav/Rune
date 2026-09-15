@@ -41,7 +41,8 @@ import {
   workingKindForTool,
   workingMark,
   workingPhrase,
-  breathStep,
+  paintPhrase,
+  breathFrame,
   type WorkingKind,
   type WorkingState,
 } from "./working";
@@ -354,7 +355,7 @@ export const HEX = glyph("phase");
 const DWELL_MS = 700;
 
 /** How long a state that says *less* than what is already up must persist
- *  before it may replace it. Quiet frames -- `thinking` with nothing under it,
+ *  before it may replace it. Quiet frames -- `working` with nothing under it,
  *  `answering` on the strength of one stray token -- are the ones that turn out
  *  not to have been true a moment later, so they are asked to prove themselves.
  *  A frame that names real work is not: making it wait would mean the rung goes
@@ -363,11 +364,11 @@ const SETTLE_MS = 120;
 
 /** How long after a tool ends the agent is still considered mid-burst. Between
  *  one call finishing and the next beginning there is a beat where nothing is in
- *  flight, and taken literally that beat is "thinking" -- but a 5ms hole in the
+ *  flight, and taken literally that beat is "working" -- but a 5ms hole in the
  *  middle of obvious work is an artefact of event granularity, not a state
  *  anyone is in. Left alone it also defeats the settle above, because the
  *  candidate flips away and back and never accumulates the time it needs to
- *  earn the screen: the rung ends up saying "thinking" through half a second of
+ *  earn the screen: the rung ends up saying "working" through half a second of
  *  visible work. Inside this window the rung simply holds. */
 const GAP_MS = 300;
 
@@ -669,7 +670,7 @@ export class TurnRenderer {
    * Every started-but-unfinished DELEGATION this turn, by callId, in the order
    * the model dispatched them. `currentTool` is the newest streamed call and
    * goes null on the FIRST end -- with several parallel sub-agents in flight
-   * that read as "thinking" while four workers were still building. This map
+   * that read as "working" while four workers were still building. This map
    * keeps the rung honest for the whole fleet, and carries what each member is
    * doing so the panel can show it (see fleetLines).
    */
@@ -741,10 +742,10 @@ export class TurnRenderer {
    *  rides the rung for as long as it lasts. */
   private retrying: { attempt: number; of: number } | null = null;
   /** The live rung's current frame and when it went up -- see steadyFrame. */
-  private frame: SteadyFrame = { kind: "thinking", phrase: "Thinking", detail: "" };
+  private frame: SteadyFrame = { kind: "working", phrase: "working", detail: "" };
   private frameAt = 0;
   /** The state the rung is *trying* to move to, and when it first appeared. */
-  private want: SteadyFrame = { kind: "thinking", phrase: "Thinking", detail: "" };
+  private want: SteadyFrame = { kind: "working", phrase: "working", detail: "" };
   private wantSince = 0;
   /** When the last tool call ended -- the near side of a possible burst gap. */
   private lastToolEndAt = 0;
@@ -758,7 +759,7 @@ export class TurnRenderer {
   // durable checkpoint -- all fed by structured events, never invented.
   private downTokens = 0;
   private thinkingMs = 0;
-  /** Reasoning is streaming right now. The rung already says "thinking"
+  /** Reasoning is streaming right now. The rung already says "working"
    *  then; "thought for" is the receipt once it has stopped. */
   private thinkingLive = false;
   private lastThinkingAt = 0;
@@ -822,14 +823,17 @@ export class TurnRenderer {
   liveLines(): string[] {
     const frame = this.steadyFrame();
     const state = this.workingState();
-    // The mark breathes by COLOUR at a fixed cadence and never changes shape.
-    // What it replaced was one cell off the eight-level block ramp, driven by
-    // the byte rate -- a flicker, in the accent colour, that the founder read
-    // as agitation rather than as life. Liveness has not been given up: the
-    // `quiet 31s` word in the receipt is still fed by real output and still
-    // stops when the bytes stop (see ./pulse.ts). The mark says the run is
-    // working; the word says whether it still is.
-    const mark = workingMark(state, breathStep(state.elapsedMs ?? 0));
+    // Rune's own pulse, eased: the bar climbs and falls through `▁..█` on a
+    // raised cosine, twelve frames a half-breath at 90ms a frame, height and
+    // colour off the same curve. What it replaced was the same ramp driven by
+    // the BYTE RATE -- a flicker rather than a breath -- and then, briefly, a
+    // borrowed florette and a capitalised gerund, which was another product's
+    // indicator wearing ours. Liveness has not been given up: the `quiet 31s`
+    // word in the receipt is still fed by real output and still stops when the
+    // bytes stop (see ./pulse.ts). The mark says the run is working; the word
+    // says whether it still is.
+    const beat = breathFrame(state.elapsedMs ?? 0);
+    const mark = workingMark(state, beat);
     const phrase = workingPhrase(state);
     // The clock rides inline, after the phrase, because that is the pairing
     // the founder asked for: `Running checks - 1m 05s` is one sentence, and a
@@ -846,7 +850,11 @@ export class TurnRenderer {
     // constants to stop it strobing, which was the code admitting the block
     // moved too much. Prose streams into the transcript now (see settleProse),
     // so the rung has one sentence to say and says it once.
-    const said = clock ? `${muted(phrase)}${faint(dot)}${faint(clock)}` : muted(phrase);
+    // The phrase shimmers -- quiet, with a four-cell brighter window easing
+    // left to right every 1.6s and resting for 0.4s. The clock does not: a
+    // number that moves under the eye is a number you re-read.
+    const lit = paintPhrase(phrase, state.elapsedMs ?? 0, { kind: state.kind });
+    const said = clock ? `${lit}${faint(dot)}${faint(clock)}` : lit;
     const spent = phrase.length + clock.length + 4;
     const head = frame.detail
       ? `${said}${faint(dot)}${faint(truncate(frame.detail, Math.max(20, F.proseWidth() - spent)))}`
@@ -1472,7 +1480,7 @@ export class TurnRenderer {
     }
     if (this.verificationRunning) return said("running", "checks");
     if (this.prose.trim()) return said("answering");
-    return said("thinking");
+    return said("working");
   }
 
   /** `4 sub-agents`, or a workflow's own level -- the subject of `Delegating`. */
@@ -1498,7 +1506,7 @@ export class TurnRenderer {
    * against whatever wants to replace it. The **gap** (inToolGap) hides the beat
    * between two calls in a burst, so a 5ms hole in obvious work is not mistaken
    * for a change of state. The **settle** asks a candidate that says *less* than
-   * what is up -- `thinking` with nothing under it -- to still be true a moment
+   * what is up -- `working` with nothing under it -- to still be true a moment
    * later before it takes the screen; a candidate that names real work goes up
    * as soon as the dwell allows, because making it wait would leave the rung
    * silent exactly while the agent is busiest.
@@ -1521,7 +1529,7 @@ export class TurnRenderer {
     // information, so do not evaluate a transition at all -- hold what is up.
     // The emptiness is the test. A gap that *has* something to report (a check
     // came back, a plan step advanced) is not this, and is not held.
-    if (want.kind === "thinking" && !want.detail && this.inToolGap(now)) return this.frame;
+    if (want.kind === "working" && !want.detail && this.inToolGap(now)) return this.frame;
     if (!same(want, this.want)) {
       this.want = want;
       this.wantSince = now;
@@ -1531,8 +1539,8 @@ export class TurnRenderer {
     // A candidate that says LESS than what is up -- bare `Thinking`, no detail
     // -- has to still be true a moment later before it takes the screen; a
     // candidate that names real work goes up as soon as the dwell allows.
-    const saysLess = want.kind === "thinking" && !want.detail;
-    const saidMore = this.frame.kind !== "thinking" || Boolean(this.frame.detail);
+    const saysLess = want.kind === "working" && !want.detail;
+    const saidMore = this.frame.kind !== "working" || Boolean(this.frame.detail);
     if (saysLess && saidMore && now - this.wantSince < SETTLE_MS) return this.frame;
     this.frame = want;
     this.frameAt = now;

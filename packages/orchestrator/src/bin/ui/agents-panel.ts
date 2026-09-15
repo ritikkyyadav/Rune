@@ -34,7 +34,14 @@
 import * as F from "./flow";
 import { PULSE_GLYPHS, TERMINAL_GLYPH_MODE, glyph } from "./glyphs";
 import { Pulse, QUIET_AFTER_MS } from "./pulse";
-import { breathStep, workingMark } from "./working";
+import {
+  breathFrame,
+  rampGlyph,
+  rampIndex,
+  workingMark,
+  workingRestGlyph,
+  workingRestMark,
+} from "./working";
 import { clampVisible, truncate, visLen } from "./render";
 import { accent, danger, faint, muted, ok, text } from "./theme";
 
@@ -271,26 +278,42 @@ function spanOf(card: AgentCard, now: number): string {
  * as a list.
  */
 /**
- * The card's live cell: the working mark, breathing by COLOUR.
+ * The card's live cell: the same eased breath the rung runs, on this member's
+ * own clock.
  *
- * It was one cell off the eight-level block ramp, sized by the member's byte
- * rate. Nine of those on one column, each jumping between `▁` and `█` several
- * times a second, is not a panel reporting a fan-out -- it is a graphic
- * equaliser. The mark is fixed now and only its tint moves, on the member's
- * OWN clock, so two cards that started a minute apart do not breathe in
- * lockstep and none of them strobes. The rate is not lost: it was never what a
- * reader acted on, and the thing they do act on -- a member that has stopped
- * saying anything -- is still carried by the word `quiet 9s` beside it.
+ * It was one cell off this ramp sized by the member's BYTE RATE. Nine of those
+ * in a column, each jumping between `▁` and `█` several times a second, is not
+ * a panel reporting a fan-out -- it is a graphic equaliser. The shape is the
+ * same; what changed is that it is now eased along a 2.16s raised cosine
+ * phased on `startedAt`, so two cards that began a minute apart breathe out of
+ * step with each other and neither of them strobes. The rate is not lost: it
+ * was never what a reader acted on, and the thing they do act on -- a member
+ * that has stopped saying anything -- is carried by the word `quiet 9s`.
  */
 function cardBeat(card: AgentCard, now: number): string {
   // A member that has said nothing for the quiet threshold, and whose measured
   // output level has decayed to the floor, does not breathe. This is the one
-  // property the ramp had that was worth keeping: the mark cannot report life
-  // where there is none. It is carried by colour here and by the word
-  // `quiet 9s` beside it, so a mono terminal loses nothing.
-  if (card.quietMs >= QUIET_AFTER_MS && card.pulseStep === 0) return muted(glyph("working"));
+  // property the byte-fed ramp had that was worth keeping: the mark cannot
+  // report life where there is none. It rests at the mid bar, dim, beside the
+  // word `quiet 9s`, so a mono terminal loses nothing.
+  if (card.quietMs >= QUIET_AFTER_MS && card.pulseStep === 0) return workingRestMark();
   const elapsed = card.startedAt == null ? 0 : Math.max(0, now - card.startedAt);
-  return workingMark({ kind: "running" }, breathStep(elapsed));
+  return workingMark({ kind: "running" }, breathFrame(elapsed));
+}
+
+/**
+ * The bare ramp cell for a running member, unpainted, at this member's own
+ * frame of the breath.
+ *
+ * The denser rungs of the ladder (the paired rows, the initials strip, the
+ * one-line agents strip) tint the WHOLE cell -- selected or faint -- so they
+ * cannot take `cardBeat`'s painted mark without nesting two colours in one
+ * cell. They still get the motion, which is the point: the same curve, the
+ * same phase, at every density the panel can draw.
+ */
+function rampAt(card: AgentCard, now: number): string {
+  const elapsed = card.startedAt == null ? 0 : Math.max(0, now - card.startedAt);
+  return rampGlyph(rampIndex(breathFrame(elapsed)));
 }
 
 function headRow(card: AgentCard, index: number, view: PanelView, now: number, width: number) {
@@ -309,7 +332,7 @@ function headRow(card: AgentCard, index: number, view: PanelView, now: number, w
         : card.state === "skipped"
           ? faint(glyph("observed"))
           : card.state === "queued"
-            ? faint(glyph("working"))
+            ? faint(workingRestGlyph())
             : cardBeat(card, now);
   // The stall is STATED. Past the quiet threshold the row swaps its clock's
   // tail for the word, because a flat pulse and a dead pulse are the same cell.
@@ -438,7 +461,7 @@ function pairRow(
         ? glyph("verified")
         : card.state === "failed"
           ? glyph("failure")
-          : glyph("working");
+          : workingRestGlyph();
     const span =
       card.startedAt == null ? "" : compactElapsed((card.endedAt ?? now) - card.startedAt);
     const name = truncate(card.name, Math.max(4, cell - 8));
@@ -456,7 +479,7 @@ function pairRow(
  * moving; the full roster stays reachable by `ctrl+f` and the arrows, which
  * walk every member regardless of what the panel can draw.
  */
-function initialsRow(cards: AgentCard[], view: PanelView, width: number): string {
+function initialsRow(cards: AgentCard[], view: PanelView, width: number, now: number): string {
   const marks = initialsFor(cards.map((c) => c.name));
   const cells = cards.map((card, i) => {
     const beat =
@@ -465,7 +488,7 @@ function initialsRow(cards: AgentCard[], view: PanelView, width: number): string
         : card.state === "failed"
           ? glyph("failure")
           : card.state === "running"
-            ? glyph("working")
+            ? rampAt(card, now)
             : glyph("observed");
     const cell = `${marks[i]}${beat}`;
     return view.focused && view.selectedId === card.id ? accent(cell) : faint(cell);
@@ -560,7 +583,7 @@ export function renderAgentsPanel(
   }
   if (plan.initials) {
     out.push(faint(glyph("rule").repeat(Math.max(1, width))));
-    out.push(initialsRow([...running, ...finished], view, width));
+    out.push(initialsRow([...running, ...finished], view, width, now));
   }
   // The budget is a budget. Past it the column says how many it could not
   // draw rather than cutting a card off mid-way and leaving the reader to
@@ -723,7 +746,11 @@ export function newestReceipt(
   return best;
 }
 
-export function renderAgentsStrip(view: PanelView, width: number): string {
+export function renderAgentsStrip(
+  view: PanelView,
+  width: number,
+  now: number = Date.now(),
+): string {
   const { running, finished } = view;
   if (running.length === 0 && finished.length === 0) {
     return F.row(
@@ -749,7 +776,7 @@ export function renderAgentsStrip(view: PanelView, width: number): string {
   for (const card of [...running, ...finished]) {
     const beat =
       card.state === "running"
-        ? glyph("working")
+        ? rampAt(card, now)
         : card.state === "failed"
           ? glyph("failure")
           : glyph("verified");

@@ -64,15 +64,6 @@ export const GLYPH_DEFINITIONS = {
   reproduced: { utf8: "=", ascii: "=", role: "dim" },
   elision: { utf8: "…", ascii: ".", role: "dim" },
   retry: { utf8: "↻", ascii: "r", role: "warn" },
-  // The working mark: a six-petalled florette, and the ONE addition this
-  // alphabet takes for the breathing indicator (founder, 2026-09-15: "make it
-  // soothing and calm ... the whole text and a pulse"). It is a mark and not a
-  // ramp on purpose -- the breath is carried by COLOUR at a fixed cadence, so
-  // the shape never changes and nothing on screen strobes. Its ascii twin is
-  // `*`, shared with `phase`: the twins are a legibility fallback, not a
-  // second alphabet, and on a seven-bit terminal the PHRASE beside the mark is
-  // what tells the two apart.
-  working: { utf8: "\u273b", ascii: "*", role: "accent" },
 } as const satisfies Record<string, GlyphDefinition>;
 
 export type GlyphName = keyof typeof GLYPH_DEFINITIONS;
@@ -99,16 +90,22 @@ export const RUNE_LOGO: readonly string[] = [
 ];
 
 /**
- * The block ramp.
+ * The block ramp: Rune's pulse, and the only animated shape in the product.
  *
- * It is no longer an INDICATOR: nothing on screen reports the agent's state
- * with one of these cells any more (founder, 2026-09-15 -- the working mark
- * breathes by colour instead; see working.ts). What survives is the one thing
- * a block ramp is actually good at, which is a meter: `contextBar` fills a
- * twenty-cell bar with the top of this ramp and folds to `#` on a seven-bit
- * terminal through the same rung as everything else. A meter is a proportion
- * of a known whole; a state is not, which is why one of these cells could
- * never say what the agent was doing.
+ * It has two jobs and they are the same shape for a reason. As an INDICATOR it
+ * is the working mark, eased up and down this ramp on a raised cosine while a
+ * run is working (see working.ts) -- height and colour off one curve, twelve
+ * frames a half-breath, never more than one level a frame. As a METER it fills
+ * `contextBar`'s twenty cells with the top of the ramp. A proportion of a known
+ * whole and a breath are both "how full is this cell", which is what a block
+ * ramp is actually good at, and both fold to `_ . , - = + * #` on a seven-bit
+ * or ambiguous-width terminal through the same rung as everything else.
+ *
+ * What it is NOT any more is a readout of the byte rate. That was the original
+ * defect: the cell jumped between the two ends of this ramp several times a
+ * second because the bytes did, which is a flicker rather than a pulse. The
+ * rate is still measured, still cannot lie, and is still reported -- in the
+ * word `quiet 31s` beside the row (pulse.ts), where a reader can act on it.
  */
 export const PULSE_GLYPHS = [
   { utf8: "▁", ascii: "_", role: "accent" },

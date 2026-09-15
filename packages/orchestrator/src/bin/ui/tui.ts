@@ -110,7 +110,7 @@ import {
   type SessionRowView,
 } from "./composer";
 import { RUNE_MARK, renderBanner } from "./banner";
-import { workingRow } from "./working";
+import { FRAME_MS, workingRow } from "./working";
 import { notifyWarp } from "./warp";
 import { setTitle, clearTitle } from "./title";
 import { renderReadBack, renderClose } from "./read-back";
@@ -1201,7 +1201,7 @@ export class Tui {
       // product where the accent colour and a bold weight were spent on the
       // fact that nothing had happened yet.
       return this.pinLiveHeight([
-        `  ${workingRow({ kind: "thinking", elapsedMs: Math.max(0, Date.now() - this.turnStart) })}`,
+        `  ${workingRow({ kind: "working", elapsedMs: Math.max(0, Date.now() - this.turnStart) })}`,
       ]);
     }
     // This was a flat two rows, which is why a fan-out of sub-agents could only
@@ -2760,12 +2760,15 @@ export class Tui {
       },
     );
     this.liveTurn = turn;
-    // The web comp rotates the gear continuously. Terminals cannot rotate a
-    // glyph, so the same mark breathes along a colour ramp instead (breathAt,
-    // in ./turn) while the elapsed receipt advances. This tick drives that ramp
-    // and the clock, and it is deliberately the only thing repainting the rung
-    // on a timer: the stream may arrive as fast as it likes, and the footer
-    // still moves no faster than a person can read it.
+    // The animation clock. A terminal cannot rotate a glyph, so Rune's pulse
+    // eases up and down the block ramp instead (./working.ts) while the phrase
+    // shimmers and the elapsed receipt advances. This interval IS the frame
+    // clock -- FRAME_MS, 11.1fps, under the 12fps ceiling -- and it is
+    // deliberately the only thing repainting the rung on a timer: the stream
+    // may arrive as fast as it likes and the footer still moves no faster than
+    // a person can read it. It must not be slower than FRAME_MS either, or the
+    // repaint samples the easing curve unevenly and puts back exactly the
+    // stepping the curve exists to remove.
     this.tick = setInterval(() => {
       if (this.mode === "turn") {
         // The title dedupes itself; the frame is scheduled only when the rung
@@ -2787,7 +2790,7 @@ export class Tui {
         // about whether you have fifty seconds left or two.
         this.scheduleDraw();
       }
-    }, 125);
+    }, FRAME_MS);
 
     // Offer-a-dashboard bookkeeping: the answer text (for the data-density
     // heuristic) and whether the model already built/updated one this turn.
@@ -3363,7 +3366,7 @@ export class Tui {
           this.scheduleDraw();
         }
       }
-    }, 125);
+    }, FRAME_MS);
 
     let report: ResearchReport | null = null;
     try {

@@ -666,7 +666,7 @@ export const FRAME_METHODS = {
       return clampVisible(`  ${this.atWidth(w, () => renderAgentsStrip(view, inner))}`, w);
     }
     const live = this.mode === "turn" ? this.turnStateLines() : [];
-    // At rest, after a turn: `✻ Done · 1m 58s`. The indicator's last frame is
+    // At rest, after a turn: `▄ done · 1m 58s`, held still. The last frame is
     // the one worth keeping on screen -- how long the thing you just watched
     // actually took -- and it is the only row here that survives the turn it
     // describes. Before the first turn there is nothing to report and the

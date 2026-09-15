@@ -75,9 +75,11 @@ describe("TurnRenderer — customizer activity stream", () => {
     // Nothing with news in it has landed, so nothing has been set down yet.
     expect(h.commits).toHaveLength(0);
     // The rung: the working mark, the phrase, the receipt -- no ledger. The
-    // phrase is capitalised now because it is a sentence rather than a label
-    // (`Thinking`, not `thinking`); see ui/working.ts.
-    expect(h.preview()).toContain("Thinking");
+    // phrase is Rune's own lower-case strip voice, and the resting word is
+    // `working` -- not a borrowed `Thinking` (founder, 2026-09-15 evening;
+    // see ui/working.ts).
+    expect(h.preview()).toContain("working");
+    expect(h.preview()).not.toContain("Thinking");
     expect((h.previews.at(-1) ?? []).length).toBeLessThanOrEqual(2);
 
     h.turn.onEvent({ type: "text_delta", text: "The implementation is mapped." });
@@ -134,7 +136,7 @@ describe("TurnRenderer — customizer activity stream", () => {
       partialJson: '{"path":"src/auth/session.ts"}',
     });
     await sleep(DWELL + 60);
-    expect(h.rung()).toContain("Reading");
+    expect(h.rung()).toContain("reading");
     expect(h.rung()).toContain("src/auth/session.ts");
     h.turn.onEvent(toolEnd("read_file", { path: "src/auth/session.ts" }));
     h.turn.onEvent({ type: "text_delta", text: "The stale branch is the cause." });
@@ -215,12 +217,12 @@ describe("TurnRenderer — customizer activity stream", () => {
     // not shove the plan step off screen before it could be read.
     expect(h.rung()).toContain("Fix the branch");
     await sleep(DWELL + 60);
-    expect(h.rung()).toContain("Updating src/auth/session.ts");
+    expect(h.rung()).toContain("updating src/auth/session.ts");
 
     h.turn.onEvent({ type: "verification_started", attempt: 1 });
     await sleep(DWELL + 60);
-    // `checking` was a label; `Running checks` is what is happening.
-    expect(h.rung()).toContain("Running checks");
+    // `checking` was a label; `running checks` is what is happening.
+    expect(h.rung()).toContain("running checks");
   });
 
   it("holds a live frame long enough to be read, however fast the work is", async () => {
@@ -228,7 +230,7 @@ describe("TurnRenderer — customizer activity stream", () => {
     h.turn.onEvent({ type: "tool_call_start", callId: "r1", toolName: "read_file" });
     h.turn.onEvent({ type: "tool_call_args_delta", callId: "r1", partialJson: '{"path":"a.ts"}' });
     await sleep(DWELL + 60);
-    expect(h.rung()).toContain("Reading a.ts");
+    expect(h.rung()).toContain("reading a.ts");
 
     // Four more calls, all inside one dwell window. The rail below records every
     // one of them; the rung lets at most a single frame through and absorbs the
@@ -244,14 +246,14 @@ describe("TurnRenderer — customizer activity stream", () => {
     }
     // Nothing is promoted while the burst is still going: none of those states
     // has lasted long enough to be worth a reader's attention.
-    expect(h.rung()).toContain("Reading a.ts");
+    expect(h.rung()).toContain("reading a.ts");
 
     // `a.ts` is entitled to its whole dwell first. Once that is spent, the rung
     // names the call that is *actually* in flight — one frame for the burst,
     // and it is the true one, not the stalest one.
     await sleep(DWELL + 60);
     const shown = h.rung();
-    expect(shown).toContain("Reading e.ts");
+    expect(shown).toContain("reading e.ts");
     expect(["b.ts", "c.ts", "d.ts"].filter((p) => shown.includes(p))).toHaveLength(0);
   });
 
@@ -272,11 +274,12 @@ describe("TurnRenderer — customizer activity stream", () => {
       h.turn.onEvent(toolEnd("read_file", { path }, JSON.stringify({ path })));
       await sleep(25);
       expect(h.rung()).not.toContain("Thinking");
+      expect(h.rung()).not.toContain("working");
     }
-    // `working` was the old catch-all label, equally true of a grep, a
-    // 90-second test run and four sub-agents. The rung names the actual state
-    // now, and in a burst of reads that state is reading.
-    expect(h.rung()).toContain("Reading");
+    // `working` is the RESTING word, and it must not be what a burst of reads
+    // says -- it was equally true of a grep, a 90-second test run and four
+    // sub-agents. The rung names the actual state, and here that is reading.
+    expect(h.rung()).toContain("reading");
   });
 
   it("names a target only once the arguments have finished saying it", async () => {
@@ -287,12 +290,12 @@ describe("TurnRenderer — customizer activity stream", () => {
       h.turn.onEvent({ type: "tool_call_args_delta", callId: "b1", partialJson: fragment });
     }
     await sleep(DWELL + 60);
-    expect(h.rung()).toContain("Running the necessary command");
+    expect(h.rung()).toContain("running the necessary command");
     expect(h.rung()).not.toContain("npx v");
 
     h.turn.onEvent({ type: "tool_call_args_delta", callId: "b1", partialJson: 'un"}' });
     await sleep(DWELL + 60);
-    expect(h.rung()).toContain("Checking with npx vitest run");
+    expect(h.rung()).toContain("checking with npx vitest run");
   });
 
   it("renders an edit as a rail row and a line-numbered diff", () => {
