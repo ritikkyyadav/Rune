@@ -6842,7 +6842,7 @@ export class Engine {
       // and calling either one `satisfied` or `failed` would be a claim about
       // the work that nobody made.
       const text = `${output.result ?? ""}\n${output.error ?? ""}`;
-      const ranAtAll = !acceptanceDidNotRun(text, verdict.exitCode);
+      const ranAtAll = !acceptanceDidNotRun(text, verdict.exitCode, command);
       const evidence = {
         source: command,
         detail: ranAtAll

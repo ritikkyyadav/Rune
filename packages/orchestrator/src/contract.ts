@@ -48,7 +48,7 @@ import type { CheckRun } from "./brief";
 import { statusFromStopReason, treeMovedUnder, type StampedRevision } from "./lifecycle";
 import { couldNotRunOnParent } from "./parent-check";
 import { GOAL_CAP } from "./task-state";
-import { commandPaths, normalizeCommand } from "./verification-command";
+import { commandPaths, isNoOpCommand, normalizeCommand } from "./verification-command";
 
 export type {
   CompletionVerdict,
@@ -875,7 +875,12 @@ export function discardStagedAcceptance(staged: StagedAcceptance | null | undefi
  * (127, and the words it prints) are added here because an acceptance command
  * is run against THIS tree, where a missing runner is the whole finding.
  */
-export function acceptanceDidNotRun(output: string, exitCode?: number): boolean {
+export function acceptanceDidNotRun(output: string, exitCode?: number, command?: string): boolean {
+  // A command that could not fail is not a measurement (V6 finding 25).
+  // `true` exits 0 and prints nothing, so no runner-shaped "0 tests" line
+  // exists for the false-positive defence to catch, and the criterion read
+  // `satisfied` on the strength of an exit code nothing produced.
+  if (command && isNoOpCommand(command)) return true;
   if (exitCode === 127) return true;
   if (/command not found|: not found\b|no such file or directory/i.test(output)) return true;
   return couldNotRunOnParent(output);
@@ -1267,6 +1272,20 @@ function gapWhy(criterion: Criterion, status: CriterionStatus): string {
 export function computeVerdict(input: VerdictInputs): CompletionVerdict {
   const now = input.revision ?? null;
   const criteria = input.criteria.map((c) => outcomeOf(c, input.checks, now));
+  // What the independent oracle said, counted on its own (V6 finding 21).
+  // `met` is untouched: this is reported beside the kind, never folded into
+  // it, so a consumer can count acceptance by the measurement the model could
+  // not influence — the one number a question or a plan CAN reach.
+  const evaluatorOutcomes = criteria.filter((c) => c.source === "evaluator");
+  const evaluators =
+    evaluatorOutcomes.length > 0
+      ? {
+          evaluators: {
+            satisfied: evaluatorOutcomes.filter((c) => c.status === "satisfied").length,
+            total: evaluatorOutcomes.length,
+          },
+        }
+      : {};
   // How the PROCESS ended, on every kind and never folded into `kind`. A run
   // that hit its turn ceiling with one criterion satisfied is `partial` AND
   // `budget`, and a consumer that sees only the first scores it as a task that
@@ -1280,8 +1299,9 @@ export function computeVerdict(input: VerdictInputs): CompletionVerdict {
   // typecheck green, and no statement anywhere of what the work was for.
   if (criteria.length === 0) {
     const asked = NO_DELIVERABLE_REASON[input.shape ?? "unknown"];
-    if (asked && !input.wrote) return { kind: "none", criteria, reason: asked, execution };
-    return { kind: "unmet", criteria, missing: ["no criteria stated"], execution };
+    if (asked && !input.wrote)
+      return { kind: "none", criteria, reason: asked, execution, ...evaluators };
+    return { kind: "unmet", criteria, missing: ["no criteria stated"], execution, ...evaluators };
   }
 
   const stepsOpen = input.openSteps > 0;
@@ -1296,14 +1316,20 @@ export function computeVerdict(input: VerdictInputs): CompletionVerdict {
   // check is accepted whether or not anything failed on the parent commit,
   // and the attribution rides the outcome for the reader instead of gating it.
   if (short.length === 0 && !stepsOpen && red.length === 0) {
-    return { kind: "met", criteria, execution };
+    return { kind: "met", criteria, execution, ...evaluators };
   }
 
   // Not one criterion was ever assessed, and nothing else is open to declare:
   // there is nothing to name a gap AGAINST.
   const assessed = criteria.filter((c) => c.status !== "unassessed");
   if (assessed.length === 0 && !stepsOpen && red.length === 0) {
-    return { kind: "unmet", criteria, missing: criteria.map((c) => c.text), execution };
+    return {
+      kind: "unmet",
+      criteria,
+      missing: criteria.map((c) => c.text),
+      execution,
+      ...evaluators,
+    };
   }
 
   const gaps: DeclaredGap[] = short.map(({ criterion, status }) => ({
@@ -1319,7 +1345,7 @@ export function computeVerdict(input: VerdictInputs): CompletionVerdict {
   for (const command of red) {
     gaps.push({ criterion: "the checks", why: `\`${command}\` last failed` });
   }
-  return { kind: "partial", criteria, gaps, execution };
+  return { kind: "partial", criteria, gaps, execution, ...evaluators };
 }
 
 /**
@@ -1358,13 +1384,20 @@ export function verdictLine(verdict: CompletionVerdict): string {
   // `none` says WHY there was nothing to verify. The count would read "no
   // criteria stated" on every one of them, which is the fact the reader
   // already has and not the one they need.
-  if (verdict.kind === "none") return `[verdict] none — ${verdict.reason}`;
-  if (verdict.kind === "met") return `[verdict] met — ${count}${attributed}`;
+  // The oracle's own count, printed where a consumer reading one line can see
+  // it. It does not change `met`; it says what the acceptance measured, which
+  // is the only number a question or a plan can reach.
+  const oracle =
+    verdict.evaluators && verdict.evaluators.total > 0
+      ? `; evaluator ${verdict.evaluators.satisfied} of ${verdict.evaluators.total} satisfied`
+      : "";
+  if (verdict.kind === "none") return `[verdict] none — ${verdict.reason}${oracle}`;
+  if (verdict.kind === "met") return `[verdict] met — ${count}${attributed}${oracle}`;
   if (verdict.kind === "partial") {
     const first = verdict.gaps[0];
     const rest = verdict.gaps.length - 1;
     const gap = first ? `; gap: ${first.criterion} (${first.why})` : "";
-    return `[verdict] partial — ${count}${attributed}${gap}${rest > 0 ? ` +${rest} more` : ""}`;
+    return `[verdict] partial — ${count}${attributed}${oracle}${gap}${rest > 0 ? ` +${rest} more` : ""}`;
   }
-  return `[verdict] unmet — ${count}`;
+  return `[verdict] unmet — ${count}${oracle}`;
 }

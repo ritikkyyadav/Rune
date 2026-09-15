@@ -304,15 +304,55 @@ export interface DeclaredGap {
  *   the word — the one failure this vocabulary cannot afford.
  */
 export type CompletionVerdict =
-  | { kind: "met"; criteria: CriterionOutcome[]; execution?: VerdictExecution }
+  | {
+      kind: "met";
+      criteria: CriterionOutcome[];
+      execution?: VerdictExecution;
+      evaluators?: VerdictEvaluators;
+    }
   | {
       kind: "partial";
       criteria: CriterionOutcome[];
       gaps: DeclaredGap[];
       execution?: VerdictExecution;
+      evaluators?: VerdictEvaluators;
     }
-  | { kind: "unmet"; criteria: CriterionOutcome[]; missing: string[]; execution?: VerdictExecution }
-  | { kind: "none"; criteria: CriterionOutcome[]; reason: string; execution?: VerdictExecution };
+  | {
+      kind: "unmet";
+      criteria: CriterionOutcome[];
+      missing: string[];
+      execution?: VerdictExecution;
+      evaluators?: VerdictEvaluators;
+    }
+  | {
+      kind: "none";
+      criteria: CriterionOutcome[];
+      reason: string;
+      execution?: VerdictExecution;
+      evaluators?: VerdictEvaluators;
+    };
+
+/**
+ * What the INDEPENDENT ORACLE said, counted on its own (V6 finding 21).
+ *
+ * `met` is unchanged and means what it always meant: every required criterion
+ * satisfied, no red check, no open step. But a question or a plan cannot reach
+ * it — the inferred criteria a read-back states about an ANSWER derive
+ * `needs_review` ("execution receipt only"), because there is nothing to run —
+ * so a consumer reading `kind` alone scores a correct, fully-accepted research
+ * run as `partial` and cannot tell it from one that fell short.
+ *
+ * These two numbers are the half a consumer can count: the evaluator criteria
+ * the runtime ran itself, and how many it settled. They gate nothing and they
+ * do not change `met`; they are the acceptance measurement stated separately
+ * from the completion one. Absent when no acceptance was configured.
+ */
+export interface VerdictEvaluators {
+  /** Evaluator criteria the runtime's own run settled. */
+  satisfied: number;
+  /** Evaluator criteria on the contract. */
+  total: number;
+}
 
 /**
  * How the RUN ended, beside what it achieved — and never folded into it.

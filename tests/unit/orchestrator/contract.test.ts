@@ -719,8 +719,10 @@ describe("the verdict reads the status, not the rung", () => {
       why: "failed: exit 1",
     });
     expect(verdictLine(v)).toBe(
+      // The evaluator clause is new (V6 finding 21): the oracle's own count,
+      // beside the acceptance count and never folded into it.
       "[verdict] partial — 1 of 2 accepted (1 regression-attributed); " +
-        "gap: the CSV header is unchanged (failed: exit 1)",
+        "evaluator 0 of 1 satisfied; gap: the CSV header is unchanged (failed: exit 1)",
     );
   });
 
@@ -1160,5 +1162,67 @@ describe("a check the run authored (V6 finding 3)", () => {
     expect(criterionStatus(cited({ verifier: "self-authored-check@1" }), [], now)).toBe(
       "needs_review",
     );
+  });
+});
+
+describe("an acceptance command that could not have failed (V6 finding 25)", () => {
+  test("`true`, `:` and `exit 0` did not run a check", () => {
+    // They exit 0 and print nothing, so no runner-shaped "0 tests" line exists
+    // for the false-positive defence to read, and the criterion used to derive
+    // `satisfied` on the strength of an exit code nothing produced.
+    expect(acceptanceDidNotRun("", 0, "true")).toBe(true);
+    expect(acceptanceDidNotRun("", 0, ":")).toBe(true);
+    expect(acceptanceDidNotRun("", 0, "exit 0")).toBe(true);
+    expect(acceptanceDidNotRun("", 0, "true && true")).toBe(true);
+  });
+
+  test("a real command is untouched, whatever it prints", () => {
+    expect(acceptanceDidNotRun("1 pass, 0 fail", 0, "node check.mjs")).toBe(false);
+    expect(acceptanceDidNotRun("3 pass", 0, "bun test")).toBe(false);
+    // `exit 1` is a FAILING check, not an absent one.
+    expect(acceptanceDidNotRun("(fail) missing", 1, "exit 1")).toBe(false);
+  });
+});
+
+describe("the evaluator count is reported beside the kind (V6 finding 21)", () => {
+  const evaluator = (status: "satisfied" | "failed"): Criterion => ({
+    text: status === "satisfied" ? "the endpoint answers" : "the header has a total column",
+    rung: status === "satisfied" ? "observed" : null,
+    source: "evaluator",
+    method: { kind: "command", command: "node check.mjs" },
+    evidence: {
+      source: "node check.mjs",
+      executionId: "chk-1",
+      verifier: "acceptance-command@1",
+      result: status === "satisfied" ? "passed" : "failed",
+      head: "abc123",
+      dirty: true,
+      digest: "d0",
+    },
+  });
+  const inputs = (criteria: Criterion[]) => ({
+    criteria,
+    checks: [],
+    openSteps: 0,
+    totalSteps: 0,
+    stopReason: "end_turn",
+    revision: { head: "abc123", dirty: true, digest: "d0" },
+  });
+
+  test("the oracle's own count rides every kind, and does not change `met`", () => {
+    const met = computeVerdict(inputs([evaluator("satisfied")]));
+    expect(met.kind).toBe("met");
+    expect(met.evaluators).toEqual({ satisfied: 1, total: 1 });
+    expect(verdictLine(met)).toContain("evaluator 1 of 1 satisfied");
+
+    const partial = computeVerdict(inputs([evaluator("satisfied"), evaluator("failed")]));
+    expect(partial.kind).toBe("partial");
+    expect(partial.evaluators).toEqual({ satisfied: 1, total: 2 });
+  });
+
+  test("a run with no acceptance configured says nothing about evaluators", () => {
+    const v = computeVerdict(inputs([{ text: "it works", rung: null }]));
+    expect(v.evaluators).toBeUndefined();
+    expect(verdictLine(v)).not.toContain("evaluator");
   });
 });

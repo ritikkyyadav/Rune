@@ -74,6 +74,7 @@ export type {
   CriterionStatus,
   DeclaredGap,
   Evidence,
+  VerdictEvaluators,
   VerdictExecution,
   HeldStep,
   HeldStepRunResult,

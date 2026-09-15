@@ -956,6 +956,18 @@ export const RECORD_EVIDENCE_SCHEMA: ToolSchema = {
   category: "read",
 };
 
+/**
+ * The criteria a model may cite, as one sentence — and never the ones it
+ * cannot see. `total` counts every criterion on the contract, evaluator ones
+ * included; saying so in a refusal is how the hidden ones become countable.
+ */
+function citableRange(ledger: BriefLedger): string {
+  const citable = ledger.criteria.filter((c) => c.source !== "evaluator").length;
+  return citable === 0
+    ? "Read back first: a criterion is citable once you have stated it."
+    : `Cite one of the criteria you read back — they are numbered 0-${citable - 1}.`;
+}
+
 /** What a citation points at: a numbered criterion or step, or a claim in words. */
 function citationTarget(args: Record<string, unknown>): { index?: number; claim?: string } {
   const raw = args.criterion;
@@ -1068,9 +1080,12 @@ export function createRecordEvidenceTool(
           (c) => c.text.toLowerCase().includes(needle) || needle.includes(c.text.toLowerCase()),
         );
         if (found < 0) {
+          // The range named is the CITABLE one — the criteria this model read
+          // back. Naming the full total would count the criteria it never saw
+          // (V6 finding 26): a model that cannot read an evaluator criterion
+          // could still learn how many there are by watching this number.
           return reply(
-            `No criterion reads like "${target.claim.slice(0, 60)}". The brief's criteria are ` +
-              `numbered 0-${Math.max(0, ledger.total - 1)}; cite one by index.`,
+            `No criterion reads like "${target.claim.slice(0, 60)}". ${citableRange(ledger)}`,
           );
         }
         index = found;
@@ -1126,11 +1141,18 @@ export function createRecordEvidenceTool(
       // The refusal deliberately does NOT quote the criterion back. An
       // evaluator criterion is one the model never sees, and a tool reply that
       // echoes its text on an out-of-range index would be a way to read it.
-      if (criterion?.source === "evaluator") {
+      //
+      // It is the SAME sentence for an index that does not exist, which is the
+      // other half (V6 finding 26). Two different refusals let a model binary
+      // search for the number of criteria it was never shown: "no criterion at
+      // index 7" and "criterion 7 is the runtime's" are different answers to
+      // the same probe. One answer, and it names only the range the model
+      // itself read back.
+      if (!criterion || criterion.source === "evaluator") {
         return reply(
-          `Criterion ${index} is settled by the runtime's own run, not by citation. It will be ` +
-            `checked when this turn finishes and the result will be on the record either way. ` +
-            `Cite a criterion you read back instead.`,
+          `Criterion ${index} is not one you read back: if there is a criterion there it is ` +
+            `settled by the runtime's own run, not by citation, and the result will be on the ` +
+            `record either way. ${citableRange(ledger)}`,
         );
       }
 

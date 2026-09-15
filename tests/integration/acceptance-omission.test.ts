@@ -288,9 +288,13 @@ describe("T1: the independent oracle catches what the model left out", () => {
     expect(outcomes.filter((c) => c.attribution === "regression").map((c) => c.text)).toEqual([
       "both features are in",
     ]);
+    // The evaluator clause is new (V6 finding 21): a consumer can now count
+    // acceptance by the oracle, beside the criteria count and never instead
+    // of it. `met` means exactly what it meant.
     expect(verdictLine(terminal.verdict!)).toBe(
-      "[verdict] met — 3 of 3 accepted (1 regression-attributed)",
+      "[verdict] met — 3 of 3 accepted (1 regression-attributed); evaluator 2 of 2 satisfied",
     );
+    expect(terminal.verdict!.evaluators).toEqual({ satisfied: 2, total: 2 });
   }, 90_000);
 });
 

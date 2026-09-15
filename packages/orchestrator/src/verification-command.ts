@@ -756,6 +756,27 @@ const SELECTOR_FLAGS = new Set([
 const hasSelectorWord = (words: string[]): boolean =>
   words.some((w) => SELECTOR_FLAGS.has(w.split("=", 1)[0]!));
 
+/**
+ * A command that could not have failed: `true`, `:`, `exit 0` (V6 finding 25).
+ *
+ * The false-positive defence catches RUNNER-shaped no-ops — "0 tests", a
+ * missing runner — by reading their output. These print nothing at all, so
+ * there is nothing to read, and an acceptance command of `true` derived
+ * `satisfied` on the strength of an exit code nothing produced.
+ */
+export function isNoOpCommand(command: string): boolean {
+  const chain = lastCommandChain(command);
+  if (chain === null || chain.length === 0) return false;
+  return chain.every((input) => {
+    const words = [...input];
+    while (ASSIGNMENT.test(words[0] ?? "")) words.shift();
+    const program = base(words.shift() ?? "");
+    if (program === "true" || program === ":") return true;
+    if (program === "exit") return words.length === 0 || words[0] === "0";
+    return false;
+  });
+}
+
 /** Whether a check's command narrows it by test NAME, so it may match nothing. */
 export function hasTestSelector(command: string): boolean {
   const chain = lastCommandChain(command);

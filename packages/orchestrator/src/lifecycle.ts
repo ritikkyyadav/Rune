@@ -529,9 +529,23 @@ export function inheritedEmptyCompletions(
       continue;
     }
     if (event.type !== "decision") continue;
-    const p = event.payload as { guard?: unknown; applied?: unknown; transition?: unknown };
+    const p = event.payload as {
+      guard?: unknown;
+      applied?: unknown;
+      transition?: unknown;
+      inputs?: { emptyCompletions?: unknown };
+    };
     if (p.guard !== "E4" || p.applied !== true) continue;
-    if (p.transition === "working") seen += 1;
+    if (p.transition !== "working") continue;
+    // The ROW's own number, not the row COUNT (V6 finding 12). Counting rows
+    // drops the allowance the killed run had itself inherited: run A writes
+    // one row; run B inherits 1, spends one more and writes ONE row — whose
+    // `inputs.emptyCompletions` correctly reads 2 — and run C then inherited
+    // 1 again. Four empty completions against an allowance of three, growing
+    // one per crash. `Math.max` keeps the count monotonic, so a row without
+    // the field (an older log) still advances it by one.
+    const stated = Number(p.inputs?.emptyCompletions);
+    seen = Math.max(seen + 1, Number.isFinite(stated) ? Math.floor(stated) : 0);
   }
   return seen;
 }

@@ -1085,3 +1085,54 @@ describe("a parent commit the check could not run on", () => {
     if (v.ok) expect(v.rung).toBe("reproduced");
   });
 });
+
+describe("a hidden criterion cannot be counted by probing (V6 finding 26)", () => {
+  // The refusal used to say two different things: "criterion 7 is settled by
+  // the runtime's own run" for an evaluator criterion, and "no criterion at
+  // index 7" for an index that does not exist. A model that can never READ an
+  // evaluator criterion could still binary-search for how many there are by
+  // watching which sentence came back. It is one sentence now, and the only
+  // range it names is the one the model itself read back.
+  const withHidden = () =>
+    new BriefLedger({
+      reading: "the export is dropping rows",
+      touch: ["api.ts"],
+      leave: [],
+      criteria: [
+        { text: "the exporter writes every row", rung: null },
+        {
+          text: "the endpoint answers",
+          rung: null,
+          id: "a1",
+          source: "evaluator",
+          method: { kind: "command", command: "node check.mjs" },
+        },
+      ],
+      request: "fix the exporter",
+      createdAt: "2026-09-14T00:00:00.000Z",
+    });
+
+  test("the hidden criterion and an index that does not exist answer the same way", async () => {
+    const ledger = withHidden();
+    const log = logWith([["bun test", true, "44/44"]]);
+    const tool = createRecordEvidenceTool(
+      () => ledger,
+      () => log,
+    );
+    const call = async (criterion: number) =>
+      (
+        await tool.execute({
+          callId: `c${criterion}`,
+          toolName: "record_evidence",
+          args: { criterion, command: "bun test" },
+        } as never)
+      ).result as string;
+
+    const hidden = await call(1);
+    const absent = await call(7);
+    expect(hidden.replace("1", "N")).toBe(absent.replace("7", "N"));
+    // …and the range it names is the CITABLE one: one criterion was read back.
+    expect(hidden).toContain("numbered 0-0");
+    expect(hidden).toContain("settled by the runtime's own run");
+  });
+});
