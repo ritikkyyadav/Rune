@@ -22,7 +22,16 @@ export interface PilotOptions {
   opencodeCommand: string[];
   /** Read the tasks from a frozen corpus directory instead of COMPARISON_TASKS. */
   corpus?: string;
+  /**
+   * What this run's arms are pointed at. `live` demands the spend
+   * authorisation; `scripted` declares arms that reach no provider. Left unset
+   * the runner INFERS it from the commands (see `pilotSpendRoute`), so a caller
+   * never has to remember a flag to be refused — only to be let through.
+   */
+  route?: SpendRoute;
 }
+
+export type SpendRoute = "live" | "scripted";
 
 /**
  * The frozen corpus as live comparison tasks.
@@ -242,11 +251,46 @@ export function authorisedBudgetUsd(env: NodeJS.ProcessEnv = process.env): numbe
   return value;
 }
 
+/**
+ * The command shapes that can reach a provider.
+ *
+ * A pilot run is two spawns. Money is spent by a spawn of a REAL harness — the
+ * rune CLI, or `opencode` — against real credentials; a spawn of a fixture
+ * script that writes a sqlite row and exits cannot spend, whatever the
+ * environment says. The pattern matches the argv the `--real` block below
+ * builds (`bun …/bin/rune-cli.ts`, `--rune-bin …/rune`, `opencode`), on any
+ * token of the command, so the recogniser sees the harness whether it is
+ * argv0 or the script argv1.
+ */
+const LIVE_HARNESS_COMMAND = /(^|[/\\])(rune|rune-cli\.ts|rune-cli|opencode)$/;
+
+/**
+ * Can this run spend?
+ *
+ * The refusal has to sit in front of the runs that CAN spend and nowhere else:
+ * a guard that also refuses a scripted, zero-dollar run is not a safety
+ * property, it is a red unit gate (V6 finding 6), and a red gate is the thing
+ * that gets guards deleted. Declared `route` wins; otherwise a run is live iff
+ * one of its arm commands names a real harness.
+ */
+export function pilotSpendRoute(
+  options: Pick<PilotOptions, "runeCommand" | "opencodeCommand" | "route">,
+): SpendRoute {
+  if (options.route) return options.route;
+  const live = [...(options.runeCommand ?? []), ...(options.opencodeCommand ?? [])].some((token) =>
+    LIVE_HARNESS_COMMAND.test(token),
+  );
+  return live ? "live" : "scripted";
+}
+
 export async function runPilot(options: PilotOptions) {
-  const authorised = authorisedBudgetUsd();
+  // `authorisedBudgetUsd` is the authorisation for spending; this is the prior
+  // question of whether spending is even possible. A scripted route asks
+  // neither, and its `--budget-usd` is then only the per-task ceiling below.
+  const authorised = pilotSpendRoute(options) === "live" ? authorisedBudgetUsd() : null;
   const catalogue = options.corpus ? corpusTasks(options.corpus) : COMPARISON_TASKS;
   const tasks = catalogue.filter((task) => !options.tasks || options.tasks.includes(task.id));
-  if (options.budgetUsd > authorised)
+  if (authorised !== null && options.budgetUsd > authorised)
     throw new Error(
       `--budget-usd ${options.budgetUsd} is above the authorised RUNE_EVAL_BUDGET_USD ${authorised}.`,
     );
@@ -438,6 +482,8 @@ if (import.meta.main) {
       out = get("out");
     if (!model || !out) throw new Error("--model and --out are required");
     await runPilot({
+      // `--real` IS the live route; it never depends on the recogniser.
+      route: "live",
       out: resolve(out),
       model,
       runeProvider: get("rune-provider") ?? "codex",

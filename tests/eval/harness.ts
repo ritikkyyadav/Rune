@@ -3,13 +3,14 @@ import { rmTemp } from "../helpers/tmp";
 import { tmpdir } from "os";
 import { join } from "path";
 import { Database } from "bun:sqlite";
+import { accessSync, constants } from "node:fs";
 
 import { Engine } from "@rune/orchestrator";
 import type {
   PermissionDecision as BrokerDecision,
   UserPermissionDecision,
 } from "@rune/orchestrator";
-import { openCredentialStore } from "@rune/shared";
+import { openCredentialStore, PROVIDER_PRESETS } from "@rune/shared";
 import type { ResolvedCredential } from "@rune/llm-gateway";
 
 import { resolveProviderCredentials } from "../../packages/orchestrator/src/provider-registry";
@@ -269,10 +270,19 @@ const REAL_DEFAULT_MAX_COST = Math.max(
 // Both spellings, because CI jobs and local runs export either one; the
 // repeated `RUNE_TOOLS_BINARY` here was a rename artifact that made an
 // exported `RUNE_TOOLS_BIN` invisible.
-const TOOLS_BINARY =
-  process.env.RUNE_TOOLS_BINARY ??
-  process.env.RUNE_TOOLS_BIN ??
-  join(__dirname, "..", "..", "target", "release", "rune-tools");
+// A BLANK spelling is unset, not a path. `export RUNE_TOOLS_BIN=$PWD/… \
+// RUNE_TOOLS_BINARY=$RUNE_TOOLS_BIN` in one statement leaves the second one
+// empty in zsh, and `??` let "" through as if it were a binary: every tool call
+// then failed and the suite reported 24/63 as a MEASUREMENT rather than as a
+// broken rig. That is the same class as V6 finding 30 — a gate whose number
+// depends on the shell — and `toolsBinaryPath` is where it entered.
+export function resolveToolsBinary(env: NodeJS.ProcessEnv = process.env): string {
+  const named = [env.RUNE_TOOLS_BINARY, env.RUNE_TOOLS_BIN].find(
+    (value) => typeof value === "string" && value.trim() !== "",
+  );
+  return named ?? join(__dirname, "..", "..", "target", "release", "rune-tools");
+}
+const TOOLS_BINARY = resolveToolsBinary();
 
 /**
  * Legacy/default real-mode signal via env var. The runner now drives mode
@@ -280,6 +290,60 @@ const TOOLS_BINARY =
  * only set the env var (e.g. the model-sweep path) still behave as before.
  */
 const IS_REAL_MODE = (process.env.RUNE_EVAL_REAL ?? process.env.RUNE_EVAL_REAL) === "1";
+
+/**
+ * Credential-shaped environment, by a stated predicate rather than a roster.
+ *
+ * A name is credential-shaped when it ends in one of the suffixes every
+ * provider in the registry uses for a secret, or when it is one of the
+ * documented credential-CHAIN variables (bedrock and vertex authenticate from
+ * these, and neither ends in a secret suffix). The registry's own `envVar`
+ * column is unioned in so a preset that invents a new spelling — `SCW_SECRET_KEY`
+ * is the live example — is covered the day it is added, not the day somebody
+ * notices. A roster of two suffixes could not see its own blind spot.
+ */
+const CREDENTIAL_SUFFIXES = [
+  "_KEY",
+  "_TOKEN",
+  "_SECRET",
+  "_PASSWORD",
+  "_CREDENTIAL",
+  "_CREDENTIALS",
+  "_AUTH",
+];
+const CREDENTIAL_CHAIN_VARS = [
+  "AWS_ACCESS_KEY_ID",
+  "AWS_PROFILE",
+  "AWS_REGION",
+  "AWS_SESSION_TOKEN",
+  "GOOGLE_APPLICATION_CREDENTIALS",
+  "GOOGLE_CLOUD_PROJECT",
+  "GOOGLE_VERTEX_PROJECT",
+];
+export function isCredentialShapedEnv(name: string): boolean {
+  if (CREDENTIAL_CHAIN_VARS.includes(name)) return true;
+  if (PROVIDER_PRESETS.some((preset) => preset.envVar === name)) return true;
+  return CREDENTIAL_SUFFIXES.some((suffix) => name.endsWith(suffix));
+}
+
+/**
+ * Make a mock run hermetic.
+ *
+ * `bun run eval` builds a real `Engine` and only then swaps the mock provider
+ * into its gateway, so every credential visible in the environment has already
+ * been read: a stray `OLLAMA_API_KEY` on the operator's shell turned the mock
+ * gate from 63/63 into 24/63 (V6 finding 30) without touching a line of
+ * product code. A gate whose number depends on the shell is not a gate, so the
+ * mock path removes provider credentials from its own process before the first
+ * Engine exists. Real mode is never scrubbed — it needs exactly these.
+ *
+ * Returns the names it removed, so a test can assert the scrub happened.
+ */
+export function scrubProviderEnv(env: NodeJS.ProcessEnv = process.env): string[] {
+  const removed = Object.keys(env).filter(isCredentialShapedEnv);
+  for (const name of removed) delete env[name];
+  return removed;
+}
 
 export interface RunOptions {
   /** Drive a live model through the real engine/gateway instead of the mock. */
@@ -306,6 +370,8 @@ export interface RunOptions {
 
 export async function runTask(task: EvalTask, opts: RunOptions = {}): Promise<TaskResult> {
   const real = opts.real ?? IS_REAL_MODE;
+  // Before any Engine exists in this process (V6 finding 30).
+  if (!real) scrubProviderEnv();
 
   // Mock mode needs a deterministic script; fail fast without spinning up.
   if (!real && !task.script) {
@@ -568,8 +634,29 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
   }
 }
 
+/**
+ * Refuse to produce a number the rig cannot support.
+ *
+ * Every task in this suite drives the native tool binary. When it is missing —
+ * a worktree with no `target/`, a blank `RUNE_TOOLS_BINARY` — every tool call
+ * fails, the suite still prints a percentage, and the percentage is about the
+ * rig rather than about the harness. A suite that cannot measure says so.
+ */
+export function assertToolsBinary(path: string = TOOLS_BINARY): void {
+  try {
+    accessSync(path, constants.X_OK);
+  } catch {
+    throw new Error(
+      `The native tool binary is not executable at ${path || "(blank)"}. ` +
+        "Build it with `cargo build --release -p rune-tools`, or point RUNE_TOOLS_BIN at one. " +
+        "Every task here drives it, so a run without it reports the rig, not the harness.",
+    );
+  }
+}
+
 export async function runSuite(tasks: EvalTask[], opts: RunOptions = {}): Promise<TaskResult[]> {
   const real = opts.real ?? IS_REAL_MODE;
+  assertToolsBinary();
   const results: TaskResult[] = [];
   for (let i = 0; i < tasks.length; i++) {
     const result = await runTask(tasks[i], opts);

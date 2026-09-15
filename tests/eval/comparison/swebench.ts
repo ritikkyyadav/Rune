@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 import { loadAnchor } from "../anchors";
 import { prepareHarness, runeCost } from "./harness";
 import { runProcess } from "./process";
-import type { PilotOptions } from "./runner";
+import { authorisedBudgetUsd, type PilotOptions } from "./runner";
 
 export interface SWEInstance {
   instance_id: string;
@@ -77,6 +77,10 @@ export function predictionFor(root: string, instance: SWEInstance, model: string
 export async function runSWE(
   options: PilotOptions & { dataset: string; repos: string; anchor?: string },
 ) {
+  // This runner spawns the real rune CLI against a live provider for fifty
+  // pinned instances. It asks about the money BEFORE it touches the disk, so a
+  // missing dataset can never be what stops an unauthorised live run.
+  authorisedBudgetUsd();
   if (existsSync(options.out))
     throw new Error("Use a fresh output directory; predictions must not overwrite an earlier run.");
   if (!(options.budgetUsd > 0 && Number.isFinite(options.budgetUsd) && options.timeoutMs > 0))

@@ -12,7 +12,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
-import { authorisedBudgetUsd, corpusTasks } from "../../eval/comparison/runner";
+import { authorisedBudgetUsd, corpusTasks, pilotSpendRoute } from "../../eval/comparison/runner";
 import { TASK_IDS, loadAcceptance, loadTask } from "../../eval/corpus/corpus";
 
 describe("RUNE_EVAL_BUDGET_USD authorises a live run, or there is no live run", () => {
@@ -45,6 +45,10 @@ describe("RUNE_EVAL_BUDGET_USD authorises a live run, or there is no live run", 
     delete process.env.RUNE_EVAL_BUDGET_USD;
     try {
       const { runPilot } = await import("../../eval/comparison/runner");
+      // The arms are the REAL harness — the same argv the `--real` block
+      // builds. That is the run that can spend, and it is the run that has to
+      // be refused; it never reaches a spawn, because the refusal is the first
+      // thing runPilot does.
       await expect(
         runPilot({
           out: join(import.meta.dir, "never-created"),
@@ -54,6 +58,23 @@ describe("RUNE_EVAL_BUDGET_USD authorises a live run, or there is no live run", 
           budgetUsd: 2,
           timeoutMs: 1000,
           runs: 1,
+          tasks: ["csv-state-machine"],
+          runeCommand: [process.execPath, "packages/orchestrator/src/bin/rune-cli.ts"],
+          opencodeCommand: ["opencode"],
+        }),
+      ).rejects.toThrow(/not authorised/i);
+      // And a declared live route is refused whatever the commands look like.
+      await expect(
+        runPilot({
+          route: "live",
+          out: join(import.meta.dir, "never-created"),
+          model: "nothing",
+          runeProvider: "codex",
+          opencodeProvider: "openai",
+          budgetUsd: 2,
+          timeoutMs: 1000,
+          runs: 1,
+          tasks: ["csv-state-machine"],
           runeCommand: ["false"],
           opencodeCommand: ["false"],
         }),
@@ -62,6 +83,32 @@ describe("RUNE_EVAL_BUDGET_USD authorises a live run, or there is no live run", 
       if (previous === undefined) delete process.env.RUNE_EVAL_BUDGET_USD;
       else process.env.RUNE_EVAL_BUDGET_USD = previous;
     }
+  });
+
+  test("the recogniser reads a real harness in either arm, and only there", () => {
+    const base = {
+      route: undefined,
+      runeCommand: ["false"],
+      opencodeCommand: ["false"],
+    } as const;
+    expect(pilotSpendRoute(base)).toBe("scripted");
+    expect(
+      pilotSpendRoute({
+        ...base,
+        runeCommand: [process.execPath, "/repo/packages/orchestrator/src/bin/rune-cli.ts"],
+      }),
+    ).toBe("live");
+    expect(pilotSpendRoute({ ...base, runeCommand: ["/usr/local/bin/rune"] })).toBe("live");
+    expect(pilotSpendRoute({ ...base, opencodeCommand: ["opencode"] })).toBe("live");
+    // A fixture script in a temp directory reaches no provider.
+    expect(
+      pilotSpendRoute({ ...base, runeCommand: [process.execPath, "/tmp/x/interrupted.ts"] }),
+    ).toBe("scripted");
+    // A declaration always wins over the recogniser, in both directions.
+    expect(pilotSpendRoute({ ...base, route: "live" })).toBe("live");
+    expect(pilotSpendRoute({ ...base, route: "scripted", opencodeCommand: ["opencode"] })).toBe(
+      "scripted",
+    );
   });
 });
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { readFile } from "fs/promises";
 
+import { authorisedBudgetUsd } from "./comparison/runner";
 import { runSuite, IS_REAL_MODE } from "./harness";
 import type { EvalTask } from "./harness";
 import { ALL_TASKS } from "./tasks";
@@ -168,6 +169,13 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   // --real flag OR the legacy RUNE_EVAL_REAL=1 env var enables real mode.
   const real = args.real || IS_REAL_MODE;
+
+  // Real mode drives a LIVE model through the real gateway, and `RUNE_EVAL_REAL=1`
+  // reaches it without anybody typing a flag. The same authorisation the
+  // comparison pilot asks for is asked here, at the door, before a task is
+  // selected or a key is looked up: an unset RUNE_EVAL_BUDGET_USD is a refusal,
+  // never a default. Mock mode spends nothing and is never asked.
+  if (real) authorisedBudgetUsd();
 
   const provider =
     process.env.RUNE_EVAL_PROVIDER ??
