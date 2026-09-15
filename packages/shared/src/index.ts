@@ -204,6 +204,7 @@ export {
   estimateMemoryTokens,
   clampToBudget,
 } from "./system-memory.js";
+export { type UiLayout, DEFAULT_UI_LAYOUT, parseUiLayout, resolveUiLayout } from "./ui-layout.js";
 export * from "./session.js";
 export {
   type RunState,

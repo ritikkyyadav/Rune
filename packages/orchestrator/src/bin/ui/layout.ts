@@ -31,33 +31,14 @@
 // layout mid-session would re-wrap the whole history at a width it was never
 // written for -- the same reason `contentCols` refuses to consult the mode.
 
-export type UiLayout = "single" | "split";
+// The vocabulary itself lives in `@rune/shared` (ui-layout.ts) because the
+// engine must be able to read `[ui] layout` back for `/config` without
+// importing the terminal layer. Re-exported here so this module stays the one
+// place the rest of the TUI asks about the layout.
+export type { UiLayout } from "@rune/shared";
+export { DEFAULT_UI_LAYOUT, parseUiLayout, resolveUiLayout } from "@rune/shared";
 
-/** The founder's default, 2026-09-15. */
-export const DEFAULT_UI_LAYOUT: UiLayout = "single";
-
-const LAYOUTS: readonly UiLayout[] = ["single", "split"];
-
-/** Fold a written value onto the two we have. Anything else is the default --
- *  a typo in config.toml must not decide the shape of the window. */
-export function parseUiLayout(value: string | undefined | null): UiLayout | undefined {
-  if (value == null) return undefined;
-  const folded = value.trim().toLowerCase();
-  if (folded === "") return undefined;
-  // The two names people reach for. `workspace` is what Phase 4's own document
-  // calls the split, and `wide`/`panel` are what the founder called it aloud.
-  if (folded === "workspace" || folded === "wide" || folded === "panel") return "split";
-  if (folded === "simple" || folded === "column" || folded === "classic") return "single";
-  return LAYOUTS.includes(folded as UiLayout) ? (folded as UiLayout) : undefined;
-}
-
-/** env beats config beats the default. Pure, so the precedence is a test. */
-export function resolveUiLayout(input: {
-  env?: string | undefined;
-  configured?: string | undefined;
-}): UiLayout {
-  return parseUiLayout(input.env) ?? parseUiLayout(input.configured) ?? DEFAULT_UI_LAYOUT;
-}
+import { DEFAULT_UI_LAYOUT, type UiLayout } from "@rune/shared";
 
 let current: UiLayout = DEFAULT_UI_LAYOUT;
 

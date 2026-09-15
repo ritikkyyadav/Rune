@@ -86,6 +86,8 @@ import {
   loadSystemMemory,
   loadSystemMemoryMeta,
   loadConfig,
+  DEFAULT_UI_LAYOUT,
+  parseUiLayout,
   saveSystemMemory,
   saveSystemMemoryMeta,
   saveRefreshedSystemMemory,
@@ -121,7 +123,6 @@ import type {
   SystemMemoryRefusal,
   SystemMemoryBackup,
 } from "@rune/shared";
-import { DEFAULT_UI_LAYOUT, parseUiLayout } from "./bin/ui/layout";
 import { buildGateway, providerStatus } from "./provider-registry";
 import type { EnterpriseRouteConfig } from "./provider-registry";
 import type { ProviderStatusRow, BuildGatewayOpts } from "./provider-registry";
