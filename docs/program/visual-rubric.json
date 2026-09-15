@@ -1,0 +1,70 @@
+{
+  "id": "visual-rubric",
+  "version": 1,
+  "written": "2026-09-15",
+  "purpose": "The predefined rubric a blind reviewer answers over preserved screenshots. It exists so 'the design got better' can be a claim with a method behind it instead of an adjective. It grades what is VISIBLE in the capture; functional acceptance is a separate, independent check and this rubric never restates it.",
+  "verdicts": ["pass", "fail", "unclear"],
+  "rules": [
+    "The reviewer is not the model that produced the screen, and is blind to the request that produced it: it sees the rubric and the captures, nothing else.",
+    "Every criterion is answered pass, fail or unclear, with one line quoting what in the capture settles it. 'unclear' is a real answer and is expected whenever the capture cannot show the criterion.",
+    "There is no score. No number, no grade, no weighting, no total. A rubric answer is evidence a person reads, not a measurement.",
+    "A review is recorded on a criterion whose method is 'review', which the acceptance semantics derive as needs_review and never as satisfied. A second model supplements a person's judgement; it cannot certify in their place."
+  ],
+  "criteria": [
+    {
+      "id": "hierarchy",
+      "name": "Hierarchy",
+      "asks": "Does one element clearly dominate, and does the eye have an obvious first, second and third stop?",
+      "fail_when": "Several elements compete at the same visual weight, or the most important thing on the screen is not the most prominent.",
+      "unclear_when": "The capture shows only a fragment of the screen."
+    },
+    {
+      "id": "spacing-rhythm",
+      "name": "Spacing rhythm",
+      "asks": "Do the gaps come from one repeating scale, and does whitespace group related things and separate unrelated ones?",
+      "fail_when": "Gaps look arbitrary, related items are further apart than unrelated ones, or content is crammed against an edge."
+    },
+    {
+      "id": "type-scale",
+      "name": "Type scale",
+      "asks": "Is there a real, small set of type sizes and weights doing distinct jobs — one display size, quiet body, distinct labels?",
+      "fail_when": "Many near-identical sizes, body text at heading weight, or a wall of one size."
+    },
+    {
+      "id": "contrast",
+      "name": "Contrast",
+      "asks": "Is every piece of text legible against what is behind it, including secondary text, placeholders and text over images?",
+      "fail_when": "Any text is hard to read in the capture, or a state is signalled by a hue difference alone."
+    },
+    {
+      "id": "responsive-integrity",
+      "name": "Responsive integrity",
+      "asks": "Comparing the wide and narrow captures: does the layout genuinely reflow, with nothing clipped, overlapping or scrolling sideways?",
+      "fail_when": "The narrow capture shows horizontal overflow, overlapping elements, or a desktop layout merely shrunk.",
+      "unclear_when": "Only one viewport was captured.",
+      "needs": ["wide", "narrow"]
+    },
+    {
+      "id": "state-clarity",
+      "name": "State clarity",
+      "asks": "Where a state is captured — loading, empty, error — does it say what happened and what to do next?",
+      "fail_when": "A state renders as a blank area, a raw error string, or a spinner with no context.",
+      "unclear_when": "No state other than the populated one was captured."
+    },
+    {
+      "id": "focus-visibility",
+      "name": "Focus visibility",
+      "asks": "In the keyboard-focus capture, is the focused control unmistakable without hunting for it?",
+      "fail_when": "No visible focus indicator, or one that disappears against its background.",
+      "unclear_when": "No capture shows a focused control."
+    },
+    {
+      "id": "reference-consistency",
+      "name": "Consistency with the supplied reference",
+      "asks": "Against the supplied reference or the product's existing screens, does this look like the same product — same type, spacing, palette, component shapes?",
+      "fail_when": "It reads as a different product, or reinvents a component the reference already has.",
+      "unclear_when": "No reference was supplied.",
+      "needs": ["reference"]
+    }
+  ]
+}
