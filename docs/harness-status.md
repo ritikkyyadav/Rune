@@ -14,12 +14,12 @@ long-running self-improvement, and a claim to be the world's best harness are no
 
 ## Installed and reviewable
 
-Latest installation: **Rune v0.4.1-dev+33cea48**, built from commit `33cea48` on
-`gear/phase-0-stabilize` from a clean tree (`RUNE_SOURCE_DIRTY=0`) and certified by
-[the re-verification manifest](evidence/verification-20260911b.json).
+Latest installation: **Rune v0.4.1-dev+928bee0** (2026-09-15 night, the founder's own session; the previous supervisor install was `c68a349`), on
+`gear/phase-0-stabilize`; the current manifest is
+[verification-20260914.json](evidence/verification-20260914.json).
 
-- Current CLI SHA-256: `a58f592060542f95522202ebe31fadb0b6b5d4fbcc7680a9db21e426aa347f29`
-- Current native SHA-256: `c5b44f6e3620aae0cf82941a9e155fb95097815b1cd673eb9c98aa1347a28416`
+- Current CLI SHA-256: `66229ed5d2d6ae136eaf4ff78b16cb66fc161e5472bdcfdf43ed494c3d73d437`
+- Current native SHA-256: `f53cbddf32431706edf64c030db729c9d7352e50b6d1fe3d81317fe388579bc0` (moved at the `8024ac0` install, when lane D's Rust audit-path fix was first built; `c5b44f6e…` before that)
 - The `rune` launcher shim is unchanged across every install in this series:
   `5a22d1513ef3a12596add9c53f2591f1f46a8938a3ef9f8cd7db0c3f6edfc2f5`
 
@@ -1066,7 +1066,7 @@ under 1.4 ms per run.
 
 **Installed.** `bash scripts/install.sh`, no override: **Rune v0.4.1-dev+a47e9fc** (the
 docs commit atop `b5632fb`), CLI `d842162656d2beecd4e71ab80c1881466aabffd2576129948a40123de7c2a17d`,
-native and launcher unchanged; doctor's build line current, tools-smoke green. Through that binary (`RUNE_SCENARIO_CLI`), `lifecycle-durability` is **47 / 0** again.
+native `c5b44f6e…` and launcher unchanged at that install; doctor's build line current at install, tools-smoke green. Through that binary (`RUNE_SCENARIO_CLI`), `lifecycle-durability` is **47 / 0** again.
 
 **Residual, from the lane's own report.** The absorbing rule hides later decisions in a run
 (the disagreement count is a floor); G9 will always disagree on a contracted run until M3
@@ -1483,7 +1483,7 @@ format and prettier clean, cargo fmt clean, cargo test **109 / 0**, clippy 0 war
 eval **63 / 63 at 0.27** with the baseline unchanged, auto-safety offline P 92.8 / R 89.1 /
 F1 90.9 with 0 live requests, `git diff --check` clean. Installed without an override:
 **Rune v0.4.1-dev+8024ac0**, CLI `8678752aae937168f63fe9d52d3759cbdda18cbd16f0ed4fe3de878967e0953a`,
-native unchanged; doctor's build line current; tools-smoke green. Every controller key is
+native `f53cbddf…` (moved at this install — see Addendum 25); doctor's build line current at install; tools-smoke green. Every controller key is
 absent by default, so the installed binary behaves as before unless the founder opts in
 through `[controller] authority`; memory learns in the founder's interactive sessions and
 nowhere else. The second adversarial verifier pass — over M4, memory, the single column and
@@ -1667,7 +1667,7 @@ lint 7 / 7, format and Prettier clean, cargo fmt clean, cargo test 110 / 0, clip
 mock eval 63 / 63 at 0.27 with the baseline unchanged, auto-safety offline P 92.8 / R 89.1 /
 F1 90.9 with 0 live requests, `git diff --check` clean. Installed without an override:
 **Rune v0.4.1-dev+c68a349**, CLI `bfad16ef017c4fa5cda6699b933b3e475ce0fade8753538a82128948fc93f221`,
-native unchanged. On the binary: doctor's build line current and its browser line honest,
+native `f53cbddf…` (moved at the `8024ac0` install — see Addendum 25). On the binary: doctor's build line current at install (stale by this commit) and its browser line honest,
 tools-smoke green, lifecycle ** 47 pass 0 fail ** through `RUNE_SCENARIO_CLI`, and `rune memory` under a
 scratch home prints `Memory: auto — Rune decides when to update its memory` and the empty-store
 sentence.
