@@ -308,5 +308,32 @@
       "frames": ".codex/audit-20260910/handoff/m0/ui-single-frames/installed-120x40-{idle,typed}.txt"
     },
     "incident": "the mock eval wrote 30 learned-memory entries into the founder's real ~/.rune/memory before ba1f3f6 made the store opt-in at the Engine boundary; backed up and removed; recorded in harness-status Addendum 13"
+  },
+  "afterM4": {
+    "date": "2026-09-15",
+    "commits": "5e2d554, f232163, eb36218 (M4); f559c50, 3926f19 (adapters); docs",
+    "gatesAt": "8024ac0",
+    "gates": {
+      "unit": "5,507 ran / 0 fail (410 files, 70.0 s)",
+      "integration": "383 ran / 0 fail (63 files, 127.8 s)",
+      "lifecycle": "47 / 0",
+      "typecheck": "15/15",
+      "lint": "7/7",
+      "format": "clean",
+      "cargoFmt": "clean",
+      "cargoTest": "109 / 0",
+      "clippy": "0 warnings",
+      "eval": "63/63 at 0.27, baseline unchanged",
+      "autoSafetyOffline": "P 92.8 / R 89.1 / F1 90.9, 0 live requests",
+      "gitDiffCheck": "clean",
+      "prettier": "clean"
+    },
+    "installed": {
+      "version": "Rune v0.4.1-dev+8024ac0",
+      "cliSha256": "8678752aae937168f63fe9d52d3759cbdda18cbd16f0ed4fe3de878967e0953a",
+      "doctorBuildLine": "current \u2014 gear/phase-0-stabilize@8024ac08+dirty",
+      "toolsSmoke": "green"
+    },
+    "secondVerifierPass": "launched on 8024ac0; report .codex/audit-20260910/handoff/m0/verify-batch-2-report.md"
   }
 }

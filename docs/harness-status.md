@@ -1474,3 +1474,19 @@ fingerprint unmoved, zero model calls. Seven residual risks and five things deli
 built are in the lane's report; the class driven end to end through a child process is
 `no_progress` (the only one a scripted model reaches), the other counters are pinned on the
 real loop in-process.
+
+### Addendum 17 — gated and installed with M4; the second verifier pass is running
+
+The handoff's full gate list on `8024ac0`: unit **5,507 ran / 0 fail** (410 files),
+integration **383 ran / 0 fail** (63 files), lifecycle 47 / 0, typecheck 15 / 15, lint 7 / 7,
+format and prettier clean, cargo fmt clean, cargo test **109 / 0**, clippy 0 warnings, mock
+eval **63 / 63 at 0.27** with the baseline unchanged, auto-safety offline P 92.8 / R 89.1 /
+F1 90.9 with 0 live requests, `git diff --check` clean. Installed without an override:
+**Rune v0.4.1-dev+8024ac0**, CLI `8678752aae937168f63fe9d52d3759cbdda18cbd16f0ed4fe3de878967e0953a`,
+native unchanged; doctor's build line current; tools-smoke green. Every controller key is
+absent by default, so the installed binary behaves as before unless the founder opts in
+through `[controller] authority`; memory learns in the founder's interactive sessions and
+nowhere else. The second adversarial verifier pass — over M4, memory, the single column and
+the breathing mark, Lane F, the two fix lanes' closures of the first pass's criticals, and the
+adapters — was launched on this tree; its findings go to fix lanes before any authority key
+is switched on and before memory is relied upon.
