@@ -749,3 +749,21 @@ Reports: `.codex/audit-20260910/handoff/m0/{m1,p4,p4-restart}-report.md`.
   reads `partial`. Either let the verdict report "all evaluator criteria satisfied; inferred
   criteria need review" as its own kind, or let a `question`/`plan`-shaped criterion be
   satisfied by an evaluator pass. Found by the M5 offline run. — M5 — Claude
+
+## Closed by the 2026-09-15 fix lanes (recorded above, now fixed)
+
+- `REVISION_MEMO_MS` stale-under-a-slow-gate → the revision is stamped on the `CheckRun` at
+  check time (`f3989cb`).
+- `capture.py` passing `OLLAMA_API_KEY` through → scrub by predicate (`edd96ef`); the earlier
+  scrub-by-shape was itself a two-suffix roster.
+- The Phase 3 residue that `interject()` never re-ran doctrine routing → routing per user
+  message (`024dba3`).
+- The question/plan `met` limit stands, but every verdict now carries
+  `evaluators { satisfied, total }` so a consumer can count acceptance by the oracle
+  (`d9c524e`); the corpus's two remaining false negatives are that limit.
+
+Still open from the sections above: the two credential stores; the wizard writing to the real
+keychain under a scratch profile; `first-run-frame.ts` untracked; the §2.8 remainder items;
+`card.costUsd`, `SessionReadout.lastCheck`, the child pane's tool results; the 42 implicit width
+reads; the `ec8490e` credit; the `custom`-in-keychain branch (deleted, not made real — a
+`secrets.ts`/`buildGateway` change first); `runVisualReview` wired into no live path.
