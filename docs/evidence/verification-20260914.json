@@ -332,7 +332,8 @@
       "version": "Rune v0.4.1-dev+8024ac0",
       "cliSha256": "8678752aae937168f63fe9d52d3759cbdda18cbd16f0ed4fe3de878967e0953a",
       "doctorBuildLine": "current \u2014 gear/phase-0-stabilize@8024ac08+dirty",
-      "toolsSmoke": "green"
+      "toolsSmoke": "green",
+      "nativeSha256": "f53cbddf32431706edf64c030db729c9d7352e50b6d1fe3d81317fe388579bc0"
     },
     "secondVerifierPass": "launched on 8024ac0; report .codex/audit-20260910/handoff/m0/verify-batch-2-report.md"
   },
@@ -361,7 +362,8 @@
       "cliSha256": "bfad16ef017c4fa5cda6699b933b3e475ce0fade8753538a82128948fc93f221",
       "doctorBuildLine": "current \u2014 gear/phase-0-stabilize@c68a3490+dirty",
       "toolsSmoke": "green",
-      "runeMemoryScratchHome": "Memory: auto \u2014 Rune decides when to update its memory"
+      "runeMemoryScratchHome": "Memory: auto \u2014 Rune decides when to update its memory",
+      "nativeSha256": "f53cbddf32431706edf64c030db729c9d7352e50b6d1fe3d81317fe388579bc0"
     },
     "secondVerifierPass": {
       "report": ".codex/audit-20260910/handoff/m0/verify-batch-2-report.md",
@@ -378,5 +380,25 @@
       "lowsOpenInBacklog": true
     },
     "thirdVerifierPass": "not yet run; before M6"
+  },
+  "correction20260915evening": {
+    "nativeSha256Now": "f53cbddf32431706edf64c030db729c9d7352e50b6d1fe3d81317fe388579bc0",
+    "nativeMovedAt": "install of 8024ac0 (first install after 44a4e43 rebuilt rune-tools)",
+    "claimsCorrected": [
+      "afterM4.installed and afterFoundersCorrections.installed said native unchanged \u2014 false",
+      "doctorBuildLine 'current' claims are true at install time and stale by the commit that records them"
+    ],
+    "thirdVerifierPass": {
+      "report": ".codex/audit-20260910/handoff/m0/verify-batch-3-report.md",
+      "critical": 5,
+      "high": 11,
+      "medium": 13,
+      "low": 14,
+      "verdict": "not safe for a first real session with memory in auto; no authority key yet",
+      "fixLanes": [
+        "E1 memory provenance/guard/kill switch",
+        "E2 vault control path, authorship via runners, git witness, symlinks, launcher .env, cargo test home, scripts"
+      ]
+    }
   }
 }

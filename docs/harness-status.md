@@ -1690,3 +1690,43 @@ pre-overwrite profile has no backup; M6 and Phase 6 not started; the second veri
 open in the backlog. A third adversarial pass over the fix lanes C and D, the closing lane,
 the pulse rework and the memory modes has not yet run; per the founder's loop it runs before
 M6.
+
+### Addendum 25 — the third adversarial pass, and two corrections to this record
+
+`.codex/audit-20260910/handoff/m0/verify-batch-3-report.md` on `c68a349`: **five critical,
+eleven high, thirteen medium, fourteen low**; fifteen red test files under
+`tests/verification/v8-*`. **Verdict: not safe for a first real session with memory in
+`auto`, and no authority key yet.** Critical: the store's content-derived id proves the text
+and not the provenance, so a file with an ordinary sentence and a computed id still reads back
+as user-corrected, pinned and promoted; `provenance.evidence` is rendered verbatim and guarded
+on neither path; the acceptance vault under the home is not a control path and `rm -rf` of it
+restores the pre-fix behaviour silently; the authorship defence is never reached by a test
+runner because the program-path resolver returns nothing for `bun test <file>`, and the lane's
+only test set the field directly; and a `git commit` inside the run blinds the git witness.
+High, among others: the memory guard is a corpus of the shapes it was shown; the narrative
+guard is per line; there is no memory kill switch outside a session because the live sidecar
+outranks config and env; `pinned` is honoured on an observed entry with no sessions; a
+workspace symlink escapes containment; **the installed launcher sources `~/.rune/.env`
+unconditionally, so every rig in this programme ran with the founder's real API keys present**
+(no call was made, by construction of every rig, but the keys were there); and **`cargo test
+--locked --workspace`, gate eight of thirteen, appends seven lines to the founder's
+`audit.jsonl` on every run, including the gate run this record cites**. Confirmed closed from
+the second pass: the TypeScript-error classification, the repair bound across three crashes,
+the adapter env, reviewer lineage, the layout setting, the footer picker, the mutation
+survivors, the eval hermeticity; `memory_update` really is absent outside `auto`. Two fix lanes
+are running (E1: memory provenance, an HMAC over each entry, the structural guard, the kill
+switch; E2: the vault as a fail-closed control path, runner-argument authorship, the git
+witness, symlinks, the launcher, cargo's test home, the scripts).
+
+**Corrections to this record.** (1) "Native unchanged" in Addenda 14, 17 and 24 is false:
+`rune-tools` was rebuilt by lane D's Rust fix (`44a4e43`) and first installed with
+`8024ac0`; the installed native binary is `f53cbddf32431706edf64c030db729c9d7352e50b6d1fe3d81317fe388579bc0`
+from that install onward, and the manifest now says so. (2) "Doctor's build line current" in
+Addenda 17 and 24 was true at the moment of the install and false by the time the sentence was
+committed, because the docs commit that carries the sentence is what made the build stale; from
+now on the record says "current at install; stale by this commit". (3) Addenda 20 and 22 report
+overlapping suites with different denominators (the supervisor's reruns picked different file
+sets); the numbers are each true of their own command, which is now written beside them in the
+gate directories. (4) Five supervisor reruns cited in Addenda 19–24 were not logged; from this
+point every supervisor rerun writes into the dated gate directory. (5) The old flat gate logs,
+overwritten twice, are moved to `gates/legacy-overwritten/` and labelled as such.
