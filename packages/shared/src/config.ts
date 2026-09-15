@@ -626,6 +626,15 @@ export interface RuneConfig {
     model?: string;
     /** Hard cap on the memory size in tokens — keeps it butter-smooth for tiny models. Default 1500. */
     maxTokens?: number;
+    /**
+     * Learn autonomously at run end — the deterministic extractor that proposes
+     * candidates from the user's own words, machine-verified outcomes, and facts
+     * seen in two sessions. Zero model calls; see docs/program/memory-autonomous.md.
+     * Default true. `enabled = false` turns this off too: off means off.
+     */
+    learn?: boolean;
+    /** Hard bound on the structured store (~/.rune/memory). Default 500 entries. */
+    maxEntries?: number;
   };
   /**
    * Black box (flight recorder) — local incident capture to ~/.rune/blackbox.db:
@@ -842,6 +851,8 @@ const DEFAULT_CONFIG: RuneConfig = {
     schedule: "manual",
     model: "cheapest",
     maxTokens: 1500,
+    learn: true,
+    maxEntries: 500,
   },
   team: {
     enabled: true,
@@ -1006,6 +1017,8 @@ function applyEnvOverrides(config: Record<string, unknown>): void {
     RUNE_MEMORY_MODEL: (c) => setNested(c, "memory.model", process.env.RUNE_MEMORY_MODEL!),
     RUNE_MEMORY_MAX_TOKENS: (c) =>
       setNested(c, "memory.maxTokens", Number(process.env.RUNE_MEMORY_MAX_TOKENS!)),
+    RUNE_MEMORY_LEARN: (c) =>
+      setNested(c, "memory.learn", process.env.RUNE_MEMORY_LEARN !== "false"),
     RUNE_TEAM: (c) => setNested(c, "team.enabled", process.env.RUNE_TEAM !== "false"),
     RUNE_TEAM_ENFORCEMENT: (c) =>
       setNested(c, "team.claimEnforcement", process.env.RUNE_TEAM_ENFORCEMENT!),

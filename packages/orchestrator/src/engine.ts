@@ -152,6 +152,7 @@ import {
 import type { NotebookBlock, NotebookEntry, ToolObservation } from "./notebook";
 import { toolObservation } from "./notebook/capture";
 import { deriveRunRetro, recordLessons } from "./retro";
+import { MemoryStore, captureRunMemory, memoryBlockFor, type MemoryEntry } from "./memory";
 import { PLAYBOOK_PENDING_REL, PLAYBOOK_REL, writePlaybook } from "./playbook";
 import type { PermissionScope, PermissionMode, PermissionModeInput } from "./permissions";
 
@@ -1129,6 +1130,9 @@ export interface EngineConfig {
     schedule?: string;
     model?: string;
     maxTokens?: number;
+    /** Learn autonomously at run end (deterministic, zero model calls). */
+    learn?: boolean;
+    maxEntries?: number;
   };
   /**
    * Model tiers (config.toml `[tiers]`): route work by weight. Values are
@@ -4168,14 +4172,124 @@ export class Engine {
   // cheaply. Refreshed manually (`/memory update`) or automatically on a cadence.
 
   /** Resolved memory config with defaults applied. */
-  private memoryConfig(): { enabled: boolean; schedule: string; model: string; maxTokens: number } {
+  private memoryConfig(): {
+    enabled: boolean;
+    schedule: string;
+    model: string;
+    maxTokens: number;
+    learn: boolean;
+  } {
     const m = this.config.memory ?? {};
+    const enabled = m.enabled !== false;
     return {
-      enabled: m.enabled !== false,
+      enabled,
       schedule: m.schedule ?? "manual",
       model: m.model ?? "cheapest",
       maxTokens: m.maxTokens && m.maxTokens > 0 ? m.maxTokens : 1500,
+      // `enabled = false` means off, not "off for injection". A store that kept
+      // filling up while the user believed memory was disabled would be the
+      // worst possible reading of that switch.
+      learn: enabled && m.learn !== false,
     };
+  }
+
+  // ─── Autonomous memory (docs/program/memory-autonomous.md) ───
+  //
+  // The structured store behind the guide. Lazy because a session that never
+  // ends a run never needs it, and because the path is resolved per-call in
+  // shared/system-memory.ts so a test can relocate the whole of memory.
+
+  private memoryStoreCache: MemoryStore | null = null;
+
+  /** The store, created on first use. */
+  memoryStore(): MemoryStore {
+    if (!this.memoryStoreCache) this.memoryStoreCache = new MemoryStore();
+    return this.memoryStoreCache;
+  }
+
+  /**
+   * What memory would inject right now: the promoted entries for this
+   * workspace, rendered and labelled. "" when memory is off or has nothing.
+   */
+  memoryBlock(): string {
+    const cfg = this.memoryConfig();
+    if (!cfg.enabled) return "";
+    return memoryBlockFor(this.memoryStore(), {
+      workspace: this.config.workspaceRoot,
+      maxTokens: cfg.maxTokens,
+    });
+  }
+
+  /** The `/memory` panel's view of the autonomous store. */
+  getMemoryEntries(): {
+    promoted: MemoryEntry[];
+    candidates: MemoryEntry[];
+    refusals: Array<{ rule: string; reason: string; at: string }>;
+    block: string;
+    learning: boolean;
+  } {
+    const store = this.memoryStore();
+    return {
+      promoted: store.promoted(this.config.workspaceRoot),
+      candidates: store.candidates(),
+      refusals: store.refusals().slice(-10),
+      block: this.memoryBlock(),
+      learning: this.memoryConfig().learn,
+    };
+  }
+
+  /** `/memory forget <id>` / `pin <id>`. Returns whether the id was known. */
+  forgetMemory(id: string): boolean {
+    return this.memoryStore().remove(id);
+  }
+
+  pinMemory(id: string, pinned = true): MemoryEntry | undefined {
+    return this.memoryStore().setPinned(id, pinned);
+  }
+
+  /**
+   * Run end: learn from what a person said and what a machine proved.
+   *
+   * Reads the WHOLE session's events, not the turn window. The per-run retro is
+   * turn-scoped by design (one run of the loop), and a preference stated three
+   * turns ago is still the user's preference — reading only this turn is the
+   * same defect the backlog records against the retro's counters. Re-reading
+   * costs nothing because entry ids are content-derived: a fact seen again is
+   * a counter bump, not a duplicate.
+   */
+  private captureMemory(
+    sessionId: string,
+    outcome: {
+      verdictKind?: "none" | "met" | "unmet" | "partial";
+      runError?: boolean;
+      aborted?: boolean;
+      stopReason?: string;
+    },
+    retroLessons: ReadonlyArray<{ kind: string; title: string; body: string; evidence?: string }>,
+  ): void {
+    const cfg = this.memoryConfig();
+    if (!cfg.learn) return;
+    try {
+      const userMessages: string[] = [];
+      for (const { event } of this.sessions.getEvents(sessionId, 0)) {
+        if (event.type !== "user_msg") continue;
+        const p = event.payload as Record<string, unknown>;
+        if (isHarnessAuthoredTurn(p)) continue;
+        if (typeof p.content === "string" && p.content.trim()) userMessages.push(p.content);
+      }
+      captureRunMemory(this.memoryStore(), {
+        sessionId,
+        workspace: this.config.workspaceRoot,
+        userMessages,
+        outcome,
+        checks: this.checkLog.all
+          .filter((c) => (c.kind ?? "check") === "check")
+          .map((c) => ({ command: c.command, passed: c.passed })),
+        retroLessons,
+      });
+    } catch {
+      // Memory is an amenity. It may never break a run.
+    }
   }
 
   /** Current memory + status, for the `/memory` panel and the desktop Settings UI. */
@@ -6196,6 +6310,11 @@ export class Engine {
       // gets it here, from the same three runtime records. Without the
       // fallback the promise would hold only for the exits that survive long
       // enough to keep it, which is the defect this phase exists to close.
+      // What memory is allowed to learn from — see `captureMemory` below. Held
+      // out here because the verdict is computed inside a try that must not
+      // leak, and a memory that guesses the outcome is a memory that learns
+      // from a run it could not see the end of.
+      let runVerdictKind: "none" | "met" | "unmet" | "partial" | undefined;
       if (this.contract) {
         try {
           const counts = taskState.todoCounts();
@@ -6217,6 +6336,7 @@ export class Engine {
           // because it looks identical to a criterion that was checked and
           // failed. Written before the contract row below is re-taken.
           this.contract.uncovered = uncoveredCriteria(verdict);
+          runVerdictKind = verdict.kind;
           this.sessions.appendEvent(sessionId, {
             type: "verdict",
             payload: { version: 1, verdict, contractDigest: contractDigest(this.contract) },
@@ -6297,6 +6417,19 @@ export class Engine {
               arm: this.evolveArm,
             },
           });
+          // Autonomous memory, beside the retro and on the same evidence: the
+          // user's own words, the run's verdict, the check log, and the
+          // retro's rule-derived lessons. Never the model's account of itself.
+          this.captureMemory(
+            sessionId,
+            {
+              verdictKind: runVerdictKind,
+              runError: Boolean(runError),
+              aborted: signal.aborted,
+              stopReason: retro.outcome,
+            },
+            retro.lessons,
+          );
           if (this.notebookStore && this.notebookKeys) {
             recordLessons(
               this.notebookStore,

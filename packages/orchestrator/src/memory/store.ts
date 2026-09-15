@@ -88,8 +88,8 @@ export class MemoryStore {
   /** Promoted entries only, optionally narrowed to one workspace. Superseded
    *  and candidate entries are never returned here — the renderer reads this,
    *  and quarantine that reaches a prompt is not quarantine. */
-  promoted(workspace?: string): MemoryEntry[] {
-    const now = Date.now();
+  promoted(workspace?: string, at: Date = new Date()): MemoryEntry[] {
+    const now = at.getTime();
     return this.all().filter((e) => {
       if (e.status !== "promoted") return false;
       if (!e.pinned && e.expiresAt && Date.parse(e.expiresAt) <= now) return false;
