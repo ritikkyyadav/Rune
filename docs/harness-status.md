@@ -1162,7 +1162,7 @@ the boot fix; `bun test tests/unit` is red at HEAD because the corpus's budget g
 a scripted zero-spend caller; `swebench.ts --real` and `RUNE_EVAL_REAL=1` bypass the budget
 authorisation; the corpus acceptance passes deliberately wrong solutions in three of three
 families attacked (so "0 / 48" measured the twelve hand-written arms, not the oracle); a
-throw inside a shadow observation kills the run it only watches. Twelve mediums and eight
+throw inside a shadow observation kills the run it only watches. Eleven mediums and eight
 lows, listed in the report.
 
 **What held:** acceptance text reaches no prompt; evaluator citations are refused; the `kept`
