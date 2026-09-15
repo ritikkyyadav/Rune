@@ -78,6 +78,27 @@ export function corpusTasks(dir: string): ComparisonTask[] {
   });
 }
 
+/**
+ * The prompt every arm is sent.
+ *
+ * The task's own text, verbatim, plus the two lines that make a fixture run
+ * autonomous — and it is ONE function because the comparator arms
+ * (`arms/run-arms.ts`) send the same bytes. It used to be an inline template
+ * in `runPilot`'s loop, which meant a second runner could only reproduce it by
+ * copying it, and a row produced from a prompt that drifted by two sentences is
+ * not comparable with a row that was not.
+ *
+ * The Playwright module path rides in the TEXT because the tool sandbox filters
+ * environment variables, and a browser task whose runtime is invisible reads as
+ * a failed layout rather than as a missing browser.
+ */
+export function comparisonPrompt(
+  task: ComparisonTask,
+  playwrightModule: string | undefined = process.env.RUNE_BENCH_PLAYWRIGHT,
+): string {
+  return `${task.prompt}${task.browser ? `\nPlaywright module path (also available if the shell filters environment variables): ${playwrightModule}.` : ""}\n\nWork autonomously in this fixture, make the changes and verify them. No deployment, external messages or unrelated files. This is a fresh task; do not inspect other runs or benchmark infrastructure.`;
+}
+
 /** Only terminal provider errors affect scoring. Tool failures and prose that
  * discuss quotas are task evidence, not evidence of a provider outage. Return
  * a category rather than publishing provider error headers or response bodies. */
@@ -378,7 +399,7 @@ export async function runPilot(options: PilotOptions) {
           data = join(dir, "data");
         seedTask(task, root);
         mkdirSync(profile, { recursive: true });
-        const prompt = `${task.prompt}${task.browser ? `\nPlaywright module path (also available if the shell filters environment variables): ${process.env.RUNE_BENCH_PLAYWRIGHT}.` : ""}\n\nWork autonomously in this fixture, make the changes and verify them. No deployment, external messages or unrelated files. This is a fresh task; do not inspect other runs or benchmark infrastructure.`;
+        const prompt = comparisonPrompt(task);
         write(join(dir, "prompt.txt"), prompt);
         const { command, env } = prepareHarness(arm, options, dir, root, prompt);
         console.log(`${task.id} run ${run + 1}: ${arm}`);
