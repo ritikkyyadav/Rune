@@ -55,6 +55,9 @@ export const SHADOW_ROW_CAP = 200;
 /** Hard size ceiling for any one row, in bytes of JSON. */
 export const SHADOW_ROW_MAX_BYTES = 2048;
 
+/** How many disagreements the summary carries before the size ceiling trims it. */
+const SUMMARY_DISAGREEMENTS = 40;
+
 export interface ShadowDecisionRow {
   readonly type: "shadow_decision";
   readonly version: 1;
@@ -99,6 +102,17 @@ export interface ShadowSummaryRow {
    *  the guard did. Bounded — the rows carry the rest. */
   readonly disagreementList: Array<{ guard: string; expected: Transition; actual: Transition }>;
   readonly overheadUs: { p50: number; p95: number; total: number };
+  /**
+   * What the ROW SINK cost, cumulatively (V6 finding 19, the other half).
+   *
+   * `overheadUs` is the arbiter's own compute — sanitise, event build, decide.
+   * Writing the row is the embedder's cost: in the Engine a synchronous
+   * `appendEvent` insert, up to 202 per run, and folding it into `overheadUs`
+   * would report a slow database as a slow arbiter. Reporting it nowhere was
+   * the other half of the same dishonesty, because the audit line then said
+   * "a few microseconds" about a run that spent 50 ms writing one row.
+   */
+  readonly sinkUs: number;
 }
 
 export type ShadowRow = ShadowDecisionRow | ShadowCappedRow | ShadowSummaryRow;
@@ -199,7 +213,8 @@ export interface ShadowArbiterOptions {
 interface Pending {
   event: ShadowEvent;
   actual: Transition;
-  startedUs: number;
+  /** What this observation cost the arbiter, measured inside `observe`. */
+  observeUs: number;
 }
 
 export class ShadowArbiter implements ShadowObserver {
@@ -227,6 +242,8 @@ export class ShadowArbiter implements ShadowObserver {
   private readonly overheads: number[] = [];
   private readonly unshadowedSeen = new Set<string>();
   private readonly disagreementList: ShadowSummaryRow["disagreementList"] = [];
+  /** What the embedder's row sink has cost so far, in microseconds. */
+  private sinkUs = 0;
   private finished = false;
 
   constructor(options: ShadowArbiterOptions) {
@@ -258,7 +275,12 @@ export class ShadowArbiter implements ShadowObserver {
         sanitizeInputs(inputs),
         this.now(),
       );
-      this.pending.push({ event, actual, startedUs });
+      // The arbiter's OWN cost of this observation, and nothing else (V6
+      // finding 19). `startedUs` used to be read in `record()`, which runs at
+      // the NEXT step's flush — so 120ms of loop work between two observations
+      // was billed to the shadow lane, and `rune audit` reported it as the
+      // arbiter's overhead.
+      this.pending.push({ event, actual, observeUs: nowUs() - startedUs });
     } catch {
       // Observability must never break the loop.
     }
@@ -291,14 +313,15 @@ export class ShadowArbiter implements ShadowObserver {
         superseded: this.supersededCount,
         capped: this.cappedCount,
         unshadowed: [...this.unshadowedSeen].sort(),
-        disagreementList: this.disagreementList.slice(0, 40),
+        disagreementList: this.disagreementList.slice(0, SUMMARY_DISAGREEMENTS),
         overheadUs: {
           p50: round(percentile(sorted, 50)),
           p95: round(percentile(sorted, 95)),
           total: round(total),
         },
+        sinkUs: round(this.sinkUs),
       };
-      this.write(summary);
+      this.write(boundSummary(summary));
     } catch {
       // As above: a summary is a reading of the run.
     }
@@ -314,14 +337,21 @@ export class ShadowArbiter implements ShadowObserver {
     // so. `withPhase` copies; nothing the run holds is touched.
     const base = this.lastState;
     const snapshot = base ? (this.phase ? withPhase(base, this.phase) : base) : undefined;
+    // The other half of the arbiter's own cost: the decide calls, timed here
+    // and nowhere else. The sink is deliberately outside both windows — a
+    // 50ms row sink is the EMBEDDER's cost, and folding it in would report a
+    // slow database as a slow arbiter — but so is the loop's work, which the
+    // old window folded in.
+    const decideStartedUs = nowUs();
     const decisions = batch.map(({ event }) => decide(snapshot, event));
+    const decideUs = (nowUs() - decideStartedUs) / Math.max(1, batch.length);
     const events = batch.map((p) => p.event);
     const { winner, superseded } = arbitrate(decisions, events);
     const bySupersede = new Map(superseded.map((d) => [d.eventId, d]));
 
     for (const item of batch) {
       const decision = bySupersede.get(item.event.id) ?? winner;
-      this.record(item, decision);
+      this.record(item, decision, decideUs);
     }
     this.supersededCount += superseded.length;
     if (isTerminalTransition(winner.transition)) {
@@ -329,7 +359,7 @@ export class ShadowArbiter implements ShadowObserver {
     }
   }
 
-  private record(item: Pending, decision: Decision): void {
+  private record(item: Pending, decision: Decision, decideUs: number): void {
     this.events += 1;
     const agree = decision.transition === item.actual;
     if (decision.transition === "unknown") this.unknowns += 1;
@@ -344,7 +374,7 @@ export class ShadowArbiter implements ShadowObserver {
         });
       }
     }
-    const overheadUs = round(nowUs() - item.startedUs);
+    const overheadUs = round(item.observeUs + decideUs);
     this.overheads.push(overheadUs);
 
     if (this.written >= this.cap) {
@@ -384,10 +414,13 @@ export class ShadowArbiter implements ShadowObserver {
   }
 
   private write(row: ShadowRow): void {
+    const startedUs = nowUs();
     try {
       this.emit(row);
     } catch {
       // A trace row is observability. Losing one must never fail a turn.
+    } finally {
+      this.sinkUs += nowUs() - startedUs;
     }
   }
 }
@@ -408,6 +441,27 @@ function bound(row: ShadowDecisionRow): ShadowDecisionRow {
 }
 
 /**
+ * Keep the summary under the same ceiling every other row keeps (V6 finding 18).
+ *
+ * S6 asserted "no row > 2 KB" and drove ONE agreeing event, so its summary was
+ * near-empty and the assertion held vacuously: forty recorded disagreements
+ * made a 3,135-byte row, because `disagreementList` was the one growing field
+ * that never went through `bound`. It is dropped from the END — the earliest
+ * disagreements are the ones a reader wants — and `disagreements` still
+ * carries the true count, so a list shorter than that count says plainly that
+ * it was trimmed.
+ */
+function boundSummary(row: ShadowSummaryRow): ShadowSummaryRow {
+  let list = row.disagreementList;
+  let trimmed: ShadowSummaryRow = row;
+  while (list.length > 0 && JSON.stringify(trimmed).length > SHADOW_ROW_MAX_BYTES) {
+    list = list.slice(0, list.length - 1);
+    trimmed = { ...row, disagreementList: list };
+  }
+  return trimmed;
+}
+
+/**
  * The summary, as one block a person reads — used by `rune audit` and by the
  * report the lane owes. Pure formatting; no colour, so the caller paints.
  */
@@ -416,7 +470,8 @@ export function shadowSummaryLines(row: ShadowSummaryRow): string[] {
     `events ${row.events} · agree ${row.agreements} · disagree ${row.disagreements} · ` +
       `unknown ${row.unknowns} · superseded ${row.superseded}` +
       (row.capped > 0 ? ` · capped ${row.capped}` : ""),
-    `overhead p50 ${row.overheadUs.p50}µs · p95 ${row.overheadUs.p95}µs · total ${row.overheadUs.total}µs`,
+    `overhead p50 ${row.overheadUs.p50}µs · p95 ${row.overheadUs.p95}µs · total ${row.overheadUs.total}µs` +
+      (row.sinkUs > 0 ? ` · row sink ${round(row.sinkUs)}µs` : ""),
   ];
   for (const d of row.disagreementList.slice(0, 8)) {
     lines.push(`${d.guard}: arbiter ${d.expected} · guard ${d.actual}`);

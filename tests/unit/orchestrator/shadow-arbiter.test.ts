@@ -270,3 +270,102 @@ describe("the summary counts what happened", () => {
     expect(decisions(rows).length).toBe(1);
   });
 });
+
+describe("the summary is a row like every other row (V6 finding 18)", () => {
+  // S6 asserted "no row > 2 KB" and drove ONE agreeing event, so its summary
+  // was near-empty and the assertion held vacuously. Forty recorded
+  // disagreements made a 3,135-byte `shadow_summary`: `disagreementList` was
+  // the one growing field that never went through `bound`.
+  function fortyFiveDisagreements(): ShadowRow[] {
+    const rows: ShadowRow[] = [];
+    const arbiter = new ShadowArbiter({
+      runId: "s1#1",
+      emit: (row) => rows.push(row),
+      now: () => "2026-09-14T00:00:00.000Z",
+    });
+    for (let turn = 0; turn < 45; turn++) {
+      arbiter.observe(
+        "G6",
+        { required: true, reviewed: false, fired: 0 },
+        "abandoned(environment)",
+        makeRunState("s1#1", "working", { budget: { turn } }),
+      );
+    }
+    arbiter.finish();
+    return rows;
+  }
+
+  test("every row is under the ceiling, the one that grows included", () => {
+    const rows = fortyFiveDisagreements();
+    const oversized = rows.filter((r) => JSON.stringify(r).length > SHADOW_ROW_MAX_BYTES);
+    expect(oversized.map((r) => r.type)).toEqual([]);
+  });
+
+  test("the list is trimmed to fit and the true count survives", () => {
+    // The verifier's own test asserted `disagreementList.length === 40` AND
+    // the 2 KB ceiling. Those cannot both hold — forty entries of this shape
+    // are ~3.1 KB — so the ceiling wins and the LIST is what gives way. The
+    // count is not lost: `disagreements` still says 45, and a list shorter
+    // than the count says plainly that it was trimmed. Named here because it
+    // is a deliberate change to what the red test asked for.
+    const summary = fortyFiveDisagreements().find(
+      (r): r is ShadowSummaryRow => r.type === "shadow_summary",
+    )!;
+    expect(summary.disagreements).toBe(45);
+    expect(summary.disagreementList.length).toBeGreaterThan(0);
+    expect(summary.disagreementList.length).toBeLessThan(40);
+    expect(JSON.stringify(summary).length).toBeLessThanOrEqual(SHADOW_ROW_MAX_BYTES);
+  });
+});
+
+describe("overheadUs is the arbiter's own cost (V6 finding 19)", () => {
+  const spin = (ms: number) => {
+    const started = Date.now();
+    while (Date.now() - started < ms) {
+      /* the loop doing its own work between two guard triggers */
+    }
+  };
+
+  test("the loop's own time between two steps is not billed to the arbiter", () => {
+    // `startedUs` was stamped in `observe()` and read in `record()`, which runs
+    // at the NEXT step's flush — so everything the LOOP did in between was
+    // inside the window, and `rune audit` printed it as the arbiter's cost.
+    const rows: ShadowRow[] = [];
+    const arbiter = new ShadowArbiter({
+      runId: "s1#1",
+      emit: (row) => rows.push(row),
+      now: () => "2026-09-14T00:00:00.000Z",
+    });
+    arbiter.observe("G0", { pending: true }, "working", state(1));
+    spin(120); // a turn of real work; the arbiter is doing nothing at all
+    arbiter.observe("G0", { pending: true }, "working", state(2)); // flushes step 1
+    arbiter.finish();
+
+    const decisions = rows.filter((r): r is ShadowDecisionRow => r.type === "shadow_decision");
+    expect(decisions[0]!.overheadUs).toBeLessThan(10_000);
+  });
+
+  test("what the row sink costs is reported, as the sink's own number", () => {
+    // The verifier asked for the sink to be folded INTO `overheadUs`. It is
+    // reported beside it instead — a 50 ms `appendEvent` is the embedder's
+    // cost, and billing it to the arbiter would report a slow database as a
+    // slow arbiter — but reporting it nowhere was the other half of the same
+    // dishonesty, so `sinkUs` exists and `rune audit` prints it.
+    const rows: ShadowRow[] = [];
+    const arbiter = new ShadowArbiter({
+      runId: "s1#1",
+      emit: (row) => {
+        spin(50); // stands in for the Engine's synchronous appendEvent
+        rows.push(row);
+      },
+      now: () => "2026-09-14T00:00:00.000Z",
+    });
+    arbiter.observe("G0", { pending: true }, "working", state(1));
+    arbiter.finish();
+
+    const summary = rows.find((r): r is ShadowSummaryRow => r.type === "shadow_summary")!;
+    expect(summary.sinkUs).toBeGreaterThan(40_000);
+    expect(summary.overheadUs.total).toBeLessThan(10_000);
+    expect(shadowSummaryLines(summary).join(" ")).toContain("row sink");
+  });
+});

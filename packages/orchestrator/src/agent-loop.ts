@@ -1621,6 +1621,51 @@ export class AgentLoop {
    *   * a row sink that throws is contained. Losing the row loses the
    *     reconciliation record, not the run.
    */
+  /**
+   * One shadow observation, contained (V6 finding 9).
+   *
+   * M2's own words: "Never throws. A shadow lane that can fail a run is not a
+   * shadow lane." That containment lived INSIDE `ShadowArbiter.observe`, and
+   * the 26 call sites were bare `this.config.shadow?.observe(g, i, a,
+   * shadowState())` — so two things escaped it. An observer that is not the
+   * arbiter (an embedder's, a test's) threw straight into the loop; and the
+   * SNAPSHOT, evaluated as the argument, sat outside every `try`, so a run
+   * with the controller on died where the identical run with it off finished.
+   * A cost ledger that cannot answer is enough: `spentUsd` is read only
+   * because the shadow lane is on.
+   *
+   * The state arrives as a THUNK so building it is inside the catch too.
+   * `?.`'s short-circuit is kept by the early return: with no shadow, nothing
+   * is built and nothing is called.
+   */
+  private watch(
+    guard: GuardId,
+    inputs: GuardInputs,
+    action: Transition,
+    state: () => RunState | undefined,
+  ): void {
+    const shadow = this.config.shadow;
+    if (!shadow) return;
+    try {
+      const snapshot = state();
+      if (snapshot) shadow.observe(guard, inputs, action, snapshot);
+    } catch {
+      // A shadow lane cannot fail a run. There is nowhere to report this that
+      // is not itself the shadow lane, and a row nobody wrote is the correct
+      // outcome: the ledger simply has one fewer observation.
+    }
+  }
+
+  /** The snapshot for the sites that hand it somewhere else. Never throws. */
+  private snapshotOrNone(build: () => RunState): RunState | undefined {
+    if (!this.config.shadow) return undefined;
+    try {
+      return build();
+    } catch {
+      return undefined;
+    }
+  }
+
   private decideWithAuthority(
     key: string,
     guard: GuardId,
@@ -1720,7 +1765,7 @@ export class AgentLoop {
     // below is what the guard actually did and only this function knows it.
     if (state) {
       const planClosed = !!ts && ts.todos.length > 0 && !ts.hasOpenTodos();
-      this.config.shadow?.observe(
+      this.watch(
         "E5",
         {
           consecutiveErrors: errors,
@@ -1728,7 +1773,7 @@ export class AgentLoop {
           planClosed,
         },
         planClosed ? "complete(end_turn)" : "abandoned(environment)",
-        state,
+        () => state,
       );
     }
     if (ts && ts.todos.length > 0 && !ts.hasOpenTodos()) {
@@ -2138,11 +2183,11 @@ export class AgentLoop {
         "run",
         `turn ceiling reached with the plan open and moving (${counts.done}/${counts.total} steps done) — extended by ${baseMaxTurns} turns (wind ${windsUsed} of ${allowed})`,
       );
-      this.config.shadow?.observe(
+      this.watch(
         "X2",
         { granted: true, done: counts.done, open: counts.open, windsUsed, allowed },
         "working",
-        shadowState(),
+        () => shadowState(),
       );
       pendingWindNote =
         `Turn ceiling reached at turn ${turn} with ${counts.done} of ${counts.total} steps done ` +
@@ -2161,12 +2206,7 @@ export class AgentLoop {
       // Check for abort before starting each turn
       if (signal?.aborted) {
         this.state = "done";
-        this.config.shadow?.observe(
-          "E2",
-          { aborted: true },
-          "abandoned(user_abort)",
-          shadowState(),
-        );
+        this.watch("E2", { aborted: true }, "abandoned(user_abort)", () => shadowState());
         yield* this.handoffEvents("aborted");
         yield this.terminal("aborted", turn);
         return;
@@ -2583,12 +2623,7 @@ export class AgentLoop {
                 await abortableSleep(waitSecs * 1000, signal);
                 if (signal?.aborted) {
                   this.state = "done";
-                  this.config.shadow?.observe(
-                    "E2",
-                    { aborted: true },
-                    "abandoned(user_abort)",
-                    shadowState(),
-                  );
+                  this.watch("E2", { aborted: true }, "abandoned(user_abort)", () => shadowState());
                   yield* this.handoffEvents("aborted");
                   yield this.terminal("aborted", turn);
                   return;
@@ -2597,11 +2632,11 @@ export class AgentLoop {
                 break;
               }
               this.state = "error";
-              this.config.shadow?.observe(
+              this.watch(
                 "E6",
                 { retryable: false, consecutiveErrors },
                 "abandoned(environment)",
-                shadowState(),
+                () => shadowState(),
               );
               yield* this.handoffEvents("error");
               yield { type: "error", error: result.error, recoverable: false };
@@ -2715,7 +2750,7 @@ export class AgentLoop {
               yield* this.providerLostEnd(
                 consecutiveErrors,
                 turn,
-                this.config.shadow ? shadowState() : undefined,
+                this.snapshotOrNone(shadowState),
               );
               return;
             }
@@ -2728,12 +2763,7 @@ export class AgentLoop {
         // identical inference attempt or a provider fallback.
         if (err instanceof BudgetExceededError || err instanceof BudgetPricingError) {
           this.state = "error";
-          this.config.shadow?.observe(
-            "E7",
-            { admissionRefused: true },
-            "abandoned(budget)",
-            shadowState(),
-          );
+          this.watch("E7", { admissionRefused: true }, "abandoned(budget)", () => shadowState());
           yield* this.handoffEvents("error");
           yield { type: "error", error: err.message, recoverable: false };
           // A refusal BEFORE the request was sent is a budget stop, not a lost
@@ -2744,12 +2774,7 @@ export class AgentLoop {
         // Handle clean abort
         if (signal?.aborted) {
           this.state = "done";
-          this.config.shadow?.observe(
-            "E2",
-            { aborted: true },
-            "abandoned(user_abort)",
-            shadowState(),
-          );
+          this.watch("E2", { aborted: true }, "abandoned(user_abort)", () => shadowState());
           yield* this.handoffEvents("aborted");
           yield this.terminal("aborted", turn);
           return;
@@ -2765,11 +2790,7 @@ export class AgentLoop {
             "inferStream.catch",
             `run failed after ${consecutiveErrors} consecutive errors: ${msg}`,
           );
-          yield* this.providerLostEnd(
-            consecutiveErrors,
-            turn,
-            this.config.shadow ? shadowState() : undefined,
-          );
+          yield* this.providerLostEnd(consecutiveErrors, turn, this.snapshotOrNone(shadowState));
           return;
         }
         continue;
@@ -2915,7 +2936,7 @@ export class AgentLoop {
               "nudge:empty-completion",
             );
           }
-          this.config.shadow?.observe("E4", decisionInputs, "working", shadowState());
+          this.watch("E4", decisionInputs, "working", () => shadowState());
           yield {
             type: "notice",
             message: `The model returned an empty response — retrying (${emptyCompletions}/${maxEmpty - 1})…`,
@@ -2925,12 +2946,7 @@ export class AgentLoop {
         }
         if (transition !== "verifying") {
           this.state = "done";
-          this.config.shadow?.observe(
-            "E4",
-            decisionInputs,
-            "abandoned(environment)",
-            shadowState(),
-          );
+          this.watch("E4", decisionInputs, "abandoned(environment)", () => shadowState());
           yield* this.handoffEvents("provider_lost");
           yield {
             type: "error",
@@ -2963,11 +2979,11 @@ export class AgentLoop {
         // the label hid (`docs/program/m3-first-migration.md`, "What M2 showed").
         // `hasVerdict` stays a fact about this moment: no verdict is in hand
         // here, whatever the finish path computes moments later.
-        this.config.shadow?.observe(
+        this.watch(
           "G9",
           { workStands: true, hasVerdict: false, emptyCompletions, maxEmpty },
           "verifying",
-          shadowState(),
+          () => shadowState(),
         );
         this.report(
           "provider.empty_completion",
@@ -3011,10 +3027,7 @@ export class AgentLoop {
           );
         }
         this.state = "done";
-        this.config.shadow?.observe(
-          "E3",
-          { halted: true, reportGranted: true },
-          "complete(report_only)",
+        this.watch("E3", { halted: true, reportGranted: true }, "complete(report_only)", () =>
           shadowState(),
         );
         this.report("loop.auto_halt_reported", "warn", "autoHalt", "halted run reported and ended");
@@ -3080,11 +3093,11 @@ export class AgentLoop {
         }
         // Retries exhausted: surface truthfully instead of pretending we finished.
         this.state = "done";
-        this.config.shadow?.observe(
+        this.watch(
           "E8",
           { truncationRetries, maxTruncationRetries: maxTrunc },
           "abandoned(environment)",
-          shadowState(),
+          () => shadowState(),
         );
         yield* this.handoffEvents("error");
         yield this.terminal("max_tokens", turn);
@@ -3100,7 +3113,7 @@ export class AgentLoop {
         // and keep going instead of finishing past their new instructions.
         if (!signal?.aborted && this.hasPendingInterjections()) {
           this.state = "observing";
-          this.config.shadow?.observe("G0", { pending: true }, "working", shadowState());
+          this.watch("G0", { pending: true }, "working", () => shadowState());
           continue;
         }
         if (this.config.verifier && !signal?.aborted) {
@@ -3242,7 +3255,7 @@ export class AgentLoop {
           !signal?.aborted
         ) {
           delegationNudges++;
-          this.config.shadow?.observe(
+          this.watch(
             "G3",
             {
               delegatedScopes: delegatedScopes.length,
@@ -3250,7 +3263,7 @@ export class AgentLoop {
               fired: delegationNudges - 1,
             },
             "verifying",
-            shadowState("verifying"),
+            () => shadowState("verifying"),
           );
           latchEffort("delegation-evidence gate refused the finish");
           this.report(
@@ -3339,7 +3352,7 @@ export class AgentLoop {
           !signal?.aborted
         ) {
           executionNudges++;
-          this.config.shadow?.observe(
+          this.watch(
             "G4",
             {
               anyWritesThisRun,
@@ -3349,7 +3362,7 @@ export class AgentLoop {
               fired: executionNudges - 1,
             },
             "verifying",
-            shadowState("verifying"),
+            () => shadowState("verifying"),
           );
           latchEffort("execution-evidence gate refused the finish");
           this.report(
@@ -3407,7 +3420,7 @@ export class AgentLoop {
           isFixShaped(this.config.taskState?.currentRequest() ?? "")
         ) {
           fixVerifiedNudges++;
-          this.config.shadow?.observe(
+          this.watch(
             "G5",
             {
               criteriaTotal: ledger.total,
@@ -3416,7 +3429,7 @@ export class AgentLoop {
               fired: fixVerifiedNudges - 1,
             },
             "verifying",
-            shadowState("verifying"),
+            () => shadowState("verifying"),
           );
           latchEffort("fix-verified gate refused the finish");
           this.report(
@@ -3469,11 +3482,11 @@ export class AgentLoop {
           !signal?.aborted
         ) {
           productSightNudges++;
-          this.config.shadow?.observe(
+          this.watch(
             "G6",
             { required: true, reviewed: false, fired: productSightNudges - 1 },
             "verifying",
-            shadowState("verifying"),
+            () => shadowState("verifying"),
           );
           latchEffort("product-sight gate refused the finish");
           this.report(
@@ -3540,11 +3553,11 @@ export class AgentLoop {
           const c = spine.todoCounts();
           if (openStepNudges < 1) {
             openStepNudges++;
-            this.config.shadow?.observe(
+            this.watch(
               "G7",
               { openSteps: c.open, totalSteps: c.total, fired: openStepNudges - 1 },
               "repairing",
-              shadowState("repairing"),
+              () => shadowState("repairing"),
             );
             latchEffort("open-steps gate refused the finish");
             this.report(
@@ -3597,11 +3610,11 @@ export class AgentLoop {
           // exit 0 for a run that abandoned half its plan. Every machine
           // consumer scored that as a finished task.
           stopReason = "open_steps";
-          this.config.shadow?.observe(
+          this.watch(
             "G7",
             { openSteps: c.open, totalSteps: c.total, fired: openStepNudges },
             "complete(partial)",
-            shadowState(),
+            () => shadowState(),
           );
         }
 
@@ -3628,11 +3641,11 @@ export class AgentLoop {
         // Class 4, last: the contract's own answer, beside what the run is
         // about to record. With no contract in scope there is no verdict to
         // decide from, and the arbiter says `unknown` rather than guessing.
-        this.config.shadow?.observe(
+        this.watch(
           "VERDICT",
           { hasVerdict: !!verdict, verdictKind: verdict?.kind, stopReason },
           verdict ? completedTransition(verdict.kind) : completedTransition(stopReason),
-          shadowState(),
+          () => shadowState(),
         );
 
         // Compact only when context is near budget (avoids a summarization
@@ -3668,7 +3681,7 @@ export class AgentLoop {
         // evidence gate ran above — a finished turn must never swallow it.
         if (!signal?.aborted && this.hasPendingInterjections()) {
           this.state = "observing";
-          this.config.shadow?.observe("G0", { pending: true }, "working", shadowState());
+          this.watch("G0", { pending: true }, "working", () => shadowState());
           continue;
         }
         this.state = "done";
@@ -3781,12 +3794,7 @@ export class AgentLoop {
           "the run was aborted before this tool call started.",
         );
         this.state = "done";
-        this.config.shadow?.observe(
-          "E2",
-          { aborted: true },
-          "abandoned(user_abort)",
-          shadowState(),
-        );
+        this.watch("E2", { aborted: true }, "abandoned(user_abort)", () => shadowState());
         yield* this.handoffEvents("aborted");
         yield this.terminal("aborted", turn);
         return;
@@ -4367,11 +4375,11 @@ export class AgentLoop {
             const openHypothesis = ts.openHypothesis();
             const verdict = ts.setTodos(items);
             if (!verdict.accepted) {
-              this.config.shadow?.observe(
+              this.watch(
                 "G8",
                 { accepted: false, refused: verdict.refused.length },
                 "working",
-                shadowState(),
+                () => shadowState(),
               );
             }
             if (openHypothesis) {
@@ -5298,12 +5306,7 @@ export class AgentLoop {
       // Abort may have fired during tool execution (e.g. a long bash call).
       if (signal?.aborted) {
         this.state = "done";
-        this.config.shadow?.observe(
-          "E2",
-          { aborted: true },
-          "abandoned(user_abort)",
-          shadowState(),
-        );
+        this.watch("E2", { aborted: true }, "abandoned(user_abort)", () => shadowState());
         yield* this.handoffEvents("aborted");
         yield this.terminal("aborted", turn);
         return;
@@ -5322,10 +5325,7 @@ export class AgentLoop {
         // separate ad-hoc checks, and the arbiter says the same thing once, as
         // a class. Only the latch is observed — never the reason, which is
         // broker prose.
-        this.config.shadow?.observe(
-          "E3",
-          { halted: true, reportGranted: false },
-          "blocked(halt)",
+        this.watch("E3", { halted: true, reportGranted: false }, "blocked(halt)", () =>
           shadowState("blocked"),
         );
         this.report("loop.auto_halt", "error", "autoHalt", haltNotice);
@@ -5543,11 +5543,11 @@ export class AgentLoop {
 
     // Max turns reached
     this.state = "done";
-    this.config.shadow?.observe(
+    this.watch(
       "E1",
       { turn, maxTurns: this.config.maxTurns, secondWindAvailable: false },
       "abandoned(budget)",
-      shadowState(),
+      () => shadowState(),
     );
     this.report(
       "loop.max_turns",
