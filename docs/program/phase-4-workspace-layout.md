@@ -15,6 +15,11 @@ nothing larger than ~12 rows entering the stream without a keystroke.
 
 ---
 
+> **Superseded in part, 2026-09-15.** The founder chose the single column as the default
+> ("the older simple panel, not that split one"). The four-region frame in §2 is built, tested
+> and kept behind `[ui] layout = "split"`; the default at every width is the shape §2.2 gives
+> below 100 columns. See harness-status, Addendum 12.
+
 ## 1. The current TUI, mapped
 
 ### 1.1 The frame

@@ -1349,3 +1349,30 @@ done: the cadence distillation stays opt-in and off; the retro's turn-scope defe
 (the extractor reads the whole session log), not fixed. **Residual risk, stated:** the topic
 filter is two regexes and has met no real session; the first dogfood run measures its
 precision, and `rune memory` afterwards is the scorecard.
+
+### Addendum 12 — the single column is the default again, and the working mark breathes
+
+`1eee25d`, `c2862b8`. The founder looked at Claude Code's terminal and asked for "the older
+simple panel, not that split one" — so `[ui] layout` exists, defaults to `single`, and the
+four-region split built on 2026-09-14 is a setting (`split`, also `RUNE_LAYOUT`), not deleted.
+`single` is not a new code path: it is the shape the split already collapsed to below 100
+columns, now asserted at every width — header, the transcript at full width (119 cells at
+120 columns, was 78), the agents strip, the composer, the status line; the agents panel stays
+behind ctrl+f. Five test helpers now say `layout: "split"` explicitly to keep testing the
+split; nothing relaxed; `ui-layout.test.ts` states `single` at 120×40 and 160×50 as an
+equality with 80×24's shape and that nothing above the composer moves while typing. Frames
+at both sizes plus a `split` control are in `ui-single-frames/`.
+
+The indicator: `▄ working · asking` is gone. The row reads `✻ Thinking · 12s`, `✻ Reading
+turn.ts · 40s`, `✻ Running checks · 1m 05s`, `✻ Waiting for you`, `✻ Done · 1m 58s` — nine
+phrases, each from an event the transcript already reads, a tool call's phrase being the
+live label verbatim. The mark breathes by colour only, muted → text → accent → text → muted
+at 700 ms a step (a 3.5 s cycle), never by shape; `done` and `waiting` hold still. One glyph
+added (17 of the 20 the alphabet allows); the block ramp and its helpers removed, the block
+glyphs kept only for the context meter. The five-frame capture 700 ms apart against a
+loopback mock shows U+273B in every frame, three distinct colours, and `Thinking · 2s`
+becoming `Answering · 4s` on camera. Supervisor rerun of the UI suites: **782 / 0**. Lane's
+full unit suite: 5,355 / 0 / 1 skip. Left open, named by the lane: `/config`'s current-value
+hint for `layout` (one `case` in `engine.ts`), the Phase 4 layout document still describing
+the split as the default, and no breath capture at 80×24 or in ASCII mode. Not installed at
+the time of writing — the closing pass below installs it.
