@@ -109,6 +109,19 @@ jobs:
       - name: Compute the expected version (scripts/version.sh is the one source)
         run: echo "EXPECTED_VERSION=$(bash scripts/version.sh)" >> "$GITHUB_ENV"
 
+      # The step below points HOME at a scratch directory so that ~/.rune is
+      # genuinely empty. rustup, cargo and bun keep their state under the REAL
+      # home (~/.rustup, ~/.cargo, ~/.bun), so without these three the installer
+      # reached `cargo build` and rustup had no toolchain to choose — the first
+      # hosted run of this job failed on both runners inside half a minute for
+      # exactly that reason (2026-09-15). The toolchain homes are remembered here
+      # and pinned in the scratch-home steps; only ~/.rune moves.
+      - name: Remember where the toolchains live
+        run: |
+          echo "TOOLCHAIN_RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" >> "$GITHUB_ENV"
+          echo "TOOLCHAIN_CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" >> "$GITHUB_ENV"
+          echo "TOOLCHAIN_BUN_INSTALL=${BUN_INSTALL:-$HOME/.bun}" >> "$GITHUB_ENV"
+
       - name: scripts/install.sh into a scratch home
         # A scratch $HOME with no pre-existing ~/.rune means install.sh's
         # cross-worktree / non-fast-forward guard (install.sh:~150-181) never
@@ -126,6 +139,9 @@ jobs:
         # thing timed here is "does it install", not "how fast".
         env:
           HOME: ${{ runner.temp }}/rune-clean-home
+          RUSTUP_HOME: ${{ env.TOOLCHAIN_RUSTUP_HOME }}
+          CARGO_HOME: ${{ env.TOOLCHAIN_CARGO_HOME }}
+          BUN_INSTALL: ${{ env.TOOLCHAIN_BUN_INSTALL }}
         run: |
           set -euo pipefail
           mkdir -p "$HOME"
