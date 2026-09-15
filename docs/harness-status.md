@@ -1800,3 +1800,20 @@ founder's audit log** (7,167 → 7,168) — fixed in the next commit by giving t
 home. This binary carries E1's signed memory store and E2's fail-closed vault, launcher
 precedence and authorship witnesses; the fourth verifier pass has not yet run on it, so memory
 in `auto` is still provisional and every authority key stays off.
+
+### Addendum 29 — pushed, and the first Linux proof this program has had
+
+On the founder's words ("push them and proceed"), `gear/phase-0-stabilize` was pushed at
+`0530c52`: 126 commits, `943efee..0530c52`, the first push since the handoff began.
+`containment.yml` triggers on a push to this branch and ran
+(https://github.com/ritikkyyadav/Rune/actions/runs/35005128311): **the Linux containment
+audit passed on GitHub's runner** — the privileged Docker rig, the crate tests and the
+bubblewrap containment probes that every earlier manifest could only call "reasoned" —
+which closes the Linux gap of Phases 0–2 and 7 for the tracked source at this commit. **The
+clean-machine install failed on both macOS and Ubuntu** at the step `scripts/install.sh into
+a scratch home`, within about half a minute of the job starting, which is too fast for a
+cargo build; the job logs need admin rights and `gh` was refused by this session's
+classifier, so the step is being reproduced locally from a fresh clone into a scratch home.
+`ci.yml` (lint, test, build, integration on hosted runners) does not run on a push to this
+branch, only on a pull request; opening one is a further publication step and the founder's
+to take. Both results are hosted evidence of a stranger's machine, which no local run is.
