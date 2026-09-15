@@ -96,10 +96,47 @@ const KEPT_CREDENTIALS = (env: NodeJS.ProcessEnv): string[] =>
  * the scrub, and what the arm cannot match. It is also what the offline test
  * asserts, so the plan a reviewer reads is the plan the live path runs.
  */
-export function planSeries(options: ArmSeriesOptions): SeriesPlan {
+/**
+ * The tasks a series will run, and a refusal for any id that matched nothing.
+ *
+ * `--tasks` used to be a filter and only a filter, so a list where every id was
+ * wrong threw and a list with ONE typo silently shrank: `--tasks a,b-typo,c`
+ * planned two runs, printed "2 run(s) planned", and said nothing about the
+ * third. On `--real` that is a founder authorising three tasks and paying for
+ * two, with the shortfall visible only by counting lines.
+ *
+ * The empty check comes first so the message for "none of these exist" stays
+ * the one it has always been.
+ */
+export function selectedTasks(options: ArmSeriesOptions): ComparisonTask[] {
   const catalogue = corpusTasks(options.corpus);
   const tasks = catalogue.filter((task) => !options.tasks || options.tasks.includes(task.id));
   if (!tasks.length) throw new Error("No tasks selected from the corpus.");
+  const known = new Set(catalogue.map((task) => task.id));
+  const unmatched = (options.tasks ?? []).filter((id) => !known.has(id));
+  if (unmatched.length)
+    throw new Error(
+      `--tasks names ${unmatched.length} id(s) this corpus does not hold: ${unmatched.join(", ")}. ` +
+        `The corpus holds: ${catalogue.map((task) => task.id).join(", ")}.`,
+    );
+  return tasks;
+}
+
+/**
+ * The most a series can spend, in dollars: every planned run at the per-task
+ * ceiling. Needs no `--version` probe and spawns nothing, so the authorisation
+ * gate can ask it before anything runs.
+ */
+export function worstCaseSeriesUsd(options: ArmSeriesOptions): {
+  runs: number;
+  usd: number;
+} {
+  const runs = selectedTasks(options).length * options.arms.length;
+  return { runs, usd: runs * options.budgetUsd };
+}
+
+export function planSeries(options: ArmSeriesOptions): SeriesPlan {
+  const tasks = selectedTasks(options);
   const versions: Record<string, string | null> = {};
   const runs: PlannedRun[] = [];
   // The comparator gets the same bytes the Rune arm gets — `comparisonPrompt`
@@ -135,8 +172,12 @@ export function planSeries(options: ArmSeriesOptions): SeriesPlan {
         `    auth ${KEPT_CREDENTIALS(plan.env).join(", ") || "(none present in this shell)"}`,
       );
     }
+  // The figure the person authorising the run is actually authorising. It was
+  // missing, and "budget=$2/task" beside "24 run(s) planned" left the
+  // multiplication as an exercise for the reader.
   lines.push(
     `${runs.length} run(s) planned. Nothing was executed: a dry run spawns nothing but --version.`,
+    `worst case: ${runs.length} run(s) × $${options.budgetUsd}/task = $${(runs.length * options.budgetUsd).toFixed(2)} total across the series. RUNE_EVAL_BUDGET_USD is the ceiling for the SERIES and must be at least this to run it live.`,
   );
   return { versions, runs, lines };
 }
@@ -159,10 +200,20 @@ export async function runArmSeries(options: ArmSeriesOptions) {
   // probes each tool's `--version`, and a run that is going to be refused
   // should not have started a child process to find out.
   const authorised = options.dryRun ? null : authorisedBudgetUsd();
-  if (authorised !== null && options.budgetUsd > authorised)
-    throw new Error(
-      `--budget-usd ${options.budgetUsd} is above the authorised RUNE_EVAL_BUDGET_USD ${authorised}.`,
-    );
+  // RUNE_EVAL_BUDGET_USD is the ceiling for the WHOLE series, not for one task.
+  // The gate used to compare it with `options.budgetUsd` alone, which meant the
+  // documented command — 12 tasks × 2 arms × `--budget-usd 2` — planned $48 of
+  // worst-case spend against a $2 authorisation and no running total was ever
+  // compared with anything.
+  if (authorised !== null) {
+    const worst = worstCaseSeriesUsd(options);
+    if (worst.usd > authorised)
+      throw new Error(
+        `This series plans ${worst.runs} run(s) at $${options.budgetUsd}/task — up to $${worst.usd.toFixed(2)} in total, ` +
+          `above the authorised RUNE_EVAL_BUDGET_USD $${authorised}, which is the ceiling for the WHOLE series. ` +
+          `Lower --budget-usd, select fewer tasks or arms, or authorise the larger figure.`,
+      );
+  }
   const plan = planSeries(options);
   if (options.dryRun) {
     for (const line of plan.lines) console.log(line);
@@ -189,7 +240,12 @@ export async function runArmSeries(options: ArmSeriesOptions) {
     kind: "comparator-arm-series",
     startedAt: new Date().toISOString(),
     corpus: resolve(options.corpus),
-    limits: { perTaskListUsd: options.budgetUsd, timeoutMs: options.timeoutMs },
+    limits: {
+      perTaskListUsd: options.budgetUsd,
+      seriesAuthorisedUsd: authorised,
+      seriesWorstCaseUsd: worstCaseSeriesUsd(options).usd,
+      timeoutMs: options.timeoutMs,
+    },
     model: options.model ?? null,
     reasoningEffort: options.reasoningEffort ?? null,
     versions: plan.versions,
@@ -205,7 +261,23 @@ export async function runArmSeries(options: ArmSeriesOptions) {
     write(join(options.out, "report.json"), JSON.stringify(report, null, 2) + "\n");
   mkdirSync(options.out, { recursive: true });
   persist();
+  // The running total, against the SERIES authorisation. A run whose cost
+  // nobody reported counts as the full per-task ceiling: an unknown price is
+  // not a free one, and this is the founder's money.
+  let spentUsd = 0;
+  const charged = (result: { listUsd: number | null; reportedCostUsd: number | null }): number =>
+    result.reportedCostUsd === null && result.listUsd === null
+      ? options.budgetUsd
+      : Math.max(result.reportedCostUsd ?? 0, result.listUsd ?? 0);
   for (const run of plan.runs) {
+    // Before the spend, not after it: the next run may cost the whole ceiling.
+    if (authorised !== null && spentUsd + options.budgetUsd > authorised) {
+      const stop = `Series stopped before ${run.task} · ${run.arm}: $${spentUsd.toFixed(4)} spent and the next run may cost up to $${options.budgetUsd}, which is past the authorised $${authorised}.`;
+      console.log(stop);
+      (report as Record<string, unknown>).stoppedEarly = stop;
+      persist();
+      break;
+    }
     const task = byId.get(run.task)!;
     seedTask(task, workspaceOf(run.dir));
     const prompt = comparisonPrompt(task);
@@ -216,6 +288,8 @@ export async function runArmSeries(options: ArmSeriesOptions) {
       run.dir,
       limitsFor(options, run.arm),
     );
+    spentUsd += charged(result);
+    (report as Record<string, unknown>).spentUsd = spentUsd;
     const check = checkTask(task, workspaceOf(run.dir), run.dir);
     report.results.push({
       task: run.task,

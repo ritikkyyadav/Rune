@@ -266,9 +266,15 @@ export function authorisedBudgetUsd(env: NodeJS.ProcessEnv = process.env): numbe
         "to the number of dollars you have decided to spend on this run. The offline corpus " +
         "(tests/eval/corpus/run-offline.ts) needs no budget and makes no model calls.",
     );
-  const value = Number(raw);
+  // A plain decimal, and nothing cleverer. `Number()` reads `0x10` as 16 and
+  // `1e9` as a billion — dollar figures nobody typed, on a variable whose whole
+  // job is to be the number the founder decided to spend.
+  const text = raw.trim();
+  const value = /^\d+(\.\d+)?$/.test(text) ? Number(text) : NaN;
   if (!Number.isFinite(value) || value <= 0)
-    throw new Error(`RUNE_EVAL_BUDGET_USD must be a positive number of dollars, not ${raw}.`);
+    throw new Error(
+      `RUNE_EVAL_BUDGET_USD must be a positive number of dollars written plainly (2, 0.50), not ${raw}.`,
+    );
   return value;
 }
 

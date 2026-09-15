@@ -154,26 +154,52 @@ export interface ClaudeCodeEnvelope {
   permission_denials?: unknown[];
 }
 
-/** The last line of stdout that parses as a JSON object, or nothing. */
+/**
+ * The result envelope on stdout, or nothing.
+ *
+ * Scans FORWARD and takes the first object whose `type` is `"result"`. It used
+ * to walk backwards and take the last object of any shape, which made anything
+ * the CLI prints after the envelope — a hook's output, a telemetry line, a
+ * notice — the envelope, and recorded a completed scored run with real usage as
+ * `error: unexpected envelope type undefined`. The rig has never captured this
+ * stream live (the samples are transcribed), so "the envelope is the last line"
+ * was an assumption about a format nobody here has observed.
+ *
+ * An object with no `type` is still taken if no `result` object is found, so a
+ * transcribed sample that omits the field parses as it always did.
+ */
 function lastJsonObject(stdout: string): ClaudeCodeEnvelope | undefined {
-  const lines = stdout.split("\n").filter((line) => line.trim().startsWith("{"));
-  for (const line of lines.reverse()) {
+  const objects: ClaudeCodeEnvelope[] = [];
+  for (const line of stdout.split("\n")) {
+    if (!line.trim().startsWith("{")) continue;
     try {
       const value = JSON.parse(line) as unknown;
       if (value && typeof value === "object" && !Array.isArray(value))
-        return value as ClaudeCodeEnvelope;
+        objects.push(value as ClaudeCodeEnvelope);
     } catch {
-      // A partial line is not an envelope. Keep looking backwards.
+      // A partial line is not an envelope. Keep reading.
     }
   }
-  const trimmed = stdout.trim();
-  if (!trimmed.startsWith("{")) return undefined;
-  try {
-    return JSON.parse(trimmed) as ClaudeCodeEnvelope;
-  } catch {
-    return undefined;
+  if (!objects.length) {
+    const trimmed = stdout.trim();
+    if (!trimmed.startsWith("{")) return undefined;
+    try {
+      return JSON.parse(trimmed) as ClaudeCodeEnvelope;
+    } catch {
+      return undefined;
+    }
   }
+  return objects.find((value) => value.type === "result") ?? objects[objects.length - 1];
 }
+
+/**
+ * The error subtypes that are still the comparator's answer to the task.
+ *
+ * Exactly one: a turn ceiling means the tool was working and ran out of turns,
+ * which is a result. `error_during_execution` and anything else is the tool
+ * falling over.
+ */
+export const SCORED_ERROR_SUBTYPES: readonly string[] = ["error_max_turns"];
 
 function usageOf(envelope: ClaudeCodeEnvelope): ArmUsage | null {
   const usage = envelope.usage;
@@ -233,7 +259,21 @@ export function parseClaudeCodeOutput(capture: ArmCapture): ParsedArm {
     if (category) return { ...base, outcome: unscored(category), unscoredReason: category };
     // A turn ceiling is the comparator failing the task, not the provider
     // failing the comparator: it stays scored, and the acceptance decides.
-    return { ...base, outcome: "scored", detail: envelope.subtype ?? "error" };
+    //
+    // Every OTHER subtype is the tool's own crash. Scoring those — which this
+    // branch used to do for anything without quota or auth text in it — grades
+    // `error_during_execution` as Claude Code failing the corpus task, and runs
+    // the acceptance over a workspace the tool never finished writing. An
+    // allow-list, so a subtype nobody has seen yet is unscored rather than
+    // silently counted against the comparator.
+    if (SCORED_ERROR_SUBTYPES.includes(envelope.subtype ?? ""))
+      return { ...base, outcome: "scored", detail: envelope.subtype ?? "error" };
+    return {
+      ...base,
+      outcome: unscored("harness_error"),
+      unscoredReason: "harness_error",
+      detail: envelope.subtype ?? "error",
+    };
   }
   if (envelope.type !== "result")
     return { ...base, outcome: "error", detail: `unexpected envelope type ${envelope.type}` };

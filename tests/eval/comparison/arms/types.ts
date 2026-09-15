@@ -106,7 +106,9 @@ export type UnscoredReason =
   | "provider_unavailable"
   | "timeout"
   | "cost_limit"
-  | "no_model_usage";
+  | "no_model_usage"
+  /** The comparator itself crashed or aborted — its own bug, not the task's. */
+  | "harness_error";
 
 /** What a parser can say about a capture, without knowing how it was produced. */
 export interface ParsedArm {
@@ -159,14 +161,26 @@ export const workspaceOf = (dir: string): string => `${dir}/workspace`;
 
 // ─── The environment the comparator gets ───
 //
-// The predicate is the capture rig's, transcribed rather than reinvented
-// (scripts/tui-capture/capture.py, "the capture rig scrubs by a stated
-// predicate, not by a roster of two suffixes"): a name is credential-shaped
-// when it ends in a secret suffix or is one of the documented credential-chain
-// variables. An arm keeps the handful of names that are ITS OWN auth and loses
-// every other one, so a Claude Code arm cannot quietly authenticate as OpenAI,
-// a Codex arm cannot read the founder's Anthropic key, and neither inherits a
-// key for some third provider that happens to be exported in this shell.
+// An ALLOW-list, after a deny-list turned out to be a redirect path.
+//
+// The first version of this scrub removed every credential-shaped name and
+// passed the rest of the shell through. The v7 verification pass pointed out
+// what that leaves: `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL` (the arm talks
+// to any host, and the fixture and the prompt go with it), `ANTHROPIC_MODEL`
+// (the recorded `model` is not what ran), `CLAUDE_CODE_USE_BEDROCK` (a
+// different auth path entirely), `HTTP_PROXY`/`HTTPS_PROXY` (every request
+// rerouted), and `NODE_OPTIONS=--require /tmp/x.js` — arbitrary code into a
+// Node CLI. None of those ends in a secret suffix, so none of them was caught.
+//
+// A deny-list over a namespace nobody controls can only ever be a list plus an
+// omission. So the child gets a NAMED set: the handful of neutral variables a
+// CLI needs to start at all, plus the names the arm declares as its own auth.
+// Everything else — including every `RUNE_*` variable pointing at the measuring
+// instrument — is simply not there.
+//
+// The consequence is deliberate: a variable an arm genuinely needs has to be
+// named by that arm (`CODEX_HOME` is the worked example), which makes the
+// dependency reviewable in the plan instead of implicit in the founder's shell.
 
 export const SECRET_SUFFIXES = [
   "_API_KEY",
@@ -200,20 +214,50 @@ export function credentialShaped(name: string): boolean {
 }
 
 /**
- * Rune's own variables, which a comparator has no business reading.
+ * The neutral variables a CLI needs to start, and nothing else.
  *
- * Not a secret — a contaminant. `RUNE_HOME` and friends point at the rig's
- * isolated profile, and a comparator that picked one up would be reading the
- * measuring instrument.
+ * `PATH` finds the executable; `HOME` is where a tool keeps its own config and
+ * plan login; `TMPDIR`/`TMP`/`TEMP` are where it writes scratch files;
+ * `LANG`/`LC_*`/`LANGUAGE` and `TERM` decide how it renders text. Not one of
+ * them can point the arm at a different host, a different model, or a
+ * different auth path.
+ *
+ * `HOME` earns its place with a caveat worth stating: a tool's config file
+ * lives under it, which is why both arms pass their own "ignore the user's
+ * config" flag (`--ignore-user-config`, `--strict-mcp-config`). Removing
+ * `HOME` instead would break the subscription logins these arms exist to
+ * measure.
  */
-const RUNE_PREFIXES = ["RUNE_", "GEAR_", "ALAN_"];
+export const NEUTRAL_ENV_NAMES = [
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "TERM",
+  "LANG",
+  "LANGUAGE",
+] as const;
+
+/** Locale variables, which come as a family (`LC_ALL`, `LC_CTYPE`, …). */
+const NEUTRAL_ENV_PREFIXES = ["LC_"];
+
+export function neutralEnvName(name: string): boolean {
+  return (
+    (NEUTRAL_ENV_NAMES as readonly string[]).includes(name) ||
+    NEUTRAL_ENV_PREFIXES.some((prefix) => name.startsWith(prefix))
+  );
+}
 
 /**
- * The child's environment: the caller's, minus every credential the arm does
- * not own, minus Rune's own configuration.
+ * The child's environment: a named neutral base, plus the arm's own auth.
  *
- * `keep` is the arm's OWN auth, named by the arm. A name in `keep` survives
- * even though it is credential-shaped; that is the whole point of naming it.
+ * `keep` is the arm's OWN auth and configuration, named by the arm — the only
+ * way anything beyond the neutral base reaches the child. A name in `keep`
+ * survives whether or not it is credential-shaped; naming it is the point.
+ *
+ * Nothing else is inherited. There is no suffix predicate to get wrong here,
+ * because nothing arrives unless it was written down.
  */
 export function armEnv(
   keep: readonly string[],
@@ -222,8 +266,7 @@ export function armEnv(
   const env: NodeJS.ProcessEnv = {};
   for (const [name, value] of Object.entries(base)) {
     if (value === undefined) continue;
-    if (RUNE_PREFIXES.some((prefix) => name.startsWith(prefix))) continue;
-    if (credentialShaped(name) && !keep.includes(name)) continue;
+    if (!neutralEnvName(name) && !keep.includes(name)) continue;
     env[name] = value;
   }
   return env;

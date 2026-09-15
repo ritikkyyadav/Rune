@@ -59,8 +59,15 @@ import {
   workspaceOf,
 } from "./types";
 
-/** Codex's own auth: the plan login in `CODEX_HOME`, or an OpenAI API key. */
-export const CODEX_AUTH_VARS = ["OPENAI_API_KEY"] as const;
+/**
+ * Codex's own auth: the plan login in `CODEX_HOME`, or an OpenAI API key.
+ *
+ * `CODEX_HOME` is named here because `armEnv` is an allow-list: it does not end
+ * in a secret suffix, so the old deny-list passed it through by accident, and
+ * an allow-list would drop it and silently send a founder with a relocated
+ * Codex profile back to an unauthenticated `~/.codex`.
+ */
+export const CODEX_AUTH_VARS = ["OPENAI_API_KEY", "CODEX_HOME"] as const;
 
 /** The file `--output-last-message` writes, relative to the evidence directory. */
 export const CODEX_LAST_MESSAGE = "last-message.txt";

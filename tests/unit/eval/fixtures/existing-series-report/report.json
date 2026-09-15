@@ -1,0 +1,6 @@
+{
+  "schema": 1,
+  "kind": "comparator-arm-series",
+  "note": "A fixture, not a run. Its only job is to make the 'evidence is never overwritten' refusal fire, so a test can prove the budget gate was passed without letting anything spawn a comparator.",
+  "results": []
+}
