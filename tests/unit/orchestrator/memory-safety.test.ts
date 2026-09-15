@@ -188,14 +188,14 @@ describe("#4 a lesson that would weaken a boundary is rejected and logged", () =
       promoted: 0,
     });
     expect(store.all()).toHaveLength(0);
-    // Seven, not eight: "I'd rather you didn't …" is not a shape the EXTRACTOR
-    // recognises at all (`TASTE_RE` knows "I want/prefer/need", not "I'd
-    // rather"; `RULE_RE` knows "don't", not "didn't"), so it never becomes a
-    // candidate and there is nothing to refuse. It is refused on the manual
-    // `/memory add` path, which is where it can still arrive —
-    // `memory-guard.test.ts` holds all eight against `guardMemoryText`.
-    expect(r.refusals.length).toBe(7);
-    expect(store.refusals().length).toBe(7);
+    // Eight, not seven. "I'd rather you didn't …" used to reach the extractor
+    // at all: `TASTE_RE` knew "I want/prefer/need" and not "I'd rather", and
+    // `RULE_RE` knows "don't" and not "didn't", so it was never a candidate and
+    // there was nothing to refuse — a LEARNING-side miss, named in fix lane C's
+    // report and closed by widening `TASTE_RE`. All eight are now counted and
+    // diarised refusals, and none of them is stored.
+    expect(r.refusals.length).toBe(8);
+    expect(store.refusals().length).toBe(8);
   });
 
   it("still learns the ten true facts the same corpus holds", () => {
@@ -208,6 +208,35 @@ describe("#4 a lesson that would weaken a boundary is rejected and logged", () =
     ];
     const r = captureRunMemory(store, run({ userMessages: keep }));
     expect(r.proposed).toBe(keep.length);
+    expect(r.refusals).toEqual([]);
+  });
+
+  it("learns the same preferences said the OTHER way round", () => {
+    // The paraphrases, stated as things that are true rather than as things
+    // that weaken a boundary. Each one used to be silence.
+    const keep = [
+      "I'd rather have short answers with the conclusion first.",
+      "I'd prefer the report in bullets, not prose.",
+      "Could you always show me the diff before you commit?",
+      "Please stop hedging in your summaries.",
+    ];
+    const r = captureRunMemory(store, run({ userMessages: keep }));
+    expect(r.proposed).toBe(keep.length);
+    expect(r.refusals).toEqual([]);
+  });
+
+  it("and a TASK said the same way is still not a preference", () => {
+    // The whole reason the topic filter sits behind `TASTE_RE`: widening what
+    // is recognised must not widen what is kept. A store that learns these
+    // briefs every future session about a page nobody is building any more.
+    const tasks = [
+      "I'd rather you built the login page first.",
+      "Could you always start with the landing page?",
+      "Please stop the dev server.",
+      "I'd prefer a dark theme for the marketing site.",
+    ];
+    const r = captureRunMemory(store, run({ userMessages: tasks }));
+    expect({ proposed: r.proposed, stored: r.stored }).toEqual({ proposed: 0, stored: 0 });
     expect(r.refusals).toEqual([]);
   });
 });

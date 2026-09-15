@@ -80,8 +80,28 @@ const CORRECTION_RE =
 /** A standing rule: always / never / don't. */
 const RULE_RE = /\b(?:always|never)\b|\b(?:don'?t|do\s+not)\b/i;
 
-/** A stated taste. */
-const TASTE_RE = /\bi\s+(?:want|like|hate|prefer|need|expect|don'?t\s+want)\b/i;
+/**
+ * A stated taste.
+ *
+ * The first alternative is the shape the extractor shipped with: "I want", "I
+ * prefer", "I need". The three that follow are the paraphrases fix lane C
+ * measured as LEARNING-side misses — sentences a frustrated founder really
+ * types that reached neither `RULE_RE` nor this one, so they were never
+ * candidates and never even reached the guard:
+ *
+ *   • "I'd rather you didn't ask me to confirm each command"  (RULE_RE knows
+ *     `don't`, not `didn't`; this knew "prefer", not "rather")
+ *   • "Could you always show the diff first"  — a request in the interrogative
+ *   • "Please stop re-running the checks after every fix"
+ *
+ * Widening what is RECOGNISED is not widening what is KEPT: every sentence
+ * here still has to pass the topic filter below (a task is not a preference)
+ * and the guard (a preference may not weaken a boundary). What it buys is that
+ * a paraphrased boundary now arrives as a counted, diarised refusal rather
+ * than as silence.
+ */
+const TASTE_RE =
+  /\bi\s+(?:want|like|hate|prefer|need|expect|don'?t\s+want)\b|\bi(?:'d|\s+would)\s+(?:rather|prefer|like)\b|\b(?:could|can|would)\s+you\s+(?:please\s+)?(?:always|never|not)\b|\bplease\s+(?:stop|don'?t|do\s+not|never|always)\b/i;
 
 /**
  * The topic filter, and the reason this extractor is conservative rather than
