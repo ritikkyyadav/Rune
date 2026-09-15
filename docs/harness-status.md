@@ -1817,3 +1817,19 @@ classifier, so the step is being reproduced locally from a fresh clone into a sc
 `ci.yml` (lint, test, build, integration on hosted runners) does not run on a push to this
 branch, only on a pull request; opening one is a further publication step and the founder's
 to take. Both results are hosted evidence of a stranger's machine, which no local run is.
+
+### Addendum 30 — hosted CI green: Linux containment, and a clean machine installs Rune on Ubuntu and macOS
+
+The first hosted run failed for a reason the job's own comment had reasoned around: it points
+`HOME` at a scratch directory so `~/.rune` is empty, and took rustup, cargo and bun's state with
+it. Reproduced locally from a fresh clone (red without the pins, green with them), fixed in
+`414ac89` by remembering the toolchain homes before `HOME` moves, and pushed. Run
+https://github.com/ritikkyyadav/Rune/actions/runs/35005701419 on `414ac89`: **Linux
+containment audit — success; clean-machine install (ubuntu-latest) — success; clean-machine
+install (macos-latest) — success.** Each install job builds the CLI and the native tools from
+the tracked source on a machine that has never seen Rune, installs through `scripts/install.sh`
+with its guards, checks `rune --version` against `scripts/version.sh`, and runs `rune doctor`
+on a first-ever install. This is hosted evidence of a stranger's machine, which no local run
+is, and it is the Phase 7 platform claim the handoff asked for on Linux and macOS. **Still
+not hosted:** `ci.yml` (lint, tests, build, integration on hosted runners) runs for this branch
+only on a pull request, which is the founder's step; Windows remains reasoned, not run.

@@ -426,5 +426,23 @@
       "lifecycleThroughBinary": "47 / 0"
     },
     "fourthVerifierPass": "pending"
+  },
+  "hostedCi": {
+    "push": "943efee..0530c52 then 414ac89 (2026-09-15 ~23:30 IST, on the founder's word)",
+    "firstRun": {
+      "id": 35005128311,
+      "result": "containment-linux success; install-smoke failed on both runners at scripts/install.sh \u2014 rustup had no toolchain because HOME was moved"
+    },
+    "fix": "414ac89 pins RUSTUP_HOME/CARGO_HOME/BUN_INSTALL before HOME moves; reproduced locally red\u2192green from a fresh clone",
+    "secondRun": {
+      "id": 35005701419,
+      "url": "https://github.com/ritikkyyadav/Rune/actions/runs/35005701419",
+      "jobs": {
+        "Linux containment audit (Docker, --privileged rig)": "success",
+        "Clean-machine install (ubuntu-latest)": "success",
+        "Clean-machine install (macos-latest)": "success"
+      }
+    },
+    "notHosted": ["ci.yml (runs on pull_request only for this branch)", "Windows"]
   }
 }
