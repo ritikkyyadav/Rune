@@ -15,6 +15,9 @@ import {
   doctrineForRequest,
   extractDoctrineSection,
   type JitDoctrineSection,
+  jitDoctrineText,
+  FRONTEND_LOOP_DOCTRINE,
+  ARCHITECTURE_PLAN_DOCTRINE,
 } from "../../../packages/orchestrator/src/prompts";
 
 function ev(type: string, extra: Record<string, unknown> = {}) {
@@ -249,5 +252,168 @@ describe("jit injection in the loop", () => {
     );
     await collect(loop.run("build", "s1", "/tmp"));
     expect(JSON.stringify(loop.getMessages())).not.toContain("applies for the rest of the session");
+  });
+});
+
+// ─── Phase 5 F1: the frontend loop, and the architecture plan ───
+//
+// Two sections that are NOT part of AGENT_DOCTRINE: they sit in no prefix in
+// any delivery mode, so the loop owns them. What has to hold is that they cost
+// a frontend/architecture request ~1 KB each, cost every other request exactly
+// zero bytes, and arrive once per user message — including the mid-run steer
+// the backlog says JIT doctrine never reached (`agent-loop.ts:1309`).
+
+describe("doctrineForRequest routes the Phase 5 sections by shape", () => {
+  test("a frontend-shaped request gets the loop; an ordinary fix gets nothing", () => {
+    for (const request of [
+      "Build a responsive project dashboard",
+      "redesign the settings screen",
+      "fix the css on the landing page",
+      "the frontend crashes when the list is empty",
+    ]) {
+      expect(doctrineForRequest(request)).toContain("frontend");
+    }
+    for (const request of [
+      "Fix parsing of empty JSON objects",
+      "the CSV parser drops the last row",
+      "add a retry to the queue consumer",
+    ]) {
+      expect(doctrineForRequest(request)).not.toContain("frontend");
+      expect(doctrineForRequest(request)).not.toContain("architecture");
+    }
+  });
+
+  test("an architecture-shaped request gets the plan section; a local repair does not", () => {
+    for (const request of [
+      "migrate the store to the new schema",
+      "refactor the parser into its own package",
+      "extract a module for the pricing rules",
+      "this is an interface change across three modules",
+    ]) {
+      expect(doctrineForRequest(request)).toContain("architecture");
+    }
+    for (const request of [
+      "fix the off-by-one in nextIndex",
+      "add a test for the empty case",
+      "why does the queue stall?",
+    ]) {
+      expect(doctrineForRequest(request)).not.toContain("architecture");
+    }
+  });
+
+  test("the two sections are new text, not slices of AGENT_DOCTRINE", () => {
+    expect(jitDoctrineText("frontend")).toBe(FRONTEND_LOOP_DOCTRINE);
+    expect(jitDoctrineText("architecture")).toBe(ARCHITECTURE_PLAN_DOCTRINE);
+    expect(jitDoctrineText("interfaces")).toBe("");
+    expect(AGENT_DOCTRINE).not.toContain(FRONTEND_LOOP_DOCTRINE);
+    expect(AGENT_DOCTRINE).not.toContain(ARCHITECTURE_PLAN_DOCTRINE);
+  });
+
+  test("the loop states the handoff's steps in order", () => {
+    const order = [
+      "REQUIREMENTS AND REFERENCES",
+      "THE ACTUAL STACK",
+      "ART DIRECTION",
+      "IMPLEMENT",
+      "SERVE IT",
+      "CAPTURE BOTH WIDTHS",
+      "EXERCISE IT",
+      "FIX what you saw",
+      "HAND IT BACK",
+    ];
+    let at = -1;
+    for (const step of order) {
+      const next = FRONTEND_LOOP_DOCTRINE.indexOf(step);
+      expect(next).toBeGreaterThan(at);
+      at = next;
+    }
+  });
+});
+
+describe("the Phase 5 sections in the loop", () => {
+  test("a frontend request carries the loop exactly once, before the first inference", async () => {
+    const jit = onceJit();
+    const gw = makeGateway([{ tools: [{ name: "write_file", args: { path: "a.html" } }] }, {}]);
+    let firstRequest = "";
+    const stream = gw.inferStream;
+    gw.inferStream = async function* (request: unknown) {
+      firstRequest ||= JSON.stringify(request);
+      yield* stream(request);
+    };
+    const loop = makeLoop(gw, jit.fn);
+    await collect(loop.run("Build a responsive project board screen", "f1", "/tmp"));
+    expect(firstRequest).toContain("# The frontend loop");
+    expect(firstRequest).toContain("SERVE IT");
+    const t = JSON.stringify(loop.getMessages());
+    expect(t.split("# The frontend loop").length - 1).toBe(1);
+  });
+
+  test("an architecture request carries the plan section exactly once", async () => {
+    const jit = onceJit();
+    const gw = makeGateway([{ text: "done" }]);
+    let firstRequest = "";
+    const stream = gw.inferStream;
+    gw.inferStream = async function* (request: unknown) {
+      firstRequest ||= JSON.stringify(request);
+      yield* stream(request);
+    };
+    const loop = makeLoop(gw, jit.fn);
+    await collect(loop.run("migrate the storage layer to the new schema", "f4", "/tmp"));
+    expect(firstRequest).toContain("# The architecture plan");
+    expect(firstRequest).toContain("dependsOn");
+    expect(JSON.stringify(loop.getMessages()).split("# The architecture plan").length - 1).toBe(1);
+  });
+
+  /**
+   * The cost guarantee: a plain fix request must not pay one byte for either
+   * section. Measured as the whole first request, not just an absence check —
+   * a run that injected anything at all would move this number.
+   */
+  test("a plain fix request pays zero extra bytes", async () => {
+    const jit = onceJit();
+    const gw = makeGateway([{ text: "done" }]);
+    let firstRequest = "";
+    const stream = gw.inferStream;
+    gw.inferStream = async function* (request: unknown) {
+      firstRequest ||= JSON.stringify(request);
+      yield* stream(request);
+    };
+    const loop = makeLoop(gw, jit.fn);
+    await collect(loop.run("Fix parsing of empty JSON objects", "plain", "/tmp"));
+    expect(jit.calls).toEqual([]);
+    expect(firstRequest).not.toContain("# The frontend loop");
+    expect(firstRequest).not.toContain("# The architecture plan");
+    // Exactly one message went to the provider: the user's own words. Any
+    // injection at all — a harness note, a doctrine section — adds a second.
+    expect(loop.getMessages().length).toBe(2); // the request, and the model's reply
+  });
+
+  /**
+   * The backlog's residue (`agent-loop.ts:1309`): JIT doctrine fired only from
+   * the message that STARTS a run, so a steer typed into a run in flight got
+   * no routing from anywhere. The steer is a user message and is routed like
+   * one — so a frontend steer on a backend run delivers the loop, and a second
+   * frontend steer delivers it again, because the ask moved.
+   */
+  test("a frontend steer mid-run is routed; the section arrives once more", async () => {
+    const jit = onceJit();
+    const gw = makeGateway([
+      { tools: [{ name: "bash", args: { command: "ls" } }] },
+      { tools: [{ name: "bash", args: { command: "ls" } }] },
+      { text: "done" },
+    ]);
+    const loop = makeLoop(gw, jit.fn);
+    const events: AgentTurnEvent[] = [];
+    for await (const e of loop.run("Fix parsing of empty JSON objects", "steer", "/tmp")) {
+      events.push(e);
+      if (e.type === "tool_call_end") loop.interject("actually, give it a web UI screen too");
+    }
+    const t = JSON.stringify(loop.getMessages());
+    // Once per frontend-shaped user message: two steers were folded in.
+    expect(t.split("# The frontend loop").length - 1).toBe(2);
+    // The doctrine sections that DO live in the prefix stay once-per-session:
+    // the engine's gate returns null on the second ask.
+    expect(jit.calls.filter((c) => c === "interfaces").length).toBe(2);
+    expect(t.split("# Building interfaces").length - 1).toBe(1);
   });
 });

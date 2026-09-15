@@ -33,7 +33,7 @@ import {
   resultSignature,
 } from "./call-signature";
 import { TurnRefunds } from "./turn-refunds";
-import { doctrineForRequest, type JitDoctrineSection } from "./prompts";
+import { doctrineForRequest, jitDoctrineText, type JitDoctrineSection } from "./prompts";
 import type { IncidentContext, IncidentReporter, IncidentSeverity } from "@rune/shared";
 import type { IncidentClass } from "@rune/shared";
 import type { ToolCallInput, ToolCallOutput } from "@rune/tool-registry";
@@ -1809,6 +1809,36 @@ export class AgentLoop {
     yield { type: "handoff", reason, state: ts.renderHandoff() };
   }
 
+  /**
+   * Situational doctrine for one USER message, routed by its shape.
+   *
+   * Two kinds of section come through here. The four that live inside
+   * AGENT_DOCTRINE are fetched through `config.jitDoctrine`, which the engine
+   * gates to once per session — a second call for the same section returns
+   * null, so a steer never re-bills a section already sitting in history. The
+   * two Phase 5 sections are NEW text (`jitDoctrineText`): they are in no
+   * prefix in any delivery mode, so the loop owns them, and they arrive
+   * whenever a message asks for that kind of work.
+   *
+   * Called once per user message — the message that starts the run, and every
+   * mid-run steer folded in by `drainInterjections`. That second call is the
+   * backlog's residue (`agent-loop.ts:1309`): JIT doctrine used to fire ONLY
+   * from the message that starts a run, so "actually, make it a dashboard"
+   * typed into a run already in flight reached a prompt with no routing at all
+   * — not from the prefix, not from the JIT set.
+   */
+  private routeJitDoctrine(message: string): void {
+    for (const section of doctrineForRequest(message)) {
+      const own = jitDoctrineText(section);
+      if (own) {
+        this.injectHarnessNote(own);
+        continue;
+      }
+      const guidance = this.config.jitDoctrine?.(section);
+      if (guidance) this.injectHarnessNote(guidance);
+    }
+  }
+
   /** Fold every queued interjection into the transcript as ONE user message.
    *  Returns true when something was folded. Only called at turn boundaries
    *  (the messages array ends with a user/tool message there, so pushing a
@@ -1825,6 +1855,10 @@ export class AgentLoop {
       role: "user",
       content: buildUserContent(formatInterjection(texts), this.workspaceRoot),
     });
+    // A steer is a user message and gets the same routing the opening message
+    // got. The harness-note drain runs immediately after this one at the same
+    // boundary, so the section lands in the very next request.
+    this.routeJitDoctrine(texts.join("\n"));
     return true;
   }
 
@@ -1940,10 +1974,7 @@ export class AgentLoop {
     let justCompacted = false;
     // Design and delegation advice must arrive before the first decision.
     // The tool-result path remains a fallback for work discovered mid-run.
-    for (const section of doctrineForRequest(userMessage)) {
-      const guidance = this.config.jitDoctrine?.(section);
-      if (guidance) this.injectHarnessNote(guidance);
-    }
+    this.routeJitDoctrine(userMessage);
     // ── Effort routing ──
     // Latched to the ceiling for the rest of the run on the first sign of
     // difficulty; every transition is reported so the routing is auditable.

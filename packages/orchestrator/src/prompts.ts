@@ -21,17 +21,36 @@ import { getRuneHome } from "@rune/shared";
 import { getSandboxPolicy, isOsIsolationAvailable, isSandboxEnabled } from "@rune/tool-registry";
 
 /** A doctrine section delivered at its moment of relevance rather than in the prefix. */
-export type JitDoctrineSection = "interfaces" | "delegation" | "dashboards" | "modes";
+export type JitDoctrineSection =
+  "interfaces" | "delegation" | "dashboards" | "modes" | "frontend" | "architecture";
+
+/**
+ * The shape of a request that will end with something a person LOOKS at.
+ *
+ * One regex, two consumers: the "# Building interfaces" section (how the
+ * screen should look) and the frontend LOOP section below (the order in which
+ * a screen gets built and checked). Keeping them on one test means a request
+ * can never get the taste without the method, or the method without the taste.
+ */
+const FRONTEND_REQUEST_RE =
+  /\b(?:front[ -]?end|website|web\s+(?:page|app)|landing\s+page|dashboard|user\s+interface|ui|ux|screen|html|css|redesign)\b/i;
+
+/**
+ * The shape of a change that crosses module boundaries.
+ *
+ * Deliberately verb-led: "migrate", "refactor", "restructure", "extract a
+ * module", "change the interface" — the work where step 3 fails on step 1's
+ * assumption. A single-file edit inside one module is NOT this: the planning
+ * section costs ~1 KB and a local repair must never pay for it (the handoff's
+ * "do not force ten planning calls for every task").
+ */
+const ARCHITECTURE_REQUEST_RE =
+  /\b(?:migrat(?:e|ing|ion)s?|re-?architect\w*|architectur\w+|refactor\w*|restructur\w+|decoupl\w+|(?:extract|split|break)\s+(?:\w+\s+){0,3}?(?:module|package|service|interface|monolith|layer)s?|(?:interface|api|schema|protocol|contract)\s+(?:change|break\w*|rewrite|redesign)|across\s+(?:the\s+)?(?:\w+\s+){0,2}?(?:modules?|packages?|services?|layers?))\b/i;
 
 /** Select situational guidance before planning, without a classification call. */
 export function doctrineForRequest(request: string): JitDoctrineSection[] {
   const sections: JitDoctrineSection[] = [];
-  if (
-    /\b(?:front[ -]?end|website|web\s+(?:page|app)|landing\s+page|dashboard|user\s+interface|ui|ux|screen|html|css|redesign)\b/i.test(
-      request,
-    )
-  )
-    sections.push("interfaces");
+  if (FRONTEND_REQUEST_RE.test(request)) sections.push("interfaces");
   if (/\b(?:sub[ -]?agents?|workers?|delegat\w*|parallel\w*)\b/i.test(request))
     sections.push("delegation");
   // The design charter, when the request is asking for a rendered VIEW rather
@@ -56,7 +75,62 @@ export function doctrineForRequest(request: string): JitDoctrineSection[] {
     /\b(?:dashboard|interactive\s+view)\b/i.test(request)
   )
     sections.push("modes");
+  // Phase 5 F1/F4. Both sections are NEW text — they are not part of
+  // AGENT_DOCTRINE and so are dropped from no prefix and duplicated by no
+  // delivery mode. They cost a frontend-shaped or architecture-shaped request
+  // ~1 KB each and every other request exactly zero bytes.
+  if (FRONTEND_REQUEST_RE.test(request)) sections.push("frontend");
+  if (ARCHITECTURE_REQUEST_RE.test(request)) sections.push("architecture");
   return sections;
+}
+
+// ─── The frontend loop, and the architecture plan (Phase 5) ───
+//
+// "# Building interfaces" says what a good screen LOOKS like. Neither it nor
+// anything else in the doctrine said what ORDER a screen gets built and
+// checked in — so the observed failure was not ugliness, it was a run that
+// wrote markup, never served it, never resized a viewport, and handed back a
+// page nobody had looked at. G6 catches that at the finish gate, one turn
+// before the end, which is the most expensive possible place to learn it.
+//
+// These two sections are the loop stated ONCE, at the top of the run that
+// needs it. They are routed by `doctrineForRequest` and delivered by the
+// agent loop as a harness note, which means:
+//   * a backend fix pays nothing (the routing does not fire), and
+//   * they are not gated by `[doctrine] delivery`, because they never sat in
+//     the prefix that mode is trimming.
+
+/** The frontend loop, in the order the handoff's Phase 5 names it. */
+export const FRONTEND_LOOP_DOCTRINE = `# The frontend loop — the order this work gets done in
+This request ends in something a person will LOOK at. Work it in this order; each step is cheap, and skipping one is how a run ends with a screen nobody saw.
+1. REQUIREMENTS AND REFERENCES first: re-read what was asked, and open every reference supplied (a screenshot, a URL, a design file, an existing page). A reference you did not open is a requirement you did not read.
+2. THE ACTUAL STACK: find what this project already builds screens with — its framework, its component directory, its design tokens, its CSS convention — and reuse those components. A new button in a project that has one is a defect, not a feature.
+3. ART DIRECTION IS THE USER'S: unless the project already fixes the look or the user pinned one, name the genre and put two concrete directions to them with ask_user BEFORE the first markup. Asked once, at plan time. If nobody answers, state the direction you chose in one line and proceed.
+4. IMPLEMENT the vertical slice — real copy, real data, the states that exist (loading, empty, error), keyboard reachable.
+5. SERVE IT where the runtime can see it: start a local preview from THIS workspace (a dev server or a static server on localhost) and let the command print its URL. The harness recognises a preview it watched this workspace start; a URL you typed from memory, a remote origin, or a page you did not serve is not evidence and will be refused.
+6. CAPTURE BOTH WIDTHS through the browser: a wide viewport (1024px or more) and a narrow one (480px or less), screenshots you then actually READ. If no browser is mounted in this run, fetch the served page and read the real response, and say plainly in your report that layout was not seen.
+7. EXERCISE IT: drive the core interaction, tab through it and check focus is visible, and confirm anything that persists (storage, URL state) survives a reload. Read the browser console.
+8. FIX what you saw. Observed defects are yours; a screenshot you looked at and did not act on is worse than no screenshot.
+9. HAND IT BACK with the screenshots delivered and the limits stated: what you checked, at what widths, and what you could not see from here.`;
+
+/** Dependency-ordered planning, for work that crosses module boundaries. */
+export const ARCHITECTURE_PLAN_DOCTRINE = `# The architecture plan — interfaces first, closed in dependency order
+This change crosses module boundaries, which is where a plan earns its cost: the failure this section exists to prevent is step 3 failing on an interface step 1 never actually exposed.
+- Plan it ONCE with todo_write, in dependency order, before the first edit. Do not re-plan per step and do not split a one-module repair into ceremony — this section applies to THIS request, not to every request.
+- On each step that others depend on, say what it EXPOSES and what it PRESERVES: \`interface\` is the exact signature/export/route/schema other steps will call; \`invariant\` is what must remain true after it; \`migration\` is how existing data or callers move; \`acceptance\` is the command that settles it. Write them only where they are real — an invented interface is worse than a blank field.
+- \`dependsOn\` names the earlier steps a step is built on, by their number. The harness reads it: a step whose dependency is still open cannot be closed, and it will tell you so rather than let the plan record a lie.
+- When a check fails because an earlier step's interface is not what this step assumed, that is not a patch — STOP and re-plan: fix the interface at its own step, restate the plan with todo_write, and say in one line what the earlier assumption actually was.
+- Verify at the seams, not only inside modules: the acceptance that matters is the one that exercises step 1's interface through step 3's caller.`;
+
+/**
+ * The verbatim text a JIT section delivers, for the two sections that are not
+ * extracted from AGENT_DOCTRINE. "" for the rest — those come from
+ * `extractDoctrineSection`, which is the engine's job.
+ */
+export function jitDoctrineText(section: JitDoctrineSection): string {
+  if (section === "frontend") return FRONTEND_LOOP_DOCTRINE;
+  if (section === "architecture") return ARCHITECTURE_PLAN_DOCTRINE;
+  return "";
 }
 
 // ─── Agent Doctrine ───
