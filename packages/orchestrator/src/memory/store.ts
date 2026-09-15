@@ -22,14 +22,16 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
-import { getMemoryEntriesDir, getMemoryStoreDir } from "@rune/shared";
+import { getMemoryEntriesDir, getMemoryStoreDir, memoryMac, verifyMemoryMac } from "@rune/shared";
 
 import { guardMemoryText } from "./guard";
 import {
   MAX_ENTRIES,
+  MAX_EVIDENCE_CHARS,
   MAX_TEXT_CHARS,
   type MemoryCandidate,
   type MemoryEntry,
+  type MemoryIntegrity,
   type MemoryKind,
   type MemoryRefusal,
   type MemoryScope,
@@ -121,6 +123,20 @@ export class MemoryStore {
       this.logRefusal(verdict.refusal!, now);
       return { refusal: verdict.refusal };
     }
+    // Evidence is rendered into the guide beside the text, so it is text as far
+    // as the prompt is concerned and it passes the same door (V8 critical 2).
+    const evidence = candidate.evidence ? clampEvidence(candidate.evidence) : undefined;
+    if (evidence) {
+      const ev = guardMemoryText(evidence);
+      if (!ev.ok) {
+        const refusal = {
+          ...ev.refusal!,
+          reason: `${ev.refusal!.reason} (in the evidence)`,
+        };
+        this.logRefusal(refusal, now);
+        return { refusal };
+      }
+    }
     const id = entryId(candidate.kind, candidate.scope, text);
     const existing = this.get(id);
     const at = now.toISOString();
@@ -139,7 +155,7 @@ export class MemoryStore {
           source: strongerSource(existing.provenance.source, candidate.source),
           sessionIds,
           lastSeenAt: at,
-          evidence: candidate.evidence ?? existing.provenance.evidence,
+          evidence: evidence ?? existing.provenance.evidence,
         },
         observedCount: existing.observedCount + 1,
         confidence: Math.min(
@@ -162,7 +178,7 @@ export class MemoryStore {
         sessionIds: [candidate.sessionId],
         at,
         lastSeenAt: at,
-        ...(candidate.evidence ? { evidence: candidate.evidence } : {}),
+        ...(evidence ? { evidence } : {}),
       },
       confidence: candidate.confidence ?? defaultConfidence(candidate.source),
       observedCount: 1,
@@ -178,7 +194,13 @@ export class MemoryStore {
   put(entry: MemoryEntry): MemoryEntry {
     try {
       mkdirSync(this.entriesDir, { recursive: true });
-      writeFileSync(this.pathFor(entry.id), JSON.stringify(entry, null, 2) + "\n");
+      // The key is minted here, on the first write, and nowhere else. A read of
+      // a store that has never been written to must not create one — a key made
+      // on the read path would be a key made to authenticate whatever is
+      // already lying in the directory.
+      const mac = memoryMac(entryMacPayload(entry), true, this.dir);
+      const signed: MemoryEntry = mac ? { ...entry, integrity: { v: 1, mac } } : entry;
+      writeFileSync(this.pathFor(entry.id), JSON.stringify(signed, null, 2) + "\n");
     } catch {
       // A store that cannot write is a store with no memory, not a broken run.
     }
@@ -202,9 +224,23 @@ export class MemoryStore {
     // Pinning is the user saying "this one is right" — it promotes as well as
     // protects, because a pinned entry the store still calls a candidate would
     // be pinned out of sight.
+    //
+    // And it is a USER act, so it carries the user's authority onto the
+    // provenance: the read path refuses a pin that no user source and no second
+    // session stands behind (V8 finding 11), and an entry the person has just
+    // affirmed by hand has to survive that rule. `strongerSource` never
+    // downgrades, so a `user-corrected` entry stays corrected.
     const next: MemoryEntry = {
       ...entry,
       pinned,
+      ...(pinned
+        ? {
+            provenance: {
+              ...entry.provenance,
+              source: strongerSource(entry.provenance.source, "user-said"),
+            },
+          }
+        : {}),
       status: pinned && entry.status === "candidate" ? "promoted" : entry.status,
     };
     delete (next as { expiresAt?: string }).expiresAt;
@@ -300,7 +336,7 @@ export class MemoryStore {
     let read: MemoryEntry | { refusal: MemoryRefusal } | null;
     try {
       if (!existsSync(path)) return null;
-      read = sanitize(JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>);
+      read = sanitize(JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>, this.dir);
     } catch {
       return null;
     }
@@ -391,10 +427,27 @@ const SOURCES: ReadonlySet<string> = new Set(Object.keys(SOURCE_RANK));
  *     not read back whole past a 200-character cap;
  *   · the guard runs, so a line it refused is not an entry however it got
  *     onto the disk;
- *   · the id must RE-DERIVE from the content — `entryId(kind, scope, text)` —
- *     which is what makes a hand-written file provably not a store write: the
- *     id is the content, and a forger who fixes the id has to write text the
- *     guard already passed;
+ *   · every OTHER string the entry carries — the evidence above all, which the
+ *     renderer prints verbatim — passes the same guard and the same clamp, so
+ *     nothing in an entry reaches a prompt unguarded (V8 critical 2);
+ *   · `pinned` needs an authority behind it: the user's own words, or two
+ *     distinct sessions. A pin is a user act and `prune` may never drop one, so
+ *     an `observed` row with an empty session list may not claim it (V8 11);
+ *   · the id must RE-DERIVE from the content — `entryId(kind, scope, text)`;
+ *   · and the entry must carry the store's own HMAC over the WHOLE of it, with
+ *     the per-home key in `~/.rune/memory/.key`.
+ *
+ * That last one is the one that matters, and V8 critical 1 is why. The id is an
+ * UNKEYED hash of content the writer chooses, so re-deriving it proves the text
+ * and nothing whatever about the provenance: a `cat >` with an ordinary
+ * sentence — one the guard has no reason to refuse — and a correctly computed
+ * id bought `source: "user-corrected"`, `pinned: true` and `status:
+ * "promoted"`, rendered into every future session as "(you corrected this)",
+ * with an empty refusal log. The old comment here called the id check "a
+ * hand-written file provably not a store write", and that was the half of it
+ * that was not true. A MAC is the half that is: it covers kind, scope, text,
+ * source, sessions, evidence, pin, status and dates together, and it cannot be
+ * computed without a file the store wrote 0600 and never puts in config.
  *   · the provenance must be one of the five sources spelled out, and
  *     `verified-outcome` must carry the evidence that is what makes it
  *     verified rather than claimed (the same rule `readyToPromote` applies —
@@ -406,7 +459,10 @@ const SOURCES: ReadonlySet<string> = new Set(Object.keys(SOURCE_RANK));
  * protect them is a worse surprise than ignoring it, and the refusal is
  * logged so `/memory` can say what was turned away and why.
  */
-function sanitize(raw: Record<string, unknown>): MemoryEntry | { refusal: MemoryRefusal } | null {
+function sanitize(
+  raw: Record<string, unknown>,
+  storeDir: string,
+): MemoryEntry | { refusal: MemoryRefusal } | null {
   if (typeof raw.id !== "string" || !raw.id) return null;
   if (typeof raw.text !== "string" || !raw.text.trim()) return null;
   if (typeof raw.kind !== "string" || !KINDS.has(raw.kind)) return null;
@@ -419,7 +475,7 @@ function sanitize(raw: Record<string, unknown>): MemoryEntry | { refusal: Memory
     return { refusal: { rule: "provenance", reason: `entry ${raw.id} states no known source` } };
   }
   const source = prov.source as MemorySource;
-  const evidence = typeof prov.evidence === "string" ? prov.evidence.trim() : "";
+  const evidence = typeof prov.evidence === "string" ? clampEvidence(prov.evidence) : "";
   if (source === "verified-outcome" && !evidence) {
     return {
       refusal: {
@@ -440,6 +496,21 @@ function sanitize(raw: Record<string, unknown>): MemoryEntry | { refusal: Memory
   const text = normalizeText(raw.text);
   const verdict = guardMemoryText(text);
   if (!verdict.ok) return { refusal: verdict.refusal! };
+  if (evidence) {
+    const ev = guardMemoryText(evidence);
+    if (!ev.ok) {
+      return { refusal: { ...ev.refusal!, reason: `${ev.refusal!.reason} (in the evidence)` } };
+    }
+  }
+  const pinned = raw.pinned === true;
+  if (pinned && !pinAuthorised(source, sessionIds.length)) {
+    return {
+      refusal: {
+        rule: "pin-provenance",
+        reason: `entry ${raw.id} is pinned with nothing behind it — a pin needs the user's own words or two sessions, and this is ${source} with ${sessionIds.length}`,
+      },
+    };
+  }
   if (entryId(raw.kind as MemoryKind, scope, text) !== raw.id) {
     return {
       refusal: {
@@ -448,7 +519,7 @@ function sanitize(raw: Record<string, unknown>): MemoryEntry | { refusal: Memory
       },
     };
   }
-  return {
+  const entry: MemoryEntry = {
     id: raw.id,
     kind: raw.kind as MemoryKind,
     status: status as MemoryStatus,
@@ -462,12 +533,70 @@ function sanitize(raw: Record<string, unknown>): MemoryEntry | { refusal: Memory
     },
     confidence: typeof raw.confidence === "number" ? raw.confidence : 0.5,
     observedCount: typeof raw.observedCount === "number" ? raw.observedCount : 1,
-    ...(raw.pinned === true ? { pinned: true } : {}),
+    ...(pinned ? { pinned: true } : {}),
     ...(typeof raw.expiresAt === "string" ? { expiresAt: raw.expiresAt } : {}),
     scope,
-    ...(typeof raw.supersededBy === "string" ? { supersededBy: raw.supersededBy } : {}),
-    ...(typeof raw.supersedes === "string" ? { supersedes: raw.supersedes } : {}),
+    ...(isEntryId(raw.supersededBy) ? { supersededBy: raw.supersededBy as string } : {}),
+    ...(isEntryId(raw.supersedes) ? { supersedes: raw.supersedes as string } : {}),
   };
+  const integrity = raw.integrity as MemoryIntegrity | undefined;
+  if (!verifyMemoryMac(entryMacPayload(entry), integrity?.mac, storeDir)) {
+    return {
+      refusal: {
+        rule: "integrity",
+        reason: `entry ${raw.id} does not carry this store's signature — it was not written by the store`,
+      },
+    };
+  }
+  return entry;
+}
+
+/** `supersedes` / `supersededBy` name another ENTRY, so only an id will do. */
+function isEntryId(v: unknown): boolean {
+  return typeof v === "string" && /^[0-9a-f]{12}$/.test(v);
+}
+
+/** Evidence is a receipt: one line, clamped. */
+export function clampEvidence(s: string): string {
+  return s.replace(/\s+/g, " ").trim().slice(0, MAX_EVIDENCE_CHARS);
+}
+
+/**
+ * Who may pin. The user's own words, or a claim two distinct sessions stand
+ * behind. `setPinned` carries the user's authority onto the provenance, so a
+ * real `/memory pin` always satisfies this; what it refuses is a file that
+ * arrived with the pin already on it.
+ */
+export function pinAuthorised(source: MemorySource, sessions: number): boolean {
+  return source === "user-said" || source === "user-corrected" || sessions >= 2;
+}
+
+/**
+ * The canonical bytes an entry is signed over: everything the renderer, the
+ * promotion table and `prune` read. Order is fixed here rather than taken from
+ * `JSON.stringify(entry)`, so a key reordered on disk is still the same entry
+ * and a field added to the type is a deliberate change to the signature.
+ */
+export function entryMacPayload(e: MemoryEntry): string {
+  return JSON.stringify([
+    "memory.entry.v1",
+    e.id,
+    e.kind,
+    e.status,
+    e.text,
+    e.provenance.source,
+    e.provenance.sessionIds,
+    e.provenance.at,
+    e.provenance.lastSeenAt ?? "",
+    e.provenance.evidence ?? "",
+    e.confidence,
+    e.observedCount,
+    e.pinned === true,
+    e.expiresAt ?? "",
+    scopeKey(e.scope),
+    e.supersededBy ?? "",
+    e.supersedes ?? "",
+  ]);
 }
 
 export { sameScope, scopeKey };

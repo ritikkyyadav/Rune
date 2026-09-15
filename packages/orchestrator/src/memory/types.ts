@@ -63,6 +63,18 @@ export interface MemoryEntry {
   scope: MemoryScope;
   supersededBy?: string;
   supersedes?: string;
+  /**
+   * The store's own signature over every field above, with the per-home key.
+   * Written by `MemoryStore.put`, checked by the read path, and the only thing
+   * here a hand-written file cannot produce (see store.ts's `sanitize`).
+   */
+  integrity?: MemoryIntegrity;
+}
+
+/** HMAC-SHA256 over the canonical reading of an entry. */
+export interface MemoryIntegrity {
+  v: number;
+  mac: string;
 }
 
 /** The store's hard bound. Overflow drops lowest-confidence oldest first. */
@@ -70,6 +82,18 @@ export const MAX_ENTRIES = 500;
 
 /** An entry is a fact, not a document. */
 export const MAX_TEXT_CHARS = 200;
+
+/**
+ * `provenance.evidence` is a receipt, not a paragraph.
+ *
+ * V8 critical 2: it was rendered VERBATIM into the guide for a
+ * `verified-outcome` entry (`verified: ${evidence}`) and guarded on neither the
+ * write path nor the read path, so a payload the guard refuses outright in
+ * `text` reached the prompt whole inside a file whose id verified. Nothing in an
+ * entry now reaches a prompt without passing the same guard the text does, and
+ * the clamp is the shape half of it.
+ */
+export const MAX_EVIDENCE_CHARS = 160;
 
 /** `observed` needs this many DISTINCT sessions before it is a pattern. */
 export const OBSERVED_SESSIONS_TO_PROMOTE = 2;
