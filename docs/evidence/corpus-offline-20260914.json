@@ -34,13 +34,7 @@
       "cache-plan",
       "working-tree-integration"
     ],
-    "scenarios": [
-      "correct",
-      "omission",
-      "wrong",
-      "silent",
-      "stopped"
-    ],
+    "scenarios": ["correct", "omission", "wrong", "silent", "stopped"],
     "complete": true,
     "engine": "checkpoints, security, rate limiting, hooks, MCP, skills, verification, repo map, playbook and memory off — the same configuration M1's acceptance integration tests use, so the rows are comparable to those.",
     "classification": {
@@ -305,9 +299,7 @@
           "why": "`bun .rune-acceptance/check.mjs unterminated` last failed"
         }
       ],
-      "evaluatorFailed": [
-        "an unterminated quoted field throws → failed"
-      ],
+      "evaluatorFailed": ["an unterminated quoted field throws → failed"],
       "harnessRePrompts": 5,
       "completions": 1,
       "providerTurns": 7,
@@ -1118,9 +1110,7 @@
           "why": "`bun .rune-acceptance/check.mjs changelog` last failed"
         }
       ],
-      "evaluatorFailed": [
-        "the Unreleased section of CHANGELOG.md records the new route → failed"
-      ],
+      "evaluatorFailed": ["the Unreleased section of CHANGELOG.md records the new route → failed"],
       "harnessRePrompts": 4,
       "completions": 1,
       "providerTurns": 6,
@@ -2837,9 +2827,7 @@
           "why": "`bun .rune-acceptance/check.mjs sourceUntouched` last failed"
         }
       ],
-      "evaluatorFailed": [
-        "no source file was modified by a task that asked for none → failed"
-      ],
+      "evaluatorFailed": ["no source file was modified by a task that asked for none → failed"],
       "harnessRePrompts": 4,
       "completions": 1,
       "providerTurns": 6,

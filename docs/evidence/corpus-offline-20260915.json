@@ -34,14 +34,7 @@
       "cache-plan",
       "working-tree-integration"
     ],
-    "scenarios": [
-      "correct",
-      "omission",
-      "wrong",
-      "silent",
-      "stopped",
-      "wrong-v6"
-    ],
+    "scenarios": ["correct", "omission", "wrong", "silent", "stopped", "wrong-v6"],
     "complete": true,
     "engine": "checkpoints, security, rate limiting, hooks, MCP, skills, verification, repo map, playbook and memory off — the same configuration M1's acceptance integration tests use, so the rows are comparable to those.",
     "classification": {
@@ -319,9 +312,7 @@
           "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-csv-state-machine-omission-2dX4dN/home/rune-acceptance-dJWgkm/.rune-acceptance/check.mjs unterminated` last failed"
         }
       ],
-      "evaluatorFailed": [
-        "an unterminated quoted field throws → failed"
-      ],
+      "evaluatorFailed": ["an unterminated quoted field throws → failed"],
       "harnessRePrompts": 5,
       "completions": 1,
       "providerTurns": 7,
