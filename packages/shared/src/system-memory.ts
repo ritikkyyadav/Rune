@@ -64,6 +64,30 @@ export function getSystemMemoryMetaPath(): string {
   return md.replace(/\.md$/i, "") + ".json";
 }
 
+/**
+ * The structured store behind the guide — `~/.rune/memory/`, one JSON file per
+ * entry under `entries/`. The guide above is what a model reads; this is what
+ * the guide is rendered FROM, and what carries provenance.
+ *
+ * Resolved here, beside the other two paths, so that a test pointing
+ * `RUNE_SYSTEM_MEMORY_PATH` at a scratch file relocates the whole of memory
+ * rather than half of it — a store that stayed in the real `~/.rune` while the
+ * guide moved would be the one way a test suite could write on the founder's
+ * own memory. When the override is set the store sits beside it.
+ */
+export function getMemoryStoreDir(): string {
+  const override = process.env.RUNE_MEMORY_DIR;
+  if (override) return override;
+  const md = process.env.RUNE_SYSTEM_MEMORY_PATH;
+  if (md) return join(dirname(md), "memory");
+  return join(getRuneHome(), "memory");
+}
+
+/** Where the individual entry files live. */
+export function getMemoryEntriesDir(): string {
+  return join(getMemoryStoreDir(), "entries");
+}
+
 // ─── Load / Save ───
 
 /** Read the memory content + meta. Missing/malformed → empty (never throws). */

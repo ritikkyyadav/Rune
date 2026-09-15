@@ -178,6 +178,8 @@ export {
   type SystemMemory,
   getSystemMemoryPath,
   getSystemMemoryMetaPath,
+  getMemoryStoreDir,
+  getMemoryEntriesDir,
   loadSystemMemory,
   loadSystemMemoryMeta,
   saveSystemMemory,
