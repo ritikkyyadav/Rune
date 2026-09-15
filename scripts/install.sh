@@ -350,12 +350,32 @@ if [ -f "$META_FILE" ]; then
   fi
 fi
 
-# Load API keys if present
-RUNE_ENV="$HOME/.rune/.env"
-if [ -f "$RUNE_ENV" ]; then
+# ── Credentials follow the home (V8 finding 14) ──
+#
+# This line read RUNE_ENV="$HOME/.rune/.env" and sourced it unconditionally, so
+# a run under a scratch RUNE_HOME re-imported the founder's real provider keys
+# from disk one line after the capture rigs had scrubbed them from the child by
+# shape. Every rig in that programme that drove the installed binary ran with
+# live billable credentials present; nothing was spent, and the isolation those
+# rigs documented did not exist.
+#
+# Precedence, highest first:
+#   1. --pristine in the argv, or RUNE_NO_ENV_FILE=1 — nothing is sourced, and
+#      the process starts with exactly the environment it was given.
+#   2. RUNE_HOME set — that home's .env, and never any other home's.
+#   3. neither — "$HOME/.rune/.env", which is what 2 resolves to anyway.
+#
+# A file that does not exist is not an error at any level: a fresh install has
+# no .env, and a scratch home is expected not to.
+RUNE_ENV="${RUNE_HOME:-$HOME/.rune}/.env"
+case " $* " in
+  *" --pristine "*) RUNE_ENV="" ;;
+esac
+if [ "${RUNE_NO_ENV_FILE:-0}" = "1" ]; then RUNE_ENV=""; fi
+if [ -n "$RUNE_ENV" ] && [ -f "$RUNE_ENV" ]; then
   set -a
   # shellcheck disable=SC1090
-  source "$RUNE_ENV"
+  . "$RUNE_ENV"
   set +a
 fi
 

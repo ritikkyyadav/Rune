@@ -8,7 +8,7 @@
     "build": "bun build ./src/index.ts --outdir ./dist --target bun",
     "typecheck": "tsc --noEmit",
     "lint": "prettier --check src/",
-    "test": "bun test ../../tests/unit/protocol"
+    "test": "bun test --preload ../../tests/scratch-home.ts ../../tests/unit/protocol"
   },
   "devDependencies": {
     "typescript": "^5.8"

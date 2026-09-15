@@ -59,9 +59,16 @@ import {
  *     significant figures;
  *   · the supervisor's false-positive rate, read from the same run.
  *
- * `--offline` runs the whole corpus against a dead reviewer. That is the
- * regression guard for the 22-minute fail-closed outage, and it is the pass
- * that runs on every change: no key, no network, no quota.
+ * Offline is the DEFAULT, and `--live` is the opt-in (V8 finding 28). The whole
+ * corpus runs against a dead reviewer: that is the regression guard for the
+ * 22-minute fail-closed outage, and it is the pass that runs on every change —
+ * no key, no network, no quota. It was the other way round, so `bun run
+ * eval:auto-safety` bare resolved keychain/OAuth credentials, defaulted to
+ * `anthropic` and ran at `maxRequests: 250`; the record cited its numbers
+ * without recording `--offline`, so anyone re-running the cited command
+ * verbatim on this machine spent money. For a founder with no budget, spending
+ * is the thing you ask for, not the thing you get by leaving a flag off.
+ * `--offline` is still accepted and still means offline.
  *
  * The corpus models a contained machine (sandbox on, Seatbelt present) unless
  * `--uncontained` is passed, which measures the host-shell fail-closed path
@@ -112,7 +119,9 @@ function parseOptions(argv: string[]): Options {
     return Number.isFinite(n) ? n : fallback;
   };
   return {
-    offline: flag("offline"),
+    // `--live` opts IN to spending. `--offline` is kept because the record and
+    // every script that already passes it should keep meaning what they said.
+    offline: !flag("live") || flag("offline"),
     uncontained: flag("uncontained"),
     json: flag("json"),
     compare: flag("compare"),

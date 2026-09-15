@@ -326,6 +326,7 @@ mod tests {
         SandboxConfig {
             workspace_root: ws,
             allow_network,
+            audit_log_path: crate::test_audit_path(),
             ..Default::default()
         }
     }

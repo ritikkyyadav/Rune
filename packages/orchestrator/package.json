@@ -11,7 +11,7 @@
     "build": "bun build ./src/index.ts --outdir ./dist --target bun",
     "typecheck": "tsc --noEmit",
     "lint": "prettier --check src/",
-    "test": "bun test ../../tests/unit/orchestrator",
+    "test": "bun test --preload ../../tests/scratch-home.ts ../../tests/unit/orchestrator",
     "start": "bun run src/bin/rune-cli.ts"
   },
   "dependencies": {

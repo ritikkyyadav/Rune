@@ -73,6 +73,15 @@ fn the_audit_log_follows_rune_home() {
     // An empty or whitespace-only override is not a relocation to the current
     // directory: it reads as unset.
     let real = with_env(&[("RUNE_HOME", None), ("GEAR_HOME", None)], rune_home);
+    // The DEFAULT still points at the real profile, which is what a real
+    // invocation wants — and is why no test in this crate may use it (V8 #15).
+    assert_eq!(
+        with_env(&[("RUNE_HOME", None), ("GEAR_HOME", None)], || {
+            SandboxConfig::default().audit_log_path
+        }),
+        real.join("audit.jsonl"),
+        "the default is the real profile; a test that wants one must say so"
+    );
     assert_eq!(
         real,
         dirs::home_dir()
@@ -85,4 +94,33 @@ fn the_audit_log_follows_rune_home() {
             assert_eq!(rune_home(), real, "a blank override is not a path");
         });
     }
+}
+
+/// No test in this crate may build a config that writes to a real profile.
+///
+/// V8 finding 15: `cargo test --locked --workspace` — gate #8 of the thirteen —
+/// appended seven lines to the founder's `~/.rune/audit.jsonl` on every run,
+/// deterministically, including the closing gate run that certified the
+/// release. `bunfig.toml`'s `[test] preload` cannot reach cargo, and three
+/// verifiers in a row mis-attributed those lines rather than suspecting the one
+/// gate nobody fingerprints. The five macOS tests that actually execute a
+/// command took their `audit_log_path` from `SandboxConfig::default()`, which
+/// resolves through `rune_home()`, which with no `RUNE_HOME` set is the real
+/// home. They take it from `crate::test_audit_path()` now.
+///
+/// Read off the source, so it needs no environment of its own — this file runs
+/// its tests on parallel threads and the env is process-global, which is why
+/// exactly one test here may touch it.
+#[test]
+fn no_test_config_in_this_crate_inherits_the_default_audit_path() {
+    let source = include_str!("../src/macos.rs");
+    assert!(
+        source.contains("audit_log_path: crate::test_audit_path()"),
+        "macos.rs's test config must not inherit the default audit path"
+    );
+    let linux = include_str!("../src/linux.rs");
+    assert!(
+        linux.contains("audit_log_path: crate::test_audit_path()"),
+        "linux.rs's test config must not inherit the default audit path"
+    );
 }

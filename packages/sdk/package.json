@@ -1,7 +1,7 @@
 {
   "name": "@rune/sdk",
   "version": "0.4.1",
-  "description": "Drive a Rune agent session over the Rune protocol — from Node, Bun, a browser, an editor extension or a CI step.",
+  "description": "Drive a Rune agent session over the Rune protocol \u2014 from Node, Bun, a browser, an editor extension or a CI step.",
   "license": "Apache-2.0",
   "type": "module",
   "keywords": [
@@ -48,7 +48,7 @@
     "prepack": "bun run scripts/build.ts",
     "typecheck": "tsc --noEmit",
     "lint": "prettier --check src/ scripts/",
-    "test": "bun test ../../tests/unit/sdk"
+    "test": "bun test --preload ../../tests/scratch-home.ts ../../tests/unit/sdk"
   },
   "devDependencies": {
     "@rune/protocol": "workspace:*",

@@ -365,6 +365,7 @@ mod tests {
         let config = SandboxConfig {
             workspace_root: PathBuf::from("/tmp/ws"),
             allow_network,
+            audit_log_path: crate::test_audit_path(),
             ..Default::default()
         };
         LinuxSandbox::new(config).bwrap_args("true", Path::new("/tmp/ws"))

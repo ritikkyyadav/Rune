@@ -60,6 +60,23 @@ pub(crate) fn escape_sbpl(s: &str) -> String {
 /// test run appended to the founder's real `~/.rune/audit.jsonl`. An empty or
 /// whitespace-only value is treated as unset rather than as the current
 /// directory.
+/// A scratch audit log for this crate's own tests (V8 finding 15).
+///
+/// `SandboxConfig::default()` resolves `audit_log_path` through [`rune_home`],
+/// and `cargo test --locked --workspace` runs with no `RUNE_HOME` set — so the
+/// five macOS tests that actually execute a command appended seven lines to the
+/// founder's real `~/.rune/audit.jsonl` on every run, including the gate run
+/// that certified the release. `bunfig.toml`'s preload cannot reach cargo, and
+/// the fingerprint everyone checks is the two bun suites, which is exactly why
+/// this went unmeasured. Every test config in this crate builds its audit path
+/// here instead, under the process's own temp directory.
+#[cfg(test)]
+pub(crate) fn test_audit_path() -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("rune-sandbox-test-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join("audit.jsonl")
+}
+
 pub fn rune_home() -> PathBuf {
     for key in ["RUNE_HOME", "GEAR_HOME"] {
         if let Ok(value) = std::env::var(key)
