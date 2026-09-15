@@ -1,0 +1,17 @@
+{
+  "id": "dependent-interface",
+  "family": "migration",
+  "browser": false,
+  "prompt": "Migrate the pricing code off computeTotal. Three modules move, in order. (1) pricing.js must expose a per-line price instead of a cart total, and it must return money as money — a value that carries its own currency, not a bare number a caller has to remember the unit of. (2) The volume-discount rules belong in rules.js next to the rounding policy, not inside pricing.js; pricing.js should hold no rate table afterwards. (3) checkout.js must be rewritten onto the new price function and keep producing a correct, currency-bearing total line for a multi-item cart. computeTotal must be gone when you are done. No dependencies and no build step; catalog.js does not change.",
+  "files": ["files/catalog.js", "files/checkout.js", "files/pricing.js", "files/rules.js"],
+  "untracked": [],
+  "constraints": [
+    "catalog.js is unchanged",
+    "no package manager and no build step",
+    "computeTotal is removed, not deprecated"
+  ],
+  "solution": "solution",
+  "inconsistent": "solution-inconsistent",
+  "inconsistency": "step 3 is written against the interface step 1 was assumed to expose — a bare number of cents — while step 1 exposes a Money object. Nothing throws; the total renders as NaN.",
+  "acceptance": "acceptance.json"
+}

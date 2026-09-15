@@ -1,0 +1,15 @@
+{
+  "id": "form-states",
+  "family": "frontend",
+  "browser": true,
+  "prompt": "The contact form in app.js is unimplemented — index.html already mounts it and throws. Build it: render the three fields from fields.js with their labels bound to their controls, validate on submit (every field required, a real email address, at least 12 characters of message), and show the person what happened. It needs a state for each thing that can be true: nothing typed yet, a refused submit with the bad fields marked and explained, sending, and sent. Keep what they typed across a reload. The form must be fully operable from the keyboard, with a visible focus ring, and after a refused submit the caret should land on the first field that is wrong. Use the existing tokens and the existing .field convention in styles.css — do not introduce a second palette or a component the project already has. No dependencies, no build step.",
+  "files": ["files/app.js", "files/fields.js", "files/index.html", "files/styles.css"],
+  "untracked": [],
+  "constraints": [
+    "fields.js is the field schema; read it, do not restate it",
+    "no package manager and no build step",
+    "the design tokens in styles.css are the palette"
+  ],
+  "solution": "solution",
+  "acceptance": "acceptance.json"
+}

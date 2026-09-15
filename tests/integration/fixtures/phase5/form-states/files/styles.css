@@ -1,0 +1,41 @@
+/* Design tokens. A new screen composes with these; it does not invent a palette. */
+:root {
+  --ink: #17181c;
+  --ink-quiet: #5c6068;
+  --ground: #fbfaf8;
+  --line: #e3e0da;
+  --accent: #2f6f4f;
+  --danger: #a13322;
+  --space: 8px;
+  --radius: 6px;
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font:
+    15px/1.5 system-ui,
+    sans-serif;
+}
+
+.field {
+  display: grid;
+  gap: calc(var(--space) / 2);
+  margin-bottom: calc(var(--space) * 2);
+}
+
+.field label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-quiet);
+}
+
+.field input,
+.field textarea {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: calc(var(--space) * 1.25);
+  font: inherit;
+}

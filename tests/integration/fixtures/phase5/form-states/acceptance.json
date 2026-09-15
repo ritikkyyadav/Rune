@@ -1,0 +1,61 @@
+{
+  "id": "form-states",
+  "note": "Evaluator criteria. The model never sees this file, and no criterion restates the prompt's wording closely enough to be satisfied by copying it. Every command addresses the tree by relative path and runs from the workspace root.",
+  "criteria": [
+    {
+      "id": "reuses-field-schema",
+      "source": "evaluator",
+      "text": "the form is rendered from fields.js rather than a second copy of the field list",
+      "command": "grep -q \"from \\\"./fields.js\\\"\" app.js && ! grep -q \"What do you need?\" app.js"
+    },
+    {
+      "id": "validation-rules",
+      "source": "evaluator",
+      "text": "validation refuses an empty field, a malformed email, and a message under twelve characters, and accepts a good submission",
+      "command": "bun -e 'const m=await import(\"./app.js\");const bad=m.validate({name:\"\",email:\"nope\",message:\"hi\"});if(Object.keys(bad).length!==3)process.exit(1);const partial=m.validate({name:\"Ada\",email:\"ada@example.com\",message:\"short\"});if(!partial.message)process.exit(1);const ok=m.validate({name:\"Ada\",email:\"ada@example.com\",message:\"twelve characters at least\"});if(Object.keys(ok).length!==0)process.exit(1)'"
+    },
+    {
+      "id": "error-state",
+      "source": "evaluator",
+      "text": "a refused submit renders an error state that is announced and names what to fix",
+      "command": "bun -e 'const m=await import(\"./app.js\");const html=m.renderForm({values:{name:\"\",email:\"nope\",message:\"hi\"},errors:m.validate({name:\"\",email:\"nope\",message:\"hi\"})});if(!/data-state=\"error\"/.test(html))process.exit(1);if(!/role=\"alert\"/.test(html))process.exit(1);if(!/aria-invalid=\"true\"/.test(html))process.exit(1);if(!/aria-describedby=/.test(html))process.exit(1)'"
+    },
+    {
+      "id": "empty-state",
+      "source": "evaluator",
+      "text": "the untouched form shows an empty state that says what to do, not a blank panel",
+      "command": "bun -e 'const m=await import(\"./app.js\");const html=m.renderForm({});if(!/data-state=\"empty\"/.test(html))process.exit(1);if(html.replace(/<[^>]+>/g,\"\").trim().length<40)process.exit(1)'"
+    },
+    {
+      "id": "labels-bound",
+      "source": "evaluator",
+      "text": "every control has a label bound to it by id, so the form is usable from the keyboard and by a screen reader",
+      "command": "bun -e 'const m=await import(\"./app.js\");const html=m.renderForm({});const ids=[...html.matchAll(/<label for=\"([^\"]+)\"/g)].map(x=>x[1]);if(ids.length!==3)process.exit(1);for(const id of ids){if(!new RegExp(`id=\"${id}\"`).test(html))process.exit(1)}'"
+    },
+    {
+      "id": "draft-persists",
+      "source": "evaluator",
+      "text": "what was typed survives a reload",
+      "command": "bun -e 'const m=await import(\"./app.js\");const store=new Map();const fake={getItem:k=>store.get(k)??null,setItem:(k,v)=>store.set(k,v)};m.saveDraft({name:\"Ada\"},fake);const back=m.loadDraft(fake);if(back.name!==\"Ada\")process.exit(1)'"
+    },
+    {
+      "id": "focus-visible",
+      "source": "evaluator",
+      "text": "keyboard focus is visible in the stylesheet, not left to the browser default the reset removed",
+      "command": "grep -q \":focus-visible\" styles.css"
+    },
+    {
+      "id": "no-second-palette",
+      "source": "evaluator",
+      "text": "the screen composes with the project's tokens instead of introducing its own colours",
+      "command": "bun -e 'const css=await Bun.file(\"styles.css\").text();const hex=[...css.matchAll(/#[0-9a-fA-F]{3,8}\\b/g)].map(x=>x[0].toLowerCase());const declared=[...css.matchAll(/--[a-z-]+:\\s*(#[0-9a-fA-F]{3,8})/g)].map(x=>x[1].toLowerCase());const stray=hex.filter(h=>!declared.includes(h)&&h!==\"#fff\"&&h!==\"#ffffff\");if(stray.length>0){console.log(\"stray colours: \"+stray.join(\", \"));process.exit(1)}'"
+    },
+    {
+      "id": "mobile-no-overflow",
+      "source": "evaluator",
+      "browser": true,
+      "text": "at 390px wide the form does not scroll sideways and the submit button is reachable",
+      "command": "bun -e 'const pw=process.env.RUNE_TEST_PLAYWRIGHT;if(!pw){console.log(\"not-applicable: no Playwright module\");process.exit(0)}const {chromium}=await import(pw);const b=await chromium.launch({headless:true});const p=await b.newPage({viewport:{width:390,height:800}});await p.goto(\"file://\"+process.cwd()+\"/index.html\");const over=await p.evaluate(()=>document.documentElement.scrollWidth>document.documentElement.clientWidth);await b.close();if(over)process.exit(1)'"
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "id": "dependent-interface",
+  "note": "Evaluator criteria. The model never sees this file. `checkout-total` and `checkout-currency` are the two that a step 3 written against the wrong interface fails — they exercise step 1's interface THROUGH step 3's caller, which is the only place the inconsistency shows.",
+  "criteria": [
+    {
+      "id": "money-interface",
+      "source": "evaluator",
+      "text": "pricing.js exposes a per-line price that carries its own currency",
+      "command": "bun -e 'const p=await import(\"./pricing.js\");const m=p.priceFor(\"lamp-04\",1);if(typeof m!==\"object\"||m===null)process.exit(1);if(typeof m.cents!==\"number\"||typeof m.currency!==\"string\")process.exit(1);if(m.cents!==7900)process.exit(1)'"
+    },
+    {
+      "id": "old-export-gone",
+      "source": "evaluator",
+      "text": "computeTotal is removed, not merely unused",
+      "command": "bun -e 'const p=await import(\"./pricing.js\");if(typeof p.computeTotal!==\"undefined\")process.exit(1)'"
+    },
+    {
+      "id": "rules-extracted",
+      "source": "evaluator",
+      "text": "the discount tiers live in rules.js and pricing.js no longer holds a rate table",
+      "command": "bun -e 'const r=await import(\"./rules.js\");if(typeof r.discountCents!==\"function\")process.exit(1);const src=await Bun.file(\"pricing.js\").text();if(/from:\\s*\\d+/.test(src)||/0\\.15|0\\.08/.test(src))process.exit(1);if(!/from \"\\.\\/rules\\.js\"/.test(src))process.exit(1)'"
+    },
+    {
+      "id": "discount-applied",
+      "source": "evaluator",
+      "text": "the volume discount still applies at the tier boundaries after the move",
+      "command": "bun -e 'const p=await import(\"./pricing.js\");const five=p.priceFor(\"tray-02\",5).cents;const four=p.priceFor(\"tray-02\",4).cents;if(five!==Math.round(1900*5*0.92))process.exit(1);if(four!==1900*4)process.exit(1);const ten=p.priceFor(\"tray-02\",10).cents;if(ten!==Math.round(1900*10*0.85))process.exit(1)'"
+    },
+    {
+      "id": "checkout-total",
+      "source": "evaluator",
+      "text": "the checkout summary is numerically correct for a multi-item cart — step 1's interface exercised through step 3's caller",
+      "command": "bun -e 'const c=await import(\"./checkout.js\");const line=c.summarise({items:[{sku:\"desk-01\",qty:1},{sku:\"tray-02\",qty:5}]});if(/NaN|undefined/.test(line)){console.log(line);process.exit(1)}const expected=48900+Math.round(1900*5*0.92);if(!line.includes((expected/100).toFixed(2))){console.log(line+\" expected \"+(expected/100).toFixed(2));process.exit(1)}'"
+    },
+    {
+      "id": "checkout-currency",
+      "source": "evaluator",
+      "text": "the summary line names its currency instead of assuming one",
+      "command": "bun -e 'const c=await import(\"./checkout.js\");const line=c.summarise({items:[{sku:\"lamp-04\",qty:1}]});if(!/[A-Z]{3}/.test(line)){console.log(line);process.exit(1)}'"
+    },
+    {
+      "id": "catalog-untouched",
+      "source": "evaluator",
+      "text": "catalog.js is unchanged",
+      "command": "grep -q 'Standing desk' catalog.js && ! grep -qi 'discount\\|priceFor\\|tier' catalog.js"
+    }
+  ]
+}

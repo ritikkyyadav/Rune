@@ -8,9 +8,17 @@
  *   - a step whose check fails while it rests on an earlier step's declared
  *     interface goes through the existing replan path, naming the interface;
  *   - a plan with no dependencies is untouched by either.
+ *
+ * Then F5's `dependent-interface` fixture: green against the hand-written
+ * solution, red against the deliberately inconsistent step 3 — and red in
+ * exactly the two places that exercise step 1's interface through step 3's
+ * caller, which is the whole point of the fixture.
  */
 
 import { describe, expect, test, mock } from "bun:test";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { materialise, runAcceptance } from "./fixtures/phase5/harness";
 import { AgentLoop, type AgentTurnEvent } from "../../packages/orchestrator/src/agent-loop";
 import { TaskStateStore } from "../../packages/orchestrator/src/task-state";
 import type { TodoItem } from "@rune/protocol";
@@ -241,5 +249,83 @@ describe("F4 — a check failing on an earlier step's interface asks for a repla
         r.reason.includes("declared interface"),
       ),
     ).toBe(false);
+  });
+});
+
+// ─── F5 — the dependent-interface fixture ───
+
+describe("F5 — the dependent-interface fixture", () => {
+  const dir = join(import.meta.dir, "fixtures", "phase5", "dependent-interface");
+
+  test("is shaped the way the corpus lane expects, and names its own defect", () => {
+    for (const file of [
+      "task.json",
+      "acceptance.json",
+      "files",
+      "solution",
+      "solution-inconsistent",
+    ]) {
+      expect(existsSync(join(dir, file))).toBe(true);
+    }
+    const task = JSON.parse(readFileSync(join(dir, "task.json"), "utf-8")) as {
+      id: string;
+      family: string;
+      prompt: string;
+      inconsistency: string;
+    };
+    expect(task.id).toBe("dependent-interface");
+    expect(task.family).toBe("migration");
+    expect(task.inconsistency).toContain("bare number");
+    expect(task.prompt).not.toContain("acceptance");
+    // The prompt says what money must CARRY, never the signature: a prompt
+    // that dictates the interface cannot test whether the plan declared one.
+    expect(task.prompt).not.toContain("priceFor");
+    expect(task.prompt).not.toContain("Money");
+  });
+
+  test("green against the hand-written solution", () => {
+    const work = materialise(dir, "solution");
+    try {
+      const result = runAcceptance(work, join(dir, "acceptance.json"));
+      expect(result.failed).toEqual([]);
+      expect(result.passed).toHaveLength(7);
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * The late architectural inconsistency, measured. Step 3 is written against
+   * the interface step 1 was assumed to expose. Nothing throws and every
+   * criterion that checks step 1 or step 2 IN ISOLATION passes — which is
+   * exactly why a plan judged on its prose, or a run judged on its own green
+   * tests, would call this done.
+   */
+  test("red against the deliberately inconsistent step 3, at the seam and nowhere else", () => {
+    const work = materialise(dir, "solution-inconsistent");
+    try {
+      const result = runAcceptance(work, join(dir, "acceptance.json"));
+      expect(result.failed.sort()).toEqual(["checkout-currency", "checkout-total"]);
+      expect(result.passed.sort()).toEqual([
+        "catalog-untouched",
+        "discount-applied",
+        "money-interface",
+        "old-export-gone",
+        "rules-extracted",
+      ]);
+      // It renders; it does not crash. That is what makes it worth catching.
+      const proc = Bun.spawnSync(
+        [
+          "bun",
+          "-e",
+          'const c=await import("./checkout.js");console.log(c.summarise({items:[{sku:"desk-01",qty:1}]}))',
+        ],
+        { cwd: work, stdout: "pipe", stderr: "pipe" },
+      );
+      expect(proc.exitCode).toBe(0);
+      expect(new TextDecoder().decode(proc.stdout)).toContain("NaN");
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
   });
 });

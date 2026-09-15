@@ -5,9 +5,17 @@
  * F2: a frontend run with no browser mounted says so on the FIRST turn, as a
  * notice to the person and as a note to the model, and the read-back's `leave`
  * carries the same sentence.
+ *
+ * F5: the `form-states` fixture materialises, and the evaluator acceptance the
+ * model never sees runs green against the hand-written solution — while the
+ * browser criterion, which needs a real Chromium, is reported as a SKIP and
+ * never as a pass.
  */
 
 import { describe, expect, test, mock } from "bun:test";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { materialise, runAcceptance } from "./fixtures/phase5/harness";
 import { AgentLoop, type AgentTurnEvent } from "../../packages/orchestrator/src/agent-loop";
 import { TaskStateStore } from "../../packages/orchestrator/src/task-state";
 import { briefFromArgs } from "../../packages/orchestrator/src/brief";
@@ -156,5 +164,68 @@ describe("F2 — a run without a browser says so before it spends", () => {
     expect(briefFromArgs({ reading: "r", leave: ["x"], done_when: ["y"] }, "q", "t").leave).toEqual(
       ["x"],
     );
+  });
+});
+
+// ─── F5 — the form fixture, and the acceptance the model never sees ───
+
+const FIXTURES = join(import.meta.dir, "fixtures", "phase5");
+
+describe("F5 — the form fixture", () => {
+  const dir = join(FIXTURES, "form-states");
+
+  test("is shaped the way the corpus lane expects, and hides its acceptance", () => {
+    for (const file of ["task.json", "acceptance.json", "files", "solution"]) {
+      expect(existsSync(join(dir, file))).toBe(true);
+    }
+    const task = JSON.parse(readFileSync(join(dir, "task.json"), "utf-8")) as {
+      id: string;
+      family: string;
+      prompt: string;
+    };
+    expect(task.id).toBe("form-states");
+    expect(task.family).toBe("frontend");
+    expect(task.prompt.length).toBeGreaterThan(200);
+    // The prompt never points at the file that grades it.
+    expect(task.prompt).not.toContain("acceptance");
+    // Every command addresses the tree by relative path.
+    const raw = readFileSync(join(dir, "acceptance.json"), "utf-8");
+    expect(raw).not.toContain("fixtures/phase5");
+    expect(raw).not.toMatch(/"command":\s*"[^"]*\s\//);
+  });
+
+  test("the acceptance runs green against the hand-written solution", () => {
+    const work = materialise(dir, "solution");
+    try {
+      const result = runAcceptance(work, join(dir, "acceptance.json"));
+      expect(result.failed).toEqual([]);
+      expect(result.passed.length).toBeGreaterThanOrEqual(8);
+      if (process.env.RUNE_TEST_PLAYWRIGHT) {
+        expect(result.skipped).toEqual([]);
+        expect(result.passed).toContain("mobile-no-overflow");
+      } else {
+        // Reported as a skip. It is not a pass, and the count above excludes it.
+        expect(result.skipped).toEqual(["mobile-no-overflow"]);
+        expect(result.passed).not.toContain("mobile-no-overflow");
+      }
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
+  });
+
+  test("the acceptance is not vacuous: a form that stops announcing its errors goes red", () => {
+    const work = materialise(dir, "solution");
+    try {
+      const app = join(work, "app.js");
+      const broken = readFileSync(app, "utf-8").replace(/ role="alert"/g, "");
+      expect(broken).not.toBe(readFileSync(app, "utf-8"));
+      writeFileSync(app, broken);
+      const result = runAcceptance(work, join(dir, "acceptance.json"));
+      expect(result.failed).toContain("error-state");
+      // And only that one: the mutation is narrow, so the rest still hold.
+      expect(result.failed).toEqual(["error-state"]);
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
   });
 });
