@@ -31,7 +31,7 @@ import {
 } from "./composer";
 import * as F from "./flow";
 import { questionLines, questionPlaceholder } from "./question";
-import { heldLines } from "./held";
+import { heldBlock } from "./held";
 import { loopPromptPreview } from "../../loop-mode";
 import { text, muted, faint, info, ok, warn, danger } from "./theme";
 import { glyph, TERMINAL_GLYPH_MODE } from "./glyphs";
@@ -98,7 +98,7 @@ export const INPUT_METHODS = {
     }
     if (this.mode === "held" && this.heldState) {
       const st = this.heldState;
-      const lines = heldLines({
+      const held = heldBlock({
         steps: st.steps,
         outcomes: st.outcomes,
         selected: st.sel,
@@ -106,8 +106,16 @@ export const INPUT_METHODS = {
         width: this.contentCols(),
       });
       // The caret parks on the hint row: there is no field here, and the
-      // marker already says where the selection is.
-      return { lines, caretRow: lines.length - 1, caretCol: F.BODY.length };
+      // marker already says where the selection is. The window, though, must
+      // follow the STEP -- sixty held steps do not fit a forty-row footer, and
+      // an anchor read off the caret (or off the title's own `›`) leaves the
+      // step you are approving off the bottom.
+      return {
+        lines: held.lines,
+        caretRow: held.lines.length - 1,
+        caretCol: F.BODY.length,
+        anchorRow: held.selectedRow,
+      };
     }
     if (this.mode === "ask" && this.askState) {
       const title = `  ${info("?")} ${text(this.askState.title)} ${faint("(Enter = ok | Esc = skip)")}`;

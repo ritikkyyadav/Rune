@@ -48,6 +48,7 @@
 
 import { accent, blendPaint, colorEnabled, dim, faint, quiet, text, truecolor } from "./theme";
 import { PULSE_GLYPHS, TERMINAL_GLYPH_MODE, glyph, type GlyphMode } from "./glyphs";
+import { graphemeSpans, prefixByWidth, termWidth, visLen } from "./render";
 
 /**
  * What the run is doing, as a closed set.
@@ -252,6 +253,52 @@ export function breathFrame(elapsedMs: number, frameMs: number = FRAME_MS): numb
 }
 
 /**
+ * The clock the MOTION runs on, which is not the wall clock.
+ *
+ * `breathFrame(elapsedMs)` says which frame a MOMENT is on, and while the
+ * repaint lands on the 90ms grid those are the same thing. They stop being the
+ * same thing the moment a repaint is late -- a busy event loop, a terminal
+ * that cannot keep up, a machine under load -- because the next tick then
+ * samples the curve wherever the wall clock actually got to. Verifier pass 3,
+ * finding 20, measured that on a real pty whose reader drained every 200ms:
+ * what the child WROTE never stepped the ramp by more than one level, and what
+ * the GLASS SHOWED stepped by three, eleven to thirteen times a breath. The
+ * invariant this module states -- at most one ramp level per frame, because a
+ * jump is a strobe -- was a property of the function and not of the screen.
+ *
+ * So the breath is driven by PAINTS rather than by milliseconds: each paint
+ * advances the animation by at most one frame, however long the terminal took
+ * to come back. A slow terminal therefore BREATHES SLOWER -- 48 paints to the
+ * breath whatever they cost -- instead of teleporting up the ramp, which is
+ * the trade the easing exists to make in the first place. A repaint that keeps
+ * up is unchanged: at FRAME_MS the clock follows the wall clock exactly.
+ *
+ * Two calls inside one frame do not double-advance, because the advance is
+ * keyed on the wall clock's own frame bucket; and a clock that goes backwards
+ * (a new turn, whose elapsed restarts at 0) is adopted rather than chased.
+ */
+export interface PaintClock {
+  /** The animation time for the paint happening now, in milliseconds. */
+  tick(elapsedMs: number): number;
+}
+
+/** A paint clock, one per surface that animates. */
+export function createPaintClock(frameMs: number = FRAME_MS): PaintClock {
+  const step = Math.max(1, Math.floor(frameMs));
+  let ticks: number | null = null;
+  let seen: number | null = null;
+  return {
+    tick(elapsedMs: number): number {
+      const target = Math.floor(Math.max(0, elapsedMs) / step);
+      if (ticks == null || target < ticks) ticks = target;
+      else if (target > ticks && target !== seen) ticks += 1;
+      seen = target;
+      return ticks * step;
+    },
+  };
+}
+
+/**
  * The easing: a raised cosine over the breath, 0 at the trough and 1 at the
  * crest.
  *
@@ -410,6 +457,22 @@ export const SHIMMER_CYCLE_MS = SHIMMER_SWEEP_MS + SHIMMER_PAUSE_MS;
  *  terminal it is the whole window, which is still narrow enough to read as
  *  light travelling over the words. */
 export const SHIMMER_CELLS = 6;
+
+/**
+ * The longest phrase the glow can cross without LEAPING over a cell.
+ *
+ * The sweep is a fixed number of frames, so the window's speed is the phrase's
+ * length divided by them: the longer the words, the further the glow moves
+ * between two repaints. Past the point where that step exceeds the window's
+ * own width the highlight stops being light travelling over the words and
+ * becomes a stencil hopping across them -- and cells in the gaps are never lit
+ * at all. The steepest the eased sweep gets is π/2 times its average, so the
+ * bound is `cells × (2 × frames / π − 1)`: 116 cells at six cells over
+ * thirty-two frames, which is why the row's measure is where it is.
+ */
+export const SHIMMER_MAX_PHRASE = Math.floor(
+  SHIMMER_CELLS * ((2 * (SHIMMER_SWEEP_MS / FRAME_MS)) / Math.PI - 1),
+);
 
 /**
  * Ease-in-out for the sweep: the window accelerates off the left margin,
@@ -590,6 +653,121 @@ export function paintPhrase(
     .join("");
 }
 
+// ─── The measure ───
+
+/**
+ * The widest this row is ever drawn, whatever the terminal claims.
+ *
+ * A row is a SENTENCE, and a sentence past about a hundred cells stops being
+ * read and starts being scanned -- the same measure the prose column keeps.
+ * The cap also bounds the shimmer: the sweep crosses `length + SHIMMER_CELLS`
+ * cells in a fixed 32 frames, so the window's step per frame is the length
+ * divided by the frames and nothing else. Uncapped, a 200-character path made
+ * the glow jump eleven cells a frame and spend more than half of every pass
+ * off the right of an 80-column screen (verifier pass 3, finding 31's reprise).
+ */
+export const ROW_MAX_COLS = 120;
+
+/**
+ * The cells this row may use: the terminal's own width, capped at the measure,
+ * less the two-cell gutter every caller draws it in (`  ▄ reading …`).
+ */
+export function workingRowCells(width?: number): number {
+  const cols = width ?? termWidth();
+  return Math.max(16, Math.min(ROW_MAX_COLS, Math.max(1, Math.floor(cols))) - 2);
+}
+
+/** The longest grapheme-safe SUFFIX that fits in `max` cells -- the tail of a
+ *  path, which is the half of it a reader actually needs. */
+function suffixByWidth(value: string, max: number): string {
+  if (max <= 0) return "";
+  const spans = graphemeSpans(value);
+  let width = 0;
+  let start = value.length;
+  for (let i = spans.length - 1; i >= 0; i--) {
+    const span = spans[i]!;
+    if (width + span.width > max) break;
+    width += span.width;
+    start = span.start;
+  }
+  return value.slice(start);
+}
+
+/**
+ * Fit a phrase to a budget by taking the MIDDLE out of it, not the end.
+ *
+ * `reading /Users/me/project/packages/orchestrator/src/bin/ui/working.ts` cut
+ * from the right is `reading /Users/me/project/packa…` -- which names no file
+ * at all, and the file is the entire content of the row. So the verb is kept
+ * whole, the subject keeps its head and its tail, and the elision sits where
+ * the least is lost. The tail is given the larger share, because that is where
+ * the filename is.
+ */
+export function fitPhrase(
+  value: string,
+  budget: number,
+  mode: GlyphMode = TERMINAL_GLYPH_MODE,
+): string {
+  if (budget <= 0) return "";
+  if (visLen(value) <= budget) return value;
+  const mark = glyph("elision", mode);
+  const space = value.indexOf(" ");
+  // Keep the verb only while what is left can still say something: below a
+  // handful of cells the subject is all elision, and then the verb is the
+  // thing worth spending them on.
+  const MIN_SUBJECT = 8;
+  const verbCells = space > 0 ? visLen(value.slice(0, space)) : 0;
+  if (space > 0 && verbCells + 1 + visLen(mark) + MIN_SUBJECT <= budget) {
+    return `${value.slice(0, space)} ${elideMiddle(value.slice(space + 1), budget - verbCells - 1, mark)}`;
+  }
+  return elideMiddle(value, budget, mark);
+}
+
+function elideMiddle(value: string, budget: number, mark: string): string {
+  if (visLen(value) <= budget) return value;
+  const cost = visLen(mark);
+  if (budget <= cost) return prefixByWidth(value, budget);
+  const keep = budget - cost;
+  const tail = Math.max(1, Math.round(keep * 0.6));
+  const head = Math.max(0, keep - tail);
+  return `${prefixByWidth(value, head)}${mark}${suffixByWidth(value, tail)}`;
+}
+
+/** What the row ends up saying: Rune's voice, and the fact beside it. */
+export interface FittedSaid {
+  voice: string;
+  fact: string;
+}
+
+/**
+ * Fit the voice and the fact into one budget.
+ *
+ * The fact is the part a developer reads (`reading turn.ts`); the voice is the
+ * part that makes the row Rune's (`having a look around`). So a window too
+ * narrow for both keeps the FACT -- the same call turn.ts makes when the prose
+ * column drops under 72 cells -- and the fact is elided rather than dropped,
+ * because a row with no subject reports nothing.
+ */
+export function fitSaid(
+  voice: string,
+  fact: string,
+  budget: number,
+  mode: GlyphMode = TERMINAL_GLYPH_MODE,
+): FittedSaid {
+  const room = Math.max(0, budget);
+  if (!voice) return { voice: "", fact: fitPhrase(fact, room, mode) };
+  if (!fact) return { voice: fitPhrase(voice, room, mode), fact: "" };
+  const gap = visLen(sep(mode));
+  const spent = visLen(voice) + gap + visLen(fact);
+  if (spent <= room) return { voice, fact };
+  const left = room - visLen(voice) - gap;
+  // Under this the fact is elision and a letter, which says less than the
+  // voice does; past it the pair still reads as a sentence and a subject.
+  const MIN_FACT = 12;
+  if (left >= MIN_FACT) return { voice, fact: fitPhrase(fact, left, mode) };
+  return { voice: "", fact: fitPhrase(fact, room, mode) };
+}
+
 /**
  * The whole row: the mark, the phrase, and the clock.
  *
@@ -604,7 +782,20 @@ export function paintPhrase(
  */
 export function workingRow(
   state: WorkingState,
-  opts: { frameMs?: number; mode?: GlyphMode; color?: boolean } = {},
+  opts: {
+    frameMs?: number;
+    mode?: GlyphMode;
+    color?: boolean;
+    /** The row's own width, in cells. Defaults to the terminal's, capped at
+     *  the measure (`workingRowCells`). */
+    width?: number;
+    /**
+     * The animation time for this paint, from the surface's `PaintClock`.
+     * Defaults to the wall clock, which is right for a row drawn once (a
+     * settled `done`) and wrong for one drawn on a timer -- see `PaintClock`.
+     */
+    animMs?: number;
+  } = {},
 ): string {
   // Phased off the turn's OWN clock, not off `Date.now()`: two surfaces
   // drawing the same state in the same frame show the same frame of the
@@ -612,23 +803,45 @@ export function workingRow(
   // fake timer. A state with no clock does not move, so there is nothing to
   // phase.
   const elapsed = state.elapsedMs ?? 0;
-  const frame = breathFrame(elapsed, opts.frameMs);
+  const anim = opts.animMs ?? elapsed;
+  const frame = breathFrame(anim, opts.frameMs);
   const mark = workingMark(state, frame, opts.mode);
   const paint = { kind: state.kind, mode: opts.mode, color: opts.color };
+  const clock =
+    state.kind === "waiting" || state.elapsedMs == null ? "" : elapsedWord(state.elapsedMs);
+  // The clock is never elided: `reading …fixture.ts · 4m 12s` is the row, and
+  // a duration cut in half is a duration that says nothing. So it is paid for
+  // first, out of the mark's two cells and the row's measure, and whatever is
+  // left is what the words have.
+  const budget = Math.max(
+    8,
+    Math.min(
+      SHIMMER_MAX_PHRASE,
+      workingRowCells(opts.width) -
+        visLen(mark) -
+        1 -
+        (clock ? visLen(sep(opts.mode)) + clock.length : 0),
+    ),
+  );
   // The voice, when there is one, is the sentence and takes the shimmer; the
   // phrase is then the fact beside it, set quiet. With no voice the phrase is
   // the sentence, exactly as before.
-  const voice = (state.voice ?? "").trim();
-  const fact = workingPhrase(state);
-  // A bare word is not a fact worth a column beside a voice that already
-  // says it: `okay, geared up · working` says `working` twice.
-  const said = voice
-    ? isBareKind(state.kind)
-      ? paintPhrase(voice, elapsed, paint)
-      : `${paintPhrase(voice, elapsed, paint)}${faint(sep(opts.mode))}${quiet(fact)}`
-    : paintPhrase(fact, elapsed, paint);
-  const clock =
-    state.kind === "waiting" || state.elapsedMs == null ? "" : elapsedWord(state.elapsedMs);
+  //
+  // A bare word is not a fact worth a column beside a voice that already says
+  // it: `okay, geared up · working` says `working` twice.
+  const fit = fitSaid(
+    (state.voice ?? "").trim(),
+    isBareKind(state.kind) && (state.voice ?? "").trim() ? "" : workingPhrase(state),
+    budget,
+    opts.mode,
+  );
+  // The shimmer is computed on the FITTED text, so the glow sweeps the cells
+  // the screen is actually showing rather than walking off the right margin.
+  const said = fit.voice
+    ? fit.fact
+      ? `${paintPhrase(fit.voice, anim, paint)}${faint(sep(opts.mode))}${quiet(fit.fact)}`
+      : paintPhrase(fit.voice, anim, paint)
+    : paintPhrase(fit.fact, anim, paint);
   return clock ? `${mark} ${said}${faint(sep(opts.mode))}${faint(clock)}` : `${mark} ${said}`;
 }
 

@@ -897,6 +897,17 @@ export interface RenderedBlock {
   lines: string[];
   caretRow: number;
   caretCol: number;
+  /**
+   * The row the window must keep on screen when the block is taller than the
+   * footer: the one the reader is standing on.
+   *
+   * Stated by the block rather than guessed from the bytes, because the
+   * selection glyph is also the grammar's notice bullet -- the held panel's
+   * own title carries one -- and a window anchored on the first `›` it finds
+   * anchors on the title and never moves (verifier pass 3, finding 21).
+   * Absent means "no selection", and the caret is the anchor.
+   */
+  anchorRow?: number;
 }
 
 /** Number of detail rows available after the fixed review header and footer. */

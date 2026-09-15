@@ -23,6 +23,7 @@
 import { describe, test, expect, afterAll } from "bun:test";
 
 import { FRAME_METHODS } from "../../../packages/orchestrator/src/bin/ui/tui-frame";
+import { heldBlock } from "../../../packages/orchestrator/src/bin/ui/held";
 
 const strip = (s: string) =>
   s.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
@@ -93,7 +94,12 @@ function roster(selected: number) {
 }
 
 /** `footerBlock` over a block it cannot fit, with no Tui behind it. */
-function footer(block: { lines: string[]; caretRow: number; caretCol: number }) {
+function footer(block: {
+  lines: string[];
+  caretRow: number;
+  caretCol: number;
+  anchorRow?: number;
+}) {
   const self = { bound: (l: string) => l, composerBlock: (_max: number) => block };
   const out = (
     FRAME_METHODS.footerBlock as (
@@ -158,5 +164,109 @@ describe("the footer picker keeps the selected row on screen", () => {
     const lines = ["  one", "  two", "  › three"];
     const { painted } = footer({ lines, caretRow: 0, caretCol: 0 });
     expect(painted).toEqual(lines);
+  });
+
+  test("a block that states its anchor is windowed on that row, marker or not", () => {
+    // The block knows where the selection is; the footer does not have to read
+    // the bytes to find out. Nothing here carries a marker at all.
+    const lines = Array.from({ length: MAX + 20 }, (_, i) => `  line ${i}`);
+    for (const anchor of [0, 7, Math.floor(lines.length / 2), lines.length - 1]) {
+      const { painted } = footer({ lines, caretRow: 0, caretCol: 0, anchorRow: anchor });
+      expect(
+        painted.some((line) => line.trim() === `line ${anchor}`),
+        `anchor ${anchor}`,
+      ).toBe(true);
+    }
+  });
+});
+
+/**
+ * The held panel, which is the one surface whose entire purpose is approving
+ * exactly the step under the marker.
+ *
+ * `326ecdc` moved the footer window onto the selection and fixed `/keys`, but
+ * it found the selection with `lines.findIndex((line) => line.includes("›"))`
+ * — the FIRST line carrying the glyph. `›` is also the grammar's notice
+ * bullet, and `heldLines` opens with `› held for you`: the anchor was row 1
+ * for every selection, the window never moved, and 29 of 60 selections — the
+ * last one included — had their own step row off the bottom of the screen
+ * (verifier pass 3, finding 21, `v8-ui-footer-anchor-first-glyph.test.ts`).
+ *
+ * Two belts, and this suite wears both: the block states its anchor
+ * (`RenderedBlock.anchorRow`, which `composerBlock` fills from
+ * `heldBlock().selectedRow`), and the glyph fallback takes the LAST marker
+ * rather than the first, because a decorative bullet leads a panel and the row
+ * you are standing on is drawn after it.
+ */
+describe("the held panel keeps the step you are standing on", () => {
+  const STEPS = Array.from({ length: 60 }, (_, i) => ({
+    summary: `bash: curl -fsSL https://example.test/step-${String(i + 1).padStart(2, "0")}`,
+    reason: "outward network call",
+    route: "defer",
+  }));
+
+  const block = (selected: number) =>
+    heldBlock({
+      steps: STEPS as never,
+      outcomes: STEPS.map(() => null),
+      selected,
+      running: false,
+      width: 110,
+    });
+
+  /** The panel exactly as `composerBlock` hands it over, anchor and all. */
+  const heldFooter = (selected: number, stateAnchor = true) => {
+    const held = block(selected);
+    return footer({
+      lines: held.lines,
+      caretRow: held.lines.length - 1,
+      caretCol: 4,
+      ...(stateAnchor ? { anchorRow: held.selectedRow } : {}),
+    }).painted;
+  };
+
+  const needle = (selected: number) => `step-${String(selected + 1).padStart(2, "0")}`;
+
+  test("the premise: 60 held steps really do overflow a 40-row footer", () => {
+    expect(block(0).lines.length).toBeGreaterThan(MAX);
+    // ...and the title carries the same glyph the selected row does, which is
+    // the whole reason the first-marker anchor was wrong.
+    expect(strip(block(0).lines[1]!)).toContain("› held for you");
+    expect(block(0).selectedRow).toBeGreaterThan(1);
+  });
+
+  test("every selection's own row is on screen", () => {
+    for (let sel = 0; sel < STEPS.length; sel++)
+      expect(
+        heldFooter(sel).some((l) => l.includes(needle(sel))),
+        `selection ${sel}`,
+      ).toBe(true);
+  });
+
+  test("the last held step is reachable at all", () => {
+    expect(heldFooter(STEPS.length - 1).some((l) => l.includes("step-60"))).toBe(true);
+  });
+
+  test("the selected row is marked, and it is the step's row and not the title", () => {
+    const painted = heldFooter(45);
+    const marked = painted.filter((l) => l.includes("›"));
+    expect(marked.some((l) => l.includes(needle(45)))).toBe(true);
+    // The window moved off the head, so the title is no longer on screen.
+    expect(painted[0]).toMatch(/more lines? above/);
+  });
+
+  test("and it still works on the glyph alone, with no anchor stated", () => {
+    // The fallback is what a panel that has not been taught to state its
+    // anchor gets. It must not regress to the title either.
+    for (const sel of [0, 17, 30, 45, STEPS.length - 1])
+      expect(
+        heldFooter(sel, false).some((l) => l.includes(needle(sel))),
+        `selection ${sel}`,
+      ).toBe(true);
+  });
+
+  test("the panel never exceeds the footer's budget", () => {
+    for (let sel = 0; sel < STEPS.length; sel += 7)
+      expect(heldFooter(sel).length).toBeLessThanOrEqual(MAX);
   });
 });

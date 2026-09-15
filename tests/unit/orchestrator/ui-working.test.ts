@@ -51,14 +51,19 @@ import {
   HALF_BREATH_FRAMES,
   MAX_FPS,
   REST_INDEX,
+  ROW_MAX_COLS,
   SHIMMER_CELLS,
   SHIMMER_CYCLE_MS,
+  SHIMMER_MAX_PHRASE,
   SHIMMER_PAUSE_MS,
   SHIMMER_SWEEP_MS,
   breathEase,
   breathFrame,
   breathTint,
+  createPaintClock,
   elapsedWord,
+  fitPhrase,
+  fitSaid,
   isBreathing,
   paintPhrase,
   rampGlyph,
@@ -69,13 +74,18 @@ import {
   tintIndex,
   workingKindForTool,
   workingMark,
+  workingRowCells,
   workingPhrase,
   workingRestGlyph,
   workingRow,
   type WorkingKind,
   type WorkingState,
 } from "../../../packages/orchestrator/src/bin/ui/working";
-import { GLYPH_DEFINITIONS, PULSE_GLYPHS } from "../../../packages/orchestrator/src/bin/ui/glyphs";
+import {
+  GLYPH_DEFINITIONS,
+  PULSE_GLYPHS,
+  glyph,
+} from "../../../packages/orchestrator/src/bin/ui/glyphs";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
 import { visLen } from "../../../packages/orchestrator/src/bin/ui/render";
 import { OPENING, VOICE, address } from "../../../packages/orchestrator/src/bin/ui/voice";
@@ -197,6 +207,97 @@ describe("the frame rate", () => {
     );
     expect(tui).toContain("}, FRAME_MS);");
     expect(tui).not.toMatch(/\}, 125\);/);
+  });
+});
+
+describe("the paint clock", () => {
+  /** The ramp a terminal repainting every `periodMs` actually puts on the
+   *  glass, over two whole breaths. */
+  const rendered = (periodMs: number) => {
+    const clock = createPaintClock();
+    const out: number[] = [];
+    for (let t = 0; t < BREATH_MS * 2; t += periodMs)
+      out.push(rampIndex(breathFrame(clock.tick(t))));
+    return out;
+  };
+  const worstStep = (seq: number[]) =>
+    seq.slice(1).reduce((worst, v, i) => Math.max(worst, Math.abs(v - seq[i]!)), 0);
+
+  it("is the wall clock exactly, while the repaint keeps up", () => {
+    // Nothing changes for a terminal that arrives on time: the animation time
+    // IS the elapsed time, frame for frame, over two whole breaths.
+    const clock = createPaintClock();
+    for (let t = 0; t < BREATH_MS * 2; t += FRAME_MS) {
+      expect(clock.tick(t), `at ${t}ms`).toBe(t);
+    }
+  });
+
+  it("never skips a ramp level, however late the repaint is", () => {
+    // The invariant this module states -- at most one level a frame, because a
+    // jump is a strobe -- used to be a property of the FUNCTION and not of the
+    // SCREEN. Measured on a real pty draining every 200ms, what the child
+    // wrote stepped by at most one and what the glass showed stepped by three,
+    // eleven to thirteen times a breath (verifier pass 3, finding 20).
+    for (const period of [FRAME_MS, 125, 200, 250, 300, 700]) {
+      const seq = rendered(period);
+      expect(worstStep(seq), `${period}ms repaint`).toBeLessThanOrEqual(1);
+      // ...and it is still MOVING: a clock that never advanced would pass the
+      // line above and put a dead bar on the screen.
+      expect(new Set(seq).size, `${period}ms repaint`).toBeGreaterThan(1);
+    }
+    // The tint rides the same eased value, so it cannot skip either.
+    const clock = createPaintClock();
+    const tints: number[] = [];
+    for (let t = 0; t < BREATH_MS * 2; t += 300) tints.push(tintIndex(breathFrame(clock.tick(t))));
+    expect(worstStep(tints)).toBeLessThanOrEqual(1);
+  });
+
+  it("breathes slower rather than faster: one frame a paint, always", () => {
+    // The trade, stated: a terminal that cannot keep up gets a longer breath,
+    // not a shorter one with holes in it. Forty-eight paints to the breath
+    // whatever each paint cost.
+    const clock = createPaintClock();
+    const start = clock.tick(0);
+    let paints = 0;
+    let now = start;
+    while (paints < BREATH_FRAMES * 2) {
+      paints++;
+      now = clock.tick(paints * 300);
+      if (now - start >= BREATH_MS) break;
+    }
+    expect(paints).toBe(BREATH_FRAMES);
+  });
+
+  it("does not double-advance when one frame is drawn twice", () => {
+    // Two surfaces (or a redraw) inside one frame must not move the breath
+    // twice: the advance is keyed on the wall clock's own frame bucket.
+    const clock = createPaintClock();
+    expect(clock.tick(0)).toBe(0);
+    expect(clock.tick(FRAME_MS)).toBe(FRAME_MS);
+    expect(clock.tick(FRAME_MS + 10)).toBe(FRAME_MS);
+    expect(clock.tick(FRAME_MS + 89)).toBe(FRAME_MS);
+    expect(clock.tick(FRAME_MS * 2)).toBe(FRAME_MS * 2);
+  });
+
+  it("adopts a clock that went backwards, because that is a new turn", () => {
+    const clock = createPaintClock();
+    clock.tick(60_000);
+    expect(clock.tick(0)).toBe(0);
+    expect(clock.tick(FRAME_MS)).toBe(FRAME_MS);
+  });
+
+  it("is what the rung's breath is drawn from", () => {
+    // The row a person actually watches is turn.ts's, and it must take its
+    // frame from the paint clock rather than from `state.elapsedMs` -- the
+    // same assertion the frame rate makes against tui.ts, for the same reason:
+    // a repaint's period cannot be observed from inside it.
+    const turn = readFileSync(
+      join(import.meta.dir, "../../../packages/orchestrator/src/bin/ui/turn.ts"),
+      "utf8",
+    );
+    expect(turn).toContain("createPaintClock()");
+    expect(turn).toContain("this.breath.tick(");
+    expect(turn).not.toMatch(/breathFrame\(state\.elapsedMs/);
   });
 });
 
@@ -367,6 +468,106 @@ describe("the shimmer", () => {
     const segments = shimmerSegments("reading turn.ts", 40_000);
     expect(segments.map((p) => p.text).join("")).toBe("reading turn.ts");
     expect(segments.some((p) => p.text.includes("40s"))).toBe(false);
+  });
+});
+
+describe("the measure", () => {
+  // 200 characters, the shape the verifier used: a real path with a real
+  // filename on the end of it.
+  const PATH_200 =
+    ("/Users/someone/project/packages/orchestrator/src/bin/ui/" + "x".repeat(200)).slice(0, 177) +
+    "/a-generated-fixture.ts";
+  const vis = (row: string) => visLen(stripAnsi(row));
+
+  it("fits the row to the terminal it is drawn in", () => {
+    // `workingRow` emitted 215 cells for this state and left every call site
+    // to clamp it -- and the clamp cuts from the RIGHT, which takes the
+    // filename (verifier pass 3, finding 31's reprise).
+    expect(PATH_200.length).toBe(200);
+    for (const width of [60, 80, 120, 400]) {
+      const row = workingRow({ kind: "reading", target: PATH_200, elapsedMs: 800 }, { width });
+      expect(vis(row), `at ${width} columns`).toBeLessThanOrEqual(Math.min(width, ROW_MAX_COLS));
+    }
+    // A caller-composed phrase (turn.ts's live tool label) is fitted too.
+    expect(
+      vis(
+        workingRow(
+          { kind: "running", phrase: `Checking with ${"a".repeat(186)}`, elapsedMs: 800 },
+          { width: 120 },
+        ),
+      ),
+    ).toBeLessThanOrEqual(120);
+  });
+
+  it("keeps the verb and the filename and takes the middle out", () => {
+    const row = stripAnsi(
+      workingRow({ kind: "reading", target: PATH_200, elapsedMs: 800 }, { width: 120 }),
+    );
+    expect(row).toContain("reading /Users/someone/project/");
+    expect(row).toContain("a-generated-fixture.ts");
+    expect(row).toContain(glyph("elision"));
+    // The clock is never the thing that gives way: a duration cut in half is a
+    // duration that says nothing.
+    expect(row.endsWith("· 0s")).toBe(true);
+  });
+
+  it("keeps the fact when the window is too narrow for the voice as well", () => {
+    // turn.ts's rule, applied to the row: the voice is what makes it Rune's,
+    // the fact is what a developer reads, and when only one fits it is the
+    // fact.
+    const wide = fitSaid("having a look around", "reading turn.ts", 60);
+    expect(wide).toEqual({ voice: "having a look around", fact: "reading turn.ts" });
+    const narrow = fitSaid("having a look around", "reading turn.ts", 28);
+    expect(narrow.voice).toBe("");
+    expect(narrow.fact).toContain("reading");
+    const tight = fitSaid("having a look around", "reading packages/orchestrator/turn.ts", 44);
+    expect(tight.voice).toBe("having a look around");
+    expect(visLen(`${tight.voice} · ${tight.fact}`)).toBeLessThanOrEqual(44);
+    expect(tight.fact).toContain("turn.ts");
+  });
+
+  it("leaves a phrase that already fits exactly alone", () => {
+    expect(fitPhrase("reading turn.ts", 40)).toBe("reading turn.ts");
+    expect(fitPhrase("reading turn.ts", 15)).toBe("reading turn.ts");
+    expect(workingPhrase({ kind: "reading", target: "turn.ts" })).toBe("reading turn.ts");
+    // A budget under a subject's worth of cells spends what is left on the
+    // verb rather than on an elision.
+    expect(visLen(fitPhrase("reading some/very/long/path.ts", 12))).toBeLessThanOrEqual(12);
+  });
+
+  it("never lets the glow leap a cell, at any length the row can reach", () => {
+    // The sweep crosses `length + SHIMMER_CELLS` cells in a fixed 32 frames,
+    // so the window's step per frame IS the phrase's length. Past the point
+    // where that step exceeds the window's own width the highlight stops being
+    // light over the words and becomes a stencil hopping across them, and the
+    // cells in the gaps are never lit at all.
+    for (let len = 1; len <= SHIMMER_MAX_PHRASE; len++) {
+      let worst = 0;
+      let prev: number | null = null;
+      const lit = new Set<number>();
+      for (let t = 0; t < SHIMMER_SWEEP_MS; t += FRAME_MS) {
+        const win = shimmerWindowAt(t, len);
+        if (!win) continue;
+        if (prev != null) worst = Math.max(worst, Math.abs(win.head - prev));
+        prev = win.head;
+        for (let c = win.start; c < win.end; c++) lit.add(c);
+      }
+      expect(worst, `a ${len}-cell phrase`).toBeLessThanOrEqual(SHIMMER_CELLS);
+      expect(lit.size, `a ${len}-cell phrase`).toBe(len);
+    }
+  });
+
+  it("holds the words inside that bound however wide the terminal is", () => {
+    // The measure is a reading column, not a window width: a 400-column
+    // terminal does not get a 400-cell sentence with the glow tearing across
+    // it eleven cells a frame.
+    expect(workingRowCells(400)).toBeLessThanOrEqual(ROW_MAX_COLS);
+    for (const width of [120, 200, 400]) {
+      const said = stripAnsi(
+        workingRow({ kind: "reading", target: PATH_200, elapsedMs: 800 }, { width }),
+      ).replace(/^.\s|\s·\s\d+s$/g, "");
+      expect(visLen(said), `at ${width} columns`).toBeLessThanOrEqual(SHIMMER_MAX_PHRASE);
+    }
   });
 });
 

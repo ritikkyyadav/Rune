@@ -112,8 +112,24 @@ export function heldHint(view: HeldView): string {
   return truncate(render(rows, false), budget);
 }
 
+/** The block above the composer, with the row the selection is standing on. */
+export interface HeldBlock {
+  lines: string[];
+  /** Index into `lines` of the selected step's own row -- what the footer
+   *  window anchors on. The panel's TITLE carries the same selection glyph
+   *  (it is the grammar's notice bullet), so a window that went looking for
+   *  the glyph anchored on the title and left the step you were approving off
+   *  the bottom of the screen. */
+  selectedRow: number;
+}
+
 /** The block above the composer: the promise, the steps, and the hint. */
 export function heldLines(view: HeldView): string[] {
+  return heldBlock(view).lines;
+}
+
+/** The same block, and where its selection landed. */
+export function heldBlock(view: HeldView): HeldBlock {
   const width = F.measure(view.width);
   const decided = view.outcomes.filter((o) => o !== null).length;
   const lines: string[] = [
@@ -128,9 +144,11 @@ export function heldLines(view: HeldView): string[] {
     `${F.BODY}${faint("approving runs only that exact call -- nothing broader is granted")}`,
     "",
   ];
+  let selectedRow = 0;
   view.steps.forEach((step, index) => {
     const outcome = view.outcomes[index] ?? null;
     const chosen = index === view.selected;
+    if (chosen) selectedRow = lines.length;
     // MARK + glyph + space is exactly BODY's four cells, so the number column
     // holds still as the selection travels (the ask() rule).
     const gutter = chosen && !view.running ? `${F.MARK}${info(glyph("selection"))} ` : F.BODY;
@@ -153,7 +171,7 @@ export function heldLines(view: HeldView): string[] {
     }
   });
   lines.push("", `${F.BODY}${faint(heldHint(view))}`);
-  return lines;
+  return { lines, selectedRow };
 }
 
 /** What a keystroke means while the held panel is open. */

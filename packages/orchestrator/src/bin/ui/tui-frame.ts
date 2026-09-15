@@ -1148,12 +1148,26 @@ export const FRAME_METHODS = {
       // never moved. The comment beside it was right about the hazard and
       // guarded the wrong end.
       //
-      // The anchor is the selection marker where a picker drew one, and the
-      // caret row otherwise, which is what a composer overflowing its own field
-      // wants. Either way the anchor stays on screen, and whichever side is cut
-      // says how much it cut.
+      // The anchor is the row the block SAID it was standing on, the selection
+      // marker where a picker drew one and said nothing, and the caret row
+      // otherwise, which is what a composer overflowing its own field wants.
+      // Either way the anchor stays on screen, and whichever side is cut says
+      // how much it cut.
+      //
+      // The marker scan takes the LAST line carrying the glyph, not the first.
+      // `›` is also the grammar's notice bullet: the held panel opens with
+      // `› held for you`, and a window anchored on the first one it found
+      // anchored on that title, never moved, and put 29 of 60 selections --
+      // the last one included -- off the bottom of the screen (verifier pass
+      // 3, finding 21). A decorative bullet leads a panel; the row you are
+      // standing on is drawn after it. Blocks that know their own selection
+      // say so in `anchorRow` and never reach this heuristic at all.
       const mark = glyph("selection", TERMINAL_GLYPH_MODE);
-      const selected = lines.findIndex((line) => line.includes(mark));
+      const stated =
+        typeof comp.anchorRow === "number" && comp.anchorRow >= 0 && comp.anchorRow < lines.length
+          ? comp.anchorRow
+          : -1;
+      const selected = stated >= 0 ? stated : lines.findLastIndex((line) => line.includes(mark));
       const anchor = selected >= 0 ? selected : caretRow;
       const label = (n: number, where: "above" | "below") =>
         withThemeBg(

@@ -44,6 +44,9 @@ import {
   workingPhrase,
   paintPhrase,
   breathFrame,
+  createPaintClock,
+  fitPhrase,
+  SHIMMER_MAX_PHRASE,
   type WorkingKind,
   type WorkingState,
 } from "./working";
@@ -739,6 +742,9 @@ export class TurnRenderer {
    *  Fed by every scrap of genuine progress: streamed prose, reasoning deltas,
    *  tool arguments, sub-agent heartbeats, calls opening and closing. */
   private readonly pulse = new Pulse();
+  /** The rung's animation clock: one frame of the breath per paint, however
+   *  late the paint was. The wall clock still owns the elapsed receipt. */
+  private readonly breath = createPaintClock();
   /** The provider retry in flight, when there is one. A silent retry is a lie
    *  of omission about how long something took and how reliable it was, so it
    *  rides the rung for as long as it lasts. */
@@ -850,7 +856,11 @@ export class TurnRenderer {
     // word in the receipt is still fed by real output and still stops when the
     // bytes stop (see ./pulse.ts). The mark says the run is working; the word
     // says whether it still is.
-    const beat = breathFrame(state.elapsedMs ?? 0);
+    // The breath advances one frame per PAINT, not per 90ms of wall clock: a
+    // repaint that arrives late (a busy loop, a terminal under load) makes the
+    // row breathe slower rather than teleport up the ramp. See PaintClock.
+    const anim = this.breath.tick(state.elapsedMs ?? 0);
+    const beat = breathFrame(anim);
     const mark = workingMark(state, beat);
     const phrase = workingPhrase(state);
     // The clock rides inline, after the phrase, because that is the pairing
@@ -878,12 +888,24 @@ export class TurnRenderer {
     const voice = F.proseWidth() >= 72 ? (state.voice ?? "").trim() : "";
     // A bare word is not a fact worth a column beside a voice that already
     // says it: `okay, geared up · working` says `working` twice.
-    const fact = voice && isBareKind(state.kind) ? "" : phrase;
+    //
+    // The fact is FITTED to what is left of the row rather than left to run
+    // past the right margin: `flowRow` would cut it from the right, which
+    // takes the filename -- the one thing the fact is there to carry -- and
+    // the glow would go on sweeping cells the screen never shows.
+    const room = Math.max(
+      12,
+      Math.min(
+        SHIMMER_MAX_PHRASE,
+        F.proseWidth() - (voice ? voice.length + 3 : 0) - clock.length - 4,
+      ),
+    );
+    const fact = voice && isBareKind(state.kind) ? "" : fitPhrase(phrase, room);
     const lit = voice
       ? fact
-        ? `${paintPhrase(voice, state.elapsedMs ?? 0, { kind: state.kind })}${faint(dot)}${quiet(fact)}`
-        : paintPhrase(voice, state.elapsedMs ?? 0, { kind: state.kind })
-      : paintPhrase(phrase, state.elapsedMs ?? 0, { kind: state.kind });
+        ? `${paintPhrase(voice, anim, { kind: state.kind })}${faint(dot)}${quiet(fact)}`
+        : paintPhrase(voice, anim, { kind: state.kind })
+      : paintPhrase(fact, anim, { kind: state.kind });
     const said = clock ? `${lit}${faint(dot)}${faint(clock)}` : lit;
     const spent = (voice ? voice.length + 3 : 0) + fact.length + clock.length + 4;
     const head = frame.detail

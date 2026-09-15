@@ -110,7 +110,7 @@ import {
   type SessionRowView,
 } from "./composer";
 import { RUNE_MARK, renderBanner } from "./banner";
-import { FRAME_MS, workingRow } from "./working";
+import { FRAME_MS, createPaintClock, workingRow } from "./working";
 import { notifyWarp } from "./warp";
 import { setTitle, clearTitle } from "./title";
 import { renderReadBack, renderClose } from "./read-back";
@@ -265,6 +265,16 @@ export function permissionKeyAction(
 }
 
 type SessionListItem = ReturnType<Engine["listSessions"]>[number];
+
+/**
+ * The breath of the ONE row drawn before a turn has any events to show.
+ *
+ * A module clock rather than a field because it animates a single surface that
+ * only ever exists while a turn is opening, and because a paint clock must be
+ * ticked once per paint by exactly one caller to mean anything. It re-syncs on
+ * its own when a new turn restarts the elapsed clock (see `createPaintClock`).
+ */
+const OPENING_BREATH = createPaintClock();
 
 /** Empty launch placeholders are implementation detail, not conversation history. */
 function isMeaningfulSession(session: SessionListItem): boolean {
@@ -1189,7 +1199,12 @@ export class Tui {
       // product where the accent colour and a bold weight were spent on the
       // fact that nothing had happened yet.
       return this.pinLiveHeight([
-        `  ${workingRow({ kind: "working", elapsedMs: Math.max(0, Date.now() - this.turnStart) })}`,
+        `  ${workingRow(
+          { kind: "working", elapsedMs: Math.max(0, Date.now() - this.turnStart) },
+          // One frame of the breath per paint, not per 90ms of wall clock:
+          // a late repaint breathes slower instead of skipping levels.
+          { animMs: OPENING_BREATH.tick(Math.max(0, Date.now() - this.turnStart)) },
+        )}`,
       ]);
     }
     // This was a flat two rows, which is why a fan-out of sub-agents could only
