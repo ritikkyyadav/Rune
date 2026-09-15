@@ -1,7 +1,8 @@
 # Autonomous memory — what Rune is allowed to remember
 
 **Status:** built 2026-09-15 (Memory lane, M0 handoff). Off-model by default; zero live calls on
-every path that writes.
+every path that writes. **Revised the same evening**: the user-facing control is now three modes
+and no clock — see §0.
 
 The founder's ask, in one sentence: _a new chat window should already know the person, without the
 previous session's mistakes riding along._
@@ -15,6 +16,47 @@ next session confidently wrong, permanently, and with no one watching.
 
 So the design is not "summarise the session". It is a **provenance rule**: nothing enters memory
 unless a person said it or a machine proved it.
+
+---
+
+## 0. The control: three modes, and no clock
+
+The founder, 2026-09-15, withdrawing the cadence:
+
+> "For memory there should be three options only. **Off**: turn memory off completely. **Auto**: the
+> agent has the autonomy to decide when to update and manage its memory, for the most efficient use.
+> **Manual**: the person holds control — during a session they run `/memory update` and the memory
+> gets updated at that time. Not daily, not monthly — just these three."
+
+One setting, `[memory] mode`, default `auto`:
+
+| mode     | injected | learns at run end | refreshed on a clock | refreshed by the agent | refreshed by `/memory update`               |
+| -------- | -------- | ----------------- | -------------------- | ---------------------- | ------------------------------------------- |
+| `off`    | no       | no                | no                   | no                     | no (refused, says how to turn it on)        |
+| `auto`   | yes      | yes (zero spend)  | **no**               | yes — once per session | yes                                         |
+| `manual` | yes      | only when asked   | **no**               | no                     | yes — extractor **and** refresh, right then |
+
+`manual` still READS what was promoted. A fact the user already approved of does not become useless
+because they took the wheel; it just stops growing without them.
+
+**`auto` is a judgement, not a timer.** The agent gets one tool, `memory_update`, registered only in
+`auto` mode and callable at most once per session. It goes through the same backup and the same
+shrink floor as every other refresh, is recorded in the sidecar as `origin: agent`, and shows in the
+transcript as one line. `maybeReflectSystemMemory()` — the old startup cadence check that both front
+ends and the engine host call — is now a permanent no-op that says so. No startup path can spend.
+
+**Migration.** `schedule = daily | weekly | 3d` → `auto`, with a one-line note in the sidecar and the
+transcript ("cadence withdrawn; memory is now auto"); `schedule = manual` → `manual`;
+`enabled = false` → `off` (and it outranks a leftover cadence). `schedule`, `enabled` and `learn`
+are read-only compatibility fields: the loader accepts them, the settings catalog no longer offers
+them, and Rune never writes them. `learn = false` can still narrow (`auto` stops extracting), never
+widen. `/memory daily` and friends are refused by name with the three-mode message rather than
+quietly reinterpreted — the user asked for a clock and there isn't one.
+
+**Surfaces.** `/memory` and `rune memory` state the mode first. `/memory off|auto|manual` and
+`rune memory off|auto|manual` set it live (the sidecar outranks the config file);
+`/config memory <mode>` and the `update_config` catalog persist it to `~/.rune/config.toml`.
+`/memory update` and `rune memory update` are the user's own hand, in both `auto` and `manual`.
 
 ---
 
@@ -108,8 +150,7 @@ runner this repo actually uses.
 
 ### The dream, demoted
 
-The existing cadence "dream" (cheap model, opt-in, still `manual` by default) keeps its job but
-loses its authority: it may **distil promoted entries into readable prose** and may not mint a fact
+The profile refresh (cheap model, never on a clock — §0) keeps its job but loses its authority: it may **distil promoted entries into readable prose** and may not mint a fact
 of its own. A `distilled` entry never promotes on its own and every distilled line must trace to
 promoted entries. That is the difference between a writer and a witness.
 
@@ -203,9 +244,10 @@ founder's taste in prose is not its business, and shipping it there is pure toke
 is `audience: "subagent"` in the renderer, and it is asserted by a test rather than described here.
 
 The user sees it. The first time memory is injected in a session, the transcript shows one calm
-line: `remembering 6 things about you and this repo · /memory`. `/memory` shows the guide, the
-candidates in quarantine with their provenance, and the refusals. `/memory forget <id>`,
-`pin <id>`, `edit`, `off`. `rune memory` does the same outside the TUI.
+line: `remembering 6 things about you and this repo · /memory`. `/memory` shows the mode first, then
+the guide, the candidates in quarantine with their provenance, and the refusals. `/memory forget
+<id>`, `pin <id>`, `edit`, `update`, and `off | auto | manual`. `rune memory` does the same outside
+the TUI.
 
 ---
 
@@ -222,7 +264,7 @@ the above.
 | 4   | memory becomes an attack surface    | "skip the sandbox", "don't ask before pushing" → rejected by the guard, refusal logged                    |
 | 5   | project facts leak across repos     | a fact from workspace A is absent in workspace B                                                          |
 | 6   | the block grows without bound       | 500 entries → rendered guide under the cap                                                                |
-| 7   | off is not off                      | `[memory] enabled = false` → nothing injected, nothing written                                            |
+| 7   | off is not off                      | `[memory] mode = "off"` (and the legacy `enabled = false`) → nothing injected, nothing written            |
 | 8   | one anecdote becomes a pattern      | the same observation in two sessions promotes; in one it does not                                         |
 | 9   | a secret is remembered              | credential-shaped strings never enter                                                                     |
 | 10  | the store churns                    | nothing promoted → the guide is byte-identical                                                            |
@@ -230,12 +272,18 @@ the above.
 Plus the retro's turn-scope defect: the extractor reads the **run's whole event window**, not the
 last turn, so a real run is not seen as a two-word greeting.
 
+And, since the mode rework, the semantics table of §0 is executed row by row against the real Engine
+with a scripted provider in `tests/unit/orchestrator/memory-modes.test.ts` (mode × inject / extract /
+promote / clock / agent refresh / user refresh, plus every migration case and both refusals), with
+the run-end wiring settled end-to-end in `tests/integration/memory-e2e.test.ts`.
+
 ---
 
 ## 7. What is deliberately not done
 
-- **Live distillation.** The dream stays `manual` by default and is exercised in tests with a
-  scripted provider only. The founder has no budget; a memory that spends on every session is a
+- **Any clock at all.** Withdrawn 2026-09-15 (§0). The refresh spends, so it happens when the agent
+  judges it worth doing (`auto`, once a session) or when the person says so (`manual`) — never
+  because a day went by. The founder has no budget; a memory that spends on its own schedule is a
   memory that gets turned off.
 - **Cross-machine sync.** Local files, like every other store in `~/.rune`.
 - **Semantic contradiction detection.** Topic matching is a keyword signature, not an embedding.
