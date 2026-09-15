@@ -12,6 +12,15 @@ corpus, Lane F (Phase 5), one adversarial verifier pass and its two fix lanes �
 review's M4 and M3's mechanics), M3's second branch, Phase 6 + M6, Phase 7; a second verifier
 pass at the end is the release gate. Lane reports under `.codex/audit-20260910/handoff/m0/`.
 
+**Cap checkpoint, 2026-09-15 ~21:00 IST.** The session cap tripped while Fix lanes E1 (memory
+provenance/HMAC/guard/kill switch) and E2 (vault control path, runner authorship, git witness,
+symlinks, launcher `.env`, cargo test home, scripts) were starting on the third verifier's
+findings (`verify-batch-3-report.md`, 5 critical / 11 high). Neither wrote a file; the tree is
+`c22b2a0` plus the verifier's fifteen red `tests/verification/v8-*` files. Installed binary
+`v0.4.1-dev+c68a349` — **not safe for a real session with memory in `auto`; no authority key on**.
+Resume: relaunch E1 and E2 with the briefs in this session's transcript (or rewrite them from the
+report's findings 1–15 and 17–19, 26–28), then gates, reinstall, fourth verifier pass.
+
 ---
 
 # Claude checkpoint — 2026-09-14 20:55 IST
