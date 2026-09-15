@@ -62,23 +62,88 @@ ARGV = ["bun", ENTRY, "--new", "--no-browser", "--pristine"]
 # picture of this machine rather than of the product.
 SCRUB = "COLUMNS LINES RUNE_CONFIG_PATH RUNE_DB_PATH GEAR_HOME RUNE_MODEL RUNE_PROVIDER".split()
 
-# Credentials are scrubbed by SHAPE. A hand-written roster is a roster that goes
-# stale: the one this replaced named ten providers and missed OLLAMA_API_KEY,
-# GEMINI_API_KEY and BRAVE_API_KEY, so the docstring's "every provider key" was
-# not true of the machine it was running on. `_API_KEY` and `_TOKEN` are the two
-# suffixes every provider in the registry uses.
-SECRET_SUFFIXES = ("_API_KEY", "_TOKEN")
+# Credentials are scrubbed by a PREDICATE, stated here in full.
+#
+# A hand-written roster goes stale: the one this replaced named ten providers
+# and missed OLLAMA_API_KEY, GEMINI_API_KEY and BRAVE_API_KEY. Its replacement
+# was a roster too — two suffixes — and the registry already held a provider it
+# could not see (`SCW_SECRET_KEY`), while bedrock and vertex authenticate from
+# the machine's AWS/GCP credential CHAIN, whose names end in no secret suffix at
+# all. The guard below used the same two suffixes, so it could not catch its own
+# blind spot.
+#
+# A name is credential-shaped when ANY of these is true:
+#   1. it ends in one of the secret suffixes below, or
+#   2. it is a credential-chain variable bedrock/vertex read, or
+#   3. the provider or search registry declares it as a preset's `envVar`
+#      (read from the source, never retyped, so a preset added tomorrow is
+#      covered the day it lands).
+SECRET_SUFFIXES = (
+    "_API_KEY",
+    "_KEY",
+    "_TOKEN",
+    "_SECRET",
+    "_PASSWORD",
+    "_CREDENTIAL",
+    "_CREDENTIALS",
+    "_AUTH",
+)
+
+# bedrock: "AWS signs each request from the machine's own credential chain";
+# vertex reads the ambient GCP credentials. Neither ends in a secret suffix.
+CREDENTIAL_CHAIN = (
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "AWS_PROFILE",
+    "AWS_REGION",
+    "AWS_DEFAULT_REGION",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "GOOGLE_CLOUD_PROJECT",
+    "GOOGLE_VERTEX_PROJECT",
+    "GOOGLE_VERTEX_LOCATION",
+)
 
 # What the rig itself puts in the child. Named so the shape rule can never eat
 # one of them, even if a future variable of the rig's own ends in a suffix.
 RIG_SET = {"RUNE_HOME", "TERM", "LANG", "RUNE_TOOLS_BIN", "RUNE_TOOLS_BINARY"}
 
 
+def registry_env_vars():
+    """Every `envVar:` a preset declares, read from the registry's source.
+
+    Generated, not retyped: the roster this replaces was wrong the day a preset
+    was added. A parse failure is a scrub that got SMALLER, so it raises rather
+    than quietly returning an empty set.
+    """
+    import re
+
+    names = set()
+    for source in (
+        REPO / "packages" / "shared" / "src" / "providers.ts",
+        REPO / "packages" / "shared" / "src" / "search-providers.ts",
+    ):
+        text = source.read_text(encoding="utf-8")
+        found = re.findall(r'envVar:\s*"([A-Z0-9_]+)"', text)
+        if not found:
+            raise AssertionError("no envVar declarations found in %s" % source)
+        names.update(found)
+    return names
+
+
+def is_credential_shaped(name, declared=None):
+    """The predicate, in one place, used by the scrub and by its own guard."""
+    if name in RIG_SET:
+        return False
+    if name.endswith(SECRET_SUFFIXES) or name in CREDENTIAL_CHAIN:
+        return True
+    return name in (registry_env_vars() if declared is None else declared)
+
+
 def secret_names(env):
     """Every credential-shaped name in `env`, minus the rig's own variables."""
-    return sorted(
-        k for k in env if k.endswith(SECRET_SUFFIXES) and k not in RIG_SET
-    )
+    declared = registry_env_vars()
+    return sorted(k for k in env if is_credential_shaped(k, declared))
 
 
 def child_env(**extra):
