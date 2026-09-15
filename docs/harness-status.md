@@ -1490,3 +1490,43 @@ nowhere else. The second adversarial verifier pass — over M4, memory, the sing
 the breathing mark, Lane F, the two fix lanes' closures of the first pass's criticals, and the
 adapters — was launched on this tree; its findings go to fix lanes before any authority key
 is switched on and before memory is relied upon.
+
+### Addendum 18 — the second adversarial pass: memory is not safe for a real session yet, and the first pass's critical reopens across sessions
+
+`.codex/audit-20260910/handoff/m0/verify-batch-2-report.md`, on `5a036ff`; twenty red test
+files under `tests/verification/v7-*` (49 failing assertions, 13 deliberate green controls,
+each reproduced twice); sixteen archives. **Four critical, eleven high, ten medium, eight
+low.** Critical: a memory entry the guard refuses can be written as a file by an ordinary
+`bash` (the store sanitises shape only, and the memory directory is not a control path), and
+is read back as a promoted, pinned, user-corrected entry injected into every later session;
+the narrative profile is the same door onto the system prefix; the acceptance script the
+model rewrites is re-staged from the workspace by the NEXT run, so Fix lane A's closure holds
+for one session only; and `error TS2307: Cannot find module` classifies as a missing runner,
+so with a repair key on the commonest TypeScript error buys no repair. High, among others:
+the model's check command becomes a promoted lesson on a failed run; the repair bound is
+restored in full by the second crash; a check the run wrote in a previous session, or an
+empty test file, settles a criterion; a passing acceptance reads `stale` unless the project
+gitignores `.rune/`; `authority = acceptance` prints hidden criteria verbatim (the M4 spec's
+own wording was wrong — the re-prompt must name an id and an output tail, never the text);
+`RUNE_HOME` cannot relocate the Rust sandbox's audit log, so **every rig in this program
+appended to the founder's real `~/.rune/audit.jsonl`** — including the verifier's, which
+said so; the adapters' env is a deny-list and their budget is per task not per series
+($48 planned against $2); the visual reviewer can pick its own provider's model; two
+bypasses of the architecture plan's dependency refusal; `[ui] layout` cannot be saved at all
+(the UI lane's report said it persists). What held: assistant prose, tool results and
+`read_back` reach no memory; sub-agents get none; `denied` cannot become a retry; the worker
+registry has no rung-moving tool; both suites green at HEAD; the installed binary is exactly
+`8024ac0`; the corpus numbers recompute.
+
+**The record:** the gate logs were overwritten again by this pass's own reruns, so Addendum
+10's thirteen gates at `44f1b05` are no longer verifiable from the logs; the runner now writes
+each run into a dated directory. Two prose counts were wrong and are corrected in the
+verifier's report. Six new cost rows in the founder's database during the pass belong to a
+concurrent live session of the founder's own (openrouter/codex), attributed by provider and
+session id, not proved.
+
+**Decision:** memory is not to be relied on and no authority key is to be switched on until
+the criticals and the highs above close. Two fix lanes are running on disjoint files (C:
+memory, acceptance, the classifier, the durable bound; D: the Rust audit path, adapters,
+visual reviewer, dependency refusal, the layout setting, the footer picker). This is the
+second time the loop has caught what green suites and a careful supervisor did not.
