@@ -15,7 +15,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Brief, Criterion } from "../../../packages/protocol/src/index";
@@ -1183,6 +1183,147 @@ describe("staging the acceptance out of the workspace (V6 finding 1)", () => {
       expect(staged.root.startsWith(dir)).toBe(false);
     } finally {
       discardStagedAcceptance(staged);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("the vault fails closed (V8 critical 3, findings 12 and 13)", () => {
+  const REAL = "console.log('1 pass, 0 fail');\n";
+  const FAKE = "console.log('forged');\n";
+  function workspace(): string {
+    const dir = mkdtempSync(join(tmpdir(), "stage-ws-"));
+    mkdirSync(join(dir, ".rune-acceptance"), { recursive: true });
+    writeFileSync(join(dir, ".rune-acceptance", "check.mjs"), REAL);
+    return dir;
+  }
+  const spec = (command = "node .rune-acceptance/check.mjs") => [
+    { id: "c1", text: "it holds", command, source: "evaluator" as const },
+  ];
+
+  test("the pinned bytes are gone and the workspace copy is a rewrite — nothing is staged", () => {
+    // Promoted from `tests/verification/v8-acceptance-vault.test.ts`. Removing
+    // only `<vault>/files` and KEEPING the manifest was the worst shape in the
+    // whole pin: the code computed `here !== pinned`, knew the script had been
+    // rewritten, found no pinned copy to fall back to, and staged the rewrite
+    // anyway with an empty `notes` — a fail-open on the one branch that exists
+    // to fail closed.
+    const dir = workspace();
+    const vaultDir = mkdtempSync(join(tmpdir(), "stage-vault-"));
+    const first = stageAcceptance(spec(), { workspaceRoot: dir, vault: { dir: vaultDir } });
+    try {
+      writeFileSync(join(dir, ".rune-acceptance", "check.mjs"), FAKE);
+      rmSync(join(vaultDir, "files"), { recursive: true, force: true });
+      const second = stageAcceptance(spec(), { workspaceRoot: dir, vault: { dir: vaultDir } });
+      try {
+        expect(second.staged).toEqual([]);
+        expect(second.notes.join("\n")).toContain("acceptance pin missing");
+        expect(second.unmeasurable).toEqual([
+          { criterion: "c1", path: ".rune-acceptance/check.mjs" },
+        ]);
+        // And the command was not rewritten to a stage that does not exist:
+        // the criterion is skipped by the gate, not run against the workspace.
+        expect(second.specs[0]!.command).toBe("node .rune-acceptance/check.mjs");
+      } finally {
+        discardStagedAcceptance(second);
+      }
+    } finally {
+      discardStagedAcceptance(first);
+      rmSync(vaultDir, { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a vault removed WHOLESALE is caught by the pin the contract row remembers", () => {
+    // The manifest cannot report its own removal, so the record is the second
+    // witness: `installAcceptance` hands the pins off the restored contract row
+    // back to the vault, and a path the row names that the manifest has
+    // forgotten is a pin whose bytes were removed — not a first intake.
+    const dir = workspace();
+    const vaultDir = mkdtempSync(join(tmpdir(), "stage-vault-"));
+    const first = stageAcceptance(spec(), { workspaceRoot: dir, vault: { dir: vaultDir } });
+    try {
+      writeFileSync(join(dir, ".rune-acceptance", "check.mjs"), FAKE);
+      rmSync(vaultDir, { recursive: true, force: true });
+      const second = stageAcceptance(spec(), {
+        workspaceRoot: dir,
+        vault: { dir: vaultDir, knownPins: first.pins },
+      });
+      try {
+        expect(second.staged).toEqual([]);
+        expect(second.notes.join("\n")).toContain("acceptance pin missing");
+      } finally {
+        discardStagedAcceptance(second);
+      }
+      // Without the row there is nothing to know it by, and the honest answer
+      // is a fresh first intake — which is why the row is passed.
+      const blind = stageAcceptance(spec(), { workspaceRoot: dir, vault: { dir: vaultDir } });
+      try {
+        expect(blind.staged.length).toBe(1);
+      } finally {
+        discardStagedAcceptance(blind);
+      }
+    } finally {
+      discardStagedAcceptance(first);
+      rmSync(vaultDir, { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a second task reusing the path takes its own pin (V8 finding 12)", () => {
+    // The manifest was keyed by workspace-relative path, forever, so task B's
+    // entirely legitimate `check.mjs` was staged from task A's pin and the note
+    // reported the revision as tampering.
+    const dir = workspace();
+    const vaultDir = mkdtempSync(join(tmpdir(), "stage-vault-"));
+    const a = stageAcceptance(spec(), { workspaceRoot: dir, vault: { dir: vaultDir, taskKey: "task-a" } }); // prettier-ignore
+    try {
+      writeFileSync(join(dir, ".rune-acceptance", "check.mjs"), "// task B, a different task\n");
+      const b = stageAcceptance(spec(), { workspaceRoot: dir, vault: { dir: vaultDir, taskKey: "task-b" } }); // prettier-ignore
+      try {
+        expect(readFileSync(b.staged[0]!.to, "utf8")).toContain("task B");
+        expect(b.notes).toEqual([]);
+        // The row still reads as a path, not as a manifest key.
+        expect(b.pins.map((p) => p.path)).toContain(".rune-acceptance/check.mjs");
+      } finally {
+        discardStagedAcceptance(b);
+      }
+      // And task A's own pin is untouched by task B having run.
+      writeFileSync(join(dir, ".rune-acceptance", "check.mjs"), FAKE);
+      const a2 = stageAcceptance(spec(), { workspaceRoot: dir, vault: { dir: vaultDir, taskKey: "task-a" } }); // prettier-ignore
+      try {
+        expect(readFileSync(a2.staged[0]!.to, "utf8")).toBe(REAL);
+      } finally {
+        discardStagedAcceptance(a2);
+      }
+    } finally {
+      discardStagedAcceptance(a);
+      rmSync(vaultDir, { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a workspace symlink pointing out of the workspace is not staged (V8 finding 13)", () => {
+    // `inside()` is a string test over `resolve()`d paths and `resolve` does not
+    // follow links, so `check.mjs -> /outside/real.mjs` read as in-workspace: it
+    // was staged and pinned on bytes the workspace does not own, and the target
+    // stayed where the run could still edit it under a pin saying it was copied.
+    const dir = workspace();
+    const vaultDir = mkdtempSync(join(tmpdir(), "stage-vault-"));
+    const outside = mkdtempSync(join(tmpdir(), "stage-outside-"));
+    writeFileSync(join(outside, "real.mjs"), "console.log('OUTSIDE');\n");
+    rmSync(join(dir, ".rune-acceptance", "check.mjs"), { force: true });
+    symlinkSync(join(outside, "real.mjs"), join(dir, ".rune-acceptance", "check.mjs"));
+    const staged = stageAcceptance(spec(), { workspaceRoot: dir, vault: { dir: vaultDir } });
+    try {
+      expect(staged.staged).toEqual([]);
+      expect(staged.pins).toEqual([]);
+      // Nothing was rewritten either: the command names what the author wrote.
+      expect(staged.specs[0]!.command).toBe("node .rune-acceptance/check.mjs");
+    } finally {
+      discardStagedAcceptance(staged);
+      rmSync(outside, { recursive: true, force: true });
+      rmSync(vaultDir, { recursive: true, force: true });
       rmSync(dir, { recursive: true, force: true });
     }
   });

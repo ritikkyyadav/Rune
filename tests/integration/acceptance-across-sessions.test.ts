@@ -41,7 +41,15 @@
 // RUNE_HOME.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -210,6 +218,67 @@ describe("the acceptance script is pinned across runs, not re-seeded from the wo
         second as unknown as { contract?: { acceptance?: { notes: string[] } } }
       ).contract?.acceptance?.notes.join("\n"),
     ).toContain("acceptance script changed in workspace — pinned copy used");
+  }, 180_000);
+
+  test("the pin's bytes are removed and the criterion refuses to be measured (V8 critical 3)", async () => {
+    // The vault lives at `~/.rune/acceptance-pins/…`, outside the workspace and
+    // outside `bash`'s scope, and `acceptance-pins` was not on Auto's
+    // self-protection list — so one `rm -rf` between sessions restored the
+    // pre-fix behaviour silently. Worse was removing only `<vault>/files` and
+    // keeping the manifest: the code computed `here !== pinned`, KNEW the
+    // script had been rewritten, found no pinned copy, and staged the rewrite
+    // with an empty `notes`.
+    //
+    // It now stages nothing and the gate does not run the criterion at all: no
+    // receipt, no rung, `needs_review` with the reason on the row. The list is
+    // fixed in `auto-containment.ts`; this is the other half — the vault is not
+    // a thing the harness trusts to still be there.
+    const { dir, home } = repo("v8-vault-gone-", ".rune-acceptance/\n.rune/\n");
+    mkdirSync(join(dir, ".rune-acceptance"), { recursive: true });
+    writeFileSync(join(dir, ".rune-acceptance", "check.mjs"), HONEST_CHECK);
+    git(dir, ["init", "-q"]);
+    git(dir, ["add", "."]);
+    git(dir, ["commit", "-m", "base"]);
+    const ACCEPTANCE = [
+      { id: "e1", text: "the version endpoint exists", command: "node .rune-acceptance/check.mjs" },
+    ];
+
+    // Session 1 takes the pin, and rewrites the workspace oracle.
+    const first = makeEngine(dir, home, ACCEPTANCE);
+    script(first, [
+      [
+        tool("write_file", {
+          path: ".rune-acceptance/check.mjs",
+          content: "console.log('1 pass, 0 fail');\n",
+        }),
+      ],
+      [{ type: "text", text: "Done." }],
+    ]);
+    await drain(first, "Add a version endpoint to api.ts");
+    await first.close();
+
+    // The bytes go; the manifest stays. This is the fail-open shape.
+    const vault = join(home, "acceptance-pins");
+    expect(existsSync(vault)).toBe(true);
+    for (const entry of readdirSync(vault)) {
+      rmSync(join(vault, entry, "files"), { recursive: true, force: true });
+    }
+
+    const second = makeEngine(dir, home, ACCEPTANCE);
+    script(second, [[{ type: "text", text: "Carrying on." }]]);
+    const verdict = terminalOf(await drain(second, "carry on")).verdict;
+    const evaluator = verdict?.criteria.find((c) => c.source === "evaluator");
+
+    // Not `satisfied` — the rewrite says "1 pass, 0 fail" and would have been
+    // staged and believed. Not `failed` either: nothing was measured.
+    expect(evaluator?.status).toBe("needs_review");
+    expect(readFileSync(join(dir, "api.ts"), "utf8")).toBe(ORIGINAL_API);
+    expect(verdict?.kind).not.toBe("met");
+    expect(
+      (
+        second as unknown as { contract?: { acceptance?: { notes: string[] } } }
+      ).contract?.acceptance?.notes.join("\n"),
+    ).toContain("acceptance pin missing");
   }, 180_000);
 
   test("a passing acceptance is not `stale` because the harness wrote its own ledger", async () => {

@@ -38,6 +38,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -754,6 +755,16 @@ export interface StagedAcceptance {
    * every honest run.
    */
   notes: string[];
+  /**
+   * The criteria that CANNOT be measured on this tree: a pin exists for a
+   * script they name and its bytes are gone from the vault (V8 critical 3).
+   *
+   * The gate skips these rather than running them. Staging the workspace copy
+   * of a script the pin says was rewritten is the fail-OPEN the pin exists to
+   * prevent, and it is worse than the hole it replaced because the code has
+   * already computed the mismatch and would be staging a rewrite it detected.
+   */
+  unmeasurable: Array<{ criterion: string; path: string }>;
 }
 
 /**
@@ -788,10 +799,62 @@ export interface StagedAcceptance {
 export interface AcceptanceVault {
   /** Where the pinned copies and the manifest live. Never inside the workspace. */
   dir: string;
+  /**
+   * The task this pin belongs to — the contract's id (V8 finding 12).
+   *
+   * The manifest was keyed by workspace-relative path alone, forever. Two tasks
+   * in one workspace naming the same `check.mjs` with different, entirely
+   * legitimate bytes meant task B was staged from task A's pin and the note
+   * reported the revision as tampering, with no re-pin short of deleting a
+   * directory the person has not been told exists. A pin is a statement about
+   * ONE task's oracle, so the key says which task.
+   */
+  taskKey?: string;
+  /**
+   * Pins this workspace is KNOWN to have taken, from the contract row of an
+   * earlier run (V8 critical 3).
+   *
+   * The manifest is the vault's own account of itself, so a vault that was
+   * removed wholesale reads as "no pin was ever taken" and the next intake
+   * seeds happily from the workspace. The contract row is a second, independent
+   * record of the same fact, and it lives in the session log where the run
+   * cannot reach it. When it names a path the manifest has forgotten, the pin
+   * is MISSING rather than absent, and the criterion is unmeasurable.
+   */
+  knownPins?: ReadonlyArray<{ path: string; digest: string }>;
 }
 
-/** The manifest file inside the vault: workspace-relative path → sha256. */
+/** The manifest file inside the vault: pin key → sha256. */
 const VAULT_MANIFEST = "pinned.json";
+
+/**
+ * The manifest key for one script. Task-scoped when the caller named a task,
+ * so a second task reusing the path is not measured by the first task's oracle.
+ */
+function pinKey(taskKey: string | undefined, relKey: string): string {
+  return taskKey ? `${taskKey}::${relKey}` : relKey;
+}
+
+/**
+ * The identity of an acceptance, for `AcceptanceVault.taskKey` (V8 finding 12).
+ *
+ * What the person STATED, not what they asked for: the criteria and the
+ * commands, in order. Keying on the request instead would reopen V7 critical 3
+ * on the first follow-up — "carry on" is a different intent against the same
+ * acceptance, and surviving exactly that second session is what the pin is for.
+ *
+ * Read from the specs as handed in, before any staging rewrite, so the key is
+ * the same on the run that takes the pin and on every run that reads it.
+ */
+export function acceptanceKey(specs: readonly AcceptanceSpec[]): string {
+  const stated = specs.map((spec, i) => [
+    spec.id ?? `a${i + 1}`,
+    spec.text.trim(),
+    spec.command?.trim() ?? "",
+    (spec.files ?? []).join(","),
+  ]);
+  return createHash("sha256").update(JSON.stringify(stated)).digest("hex").slice(0, 16);
+}
 
 function readVault(dir: string): Record<string, string> {
   try {
@@ -822,6 +885,36 @@ function inside(root: string, full: string): boolean {
   return full !== root && full.startsWith(root.endsWith(sep) ? root : root + sep);
 }
 
+/**
+ * The same test, asked of the path the filesystem will actually open.
+ *
+ * V8 finding 13: `inside()` is a string test over `resolve()`d paths, and
+ * `resolve` does not follow links. A workspace `check.mjs` symlinked to
+ * `/outside/real.mjs` read as an in-workspace file, so it was staged and pinned
+ * on bytes the workspace does not own — and the premise the whole staging pass
+ * rests on ("copy every in-workspace file OUT of the workspace") does not hold
+ * for it: the target stays where the run can still edit it, under a pin that
+ * says it was captured.
+ *
+ * A path that cannot be resolved (it does not exist yet) falls back to the
+ * lexical answer, which is what every caller wants for a file about to be made.
+ */
+function realInside(root: string, full: string): boolean {
+  let realRoot = root;
+  let realFull = full;
+  try {
+    realRoot = realpathSync(root);
+  } catch {
+    // A workspace root we cannot resolve is the lexical one.
+  }
+  try {
+    realFull = realpathSync(full);
+  } catch {
+    return inside(root, full);
+  }
+  return inside(realRoot, realFull) && inside(root, full);
+}
+
 /** A shell word that survives the shell: quoted only when it has to be. */
 function shellQuote(path: string): string {
   return /^[A-Za-z0-9_@%+=:,./-]+$/.test(path) ? path : `'${path.replace(/'/g, `'\\''`)}'`;
@@ -834,15 +927,19 @@ interface StageSink {
   /** The vault's manifest, read at the start and written back if it grew. */
   pins: Record<string, string>;
   vaultDir: string | undefined;
+  /** The task the pins are keyed by, if the caller named one. */
+  taskKey: string | undefined;
   notes: string[];
   pinned: boolean;
+  /** Paths whose pin exists and whose pinned BYTES do not. Fails closed. */
+  missing: string[];
 }
 
 /** Copy one workspace file or directory into the stage; returns what it wrote. */
 function copyInto(workspaceRoot: string, stageRoot: string, rel: string, sink: StageSink): void {
   if (sink.staged.length >= STAGE_MAX_FILES) return;
   const from = resolve(workspaceRoot, rel);
-  if (!inside(workspaceRoot, from)) return;
+  if (!realInside(workspaceRoot, from)) return;
   let stats;
   try {
     stats = statSync(from);
@@ -871,8 +968,14 @@ function copyInto(workspaceRoot: string, stageRoot: string, rel: string, sink: S
   // acceptance any more: the pinned bytes are staged instead and the run says
   // so, rather than measuring the work with an oracle the work rewrote.
   let source = from;
-  const key = relPath.split(sep).join("/");
-  const vaultCopy = sink.vaultDir ? join(sink.vaultDir, "files", relPath) : undefined;
+  const relKey = relPath.split(sep).join("/");
+  const key = pinKey(sink.taskKey, relKey);
+  // The BYTES are task-scoped for the same reason the manifest key is: task B
+  // pinning its own `check.mjs` must not overwrite the copy task A is measured
+  // against.
+  const vaultCopy = sink.vaultDir
+    ? join(sink.vaultDir, "files", ...(sink.taskKey ? [sink.taskKey] : []), relPath)
+    : undefined;
   if (sink.vaultDir) {
     let here: string | null = null;
     try {
@@ -893,9 +996,31 @@ function copyInto(workspaceRoot: string, stageRoot: string, rel: string, sink: S
           // No vault, no pin, and no claim of one.
         }
       }
-    } else if (here !== pinned && vaultCopy && existsSync(vaultCopy)) {
+    } else if (here === pinned) {
+      // The workspace copy still IS the pinned oracle. Nothing to say.
+    } else if (vaultCopy && existsSync(vaultCopy)) {
       source = vaultCopy;
-      sink.notes.push(`acceptance script changed in workspace — pinned copy used (${key})`);
+      // The note names the vault, because the only way to re-pin deliberately
+      // is to remove it — and a person told their revision was "tampering" and
+      // not told where the pin lives has no move to make (V8 finding 12).
+      sink.notes.push(
+        `acceptance script changed in workspace — pinned copy used (${relKey}); ` +
+          `to re-pin a deliberate revision, remove ${sink.vaultDir}`,
+      );
+    } else {
+      // ── Fail closed (V8 critical 3) ──
+      //
+      // A pin with no bytes behind it. The code has ALREADY computed that the
+      // workspace copy is not the oracle that was stated; staging it anyway is
+      // measuring the work with the rewrite, on the one branch that exists to
+      // refuse exactly that. The criterion is not settled here and it is not
+      // failed either — it cannot be measured, which is `needs_review`.
+      sink.missing.push(relKey);
+      sink.notes.push(
+        `acceptance pin missing — the pinned bytes for ${relKey} are gone from the vault ` +
+          `and the workspace copy does not match the pin; the criterion was not run`,
+      );
+      return;
     }
   }
 
@@ -933,21 +1058,42 @@ export function stageAcceptance(
     opts.vault && !inside(workspaceRoot, resolve(opts.vault.dir))
       ? resolve(opts.vault.dir)
       : undefined;
+  const taskKey = opts.vault?.taskKey;
+  const pins = vaultDir ? readVault(vaultDir) : {};
+  // A pin the CONTRACT ROW remembers and the manifest has forgotten is a pin
+  // whose bytes are gone — the whole-vault removal, which the manifest alone
+  // can never report because it is the thing that was removed. Seeding it here
+  // puts that path on the `pinned !== undefined` branch, where the absent
+  // vault copy makes it unmeasurable instead of a fresh first intake.
+  if (vaultDir) {
+    for (const known of opts.vault?.knownPins ?? []) {
+      if (typeof known?.path !== "string" || !/^[0-9a-f]{64}$/.test(known?.digest ?? "")) continue;
+      const key = pinKey(taskKey, known.path);
+      if (pins[key] === undefined) pins[key] = known.digest;
+    }
+  }
   const sink: StageSink = {
     digests: {},
     staged: [],
-    pins: vaultDir ? readVault(vaultDir) : {},
+    pins,
     vaultDir,
+    taskKey,
     notes: [],
     pinned: false,
+    missing: [],
   };
 
-  const rewritten = specs.map((spec) => {
+  const unmeasurable: Array<{ criterion: string; path: string }> = [];
+  const rewritten = specs.map((spec, index) => {
     const named = [
       ...(spec.files ?? []),
       ...(spec.command ? commandPaths(spec.command).filter((t) => STAGEABLE.test(t)) : []),
     ];
+    const missingBefore = sink.missing.length;
     for (const rel of named) copyInto(workspaceRoot, root, rel, sink);
+    for (const path of sink.missing.slice(missingBefore)) {
+      unmeasurable.push({ criterion: spec.id ?? `a${index + 1}`, path });
+    }
     if (!spec.command) return { ...spec };
     // Only the tokens that actually became a staged file are rewritten; a
     // path that named nothing, or named something outside the workspace, is
@@ -955,7 +1101,7 @@ export function stageAcceptance(
     const map = new Map<string, string>();
     for (const token of commandPaths(spec.command)) {
       const full = resolve(workspaceRoot, token);
-      if (!inside(workspaceRoot, full)) continue;
+      if (!realInside(workspaceRoot, full)) continue;
       const to = join(root, relative(workspaceRoot, full));
       if (sink.digests[to]) map.set(token, to);
     }
@@ -977,10 +1123,17 @@ export function stageAcceptance(
     specs: rewritten,
     digests: sink.digests,
     staged: sink.staged,
+    // The row carries the workspace-relative path, not the manifest key: the
+    // task scope is this vault's business, and a reader asking "which oracle
+    // measured this" is asking about a file.
     pins: Object.entries(sink.pins)
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([path, digest]) => ({ path, digest })),
+      .map(([key, digest]) => ({
+        path: taskKey && key.startsWith(`${taskKey}::`) ? key.slice(taskKey.length + 2) : key,
+        digest,
+      })),
     notes: sink.notes,
+    unmeasurable,
   };
 }
 

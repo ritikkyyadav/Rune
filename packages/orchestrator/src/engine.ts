@@ -249,6 +249,7 @@ import {
   priorContract,
   uncoveredCriteria,
   discardStagedAcceptance,
+  acceptanceKey,
   stageAcceptance,
   stagedAcceptanceDrift,
   type AcceptanceSpec,
@@ -7346,6 +7347,24 @@ export class Engine {
                   .digest("hex")
                   .slice(0, 16),
               ),
+              // Per ACCEPTANCE, not per path (V8 finding 12). The manifest was
+              // keyed by workspace-relative path forever, so a second task
+              // reusing `check.mjs` was measured by the first task's oracle and
+              // the note reported its entirely legitimate revision as tamper.
+              //
+              // The identity is what the acceptance STATES — the criteria and
+              // the commands the person handed in — and not the request, which
+              // would be V7 critical 3 reopened: "carry on" is a different
+              // intent against the same acceptance, and that is precisely the
+              // second session the pin exists to survive.
+              taskKey: acceptanceKey(specs),
+              // The row this run was restored from is the second witness the
+              // vault's own manifest cannot be (V8 critical 3): a pin the
+              // record remembers and the vault has forgotten is a pin whose
+              // bytes were removed, not a path that was never pinned.
+              ...(this.contract.acceptance?.pins?.length
+                ? { knownPins: this.contract.acceptance.pins }
+                : {}),
             },
           }
         : {}),
@@ -7427,6 +7446,32 @@ export class Engine {
       if (signal?.aborted) return;
 
       const command = method.command;
+      // ── The pin is gone (V8 critical 3) ──
+      //
+      // `stageAcceptance` found a pin for a script this criterion names, found
+      // the pinned bytes removed, and found the workspace copy no longer
+      // hashing to the pin. It staged nothing, so the command still names the
+      // workspace file — the rewrite. Running it would measure the work with
+      // the oracle the work replaced, which is the fail-open the pin exists to
+      // refuse. No receipt, no rung: `needs_review`, with the reason on the row.
+      const missingPin = this.stagedAcceptance?.unmeasurable.find(
+        (row) => row.criterion === (criterion.id ?? criterion.text),
+      );
+      if (missingPin) {
+        ledger.recordRuntimeCheck(
+          index,
+          {
+            source: command,
+            detail:
+              `acceptance pin missing — the pinned copy of \`${missingPin.path}\` is gone from ` +
+              `the vault and the workspace copy does not match the pin; it was not run`,
+            verifier: "acceptance-command@1",
+            env: envFingerprint(),
+          },
+          null,
+        );
+        continue;
+      }
       // The stage is outside the workspace and its name is random, so this
       // should never fire. It is read anyway: the guarantee the staging was
       // built for is one the runtime can CHECK, and a check that is only
