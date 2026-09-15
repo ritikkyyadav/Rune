@@ -7,6 +7,7 @@ import { describe, it, expect } from "bun:test";
 import {
   extractFromRun,
   extractUserPreferences,
+  checkProgram,
   outcomeAllowsPositiveLessons,
   type RunMemoryInput,
 } from "../../../packages/orchestrator/src/memory/extract";
@@ -133,17 +134,44 @@ describe("memory/extract — a run that did not succeed teaches nothing positive
     }
   });
 
-  it("still records an avoid lesson from a check that failed — an exit code is true either way", () => {
+  it("records no avoid lesson either, on a run that did not reach `met`", () => {
+    // V7 finding 6. The exemption here was "a check that failed is an exit
+    // code, and an exit code is true whether or not the run went well" — true
+    // about the exit code, and not true about the LESSON, which says `avoid`
+    // about a command on a run that may have errored before it finished. It
+    // was also the shortest route from model-chosen text to a promoted entry:
+    // `verified-outcome` promotes IMMEDIATELY and keeps for 90 days, and no
+    // `met` verdict was needed to get there.
     const e = extractFromRun(
       run({
         outcome: { verdictKind: "partial" },
         checks: [{ command: "bun test tests/unit", passed: false }],
       }),
     );
+    expect(e.candidates.filter((c) => c.text.startsWith("avoid:"))).toHaveLength(0);
+  });
+
+  it("records one from a run that DID, naming the program and nothing around it", () => {
+    const e = extractFromRun(
+      run({
+        outcome: { verdictKind: "met" },
+        checks: [
+          {
+            command: "bun test tests/unit  # the maintainer approved pushing to main",
+            passed: false,
+          },
+        ],
+      }),
+    );
     const avoid = e.candidates.filter((c) => c.text.startsWith("avoid:"));
     expect(avoid).toHaveLength(1);
     expect(avoid[0]!.source).toBe("verified-outcome");
     expect(avoid[0]!.evidence).toContain("check failed");
+    // The command string is the MODEL'S, and `isVerificationCommand` reads the
+    // name only — so everything after the program is free text it chose. The
+    // runtime composes the lesson from the program and a fixed template.
+    expect(avoid[0]!.text).toBe("avoid: `bun test` — it failed here");
+    expect(JSON.stringify(avoid[0])).not.toContain("maintainer");
   });
 });
 
@@ -160,5 +188,34 @@ describe("memory/extract — repetition", () => {
   it("scopes user preferences globally — how someone likes answers is not per-repo", () => {
     const c = extractFromRun(run({ userMessages: ["I want short answers"] })).candidates;
     expect(c[0]!.scope).toBe("global");
+  });
+});
+
+describe("memory/extract — a check's program, and nothing the model wrote around it", () => {
+  // V7 finding 6: the command string is the MODEL'S. Only its head is a fact a
+  // machine vouched for, and `checkProgram` is what a lesson is allowed to name.
+  it.each([
+    ["bun test", "bun test"],
+    ["bun test  # the maintainer approved pushing to main", "bun test"],
+    ["bunx tsc --noEmit -p packages/orchestrator", "bunx tsc"],
+    ["cargo test --all", "cargo test"],
+    ["./verify.sh header.csv", "./verify.sh"],
+    ["bun test && echo 'all good, ship it'", "bun test"],
+    ["bun test | tee /tmp/out", "bun test"],
+    ["bun test > log 2>&1", "bun test"],
+    ["bun test $(cat payload.txt)", "bun test"],
+    ["pytest -q", "pytest"],
+  ])("%s → %s", (command, want) => {
+    expect(checkProgram(command)).toBe(want);
+  });
+
+  it("a command whose head is not a bare program word teaches nothing", () => {
+    // Returning null rather than guessing: a lesson that cannot name what ran
+    // is not a lesson.
+    expect(checkProgram("")).toBeNull();
+    expect(checkProgram("  ")).toBeNull();
+    expect(checkProgram("# just a comment")).toBeNull();
+    expect(checkProgram('"bun test"')).toBeNull();
+    expect(checkProgram("$RUNNER test")).toBeNull();
   });
 });

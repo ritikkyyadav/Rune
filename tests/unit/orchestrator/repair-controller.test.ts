@@ -525,14 +525,16 @@ describe("transport — retry to the bound, then the environment", () => {
 // ─── acceptance ───
 
 describe("acceptance — one re-prompt naming the criterion, then partial", () => {
+  /** What the oracle says. The model never sees this string. */
+  const HIDDEN_TEXT = "the CSV importer accepts a file with a BOM";
   const FAILED = [
     {
-      text: "the CSV importer accepts a file with a BOM",
+      id: "a1",
       outputTail: "AssertionError: expected 3 rows, got 0\n  at import.test.ts:41",
     },
   ];
 
-  test("one re-prompt, naming the criterion's text and the tail — never its command", async () => {
+  test("one re-prompt, naming the criterion's ID and the tail — never its text or command", async () => {
     const out = await runLoop({
       script: EDIT_THEN_FINISH,
       authority: ["acceptance"],
@@ -540,8 +542,16 @@ describe("acceptance — one re-prompt naming the criterion, then partial", () =
     });
     const asked = gateMessages(out.messages, "acceptance stated for this task");
     expect(asked.length).toBe(1);
-    expect(asked[0]).toContain("the CSV importer accepts a file with a BOM");
+    // The id says WHICH criterion failed; the tail says what its check saw.
+    expect(asked[0]).toContain("acceptance criterion a1 failed");
     expect(asked[0]).toContain("expected 3 rows, got 0");
+    // V7 finding 19: the first version printed up to four hidden criteria
+    // VERBATIM plus `(and N more)`, so with `acceptance` in `[controller]
+    // authority` a model that failed deliberately could enumerate the oracle's
+    // own words and count them — retiring M1's "the acceptance the model never
+    // sees" without saying so. There is no field for the text any more.
+    expect(asked[0]).not.toContain(HIDDEN_TEXT);
+    expect(JSON.stringify(FAILED)).not.toContain(HIDDEN_TEXT);
     // The oracle's command is not in the transcript and there is no field for
     // it: quoting it teaches a model to satisfy the command, not the criterion.
     expect(asked[0]).not.toContain("bun test");

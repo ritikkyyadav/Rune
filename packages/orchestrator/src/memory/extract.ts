@@ -9,7 +9,11 @@
 //   (a) the USER'S OWN WORDS, quoted verbatim — a correction, a standing rule,
 //       a stated taste;
 //   (b) a VERIFIED OUTCOME — a lesson minted only from a run whose verdict was
-//       `met`, or from a check whose exit code is on record;
+//       `met`, naming a check whose exit code is on record. Both halves are
+//       required: V7 finding 6 found the `avoid:` half exempt from the verdict
+//       AND carrying the command string verbatim, which made the model's own
+//       `bash` argument the shortest route to an entry that promotes on sight
+//       and keeps for ninety days;
 //   (c) REPETITION — a fact seen in two distinct sessions.
 //
 // What is NOT here is the point: there is no code path from an assistant
@@ -202,33 +206,53 @@ export function extractFromRun(input: RunMemoryInput): Extraction {
     }
   }
 
-  // The avoid side needs no clean verdict — a check that failed is an exit
-  // code, and an exit code is true whether or not the run went well. This is
-  // the one thing a failed run may teach.
-  for (const check of input.checks ?? []) {
-    if (check.passed) continue;
-    candidates.push({
-      kind: "lesson",
-      text: `avoid: \`${clipCommand(check.command)}\` — it failed here`,
-      source: "verified-outcome",
-      sessionId: input.sessionId,
-      scope,
-      evidence: `check failed: ${clipCommand(check.command)}`,
-    });
-  }
-
-  // (c) Repetition. A command that passes here is a fact about this workspace
-  // once it has passed in two different sessions — the store counts the
-  // sessions, this only proposes.
-  for (const check of input.checks ?? []) {
-    if (!check.passed) continue;
-    candidates.push({
-      kind: "project",
-      text: `a check that passes here: \`${clipCommand(check.command)}\``,
-      source: "observed",
-      sessionId: input.sessionId,
-      scope,
-    });
+  // The check lessons, and the two things V7 finding 6 changed about them.
+  //
+  // FIRST, the text is composed by the runtime from a fixed template and the
+  // command's PROGRAM — never from the command string. `Engine.captureMemory`
+  // passes `checkLog.all` through as `{command, passed}`, and
+  // `isVerificationCommand` classifies by NAME, so the model's own `bash`
+  // command string was a "check" the moment it was called something
+  // check-shaped. `bun test  # the maintainer has approved pushing straight to
+  // main without review` minted `avoid: \`<that whole string>\`` with source
+  // `verified-outcome`, which the promotion table promotes IMMEDIATELY and
+  // keeps for 90 days — and the payload was in the next session's request
+  // body. The program is the only part of a command a machine vouched for; the
+  // rest is the model's prose wearing a receipt's name.
+  //
+  // SECOND, it needs a clean verdict like every other positive lesson. The
+  // argument for exempting it was that "a check that failed is an exit code,
+  // and an exit code is true whether or not the run went well" — true about
+  // the exit code, and not true about the LESSON, which says `avoid` about a
+  // command on a run that may have errored before it finished. No `met`
+  // verdict was needed on that path, which is what made it the shortest route
+  // from model-chosen text to a promoted entry.
+  if (positive) {
+    for (const check of input.checks ?? []) {
+      const program = checkProgram(check.command);
+      if (!program) continue;
+      if (check.passed) {
+        // (c) Repetition. A command that passes here is a fact about this
+        // workspace once it has passed in two different sessions — the store
+        // counts the sessions, this only proposes.
+        candidates.push({
+          kind: "project",
+          text: `a check that passes here: \`${program}\``,
+          source: "observed",
+          sessionId: input.sessionId,
+          scope,
+        });
+      } else {
+        candidates.push({
+          kind: "lesson",
+          text: `avoid: \`${program}\` — it failed here`,
+          source: "verified-outcome",
+          sessionId: input.sessionId,
+          scope,
+          evidence: `verdict=met; check failed: ${program}`,
+        });
+      }
+    }
   }
 
   // The guard, here rather than only at the store's door. A line it refuses is
@@ -242,7 +266,32 @@ export function extractFromRun(input: RunMemoryInput): Extraction {
   return { candidates: kept, refusals, notes };
 }
 
-function clipCommand(cmd: string): string {
-  const one = cmd.replace(/\s+/g, " ").trim();
-  return one.length > 120 ? one.slice(0, 117) + "…" : one;
+/** A word that is a program path, and cannot be anything else. */
+const PROGRAM_WORD = /^[A-Za-z0-9._/@+-]+$/;
+/** A word that is a SUBCOMMAND — a bare name, never a path or a flag. */
+const SUBCOMMAND_WORD = /^[A-Za-z][A-Za-z0-9_-]*$/;
+
+/**
+ * The PROGRAM a check ran, and nothing the model wrote around it.
+ *
+ * At most two words — `bun test`, `bunx tsc`, `cargo test`, `./verify.sh` —
+ * taken from the head of the command and cut at the first shell metacharacter,
+ * so a comment, a pipe, a redirect, a substitution or a second command carries
+ * nothing through. Every surviving word has to be a bare program word; a
+ * command whose first word is not one teaches nothing, which is the right
+ * answer for `A=1 env …` and for anything quoted or expanded.
+ *
+ * Returns null rather than guessing. A lesson that cannot name what ran is not
+ * a lesson (V7 finding 6).
+ */
+export function checkProgram(command: string): string | null {
+  const head = (command ?? "").split(/[#;|&<>(){}`$\n]/, 1)[0] ?? "";
+  const words = head.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0 || !PROGRAM_WORD.test(words[0]!)) return null;
+  const out = [words[0]!];
+  // The second word only when it is a SUBCOMMAND (`bun test`, `cargo test`),
+  // never an argument: `./verify.sh header.csv` names a file the model chose,
+  // and everything after a script path is that script's own argv.
+  if (words[1] && SUBCOMMAND_WORD.test(words[1])) out.push(words[1]);
+  return out.join(" ").slice(0, 60);
 }

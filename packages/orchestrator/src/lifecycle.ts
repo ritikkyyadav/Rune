@@ -689,7 +689,24 @@ export function inheritedRepairTurns(
   };
   const out: Record<string, number> = {};
   for (const { event } of events) {
-    if (event.type === "checkpoint" && event.payload?.summary === "session_started") {
+    // ── Cleared by a CLEAN END, never by a restart ──
+    //
+    // V7 finding 7. This cleared the whole accumulator on every
+    // `session_started`, which is the marker a RESTART writes — so the bound
+    // survived exactly one crash. A run that resumed with its allowance
+    // already spent writes no `spent` row of its own; when it is killed too,
+    // the next resume walks past ITS `session_started` and erases the first
+    // run's row. Measured: `{check_failed: 1}` → `{}`, and the same for
+    // `no_progress`, `transport` and `acceptance`. That is V6 finding 12
+    // inverted — not a shrink of one per crash, a RESET per crash — in the
+    // counter written to avoid it.
+    //
+    // `session_ended` is what the reset was written for: a run that reached
+    // its `finally` finished, handed nothing forward, and the next request in
+    // that session is a new task with a new allowance. A SIGKILL runs no
+    // `finally` at all, which is the whole reason `previousRunWasInterrupted`
+    // reads the same pair.
+    if (event.type === "checkpoint" && event.payload?.summary === "session_ended") {
       for (const key of Object.keys(out)) delete out[key];
       continue;
     }

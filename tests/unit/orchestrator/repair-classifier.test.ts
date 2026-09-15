@@ -193,6 +193,37 @@ describe("missing_dependency — the `not-applicable` vocabulary", () => {
       expect(classOf(check(output))).toBe("check_failed");
     }
   });
+
+  test("a missing MODULE is a failed check — the compiler ran and found the bug", () => {
+    // V7 finding 4, the inversion shipped. `MISSING_RUNNER`'s shell
+    // alternatives were carefully anchored to the shell's own line shape; the
+    // module ones beside them were the BARE phrases `cannot find module` and
+    // `module not found: `, matched anywhere under `im`. So the commonest
+    // TypeScript error there is classified `missing_dependency` /
+    // `report_only`: with `check_failed` or `missing_dependency` in
+    // `[controller] authority` it bought no repair turn, and the run finished
+    // saying "the check's runner is not available here, so nothing was
+    // measured" about a compiler that ran perfectly and found the bug.
+    //
+    // A missing MODULE is a failed check. `missing_dependency` is a missing
+    // RUNNER: command not found, a usage error, or a runner that collected
+    // nothing. The corpus's own tsc example was TS2345, which does not carry
+    // the phrase, so nothing above caught it.
+    const realRedChecks = [
+      "src/a.ts(3,10): error TS2307: Cannot find module './b' or its corresponding type declarations.\nFound 1 error.",
+      '(fail) exec > surfaces errors\nerror: expect(received).toBe(expected)\nExpected: "bash: zzz: command not found"\nReceived: "bash: zzz: not executable"\n 1 fail',
+      "bun test v1.3.14\n\n(fail) shell > reports command not found for a missing binary [2ms]\n\n 12 pass\n 1 fail\nRan 13 tests",
+      "(fail) loader > rejects a bad id\nerror: expect(received).toContain(expected)\nExpected to contain: \"Cannot find module 'nope'\"\n 1 fail",
+      '/src/a.ts\n  3:1  error  Import "x" — module not found:  import/no-unresolved\n\n2 problems',
+    ];
+    for (const output of realRedChecks) {
+      expect({ head: output.split("\n")[0]!.slice(0, 40), cls: classOf(check(output)) }).toEqual({
+        head: output.split("\n")[0]!.slice(0, 40),
+        cls: "check_failed",
+      });
+      expect(missingDependency(1, output)).toBe(false);
+    }
+  });
 });
 
 // ─── denied ───

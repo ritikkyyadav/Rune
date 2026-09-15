@@ -34,6 +34,7 @@ function decision(
 }
 
 const STARTED: Row = { event: { type: "checkpoint", payload: { summary: "session_started" } } };
+const ENDED: Row = { event: { type: "checkpoint", payload: { summary: "session_ended" } } };
 
 describe("inheritedRepairTurns", () => {
   test("an empty log inherits nothing", () => {
@@ -78,14 +79,54 @@ describe("inheritedRepairTurns", () => {
     expect(inheritedRepairTurns([decision("REPAIR_CHECK", "repairing", {}, false)])).toEqual({});
   });
 
-  test("a later `session_started` resets the count — an earlier run handed it on", () => {
+  test("a later `session_started` does NOT reset the count — the run was killed", () => {
+    // V7 finding 7. This used to clear the whole accumulator on every
+    // `session_started`, which is the marker a RESTART writes, so the bound
+    // survived exactly one crash: `{no_progress: 2}` → `{no_progress: 1}`, and
+    // a second crash handed the allowance back in full. `session_started`
+    // means the previous run was killed — that is precisely when its spend has
+    // to carry — so the count is the run's rows across all of its sessions.
     const rows = [
       decision("REPAIR_PROGRESS", "working", { nudges: 0 }),
       decision("REPAIR_PROGRESS", "working", { nudges: 1 }),
       STARTED,
       decision("REPAIR_PROGRESS", "working", { nudges: 0 }),
     ];
+    // Two spent before the crash, one after. The resumed run wrote `nudges: 0`
+    // because it did not inherit; the `prior + 1` floor is what keeps the
+    // count monotone across a log recorded before the inheritance worked.
+    expect(inheritedRepairTurns(rows)).toEqual({ no_progress: 3 });
+  });
+
+  test("a CLEAN end resets it — that is the state the reset was written for", () => {
+    // A run that reached its `finally` finished and handed nothing forward;
+    // the next request in the same session is a new task with a new allowance.
+    // A SIGKILL runs no `finally` at all, which is why `session_ended` and not
+    // `session_started` is the marker — the same pair
+    // `previousRunWasInterrupted` reads.
+    const rows = [
+      decision("REPAIR_PROGRESS", "working", { nudges: 0 }),
+      decision("REPAIR_PROGRESS", "working", { nudges: 1 }),
+      ENDED,
+      decision("REPAIR_PROGRESS", "working", { nudges: 0 }),
+    ];
     expect(inheritedRepairTurns(rows)).toEqual({ no_progress: 1 });
+  });
+
+  test("a bound spent before the FIRST crash survives the second", () => {
+    // The shape the verifier measured: the resumed run had nothing left to
+    // spend, so it wrote no row of its own, and was killed too.
+    const afterFirstCrash = [STARTED, decision("REPAIR_CHECK", "repairing", { repairTurns: 0 })];
+    expect(inheritedRepairTurns(afterFirstCrash)).toEqual({ check_failed: 1 });
+    expect(inheritedRepairTurns([...afterFirstCrash, STARTED])).toEqual({ check_failed: 1 });
+    for (const [guard, transition, inputs, key, want] of [
+      ["REPAIR_PROGRESS", "working", { nudges: 0 }, "no_progress", 1],
+      ["REPAIR_TRANSPORT", "working", { attempts: 3 }, "transport", 3],
+      ["REPAIR_ACCEPTANCE", "repairing", { repromptsUsed: 0 }, "acceptance", 1],
+    ] as const) {
+      const rows = [STARTED, decision(guard, transition, inputs), STARTED];
+      expect({ guard, out: inheritedRepairTurns(rows) }).toEqual({ guard, out: { [key]: want } });
+    }
   });
 
   test("the ROW'S own number wins — the allowance does not shrink one per crash", () => {

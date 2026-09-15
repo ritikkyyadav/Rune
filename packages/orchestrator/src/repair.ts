@@ -145,23 +145,39 @@ export type RepairFact =
  */
 const MISSING_RUNNER = new RegExp(
   [
-    // POSIX shells, three dialects of the same sentence. Anchored to the
-    // shell's OWN line shape (`sh: 1: vitest: not found`) rather than to the
-    // bare words: "expected element not found" is an assertion failing, and
-    // reading it as a missing runner would silently stop repairing real red
+    // POSIX shells, four dialects of the same sentence. Every one is anchored
+    // to the shell's OWN line shape (`sh: 1: vitest: not found`, `bash: bun:
+    // command not found`, `zsh: command not found: bun`) rather than to the
+    // bare words, because "expected element not found" is an assertion failing
+    // and reading it as a missing runner silently stops repairing real red
     // checks — the exact failure this class exists to prevent, inverted.
-    "command not found",
-    "^[^\\n]{0,40}:\\s*[\\w./+-]+:\\s*not found\\s*$",
+    //
+    // V7 finding 4 is that inversion, shipped: `command not found`,
+    // `cannot find module` and `module not found: ` were BARE alternatives
+    // beside the anchored ones, matched anywhere under `im`. So
+    // `src/a.ts(3,10): error TS2307: Cannot find module './b'` — the commonest
+    // TypeScript error there is — classified `missing_dependency` /
+    // `report_only`, bought no repair turn, and the run finished saying the
+    // runner was not available about a compiler that ran and found the bug. So
+    // did a bun test NAMED after a shell error, a test ASSERTING on one, a
+    // loader test asserting `Cannot find module`, and an eslint
+    // `import/no-unresolved` report. A missing MODULE is a failed check; only
+    // a missing RUNNER is this class.
+    "^[^\\n]{0,40}:\\s*[\\w./+-]+:\\s*(?:command not found|not found)\\s*$",
+    "^[^\\n]{0,40}:\\s*command not found:\\s*[\\w./+-]+\\s*$", // zsh
     "^[^\\n]{0,20}:\\s*[\\w./+-]+:\\s*no such file or directory\\s*$",
-    "is not recognized as an internal or external command", // cmd.exe
-    "executable file not found",
-    // Module and package resolution, per ecosystem.
-    "cannot find module",
-    "module not found: ",
-    "modulenotfounderror",
-    "importerror: no module named",
-    "cannot find package",
-    "no such command",
+    "^[^\\n]{0,60}is not recognized as an internal or external command", // cmd.exe
+    "^[^\\n]{0,80}executable file not found",
+    // Module and package resolution, per ecosystem — each anchored to the
+    // START of the line the runtime itself prints, which is what a compiler
+    // diagnostic (`<file>(<line>,<col>): error TSxxxx: …`) and a test
+    // assertion (`Expected to contain: "…"`) never are.
+    "^\\s*(?:uncaught\\s+)?(?:\\w*error)?:?\\s*cannot find module\\b",
+    "^\\s*module not found:\\s",
+    "^\\s*modulenotfounderror\\b",
+    "^\\s*importerror:\\s*no module named",
+    "^[^\\n]{0,60}cannot find package\\b",
+    "^[^\\n]{0,60}no such command\\b",
   ].join("|"),
   "im",
 );

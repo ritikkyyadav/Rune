@@ -5791,9 +5791,16 @@ export class Engine {
           if (criteria.length === 0) return [];
           const now = this.runRevision(this.brief?.touch, { fresh: true });
           const checks = this.checkLog.all;
-          return criteria.flatMap((criterion) =>
+          return criteria.flatMap((criterion, index) =>
             criterion.source === "evaluator" && criterionStatus(criterion, checks, now) === "failed"
-              ? [{ text: criterion.text, outputTail: criterion.evidence?.detail ?? "" }]
+              ? [
+                  {
+                    // The ID, never the text: an evaluator criterion is the
+                    // acceptance the model never sees (V7 finding 19).
+                    id: criterion.id ?? `a${index + 1}`,
+                    outputTail: criterion.evidence?.detail ?? "",
+                  },
+                ]
               : [],
           );
         },

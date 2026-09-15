@@ -204,16 +204,18 @@ export interface AgentLoopConfig {
    * The evaluator criteria that FAILED at this finish, each with the tail of
    * its own output (M4, the `acceptance_mismatch` class).
    *
-   * `text` is the criterion as the PERSON wrote it; `outputTail` is the last
-   * few lines the command printed. The command itself is deliberately absent
-   * and there is no field for it: quoting the oracle teaches a model to
-   * satisfy the command instead of the criterion, which is the one way an
-   * acceptance gate can be made worse than no gate at all.
+   * `id` is the criterion's stable name (`a1`, `a2`) — never its TEXT, which
+   * is the person's own statement of done and which the model does not see
+   * (V7 finding 19). `outputTail` is the last few lines the command printed.
+   * The command itself is deliberately absent and there is no field for it:
+   * quoting the oracle teaches a model to satisfy the command instead of the
+   * criterion, which is the one way an acceptance gate can be made worse than
+   * no gate at all. The same reasoning retires the text.
    *
    * Absent for every caller with no acceptance configured, and for every
    * sub-agent loop.
    */
-  failedAcceptance?: () => ReadonlyArray<{ text: string; outputTail: string }>;
+  failedAcceptance?: () => ReadonlyArray<{ id: string; outputTail: string }>;
   /**
    * Just-in-time doctrine, wired by the engine in "jit" delivery mode: returns
    * a section's verbatim text exactly ONCE per session at its first moment of
@@ -1716,26 +1718,40 @@ export class AgentLoop {
   }
 
   /**
-   * The one acceptance re-prompt: the criterion's TEXT, and the tail.
+   * The one acceptance re-prompt: the criterion's ID, and the tail.
    *
    * There is no field for the command and no way to put one here — the
    * accessor does not carry it. Quoting the oracle teaches a model to satisfy
    * the command instead of the criterion, which is the one way an acceptance
    * gate can be made worse than no gate at all
    * (`m3-first-migration.md`, the second branch).
+   *
+   * And no field for the criterion's TEXT either, which is V7 finding 19. The
+   * first version of this printed up to four hidden criteria verbatim plus
+   * `(and N more)`, so with `acceptance` in `[controller] authority` a model
+   * that failed deliberately could enumerate the oracle's own words and count
+   * them — retiring M1's central property ("the acceptance the model never
+   * sees") without saying so. The output tail is the whole of what a repair
+   * turn needs: it is what the check PRINTED about the work, which is the
+   * evidence, while the criterion text is the oracle's statement, which is
+   * not. The id (`a1`, `a2`) names which one failed without saying what it
+   * says, so the verdict's gaps and the re-prompt agree about which criterion
+   * is which. `m1-acceptance-semantics.md` says this; the M4 spec's earlier
+   * wording, "naming the criterion text", was wrong and is corrected there.
    */
   private acceptanceRepromptBody(
-    failed: ReadonlyArray<{ text: string; outputTail: string }>,
+    failed: ReadonlyArray<{ id: string; outputTail: string }>,
   ): string {
     const lines = [
       "Stop — the acceptance stated for this task does not pass on your changes.",
       "This is the person's own statement of what done means; it was not inferred, and it is",
-      "not negotiable. Fix the work so it holds, then finish. You get one attempt: the next",
-      "finish is recorded as partial whatever happens, with the gap below named in it.",
+      "not negotiable. It is not shown to you: what follows is the criterion's id and what its",
+      "check printed. Fix the work the output points at, then finish. You get one attempt: the",
+      "next finish is recorded as partial whatever happens, with the gap named in it.",
       "",
     ];
-    for (const { text, outputTail } of failed.slice(0, 4)) {
-      lines.push(`· ${text}`);
+    for (const { id, outputTail } of failed.slice(0, 4)) {
+      lines.push(`· acceptance criterion ${id} failed`);
       const tail = outputTail.trim();
       if (tail) {
         lines.push("  what it printed (last lines):");

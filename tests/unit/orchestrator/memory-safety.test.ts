@@ -335,9 +335,10 @@ describe("#8 the same observation promotes in two sessions, not in one", () => {
     captureRunMemory(store, run({ sessionId: "s1", checks }));
     captureRunMemory(store, run({ sessionId: "s2", checks }));
     expect(store.promoted("/repo")).toHaveLength(1);
-    expect(memoryBlockFor(store, { workspace: "/repo", maxTokens: 1500 })).toContain(
-      "tsc --noEmit",
-    );
+    // The PROGRAM, not the command string: everything after it is the model's
+    // own text (V7 finding 6), and `--noEmit` is not what a machine vouched
+    // for.
+    expect(memoryBlockFor(store, { workspace: "/repo", maxTokens: 1500 })).toContain("bunx tsc");
   });
 
   it("does not promote on three sightings inside ONE session", () => {
