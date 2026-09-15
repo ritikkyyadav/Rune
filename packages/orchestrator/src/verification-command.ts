@@ -662,15 +662,166 @@ const pathShaped = (word: string) =>
  * their arguments. A command whose executable is itself a path (`./verify.sh`)
  * names its entry there.
  */
-export function commandProgramPaths(command: string): string[] {
+export function commandProgramPaths(command: string, opts?: { root?: string }): string[] {
   const chain = lastCommandChain(command);
   if (chain === null) return [];
   const out: string[] = [];
+  const push = (path: string): void => {
+    if (path && !out.includes(path)) out.push(path);
+  };
   for (const words of chain) {
+    // A TEST RUNNER's first positional is its SUBCOMMAND, not its entry script
+    // (V8 critical 4). `bun test tests/mine.test.ts` returned `[]`, so
+    // `authoredThisTask` returned on `paths.length === 0` and `authoredBy` was
+    // never recorded — for the one command shape every check in this repo is
+    // run as. The files a runner is POINTED AT are the programs it executes,
+    // which is the question the authorship witnesses exist to answer, and it is
+    // a different question from V6 finding 2's (what a check is ABOUT).
+    const targets = runnerTargets(words, opts?.root);
+    if (targets !== null) {
+      for (const target of targets) push(target);
+      continue;
+    }
     const entry = entryScriptOf(words);
-    if (entry && !out.includes(entry)) out.push(entry);
+    if (entry) push(entry);
   }
   return out;
+}
+
+/**
+ * Whether a command runs a test runner over the WHOLE suite — a runner with no
+ * file target at all (`bun test`, `npm test`, `pytest`, `cargo test`).
+ *
+ * There is no path to hand the witnesses, and the honest answer is not "nothing
+ * is self-authored": every test file in the tree is this command's program, so
+ * a caller that knows what the task WROTE can still answer. `authoredThisTask`
+ * reads this and asks its write ledger about test-shaped files instead.
+ */
+export function runsWholeSuite(command: string): boolean {
+  const chain = lastCommandChain(command);
+  if (chain === null) return false;
+  return chain.some((words) => runnerTargets(words)?.length === 0);
+}
+
+/** Runners whose first positional is a subcommand rather than a script. */
+const RUNNER_SUBCOMMAND: Record<string, readonly string[]> = {
+  bun: ["test"],
+  deno: ["test", "bench"],
+  cargo: ["test", "nextest"],
+  go: ["test"],
+  dotnet: ["test"],
+  npm: ["test", "t"],
+  pnpm: ["test"],
+  yarn: ["test"],
+};
+/** Programs that ARE a test runner: every path-shaped argument is a program. */
+const TEST_RUNNER =
+  /^(?:vitest|jest|mocha|ava|tap|tape|pytest|py\.test|nose2|rspec|phpunit|playwright|cypress|karma|jasmine|nyc|c8)$/;
+/** Runner options whose VALUE names files, however the runner spells it. */
+const PATH_VALUED_FLAG =
+  /^--(?:filter|dir|rootDir|root-dir|testPathPattern|test-path-pattern|spec|testDir|test-dir|project|ignore|testMatch|test-match)$/;
+/** Wrappers that run the real program: `npx vitest`, `bunx jest`, `pnpm exec …`. */
+const RUNNER_WRAPPER = /^(?:npx|bunx|pnpx|dlx)$/;
+
+/**
+ * The files a test runner was pointed at, or `null` when this is not a runner.
+ *
+ * An empty array means "a runner over the whole suite" — a real answer, and a
+ * different one from `null`.
+ */
+function runnerTargets(input: string[], root?: string, depth = 0): string[] | null {
+  if (depth > 4) return null;
+  const words = [...input];
+  while (ASSIGNMENT.test(words[0] ?? "")) words.shift();
+  const executable = words.shift() ?? "";
+  const program = base(executable);
+  if (!program || executable.includes(OPAQUE)) return null;
+  if (program === "env" || program === "command" || RUNNER_WRAPPER.test(program)) {
+    return runnerTargets(words, root, depth + 1);
+  }
+  if ((program === "pnpm" || program === "yarn") && words[0] === "exec") {
+    return runnerTargets(words.slice(1), root, depth + 1);
+  }
+  // `bash -lc 'bun test …'` handed `git status --porcelain --` the whole inner
+  // command as a path, which can never match anything. The flag bundle is read
+  // by its letters, so `-lc`, `-c` and `-ec` all mean the same thing.
+  if (/^(?:ba|z|k|da)?sh$/.test(program)) {
+    const bundle = words.findIndex((w) => /^-[a-z]*c$/.test(w));
+    const inner = bundle === -1 ? undefined : words[bundle + 1];
+    if (typeof inner === "string") {
+      const nested = lastCommandChain(inner);
+      if (nested === null) return null;
+      const found: string[] = [];
+      let sawRunner = false;
+      for (const chainWords of nested) {
+        const targets = runnerTargets(chainWords, root, depth + 1);
+        if (targets === null) continue;
+        sawRunner = true;
+        found.push(...targets);
+      }
+      return sawRunner ? found : null;
+    }
+    return null;
+  }
+  let rest = words;
+  if (TEST_RUNNER.test(program)) {
+    // `vitest run …`, `playwright test …`: a leading non-path verb is a
+    // subcommand, never a file.
+    if (rest[0] && !rest[0].startsWith("-") && !pathShaped(rest[0])) rest = rest.slice(1);
+  } else if (/^python[23]?(?:\.\d+)?$/.test(program) && words[0] === "-m") {
+    if (!TEST_RUNNER.test(words[1] ?? "")) return null;
+    rest = words.slice(2);
+  } else if (program === "node" && words.includes("--test")) {
+    rest = words.filter((w) => w !== "--test");
+  } else {
+    const subcommands = RUNNER_SUBCOMMAND[program];
+    if (!subcommands || !subcommands.includes(rest[0] ?? "")) return null;
+    rest = rest.slice(1);
+    // `npm test -- tests/mine.test.ts`: everything after `--` is the runner's.
+    if (rest[0] === "--") rest = rest.slice(1);
+  }
+
+  const targets: string[] = [];
+  for (let i = 0; i < rest.length; i++) {
+    const word = rest[i]!;
+    if (word.includes(OPAQUE)) continue;
+    if (word.startsWith("-")) {
+      const eq = word.indexOf("=");
+      if (eq !== -1 && PATH_VALUED_FLAG.test(word.slice(0, eq))) {
+        targets.push(...expandTarget(word.slice(eq + 1), root, true));
+      } else if (PATH_VALUED_FLAG.test(word) && typeof rest[i + 1] === "string") {
+        targets.push(...expandTarget(rest[++i]!, root, true));
+      }
+      continue;
+    }
+    targets.push(...expandTarget(word, root));
+  }
+  return [...new Set(targets)];
+}
+
+/**
+ * One runner argument as the paths it names.
+ *
+ * A glob or a `--filter` pattern is expanded against the tree, because the
+ * witnesses take paths: `bun test 'tests/**' + '/*.test.ts'` names real files
+ * and handing git the pattern matches nothing. Without a root — every unit call
+ * site — a glob is kept verbatim, which is honest about what was asked and
+ * simply finds no match downstream.
+ */
+function expandTarget(word: string, root?: string, declared = false): string[] {
+  const bare = word.replace(/^['"]|['"]$/g, "");
+  if (!bare || bare.startsWith("-")) return [];
+  const globbish = /[*?[\]{}]/.test(bare);
+  // A value handed to `--dir` or `--filter` is a path BY DECLARATION: the flag
+  // said so, and `tests` has neither a slash nor a source extension.
+  if (!globbish) return declared || pathShaped(bare) ? [bare] : [];
+  if (!root) return [bare];
+  try {
+    const matches = [...new Bun.Glob(bare.replace(/^\.\//, "")).scanSync({ cwd: root })];
+    return matches.length > 0 ? matches : [bare];
+  } catch {
+    return [bare];
+  }
 }
 
 function entryScriptOf(input: string[], depth = 0): string | null {

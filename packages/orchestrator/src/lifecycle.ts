@@ -206,9 +206,24 @@ export function changesTheWork(line: string): boolean {
  * a criterion cited on it derives `needs_review` rather than `satisfied`.
  * That costs a person one commit; the reverse costs the verdict.
  */
-export function notFromParentCommit(root: string, paths: readonly string[]): string | undefined {
+export function notFromParentCommit(
+  root: string,
+  paths: readonly string[],
+  opts?: { since?: string | null },
+): string | undefined {
   const named = paths.filter((p) => typeof p === "string" && p.trim().length > 0);
   if (named.length === 0) return undefined;
+  // ── The run's own commits (V8 critical 5) ──
+  //
+  // `git status` was the whole of the witness, so the answer was "not
+  // self-authored" the moment the run COMMITTED the check it wrote — which is
+  // how a task normally ends. In the next session the write ledger is empty
+  // too, and both witnesses agree the run's fabricated oracle is the commit's
+  // program. A commit made DURING the task is the task's work by any reading,
+  // so it is asked first: everything between the commit the task opened at and
+  // HEAD, and everything in a Rune auto-commit, whose subject names it.
+  const committed = committedDuringTask(root, named, opts?.since ?? null);
+  if (committed) return committed;
   let status: string;
   try {
     status = execFileSync(
@@ -237,6 +252,67 @@ export function notFromParentCommit(root: string, paths: readonly string[]): str
   for (const path of named) {
     const norm = path.replace(/^\.\//, "");
     if (moved.has(norm) || moved.has(path)) return path;
+  }
+  return undefined;
+}
+
+/**
+ * The first of `paths` that a commit made DURING this task created or changed.
+ *
+ * Two readings of "during", because they cover different gaps and neither
+ * covers the other:
+ *
+ *   · `since..HEAD` — the commit the task opened at, carried on the contract
+ *     row (`TaskContract.baseCommit`) so it survives a crash and a resume.
+ *     Exact, and it covers a commit the model made itself through `bash`.
+ *   · a Rune auto-commit — the subject prefix `git-undo` writes. Durable in git
+ *     itself, so it still answers in a brand-new session on the same workspace,
+ *     where no contract row is restored and `since` is HEAD.
+ *
+ * Bounded at 200 commits: a check program is recent work or it is the repo's.
+ */
+function committedDuringTask(
+  root: string,
+  named: readonly string[],
+  since: string | null,
+): string | undefined {
+  const touched = new Set<string>();
+  const collect = (args: string[]): void => {
+    try {
+      const out = execFileSync("git", args, {
+        cwd: root,
+        encoding: "utf8",
+        timeout: 5_000,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      for (const line of out.split("\n")) {
+        const path = line.trim();
+        if (path) touched.add(path);
+      }
+    } catch {
+      // No git, an unknown commit, a path git will not take: this witness has
+      // no answer, and the ones after it still do.
+    }
+  };
+  if (since && /^[0-9a-fA-F]{7,40}$/.test(since)) {
+    collect(["diff", "--name-only", `${since}..HEAD`, "--", ...named]);
+  }
+  collect([
+    "log",
+    "-n",
+    "200",
+    "--name-only",
+    "--format=",
+    "--grep=^rune: ",
+    "--grep=^gear: ",
+    "--grep=^alan: ",
+    "--",
+    ...named,
+  ]);
+  if (touched.size === 0) return undefined;
+  for (const path of named) {
+    const norm = path.replace(/^\.\//, "");
+    if (touched.has(norm) || touched.has(path)) return path;
   }
   return undefined;
 }

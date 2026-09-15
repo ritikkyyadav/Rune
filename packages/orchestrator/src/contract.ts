@@ -332,6 +332,17 @@ export interface TaskContract {
   /** Every change to the criteria, with its origin. Newest last, bounded. */
   amendments: ContractAmendment[];
   /**
+   * The commit the task OPENED at, when the workspace is a git repository.
+   *
+   * V8 critical 5. "Did this task write the program this check runs?" was asked
+   * of `git status`, which answers "no" the moment the run commits the check it
+   * wrote — and committing is how a task normally ends. Everything between this
+   * commit and HEAD was committed DURING the task, which is the task's work by
+   * any reading. Written once at intake and never rewritten, so it survives the
+   * crash and the resume the write ledger does not.
+   */
+  baseCommit?: string;
+  /**
    * Required criteria with no bound evidence at verdict time. Written by
    * `computeVerdict`'s caller from the verdict it returns; named in the gaps
    * as `no check bound`, which is the fact a reader needs and the one a
@@ -357,6 +368,8 @@ export interface TaskContract {
 
 export interface CreateContractInput {
   intent: string;
+  /** The commit HEAD is at right now, when there is one. See `baseCommit`. */
+  baseCommit?: string | null;
   /** `isFixShaped(intent)` — the loop's own predicate, passed in. */
   fixShaped: boolean;
   turns: number;
@@ -386,6 +399,7 @@ export function createContract(input: CreateContractInput): TaskContract {
     constraints: [],
     amendments: [],
     uncovered: [],
+    ...(input.baseCommit ? { baseCommit: input.baseCommit } : {}),
   };
 }
 

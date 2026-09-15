@@ -645,9 +645,15 @@ export class CheckLog {
    */
   constructor(
     private readonly runtime?: {
-      authoredThisTask?: (paths: readonly string[]) => string | undefined;
+      authoredThisTask?: (paths: readonly string[], command: string) => string | undefined;
       /** The workspace revision RIGHT NOW, un-memoised, scoped to the brief. */
       revisionNow?: () => StampedRevision;
+      /**
+       * The workspace, so a test runner's glob is expanded to the files it
+       * names (V8 critical 4). Absent — an embedder, a unit call site — leaves
+       * a glob verbatim, which finds no match and claims nothing.
+       */
+      workspaceRoot?: () => string;
     },
   ) {}
 
@@ -665,7 +671,12 @@ export class CheckLog {
     // receipt can never reach `satisfied` anyway.
     const authoredBy =
       (run.kind ?? "check") === "check"
-        ? this.runtime?.authoredThisTask?.(commandProgramPaths(run.command))
+        ? this.runtime?.authoredThisTask?.(
+            commandProgramPaths(run.command, {
+              ...(this.runtime.workspaceRoot ? { root: this.runtime.workspaceRoot() } : {}),
+            }),
+            run.command,
+          )
         : undefined;
     const revision =
       (run.kind ?? "check") === "check"

@@ -70,7 +70,12 @@ import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 
-import { assertedNothing, ranZeroTests, samePathToken } from "./verification-command";
+import {
+  assertedNothing,
+  ranZeroTests,
+  runsWholeSuite,
+  samePathToken,
+} from "./verification-command";
 import {
   setConfigValue,
   SessionManager,
@@ -1451,7 +1456,10 @@ export class Engine {
   /** Every check this session ran, with the verdict the RUNTIME read.
    *  The only thing a criterion's rung is ever derived from. */
   private readonly checkLog = new CheckLog({
-    authoredThisTask: (paths) => this.authoredThisTask(paths),
+    authoredThisTask: (paths, command) => this.authoredThisTask(paths, command),
+    // The workspace, so a runner's glob is expanded to the files it names
+    // rather than handed to git as a pattern that can never match.
+    workspaceRoot: () => this.config.workspaceRoot,
     // Un-memoised, on purpose: evidence is dated by when the CHECK ran, and a
     // memo dates it by when the last measurement was taken.
     revisionNow: () => this.runRevision(this.brief?.touch, { fresh: true }),
@@ -4281,17 +4289,30 @@ export class Engine {
   }
 
   /**
-   * Switch modes live. Persisted to the meta sidecar (which outranks the config
-   * default) and applied immediately: the `memory_update` tool appears in `auto`
-   * and is taken away everywhere else, in this session, not the next one.
+   * Switch modes live. Applied immediately — the `memory_update` tool appears in
+   * `auto` and is taken away everywhere else, in this session, not the next one
+   * — and written to BOTH places the mode lives.
+   *
+   * V8 finding 8: the sidecar used to be the only record of the choice and it
+   * outranked everything, so `[memory] mode`, `[memory] enabled = false` and
+   * `RUNE_MEMORY_MODE=off` were all inert on a machine that had ever used
+   * `/memory`. The order is now env → config → sidecar, which only works if the
+   * surfaces that SET the mode write the config too; otherwise the next
+   * `rune memory off` would silently outrank every later `/memory auto`.
    */
   setMemoryMode(mode: string): { ok: boolean; mode: MemoryMode; reason?: string } {
     const parsed = parseMemoryMode(mode);
     if (!parsed) {
       return { ok: false, mode: this.memoryMode(), reason: MEMORY_CADENCE_REFUSAL };
     }
-    // The migration note is spent: the user has just made the choice themselves.
-    saveSystemMemoryMeta({ mode: parsed, modeMigration: undefined });
+    // The migration note is spent: the user has just made the choice themselves,
+    // and so is the withdrawn cadence they are being migrated off.
+    saveSystemMemoryMeta({ mode: parsed, modeMigration: undefined, schedule: undefined });
+    try {
+      setConfigValue("memory.mode", parsed);
+    } catch {
+      // A config that will not take the key is a mode that lasts this session.
+    }
     this.config.memory = { ...(this.config.memory ?? {}), mode: parsed };
     this.syncMemoryUpdateTool();
     return { ok: true, mode: parsed };
@@ -5662,6 +5683,9 @@ export class Engine {
       turns: messageBudget.maxTurns,
       secondWinds: messageBudget.conversational ? 0 : reliability.secondWinds,
       costUsd: this.config.maxSessionCostUsd ?? null,
+      // The commit this task opens at. Everything committed between here and
+      // HEAD is the task's own work, however it reached the index (V8 crit 5).
+      baseCommit: this.runRevision([], { fresh: true }).head,
     });
     // A run continuing one that died with work open inherits its criteria:
     // they are still in force, and an empty contract would report "no criteria
@@ -7563,14 +7587,35 @@ export class Engine {
    * tracked and modified, is not the commit's program however many sessions
    * ago it was written, and that answer survives the crash and the restart the
    * ledger does not.
+   *
+   * V8 critical 5 put the run's own COMMITS on git's side of the question: a
+   * run that writes its check and then commits it — which is how a task
+   * normally ends — left a clean `git status` for that path, so git answered
+   * "not self-authored" about the file the run had just authored.
+   *
+   * V8 critical 4 is why `command` is here. `commandProgramPaths` returned `[]`
+   * for every test-runner shape, so neither witness was ever asked about a
+   * check run by `bun test` — which is how every check in this repo is run.
+   * When the runner names no file at all, the whole suite is its program, and
+   * the ledger can still answer: a test file the task wrote is in that suite.
    */
-  private authoredThisTask(paths: readonly string[]): string | undefined {
-    if (paths.length === 0) return undefined;
+  private authoredThisTask(paths: readonly string[], command?: string): string | undefined {
     const written = this.liveSpine?.writtenFiles ?? [];
     for (const path of paths) {
       if (written.some((file) => samePathToken(path, file))) return path;
     }
-    return notFromParentCommit(this.config.workspaceRoot, paths);
+    const since = this.contract?.baseCommit ?? null;
+    if (paths.length > 0) {
+      return notFromParentCommit(this.config.workspaceRoot, paths, { since });
+    }
+    if (!command || !runsWholeSuite(command)) return undefined;
+    // A runner over the whole suite names no file, so the suite IS its program:
+    // a test file this task wrote is one of the programs it just ran.
+    const suiteFiles = written.filter((file) =>
+      /(?:^|[./_-])(?:test|tests|spec|specs|__tests__)(?:[./_-]|$)/i.test(file),
+    );
+    if (suiteFiles.length > 0) return suiteFiles[0];
+    return notFromParentCommit(this.config.workspaceRoot, suiteFiles, { since });
   }
 
   /**

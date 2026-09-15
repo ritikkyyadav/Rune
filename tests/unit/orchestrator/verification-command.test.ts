@@ -298,10 +298,28 @@ describe("the entry script, and the argv after it (V6 finding 2)", () => {
     expect(commandProgramPaths("node check.mjs header.csv")).toEqual(["check.mjs"]);
     expect(commandProgramPaths("sh verify-header.sh header.csv")).toEqual(["verify-header.sh"]);
     expect(commandProgramPaths("./verify.sh header.csv")).toEqual(["./verify.sh"]);
-    // A subcommand, an inline script and a module runner name no entry script.
-    expect(commandProgramPaths("bun test mine.test.ts")).toEqual([]);
+    // An inline script names no entry script: there is no file to name.
     expect(commandProgramPaths("node -e \"require('./src/csv')\"")).toEqual([]);
-    expect(commandProgramPaths("python3 -m pytest tests/a.py")).toEqual([]);
+  });
+
+  test("a runner's targets ARE its programs (V8 critical 4)", () => {
+    // These three read `[]` until the third verifier pass, on the reasoning
+    // that a runner's first positional is a subcommand and not an entry script.
+    // True, and the wrong conclusion: the files a runner is POINTED AT are the
+    // files it executes, which is the question `authoredThisTask` asks. The
+    // consequence was that `bun test` — the shape every check in this repo is
+    // run as — handed both authorship witnesses nothing, so the run's own test
+    // file graded the run's own work and `authoredBy` was never set.
+    //
+    // V6 finding 2 is a different question and is unmoved: `commandScopePaths`
+    // still refuses to credit an argv token as the check's SUBJECT, which is
+    // what the `about(…)` assertions above hold.
+    expect(commandProgramPaths("bun test mine.test.ts")).toEqual(["mine.test.ts"]);
+    expect(commandProgramPaths("python3 -m pytest tests/a.py")).toEqual(["tests/a.py"]);
+    expect(commandProgramPaths("bun test a.test.ts b.test.ts")).toEqual(["a.test.ts", "b.test.ts"]);
+    // And a non-runner subcommand is still not a program: `git log check.mjs`
+    // reads the file, it does not run it.
+    expect(commandProgramPaths("git log check.mjs")).toEqual([]);
   });
 
   test("`samePathToken` is exact — the same file however it was spelled, and nothing else", () => {
