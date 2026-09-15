@@ -342,3 +342,126 @@ describe("preserving the record", () => {
     expect(page).toContain("No rubric findings were produced.");
   });
 });
+
+// ─── `rune audit` names the preserved record (Phase 5 F3) ───
+
+describe("rune audit", () => {
+  /** stdout, with SGR colour escapes removed. */
+  async function auditPage(sessionId: string): Promise<string> {
+    const { runAudit } = await import("../../../packages/orchestrator/src/bin/audit-cli");
+    const written: string[] = [];
+    const realWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      written.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      await runAudit([sessionId], {});
+    } finally {
+      process.stdout.write = realWrite;
+    }
+    return written.join("").replace(new RegExp(String.fromCharCode(27) + "\\[[0-9;]*m", "g"), "");
+  }
+
+  async function sessionIn(home: string): Promise<string> {
+    const { SessionManager } = await import("../../../packages/shared/src/session");
+    const sessions = new SessionManager(join(home, "rune.db"));
+    const session = sessions.createSession(home, "claude-sonnet-5", "anthropic");
+    (sessions as { close?: () => void }).close?.();
+    return session.id;
+  }
+
+  test("names the reviewer, the findings, the captures and where they are", async () => {
+    const home = mkdtempSync(join(tmpdir(), "rune-audit-visual-"));
+    const previous = process.env.RUNE_HOME;
+    process.env.RUNE_HOME = home;
+    try {
+      const id = await sessionIn(home);
+      const shot = join(home, "wide.png");
+      writeFileSync(shot, "not really a png");
+      preserveVisualReview(
+        {
+          rubric: rubricRef(),
+          verifier: "visual-review@1:openai/gpt-5",
+          reviewedAt: "2026-09-15T10:00:00.000Z",
+          captures: [shot],
+          findings: [
+            {
+              id: "hierarchy",
+              name: "Hierarchy",
+              verdict: "fail",
+              quote: "three cards compete at the same weight",
+            },
+            {
+              id: "contrast",
+              name: "Contrast",
+              verdict: "pass",
+              quote: "the secondary text stays legible",
+            },
+          ],
+          defects: ["Hierarchy: three cards compete at the same weight"],
+        },
+        visualEvidenceDir(id, home),
+      );
+
+      const page = await auditPage(id);
+      expect(page).toContain("Visual review");
+      expect(page).toContain("visual-rubric@1");
+      expect(page).toContain("visual-review@1:openai/gpt-5");
+      expect(page).toContain("fail Hierarchy");
+      expect(page).toContain("three cards compete");
+      expect(page).toContain("pass Contrast");
+      expect(page).toContain("captures wide.png");
+      // The directory, so the pictures can be opened beside the findings.
+      expect(page).toContain(visualEvidenceDir(id, home));
+      // No score is invented on the way to the page either.
+      expect(page).not.toMatch(/Visual review[\s\S]{0,400}\b\d+\s*\/\s*\d+\b/);
+    } finally {
+      if (previous === undefined) delete process.env.RUNE_HOME;
+      else process.env.RUNE_HOME = previous;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("a review that ran without an independent reviewer says so on the page", async () => {
+    const home = mkdtempSync(join(tmpdir(), "rune-audit-none-"));
+    const previous = process.env.RUNE_HOME;
+    process.env.RUNE_HOME = home;
+    try {
+      const id = await sessionIn(home);
+      preserveVisualReview(
+        {
+          rubric: rubricRef(),
+          verifier: null,
+          reason: "no independent reviewer",
+          reviewedAt: "2026-09-15T10:00:00.000Z",
+          captures: [],
+          findings: [],
+          defects: [],
+        },
+        visualEvidenceDir(id, home),
+      );
+      const page = await auditPage(id);
+      expect(page).toContain("no independent reviewer");
+      expect(page).toContain("no captures preserved");
+    } finally {
+      if (previous === undefined) delete process.env.RUNE_HOME;
+      else process.env.RUNE_HOME = previous;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("a session with no visual record prints nothing about one", async () => {
+    const home = mkdtempSync(join(tmpdir(), "rune-audit-plain-"));
+    const previous = process.env.RUNE_HOME;
+    process.env.RUNE_HOME = home;
+    try {
+      const page = await auditPage(await sessionIn(home));
+      expect(page).not.toContain("Visual review");
+    } finally {
+      if (previous === undefined) delete process.env.RUNE_HOME;
+      else process.env.RUNE_HOME = previous;
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});

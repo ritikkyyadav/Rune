@@ -8,6 +8,7 @@
 // run happened in. This is that page. It opens ~/.rune/rune.db read-only, no
 // Engine, no provider — instant, like `rune incidents`.
 
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getRuneHome, SessionManager } from "@rune/shared";
 import type { SessionEvent } from "@rune/shared";
@@ -21,6 +22,7 @@ import { getContextLimit, UNKNOWN_MODEL_CONTEXT_LIMIT } from "../tokenizer";
 import { MODEL_PRICING } from "@rune/llm-gateway";
 import type { CompletionVerdict, DecisionRecord } from "@rune/protocol";
 import { criterionStatus, verdictLine, type TaskContract } from "../contract";
+import { visualEvidenceDir, type VisualReviewRecord } from "../visual-review";
 import { buildDecisionRecord, hasRecord, renderDecisionRecordMarkdown } from "../decision-record";
 import { shadowSummaryLines, type ShadowSummaryRow } from "../shadow-arbiter";
 import type { AppliedDecisionRow } from "../arbiter";
@@ -166,6 +168,56 @@ export function diagnosticsLedger(rows: Row[]): DiagnosticsLedger {
     outstanding: [...dirty.values()].filter(Boolean).length,
     verifierSeq,
   };
+}
+
+// ─── The visual record (Phase 5 F3) ───
+//
+// Screenshots and a defect list that nobody can find are not evidence. The
+// record and the captures it was written from are preserved together under the
+// session's evidence directory precisely so this page can name them, and a
+// person can open the pictures beside the findings rather than taking a
+// reviewer's sentence on faith.
+//
+// Nothing here recomputes anything: `visual-review.json` is exactly what
+// `preserveVisualReview` wrote. A missing file prints nothing — most sessions
+// have no visual record, and an absence is not a fault.
+
+export function sayVisualReview(sessionId: string, home: string = getRuneHome()): void {
+  const dir = visualEvidenceDir(sessionId, home);
+  const recordPath = join(dir, "visual-review.json");
+  if (!existsSync(recordPath)) return;
+  let record: VisualReviewRecord;
+  try {
+    record = JSON.parse(readFileSync(recordPath, "utf-8")) as VisualReviewRecord;
+  } catch {
+    say(`  ${dim("\u00b7")} visual review: ${faint(recordPath)} is unreadable`);
+    return;
+  }
+  say();
+  say(
+    `  ${text("Visual review")}  ${dim(record.rubric)} ${dim("\u00b7")} ${dim(record.reviewedAt)}`,
+  );
+  // The reviewer's identity is the first fact, because a review by nobody and
+  // a review by an independent model are not the same object.
+  say(
+    record.verifier
+      ? `    ${dim("reviewer")} ${record.verifier}`
+      : `    ${warn("no independent reviewer")}${record.reason ? dim(` \u2014 ${record.reason}`) : ""}`,
+  );
+  for (const f of (record.findings ?? []).slice(0, 12)) {
+    const mark =
+      f.verdict === "pass" ? ok("pass") : f.verdict === "fail" ? danger("fail") : warn("unclear");
+    say(`    ${mark} ${f.name}${f.quote ? dim(` \u2014 ${f.quote.slice(0, 90)}`) : ""}`);
+  }
+  // The captures by name, then where they are. A review whose pictures were
+  // not preserved says so instead of implying they exist.
+  const captures = record.captures ?? [];
+  say(
+    captures.length > 0
+      ? `    ${dim("captures")} ${captures.slice(0, 6).join(", ")}${captures.length > 6 ? dim(` +${captures.length - 6} more`) : ""}`
+      : `    ${warn("no captures preserved")}`,
+  );
+  say(`    ${dim("evidence")} ${info(dir)}`);
 }
 
 // ─── Context utilization (P10.8) ───
@@ -443,6 +495,7 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
         }
       }
     }
+    sayVisualReview(id);
     if (verdict) {
       // `none` is neither a success nor a shortfall — there was nothing to
       // verify — so it is painted like the fact it is, not like a failure.

@@ -256,6 +256,7 @@ import { learnedSkillsEnabled } from "./evolve/consent";
 import { advanceLessons, isWinningRun } from "./evolve/lessons";
 import {
   AGENT_DOCTRINE,
+  doctrineForRequest,
   doctrineHash,
   renderDoctrine,
   extractDoctrineSection,
@@ -273,6 +274,7 @@ import {
   snapshotEnvironment,
 } from "./prompts";
 import { buildRepoMap } from "./repo-map";
+import { browserPreflightNote } from "./visual-verification";
 import { CommandVerifier, detectVerifyCommands, fastCheckCommands } from "./verifier";
 import type { EcosystemSetting } from "./verifier";
 import type { Verifier } from "./verifier";
@@ -1799,6 +1801,21 @@ export class Engine {
           if (spine?.setKind(kind, "model")) {
             this.pendingNarrative.push({ type: "task_kind", kind, source: "model" });
           }
+        },
+        // ── The pre-flight the runtime knows and the model may not (Phase 5 F2) ──
+        //
+        // A frontend run with no browser mounted cannot take a screenshot, and
+        // that limit belongs in `leave` — the field that records the boundary
+        // of the work — before the expensive part, not in the final report
+        // after it. A getter rather than a value: `/browser on` can be typed
+        // between read-backs, and the brief must record the run's real
+        // capability rather than the one the session started with.
+        () => {
+          const note = browserPreflightNote(
+            doctrineForRequest(this.currentGoal()).includes("frontend"),
+            this.browserMounted(),
+          );
+          return note ? [note] : [];
         },
       ),
     );
@@ -4702,6 +4719,22 @@ export class Engine {
   /** Whether the built-in Playwright-MCP browser server is enabled. */
   isBrowserEnabled(): boolean {
     return this.browserEnabled;
+  }
+
+  /**
+   * Whether a browser is actually MOUNTED right now — the registry's answer,
+   * not the config flag's. The same test `AgentLoop` applies, and for the same
+   * reason: `[browser] enabled` can be true while discovery has not finished
+   * or the server failed to start, and what a run can do is decided by the
+   * tools it holds. A registry that cannot be listed reads as mounted, which
+   * is the quiet default: it withholds a warning rather than inventing one.
+   */
+  private browserMounted(): boolean {
+    try {
+      return this.registry.list().some((schema) => /^mcp_browser_/.test(schema.name));
+    } catch {
+      return true;
+    }
   }
 
   /**

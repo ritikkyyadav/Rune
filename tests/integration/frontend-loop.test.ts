@@ -229,3 +229,190 @@ describe("F5 — the form fixture", () => {
     }
   });
 });
+
+// ─── F2, through the real Engine: the limit reaches the persisted brief ───
+//
+// The loop's notice and harness note are the person's and the model's copies
+// of the limit. The brief's `leave` list is the DURABLE one — it survives a
+// restart, it is what the contract carries forward as a constraint, and it is
+// what a person reads back afterwards to see what the run knew it could not
+// do. Everything below drives the real Engine with an in-process scripted
+// provider under a scratch RUNE_HOME; `~/.rune` is never opened.
+
+import { afterEach } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import type { ContentBlock } from "../../packages/llm-gateway/src/types";
+import type { LlmGateway } from "../../packages/llm-gateway/src/gateway";
+import type { SessionManager } from "../../packages/shared/src/session";
+import type { AgentTurnEvent } from "../../packages/protocol/src/index";
+import { Engine } from "../../packages/orchestrator/src/engine";
+import { UsageProvider } from "../helpers/usage-provider";
+
+const engineCleanup: Array<() => void> = [];
+afterEach(() => {
+  for (const fn of engineCleanup.splice(0).reverse()) fn();
+});
+
+function toolsBinary(): string {
+  const env = process.env.RUNE_TOOLS_BIN ?? process.env.RUNE_TOOLS_BINARY;
+  if (env && existsSync(env)) return env;
+  const bin = join(process.cwd(), "target", "debug", "rune-tools");
+  if (!existsSync(bin)) throw new Error(`needs the native tools binary: ${bin}`);
+  return bin;
+}
+
+function screenRepo(): string {
+  const dir = mkdtempSync(join(tmpdir(), "f2-screen-"));
+  engineCleanup.push(() => rmSync(dir, { recursive: true, force: true }));
+  const home = mkdtempSync(join(tmpdir(), "f2-home-"));
+  engineCleanup.push(() => rmSync(home, { recursive: true, force: true }));
+  const previous = process.env.RUNE_HOME;
+  process.env.RUNE_HOME = home;
+  engineCleanup.push(() => {
+    if (previous === undefined) delete process.env.RUNE_HOME;
+    else process.env.RUNE_HOME = previous;
+  });
+  writeFileSync(join(dir, "index.html"), "<!doctype html>\n<title>settings</title>\n");
+  const git = (args: string[]) => {
+    const res = spawnSync(
+      "git",
+      [
+        "-c",
+        "user.name=F2",
+        "-c",
+        "user.email=f2@localhost",
+        "-c",
+        "commit.gpgSign=false",
+        ...args,
+      ],
+      { cwd: dir, encoding: "utf8" },
+    );
+    if (res.status !== 0) throw new Error(`git ${args.join(" ")}: ${res.stderr || res.stdout}`);
+  };
+  git(["init", "--initial-branch=main"]);
+  git(["add", "."]);
+  git(["commit", "-m", "a screen to change"]);
+  return dir;
+}
+
+function makeEngine(dir: string): Engine {
+  const engine = new Engine({
+    model: "claude-sonnet-5",
+    provider: "anthropic",
+    workspaceRoot: dir,
+    dbPath: join(process.env.RUNE_HOME!, "rune.db"),
+    toolsBinaryPath: toolsBinary(),
+    permissionMode: "gear-4",
+    enableCheckpoints: false,
+    enableSecurity: false,
+    enableRateLimiting: false,
+    enableHooks: false,
+    enableMcp: false,
+    enableSkills: false,
+    enableVerification: false,
+    context: { repoMap: false },
+    evolve: { playbook: false },
+    memory: { enabled: false },
+  } as ConstructorParameters<typeof Engine>[0]);
+  engineCleanup.push(() => engine.close());
+  return engine;
+}
+
+/**
+ * Mount a browser the way a run with `--browser` has one: a tool whose name
+ * starts `mcp_browser_`. `browserMounted()` reads the registry rather than the
+ * config flag, so this is exactly the fact it is looking at.
+ */
+function mountBrowser(engine: Engine): void {
+  (engine as unknown as { registry: { register: (h: unknown) => void } }).registry.register({
+    schema: {
+      name: "mcp_browser_navigate",
+      version: "0.1.0",
+      description: "navigate",
+      inputSchema: { type: "object", properties: {} },
+      category: "read",
+      permissionLevel: "auto",
+    },
+    execute: async (input: { callId: string; toolName: string }) => ({
+      callId: input.callId,
+      toolName: input.toolName,
+      success: true,
+      result: "ok",
+      durationMs: 1,
+    }),
+  });
+}
+
+async function runReadBack(engine: Engine, request: string): Promise<string> {
+  const session = engine.createSession();
+  const provider = new UsageProvider();
+  (engine as unknown as { gateway: LlmGateway }).gateway.registerProvider(provider);
+  let seq = 0;
+  provider.onRequest = (_request, index): ContentBlock[] =>
+    index === 1
+      ? [
+          {
+            type: "tool_use",
+            toolCallId: `f2c${++seq}`,
+            toolName: "read_back",
+            toolInput: {
+              reading: "you want the settings screen rebuilt",
+              touch: ["index.html"],
+              leave: ["the API layer"],
+              done_when: ["index.html renders the new settings screen"],
+            },
+          },
+        ]
+      : [{ type: "text", text: "Read back; stopping here." }];
+  const events: AgentTurnEvent[] = [];
+  for await (const event of engine.chat(session, request)) events.push(event);
+  expect(events.filter((e) => e.type === "error")).toEqual([]);
+  return session;
+}
+
+const FRONTEND_REQUEST = "Redesign the settings screen in index.html";
+
+describe("F2 through the real Engine — the pre-flight lands in the persisted brief", () => {
+  test("no browser mounted: the sentence is in `leave`, and it survives to the session log", async () => {
+    const dir = screenRepo();
+    const engine = makeEngine(dir);
+    const session = await runReadBack(engine, FRONTEND_REQUEST);
+
+    const brief = engine.currentBrief();
+    expect(brief).toBeDefined();
+    // What the model wrote is kept; the runtime's limit is appended to it.
+    expect(brief!.leave).toContain("the API layer");
+    expect(brief!.leave).toContain(NO_BROWSER_PREFLIGHT);
+
+    // Durable: the persisted `brief` event carries it, so a restart or an
+    // audit reads the same boundary the run was working to.
+    const sessions = (engine as unknown as { sessions: SessionManager }).sessions;
+    const persisted = sessions
+      .getEvents(session, 1)
+      .filter((row) => row.event.type === "brief")
+      .map((row) => JSON.stringify(row.event.payload));
+    expect(persisted.length).toBeGreaterThanOrEqual(1);
+    expect(persisted.at(-1)!).toContain(NO_BROWSER_PREFLIGHT);
+  });
+
+  test("a browser IS mounted: nothing is appended", async () => {
+    const dir = screenRepo();
+    const engine = makeEngine(dir);
+    mountBrowser(engine);
+    await runReadBack(engine, FRONTEND_REQUEST);
+
+    const brief = engine.currentBrief();
+    expect(brief!.leave).toEqual(["the API layer"]);
+    expect(JSON.stringify(brief)).not.toContain(NO_BROWSER_PREFLIGHT);
+  });
+
+  test("a backend request with no browser: nothing is appended either", async () => {
+    const dir = screenRepo();
+    const engine = makeEngine(dir);
+    await runReadBack(engine, "Fix the off-by-one in the CSV row counter");
+
+    expect(engine.currentBrief()!.leave).toEqual(["the API layer"]);
+  });
+});
