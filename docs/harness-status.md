@@ -1730,3 +1730,25 @@ sets); the numbers are each true of their own command, which is now written besi
 gate directories. (4) Five supervisor reruns cited in Addenda 19–24 were not logged; from this
 point every supervisor rerun writes into the dated gate directory. (5) The old flat gate logs,
 overwritten twice, are moved to `gates/legacy-overwritten/` and labelled as such.
+
+### Addendum 26 — Fix lane E1: an entry the store did not write is not an entry
+
+`784a7cb`, `4bf9a88`, `9464725`, `5fd7ef0`. The store's id was an unkeyed hash, so re-deriving
+it proved only the text. Every entry now carries an HMAC-SHA256 over kind, scope, text, source,
+sessions, dates, evidence, pin and status, keyed by `~/.rune/memory/.key` — thirty-two random
+bytes, mode 0600, minted on the first write and never on a read, in no config file; an unsigned
+or edited file is refused as `integrity`, left on disk and diarised, and the sidecar's mode,
+migration and floor are signed the same way. Every string in an entry is guarded and clamped on
+both paths (evidence capped at 160 characters; supersession links must be id-shaped). The guard
+gains two structural rules — a dismissed boundary, a standing permission — that read the shape
+of a weakening rather than its phrasing: eighteen of eighteen indirect phrasings refused,
+twenty of twenty survivors kept. The narrative is guarded by sentence with fences and comments
+blanked. Precedence is env → config → sidecar → migration → default, so `RUNE_MEMORY_MODE=off`
+and `[memory] mode = "off"` are real kill switches and `rune memory <mode>` writes config. A
+retro lesson carries the program, never the command the model wrote. The shrink floor measures
+against a signed high-water mark. A pin needs the user's words or two sessions. Mutation matrix
+ten of ten caught, three forgeries signed with the store's real key so the content rules are
+proved with the MAC doing no work. Supervisor rerun: memory suites **285 / 0**; `~/.rune/memory`
+still absent, the founder's audit log and profile byte-identical by the lane's fingerprints.
+One attribution note the lane made itself: its `setMemoryMode` engine hunk was swept into E2's
+commit `ee5c0bc` (parallel lanes share the tree); the code is right, the commit line is not.
