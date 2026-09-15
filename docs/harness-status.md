@@ -1607,3 +1607,30 @@ row was byte-identical. Supervisor rerun: UI suites **780 / 0**, typecheck clean
 the source. Left open by the lane: the agents strip row still shows `◆ <name> <bar>` rather
 than the fuller phrase (a layout decision), and the colour ramp has four steps because that
 is all the theme owns. Not installed yet; the closing reinstall carries it.
+
+### Addendum 22 — the closing-fixes lane: the profile cannot shrink and is kept, every suite runs under a scratch home, and the two leftovers close
+
+`521f2f3`, `f877ed3`, `819bf77`, `04d3f7f`, `b31ac8a`, `77c2ff3`. Every write to
+`system-memory.md` first copies it to `.bak-<ISO>` (newest five kept, `/memory clear`
+included); a refreshed profile shorter than half the previous, or under 400 bytes when the
+previous was over 800, is refused, the refusal recorded in the sidecar with the discarded
+length and shown once in the transcript and standing in `/memory`; `rune memory restore
+[--from]` and `/memory restore` bring a backup back. Found on the way: `/memory forget <id>`
+matched the clear branch and wiped the profile — fixed. **The founder's 3,976-byte profile
+from before 12:26 UTC has no backup to restore from; backups begin with the first write after
+`521f2f3`, and the file is untouched at 326 bytes for the founder to decide on.** The
+empty-completion allowance clears on `session_ended` (the old tests hid it because rows carry
+their own count; the breaking shape is a crash that wrote no row); the layout vocabulary moved
+to `@rune/shared` because lane D's prescribed engine hunk did not compile and importing
+`bin/ui` would break the engine-graph law; `TASTE_RE` learns the conditional, interrogative
+and imperative shapes with the task exclusions holding; a browser that mounted but cannot
+launch is pre-flighted (`browserUsable()` = registered AND a probe) and demoted at runtime
+when a call fails on the runtime rather than the page. **Every suite runs under a scratch
+home**: the preload as first prescribed did not work — under Bun a child spawned without an
+explicit `env` inherits the environ from process start, which is why five integration rigs
+that set `RUNE_HOME` themselves were never obeyed — so `tests/scratch-home.ts` sets the home
+and makes the spawn default explicit; the audit log's line count and md5 are byte-identical
+across both full suites. Supervisor rerun: **254 / 0** across eleven suites including
+lifecycle. Lane's gates: unit 5,665 / 0, integration 392 / 0, eval 63 / 63 at 0.27, tsc and
+prettier clean. The one thing the preload does not cover — `bun run eval` is not `bun test` —
+is closed by the supervisor in the next commit.

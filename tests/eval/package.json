@@ -4,9 +4,9 @@
   "private": true,
   "main": "runner.ts",
   "scripts": {
-    "eval": "bun run runner.ts",
+    "eval": "bun --preload ../scratch-home.ts runner.ts",
     "typecheck": "tsc --noEmit",
-    "corpus:offline": "bun run corpus/run-offline.ts",
+    "corpus:offline": "bun --preload ../scratch-home.ts corpus/run-offline.ts",
     "corpus:sanity": "bun test corpus/sanity.test.ts"
   },
   "dependencies": {
