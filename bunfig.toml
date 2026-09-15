@@ -1,0 +1,5 @@
+# Bun's test runner reads this. The preload runs before any test module is
+# evaluated, which is what makes it possible to set RUNE_HOME in time — see
+# tests/scratch-home.ts for why no test suite may write to the real ~/.rune.
+[test]
+preload = ["./tests/scratch-home.ts"]
