@@ -1585,3 +1585,25 @@ defect the lane's fingerprints exposed: **the founder's own daily dream replaced
 profile (3,976 bytes) with a 326-byte completion at 12:26 UTC, with no backup and no floor.**
 The dream is the pre-existing cadence feature, not this program's learned store, and it ran in
 the founder's live session; the fix (backup, shrink refusal, restore) is in the closing lane.
+
+### Addendum 21 — the pulse is Rune's again, and it eases
+
+The founder tested the afternoon build and rejected the indicator: it had copied Claude
+Code's `✻ Thinking · 12s` idiom instead of animating Rune's own pulse. `7ea2bc6`, `4ae5439`:
+the florette left the alphabet (19 of 20 marks), Rune's bar ramp `▁▂▃▄▅▆▇█` is the mark again,
+and the voice is lower-case in Rune's own words (`working`, `reading turn.ts`, `running
+checks`, `waiting for you`, `compacting`, `delegating 3 sub-agents`). The breath is a raised
+cosine, twelve frames per half-breath at 90 ms (2.16 s a breath, under the 12 fps cap), with
+height and colour driven by the same eased value so they crest together; a floating-point
+hitch at the fold was caught by a test and fixed. The phrase shimmers: a four-cell brighter
+window eases in from the left, across, and off the right over 1.6 s, then rests 0.4 s; the
+clock never shimmers; ASCII and NO_COLOR keep the height and drop the shimmer. `done`,
+`waiting for you` and idle hold the mark still at the mid bar. The repaint tick moved from
+125 ms to the frame period so the curve is sampled evenly. Evidence: twenty-four consecutive
+90 ms pty frames against the loopback mock in `pulse-frames/` — all eight levels touched, zero
+steps greater than one level, four mark colours in ramp order, the shimmer window walking
+0,0,0,0,0,1,2,3,4,5,6 then absent for eight frames, five windows with no repaint because the
+row was byte-identical. Supervisor rerun: UI suites **780 / 0**, typecheck clean, no `✻` in
+the source. Left open by the lane: the agents strip row still shows `◆ <name> <bar>` rather
+than the fuller phrase (a layout decision), and the colour ramp has four steps because that
+is all the theme owns. Not installed yet; the closing reinstall carries it.
