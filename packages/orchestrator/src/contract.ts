@@ -30,11 +30,25 @@ import type {
   DeclaredGap,
 } from "@rune/protocol";
 
+import { createHash } from "node:crypto";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, relative, resolve, sep } from "node:path";
+
 import type { CheckRun } from "./brief";
 import { statusFromStopReason, treeMovedUnder, type StampedRevision } from "./lifecycle";
 import { couldNotRunOnParent } from "./parent-check";
 import { GOAL_CAP } from "./task-state";
-import { normalizeCommand } from "./verification-command";
+import { commandPaths, normalizeCommand } from "./verification-command";
 
 export type {
   CompletionVerdict,
@@ -583,6 +597,16 @@ export interface AcceptanceSpec {
   required?: boolean;
   /** `evaluator` (the default) or `user`. Never `inferred` — nobody inferred this. */
   source?: "user" | "evaluator";
+  /**
+   * Extra workspace files the command needs, so they are staged with it.
+   *
+   * `stageAcceptance` already copies out every script the command NAMES. A
+   * script that loads a sibling module names it nowhere the runtime can read,
+   * so the author names it here: paths relative to the workspace root, files
+   * or directories. This is the documented seam a fixture generator builds
+   * against — see `stageAcceptance` for the two rules it must keep.
+   */
+  files?: string[];
 }
 
 /**
@@ -619,6 +643,13 @@ export function parseAcceptanceSpecs(raw: string, where = "the acceptance file")
       ...(command ? { command } : {}),
       ...(row.required === false ? { required: false } : {}),
       source,
+      ...(Array.isArray(row.files) && row.files.length > 0
+        ? {
+            files: row.files
+              .map((f) => String(f ?? "").trim())
+              .filter((f): f is string => f.length > 0),
+          }
+        : {}),
     });
   });
   if (specs.length === 0) throw new Error(`${where} states no criteria`);
@@ -637,6 +668,197 @@ export function acceptanceCriteria(specs: readonly AcceptanceSpec[]): Criterion[
       ? ({ kind: "command", command: spec.command } as const)
       : ({ kind: "review" } as const),
   }));
+}
+
+// ─── Staging: the oracle out of the thing it measures ───
+//
+// V6 finding 1. The citation path was closed — `record_evidence` refuses an
+// evaluator criterion — and the FILESYSTEM path was wide open. An acceptance
+// command runs "through the registry's `bash`, which means the same sandbox,
+// the same cwd", so a command naming a script inside the workspace ran a file
+// the model could overwrite with `write_file`. It did not need to have seen
+// the command: `ls -a` finds the script, and one `write_file` turns the
+// independent oracle into `console.log('1 pass, 0 fail')`. The run then
+// reported `met` with nothing built.
+//
+// So the runtime stages the acceptance OUT of the workspace at intake and
+// runs it from there. Three properties, and each one is load-bearing:
+//
+//  · OUTSIDE. The staged copy lives under a directory the workspace does not
+//    contain, so `write_file` and `read_file` — both scoped to the workspace —
+//    cannot reach it at all.
+//  · UNNAMED. The directory is `mkdtemp`'d, so its path is not derivable from
+//    anything the model can see, and the rewritten command never reaches a
+//    prompt (the same rule that already keeps the criterion text out).
+//  · PINNED. Every staged file's sha256 is recorded at intake and re-read
+//    before the gate runs. A staged file that changed anyway is not measured
+//    with; the criterion derives `needs_review`. This is the belt to the
+//    other two braces, and it is what makes the guarantee checkable rather
+//    than argued.
+//
+// **The staging rule, for a fixture author** (`tests/eval/corpus`, or anyone
+// writing an `--acceptance` file):
+//
+//  1. A staged script runs with **cwd = the workspace**. Address the tree
+//     under test by RELATIVE path (`readFileSync('api.ts')`) or through
+//     `process.cwd()`. A path resolved from `import.meta.url` / `__dirname`
+//     now points at the staging directory, not the workspace, and will not
+//     find the file it is looking for — which derives `needs_review`, not a
+//     false `satisfied`, but it is still not the check you meant to write.
+//  2. Anything the entry script LOADS must be named in the spec's `files`,
+//     because the runtime only sees what the command itself names. Paths are
+//     workspace-relative; a directory is copied whole (bounded).
+//
+// A command naming a file OUTSIDE the workspace is left exactly as written:
+// it is already out of the model's reach, which is the property this is for.
+
+/** Scripts are staged by shape; anything else must be named in `files`. */
+const STAGEABLE = /\.(?:[cm]?[jt]s|sh|bash|zsh|py|rb|pl|php|lua|exp|mjs|cjs)$/i;
+const STAGE_MAX_FILES = 200;
+const STAGE_MAX_BYTES = 4 * 1024 * 1024;
+
+/** What `stageAcceptance` produced: where it lives, and what to run instead. */
+export interface StagedAcceptance {
+  /** The staging directory. Never inside the workspace. */
+  root: string;
+  /** The same specs, with every in-workspace script rewritten to its copy. */
+  specs: AcceptanceSpec[];
+  /** Staged absolute path → sha256 at intake. Re-read before the gate runs. */
+  digests: Record<string, string>;
+  /** Workspace-relative → staged absolute, for the record and for a reader. */
+  staged: Array<{ from: string; to: string }>;
+}
+
+/** Whether a resolved path is inside the root (the workspaceDigest rule). */
+function inside(root: string, full: string): boolean {
+  return full !== root && full.startsWith(root.endsWith(sep) ? root : root + sep);
+}
+
+/** A shell word that survives the shell: quoted only when it has to be. */
+function shellQuote(path: string): string {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(path) ? path : `'${path.replace(/'/g, `'\\''`)}'`;
+}
+
+/** Copy one workspace file or directory into the stage; returns what it wrote. */
+function copyInto(
+  workspaceRoot: string,
+  stageRoot: string,
+  rel: string,
+  digests: Record<string, string>,
+  staged: Array<{ from: string; to: string }>,
+): void {
+  if (staged.length >= STAGE_MAX_FILES) return;
+  const from = resolve(workspaceRoot, rel);
+  if (!inside(workspaceRoot, from)) return;
+  let stats;
+  try {
+    stats = statSync(from);
+  } catch {
+    return;
+  }
+  const to = join(stageRoot, relative(workspaceRoot, from));
+  if (stats.isDirectory()) {
+    let entries: string[];
+    try {
+      entries = readdirSync(from);
+    } catch {
+      return;
+    }
+    for (const entry of entries)
+      copyInto(workspaceRoot, stageRoot, join(rel, entry), digests, staged);
+    return;
+  }
+  if (!stats.isFile() || stats.size > STAGE_MAX_BYTES) return;
+  if (staged.some((row) => row.to === to)) return;
+  mkdirSync(dirname(to), { recursive: true });
+  copyFileSync(from, to);
+  digests[to] = createHash("sha256").update(readFileSync(to)).digest("hex");
+  staged.push({ from: relative(workspaceRoot, from), to });
+}
+
+/**
+ * Copy every in-workspace file the acceptance needs out of the workspace, and
+ * rewrite the commands to run the copies.
+ *
+ * Pure of the Engine on purpose: it takes the two roots and the specs, so the
+ * property it exists for — "a later edit inside the workspace changes
+ * nothing" — is testable without driving a run.
+ */
+export function stageAcceptance(
+  specs: readonly AcceptanceSpec[],
+  opts: { workspaceRoot: string; stagingBase?: string },
+): StagedAcceptance {
+  const workspaceRoot = resolve(opts.workspaceRoot);
+  // A base inside the workspace would defeat the whole point, quietly.
+  const requested = opts.stagingBase ? resolve(opts.stagingBase) : tmpdir();
+  const base =
+    inside(workspaceRoot, requested) || requested === workspaceRoot ? tmpdir() : requested;
+  mkdirSync(base, { recursive: true });
+  const root = mkdtempSync(join(base, "rune-acceptance-"));
+  const digests: Record<string, string> = {};
+  const staged: Array<{ from: string; to: string }> = [];
+
+  const rewritten = specs.map((spec) => {
+    const named = [
+      ...(spec.files ?? []),
+      ...(spec.command ? commandPaths(spec.command).filter((t) => STAGEABLE.test(t)) : []),
+    ];
+    for (const rel of named) copyInto(workspaceRoot, root, rel, digests, staged);
+    if (!spec.command) return { ...spec };
+    // Only the tokens that actually became a staged file are rewritten; a
+    // path that named nothing, or named something outside the workspace, is
+    // left exactly as the author wrote it.
+    const map = new Map<string, string>();
+    for (const token of commandPaths(spec.command)) {
+      const full = resolve(workspaceRoot, token);
+      if (!inside(workspaceRoot, full)) continue;
+      const to = join(root, relative(workspaceRoot, full));
+      if (digests[to]) map.set(token, to);
+    }
+    if (map.size === 0) return { ...spec };
+    const pattern = [...map.keys()]
+      .sort((a, b) => b.length - a.length)
+      .map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("|");
+    const command = spec.command.replace(new RegExp(pattern, "g"), (token) =>
+      shellQuote(map.get(token) ?? token),
+    );
+    return { ...spec, command };
+  });
+
+  return { root, specs: rewritten, digests, staged };
+}
+
+/**
+ * The staged files whose bytes are not what intake recorded, if any.
+ *
+ * Should always be empty — the stage is outside the workspace and its name is
+ * random. It is read before every gate run anyway, because a guarantee that
+ * is only argued for is the kind V6 found four of.
+ */
+export function stagedAcceptanceDrift(staged: StagedAcceptance | null | undefined): string[] {
+  if (!staged) return [];
+  const moved: string[] = [];
+  for (const [path, digest] of Object.entries(staged.digests)) {
+    let now: string | null = null;
+    try {
+      now = createHash("sha256").update(readFileSync(path)).digest("hex");
+    } catch {
+      now = null;
+    }
+    if (now !== digest) moved.push(path);
+  }
+  return moved;
+}
+
+/** Remove a staging directory. Never throws: it is a temp directory. */
+export function discardStagedAcceptance(staged: StagedAcceptance | null | undefined): void {
+  if (!staged?.root) return;
+  try {
+    if (existsSync(staged.root)) rmSync(staged.root, { recursive: true, force: true });
+  } catch {
+    // A stage that outlives the run costs a few KiB in the temp directory.
+  }
 }
 
 /**

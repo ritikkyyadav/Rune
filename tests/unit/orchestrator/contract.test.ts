@@ -15,12 +15,18 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Brief, Criterion } from "../../../packages/protocol/src/index";
 import {
   amendContract,
   briefDrift,
   acceptanceCriteria,
   acceptanceDidNotRun,
+  discardStagedAcceptance,
+  stageAcceptance,
+  stagedAcceptanceDrift,
   accepted,
   carryForward,
   computeVerdict,
@@ -1008,5 +1014,107 @@ describe("did the acceptance command actually RUN?", () => {
   test("a runner that ran and FAILED is left alone — that is the finding", () => {
     expect(acceptanceDidNotRun("(fail) the total column is missing\n1 fail", 1)).toBe(false);
     expect(acceptanceDidNotRun("3 pass, 0 fail", 0)).toBe(false);
+  });
+});
+
+describe("staging the acceptance out of the workspace (V6 finding 1)", () => {
+  function workspace(): string {
+    const dir = mkdtempSync(join(tmpdir(), "stage-ws-"));
+    mkdirSync(join(dir, ".rune-acceptance"), { recursive: true });
+    writeFileSync(join(dir, ".rune-acceptance", "check.mjs"), "console.log('1 pass, 0 fail');\n");
+    return dir;
+  }
+
+  test("an in-workspace script is copied out and the command names the copy", () => {
+    const dir = workspace();
+    const staged = stageAcceptance(
+      [{ text: "it holds", command: "node .rune-acceptance/check.mjs", source: "evaluator" }],
+      { workspaceRoot: dir },
+    );
+    try {
+      expect(staged.root.startsWith(dir)).toBe(false);
+      expect(staged.staged.map((r) => r.from)).toEqual([join(".rune-acceptance", "check.mjs")]);
+      expect(staged.specs[0]!.command).toBe(
+        `node ${join(staged.root, ".rune-acceptance", "check.mjs")}`,
+      );
+      expect(Object.keys(staged.digests)).toHaveLength(1);
+    } finally {
+      discardStagedAcceptance(staged);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("an edit inside the workspace after intake changes nothing the runtime will run", () => {
+    const dir = workspace();
+    const staged = stageAcceptance(
+      [{ text: "it holds", command: "node .rune-acceptance/check.mjs", source: "evaluator" }],
+      { workspaceRoot: dir },
+    );
+    try {
+      writeFileSync(join(dir, ".rune-acceptance", "check.mjs"), "console.log('forged');\n");
+      const copy = readFileSync(staged.staged[0]!.to, "utf8");
+      expect(copy).toBe("console.log('1 pass, 0 fail');\n");
+      // And the pin agrees: nothing the gate will run has moved.
+      expect(stagedAcceptanceDrift(staged)).toEqual([]);
+    } finally {
+      discardStagedAcceptance(staged);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a staged file that changes anyway is reported, so the gate can refuse to measure with it", () => {
+    const dir = workspace();
+    const staged = stageAcceptance(
+      [{ text: "it holds", command: "node .rune-acceptance/check.mjs", source: "evaluator" }],
+      { workspaceRoot: dir },
+    );
+    try {
+      writeFileSync(staged.staged[0]!.to, "console.log('forged');\n");
+      expect(stagedAcceptanceDrift(staged)).toEqual([staged.staged[0]!.to]);
+    } finally {
+      discardStagedAcceptance(staged);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("`files` stages what the command cannot name, and a path outside the workspace is left alone", () => {
+    const dir = workspace();
+    writeFileSync(join(dir, ".rune-acceptance", "util.mjs"), "export const n = 1;\n");
+    const outside = "/opt/acceptance/check.mjs";
+    const staged = stageAcceptance(
+      [
+        {
+          text: "it holds",
+          command: "node .rune-acceptance/check.mjs",
+          files: [".rune-acceptance/util.mjs"],
+          source: "evaluator",
+        },
+        { text: "the other", command: `node ${outside}`, source: "evaluator" },
+      ],
+      { workspaceRoot: dir },
+    );
+    try {
+      expect(staged.staged.map((r) => r.from).sort()).toEqual(
+        [join(".rune-acceptance", "check.mjs"), join(".rune-acceptance", "util.mjs")].sort(),
+      );
+      expect(staged.specs[1]!.command).toBe(`node ${outside}`);
+    } finally {
+      discardStagedAcceptance(staged);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a staging base inside the workspace is refused — that would defeat the whole point", () => {
+    const dir = workspace();
+    const staged = stageAcceptance(
+      [{ text: "it holds", command: "node .rune-acceptance/check.mjs", source: "evaluator" }],
+      { workspaceRoot: dir, stagingBase: join(dir, "stage") },
+    );
+    try {
+      expect(staged.root.startsWith(dir)).toBe(false);
+    } finally {
+      discardStagedAcceptance(staged);
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

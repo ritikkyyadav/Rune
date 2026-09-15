@@ -87,13 +87,14 @@ function twoFeatureRepo(prefix: string): string {
 
   writeFileSync(join(dir, "api.ts"), "export const hello = () => 'hello';\n");
   writeFileSync(join(dir, "header.csv"), "id,name\n");
+  // Rule 1 of `stageAcceptance`: an acceptance script is copied OUT of the
+  // workspace at intake and run with cwd = the workspace, so it addresses the
+  // tree under test by relative path. A path resolved from `import.meta.url`
+  // would now point at the staging directory.
   const checker = (file: string, needle: string, name: string) =>
     [
       "import { readFileSync } from 'node:fs';",
-      "import { dirname, join } from 'node:path';",
-      "import { fileURLToPath } from 'node:url';",
-      "const here = dirname(fileURLToPath(import.meta.url));",
-      `const text = readFileSync(join(here, '${file}'), 'utf8');`,
+      `const text = readFileSync('${file}', 'utf8');`,
       `const ok = text.includes('${needle}');`,
       `console.log(ok ? '1 pass, 0 fail' : '(fail) ${name}');`,
       "process.exit(ok ? 0 : 1);",

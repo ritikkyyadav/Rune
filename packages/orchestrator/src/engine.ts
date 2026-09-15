@@ -67,7 +67,7 @@ import type {
   ToolCallOutput,
 } from "@rune/tool-registry";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   setConfigValue,
   SessionManager,
@@ -220,7 +220,11 @@ import {
   inheritContract,
   priorContract,
   uncoveredCriteria,
+  discardStagedAcceptance,
+  stageAcceptance,
+  stagedAcceptanceDrift,
   type AcceptanceSpec,
+  type StagedAcceptance,
   type CompletionVerdict,
   type TaskContract,
 } from "./contract";
@@ -1366,6 +1370,11 @@ export class Engine {
    *  spawn two git processes per tool call. */
   private revisionMemo: { at: number; value: { head: string | null; dirty: boolean } } | null =
     null;
+  /**
+   * Where this run's acceptance scripts were copied to, out of the model's
+   * reach. Built once at intake; see `stageAcceptance`.
+   */
+  private stagedAcceptance: StagedAcceptance | null = null;
   /** Digest of the last `lifecycle` emitted, so an unchanged boundary is silent. */
   private lastLifecycleDigest: string | null = null;
   /** Digest of the last persisted brief, so an unchanged ledger writes no row. */
@@ -6698,7 +6707,14 @@ export class Engine {
   private installAcceptance(request: string): void {
     const specs = this.config.acceptance;
     if (!specs || specs.length === 0 || !this.contract) return;
-    const stated = acceptanceCriteria(specs);
+    // Out of the workspace before anything else happens. The criteria the
+    // contract carries name the STAGED copies, so the command that runs at
+    // the finish gate is one no tool in this run could have edited.
+    this.stagedAcceptance ??= stageAcceptance(specs, {
+      workspaceRoot: this.config.workspaceRoot,
+      ...(this.config.dbPath ? { stagingBase: dirname(this.config.dbPath) } : {}),
+    });
+    const stated = acceptanceCriteria(this.stagedAcceptance.specs);
     // A resumed run already has them on its restored brief: match by id so a
     // second run does not stack a second copy of every criterion.
     const brief = this.brief ?? {
@@ -6711,6 +6727,16 @@ export class Engine {
     };
     const known = new Set(brief.criteria.map((c) => c.id ?? c.text));
     const fresh = stated.filter((c) => !known.has(c.id ?? c.text));
+    // A RESUMED run restored its evaluator criteria from the brief, and the
+    // command they carry names the previous run's staging directory — gone
+    // with that run. The criterion is the same criterion; only where its
+    // script now lives has changed, so re-point it rather than re-adding it.
+    const byKey = new Map(stated.map((c) => [c.id ?? c.text, c]));
+    for (const criterion of brief.criteria) {
+      if (criterion.source !== "evaluator") continue;
+      const restated = byKey.get(criterion.id ?? criterion.text);
+      if (restated?.method) criterion.method = restated.method;
+    }
     if (fresh.length > 0) brief.criteria = [...brief.criteria, ...fresh];
     if (!this.brief) {
       this.brief = brief;
@@ -6738,6 +6764,7 @@ export class Engine {
   private async runAcceptanceGate(sessionId: string, signal?: AbortSignal): Promise<void> {
     const ledger = this.ledger;
     if (!ledger) return;
+    const drift = stagedAcceptanceDrift(this.stagedAcceptance);
     const criteria = ledger.criteria;
     for (let index = 0; index < criteria.length; index++) {
       const criterion = criteria[index]!;
@@ -6751,6 +6778,25 @@ export class Engine {
       if (signal?.aborted) return;
 
       const command = method.command;
+      // The stage is outside the workspace and its name is random, so this
+      // should never fire. It is read anyway: the guarantee the staging was
+      // built for is one the runtime can CHECK, and a check that is only
+      // argued for is the kind V6 found four of.
+      if (drift.length > 0) {
+        ledger.recordRuntimeCheck(
+          index,
+          {
+            source: command,
+            detail:
+              `the staged acceptance changed on disk since intake ` +
+              `(${drift.length} file${drift.length === 1 ? "" : "s"}) — it was not run`,
+            verifier: "acceptance-command@1",
+            env: envFingerprint(),
+          },
+          null,
+        );
+        continue;
+      }
       const timeoutMs = this.config.verifyTimeoutMs ?? 120_000;
       let output: { success: boolean; result?: string; error?: string };
       try {
@@ -8008,6 +8054,11 @@ export class Engine {
   }
 
   close(): void {
+    // The staged acceptance is a temp copy of files that still exist in the
+    // workspace; nothing is lost with it, and leaving it behind would leak a
+    // directory per run.
+    discardStagedAcceptance(this.stagedAcceptance);
+    this.stagedAcceptance = null;
     // Best-effort: stop MCP subprocesses / sessions on exit.
     this.mcpDiscovery?.stopAll().catch(() => {});
     // Plugin tool subprocesses are the same kind of debt: a sandboxed program
