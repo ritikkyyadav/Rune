@@ -1183,3 +1183,29 @@ hardening, startup-selection's mutation survivors, the rig scrub). M4 does not s
 both land and their tests are promoted. This is the loop working: the build lanes' own tests
 were green, the supervisor's probes caught two holes, and the adversary caught four more that
 matter most.
+
+### Addendum 7 — Fix lane A: the four forgeries closed, and a claim is dated when its check ran
+
+`f85b263`, `6d9c8d6`, `f3989cb`, `bdd901c`, `d9c524e`. The acceptance runs from outside the
+workspace: every in-workspace script an acceptance file names is copied at intake into a
+`mkdtemp` directory the tools cannot reach, its sha256 pinned and re-checked before the gate,
+the command rewritten to run the copy with `cwd` = the workspace (so scripts address the tree
+by relative path; anything the entry loads goes in the criterion's `files`). A script host's
+relatedness scope stops at the entry script — trailing argv the script ignores buys nothing;
+`grep`, `bun test a b`, `pytest x y` unchanged. A check whose entry script the run itself
+wrote is priced like an execution receipt (`self-authored-check@1`, `needs_review`, the
+receipt naming the file); project checks stay checks. The workspace revision is stamped on
+the `CheckRun` when the check runs, un-memoised, and the verdict's `now` is fresh too — a
+revert after a green check reads `stale`, and `sleep 2` in an acceptance command no longer
+changes a verdict, which also closes the corpus's two frontend false negatives at the root.
+The shadow lane's snapshot is a thunk inside one `try` at all twenty-six sites, so a throwing
+observation cannot fail the run; the summary row is bounded and `overheadUs` measures the
+arbiter's two spans with the row sink beside it as `sinkUs`. The inherited allowance reads the
+row's number; `evaluators { satisfied, total }` rides every verdict and `verdictLine` (`met`
+unchanged); `true` / `:` / `exit 0` derive `needs_review`; the evaluator refusal reveals no
+index range. Each fix mutation-tested red and restored by hash; eight verifier tests promoted
+into the permanent suites; three expectation changes named. Supervisor rerun of the thirteen
+suites that matter: **404 / 0**. Lane's gates: integration **344 / 0 / 7 skip**, unit
+**5,121 / 1 fail / 1 skip** — the one failure is V6 #6, lane B's budget guard, not this lane's.
+Spend fingerprint unmoved. Left for lane B: the `--help` text and the corpus checks' root
+resolution (`process.cwd()`), both written out in the lane's report.
