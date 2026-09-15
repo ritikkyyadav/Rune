@@ -15,7 +15,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Engine } from "../../packages/orchestrator/src/engine";
@@ -116,7 +116,7 @@ describe("Engine memory (end-to-end, fake provider)", () => {
       sseText("Done — I always use the streaming path here, it is faster and I verified it works."),
     ]);
 
-    const first = makeEngine(dir, port);
+    const first = makeEngine(dir, port, { enabled: true });
     const s1 = first.createSession();
     await drain(first, s1, "no, always run typecheck before you claim a fix");
     first.close();
@@ -137,7 +137,7 @@ describe("Engine memory (end-to-end, fake provider)", () => {
 
     // Session 2, a fresh Engine over the same home.
     bodies = [];
-    const second = makeEngine(dir, port);
+    const second = makeEngine(dir, port, { enabled: true });
     const s2 = second.createSession();
     await drain(second, s2, "add a flag to the parser");
     second.close();
@@ -158,6 +158,99 @@ describe("Engine memory (end-to-end, fake provider)", () => {
     expect(existsSync(join(home, "memory", "entries"))).toBe(false);
     expect(new MemoryStore(join(home, "memory")).all()).toHaveLength(0);
     expect(bodies.join("\n")).not.toContain("What Rune remembers about you");
+  }, 30_000);
+
+  // ── The regression gate ──
+  //
+  // `bun run eval` lost `compaction_reclaims_and_keeps_a_tail` and moved
+  // governance 0.27 → 0.32 because the NARRATIVE profile — which has always
+  // shipped in the system prefix — was moved into the message array by this
+  // lane. On a machine with a ~4 KB profile that is ~1,000 extra message tokens
+  // per session: compaction fired harder and each fold freed proportionally
+  // less, landing at 15.0% against a 15% floor.
+  //
+  // The shape that must hold forever after: until something is PROMOTED, a tree
+  // with memory and a tree without one send the same bytes. Not "almost the
+  // same" — the same, because the eval's thresholds are decided in the third
+  // significant figure.
+  test("with nothing promoted, the requests are byte-identical to a tree without memory", async () => {
+    // A narrative profile present, exactly as on the founder's machine.
+    writeFileSync(
+      join(home, "system-memory.md"),
+      "Ritik ships alone on no budget and wants unsugared facts.\n".repeat(20),
+    );
+    const port = serve([sseText("done")]);
+
+    const withMemory = makeEngine(dir, port, { enabled: true });
+    await drain(withMemory, withMemory.createSession(), "add a flag to the parser");
+    withMemory.close();
+    type Req = { messages: Array<{ role: string; content: unknown }> };
+    const a = bodies.map((b) => JSON.parse(b) as Req);
+
+    bodies = [];
+    // No `memory` key at all — the eval harness's own shape, and every SDK
+    // embedder that never heard of memory.
+    const without = makeEngine(dir, port);
+    await drain(without, without.createSession(), "add a flag to the parser");
+    without.close();
+    const b = bodies.map((x) => JSON.parse(x) as Req);
+
+    expect(a.length).toBe(b.length);
+    for (let i = 0; i < a.length; i++) {
+      expect(a[i]!.messages.length, `request ${i} message count`).toBe(b[i]!.messages.length);
+      expect(JSON.stringify(a[i]!.messages), `request ${i} message bytes`).toBe(
+        JSON.stringify(b[i]!.messages),
+      );
+    }
+
+    // And the narrative is where it has always been: the system prefix (this
+    // endpoint is OpenAI-shaped, so that is messages[0]), never a note in the
+    // conversation. Moving it out of there is the regression this test exists
+    // to catch.
+    const prefix = a[0]!.messages[0]!;
+    expect(prefix.role).toBe("system");
+    expect(JSON.stringify(prefix.content)).toContain("wants unsugared facts");
+    const conversation = a[0]!.messages.slice(1);
+    expect(JSON.stringify(conversation)).not.toContain("wants unsugared facts");
+    expect(new MemoryStore(join(home, "memory")).all()).toHaveLength(0);
+  }, 30_000);
+
+  test("with entries, the block is exactly one more message and the prefix is untouched", async () => {
+    writeFileSync(
+      join(home, "system-memory.md"),
+      "A narrative profile that stays in the prefix.\n",
+    );
+    const port = serve([sseText("done")]);
+
+    const bare = makeEngine(dir, port, { enabled: true });
+    await drain(bare, bare.createSession(), "add a flag to the parser");
+    bare.close();
+    type Req2 = { messages: Array<{ role: string; content: unknown }> };
+    const before = JSON.parse(bodies[0]!) as Req2;
+
+    // One promoted memory.
+    const seed = new MemoryStore(join(home, "memory"));
+    seed.observe({
+      kind: "person",
+      text: "I want unsugared facts and no padding",
+      source: "user-said",
+      sessionId: "seed",
+      scope: "global",
+    });
+    seed.setPinned(seed.all()[0]!.id, true);
+
+    bodies = [];
+    const withOne = makeEngine(dir, port, { enabled: true });
+    await drain(withOne, withOne.createSession(), "add a flag to the parser");
+    withOne.close();
+    const after = JSON.parse(bodies[0]!) as Req2;
+
+    // Exactly one more message — ordinary context compaction may fold like any
+    // other, not a prefix that every turn re-pays for.
+    expect(after.messages.length).toBe(before.messages.length + 1);
+    // The prefix is untouched — the learned block costs no cacheable bytes.
+    expect(JSON.stringify(after.messages[0])).toBe(JSON.stringify(before.messages[0]));
+    expect(JSON.stringify(after.messages)).toContain("I want unsugared facts and no padding");
   }, 30_000);
 
   test("learning off still injects what is already there", async () => {
