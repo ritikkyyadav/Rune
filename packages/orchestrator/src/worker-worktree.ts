@@ -746,6 +746,22 @@ export function restoreWorkerChanges(
     .filter(Boolean);
 }
 
+/**
+ * The tree's revision, as one short string a result can carry.
+ *
+ * `HEAD`, plus a `+dirty` marker when the working tree has uncommitted
+ * changes. Both halves matter for M4's integration check: a child starts from
+ * a commit AND from whatever the person had not committed yet, and "the
+ * destination moved" has to be able to mean either. Empty for a directory that
+ * is not a git repository, which is an honest answer and not a claim.
+ */
+export function treeRevision(root: string): string {
+  const head = git(root, ["rev-parse", "--short", "HEAD"]);
+  if (!head.ok || !head.stdout) return "";
+  const dirty = git(root, ["status", "--porcelain"]);
+  return dirty.ok && dirty.stdout.length > 0 ? `${head.stdout}+dirty` : head.stdout;
+}
+
 export function mergeWorkerWorktree(
   repoRoot: string,
   wt: WorkerWorktree,

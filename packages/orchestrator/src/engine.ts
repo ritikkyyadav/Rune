@@ -7559,6 +7559,18 @@ export class Engine {
             : detectVerifyCommands(this.config.workspaceRoot),
         ),
         checkTimeoutMs: this.config.verifyTimeoutMs ?? 120_000,
+        // The text of the criteria a child is handed (M4). Read from the
+        // ledger, never from the model: `criteria` on a `worker` call is a
+        // list of IDS, and the only place an id means anything is here. An id
+        // the ledger does not know is dropped, so the child is shown the
+        // contract or told the text was unavailable — never a text the harness
+        // made up to fill the gap.
+        criteriaFor: (ids) => {
+          const criteria = this.ledger?.criteria ?? [];
+          return criteria.flatMap((c) =>
+            c.id && ids.includes(c.id) ? [{ id: c.id, text: c.text }] : [],
+          );
+        },
         get budgetDefaults() {
           return engine.config.subagents;
         },

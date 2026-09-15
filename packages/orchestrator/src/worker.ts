@@ -52,6 +52,8 @@ import {
   describeCall,
   renderWorkerResult,
   repairToSchema,
+  type ChildCheckRun,
+  type NotIntegrated,
 } from "./subagent-result";
 import {
   checkBudget,
@@ -70,6 +72,7 @@ import {
   runWorktreeChecks,
   saveWorkerChanges,
   restoreWorkerChanges,
+  treeRevision,
   type WorkerReapEntry,
   type WorkerWorktree,
 } from "./worker-worktree";
@@ -135,6 +138,16 @@ export interface WorkerDeps {
    */
   checkCommands?: string[];
   checkTimeoutMs?: number;
+  /**
+   * The text of the criteria a child is given, by id (M4).
+   *
+   * A child receives a BOUNDED SUBSET of the contract: the criteria it owns,
+   * its owned files, its share of the budget. Without this the ids are opaque
+   * tokens and the "contract" is a list of numbers — so a dispatch with
+   * `criteria` and no resolver carries the ids and says plainly that their
+   * text was not available, rather than inventing it.
+   */
+  criteriaFor?: (ids: readonly string[]) => Array<{ id: string; text: string }>;
   toolResultProcessor?: ToolResultProcessor;
   /** The black-box tap, so a worker's breakers and fallbacks leave a record. */
   onIncident?: IncidentReporter;
@@ -235,6 +248,16 @@ export const WORKER_TOOL_SCHEMA: ToolSchema = {
           "Optional wall-clock ceiling in milliseconds from dispatch. Same stop-and-return " +
           "behaviour as costCapUsd. Defaults come from `effort`.",
       },
+      criteria: {
+        type: "array",
+        items: { type: "string" },
+        description:
+          "Ids of the done_when criteria this worker OWNS (c1, c4). It is shown their text " +
+          "and told it owns them; it returns check runs, never a verdict, and its report " +
+          "cannot move any criterion's rung. When you pass these, the runtime re-runs the " +
+          "project's checks on the COMBINED tree after the merge and reports `not integrated` " +
+          "if they only fail there.",
+      },
     },
     required: ["prompt", "files"],
   },
@@ -249,6 +272,59 @@ export const WORKER_TOOL_SCHEMA: ToolSchema = {
   // ownership claims make parallel writers safe by construction.
   parallelSafe: true,
 };
+
+// ── The bounded contract a child is given (M4) ──
+
+/**
+ * The criteria a child owns, its files, its budget — and the one thing it is
+ * not allowed to do with them.
+ *
+ * The review's words: "A child receives a bounded subset of the contract: the
+ * criteria it owns (by id), its owned files, its dependencies, its share of
+ * the budget. It returns artifacts and evidence (check runs with their
+ * revision stamps), never a verdict."
+ *
+ * The last sentence is the one that needs saying in the prompt rather than
+ * only in the code. A child that believes it can settle a criterion writes a
+ * report shaped like an acceptance — "done, all criteria met" — and a lead
+ * reading a fleet of those in a hurry treats them as evidence. The mechanical
+ * guarantee is elsewhere and is absolute (a worker's registry has no
+ * `record_evidence`, and rungs move only from the runtime's own check log);
+ * this paragraph is so the child does not spend its turns trying.
+ *
+ * An id with no text is carried AS an id and said to be unavailable. Inventing
+ * the text would be the harness making up the contract.
+ */
+export function boundedContractBlock(
+  ids: readonly string[],
+  texts: ReadonlyArray<{ id: string; text: string }>,
+  ownership: string,
+  budget: { costCapUsd?: number | null; deadlineMs?: number | null },
+  maxTurns: number,
+): string {
+  const byId = new Map(texts.map((t) => [t.id, t.text]));
+  const lines = [
+    "[Your slice of the contract]",
+    "You own these acceptance criteria. Nothing else in the task is yours to judge:",
+  ];
+  for (const id of ids) {
+    const text = byId.get(id);
+    lines.push(text ? `  ${id}: ${text}` : `  ${id}: (its text was not available here)`);
+  }
+  lines.push(
+    `You may create or edit only: ${ownership}. Everything else is read-only reference.`,
+    `Your budget: ${maxTurns} turns` +
+      (budget.costCapUsd ? `, $${budget.costCapUsd.toFixed(2)} of inference` : "") +
+      (budget.deadlineMs ? `, ${Math.round(budget.deadlineMs / 1000)}s of wall clock` : "") +
+      ". It stops you and returns what you built; it never discards work.",
+    "Return EVIDENCE, not a verdict. Run the project's checks in this checkout and report",
+    "what they printed. Do not write that a criterion is met, satisfied or done — you cannot",
+    "settle one, and saying so moves nothing. The runtime re-runs your checks on the combined",
+    "tree after your patch lands, and that run is what counts.",
+    "",
+  );
+  return `${lines.join("\n")}\n`;
+}
 
 // ── Ownership ──
 
@@ -557,6 +633,14 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
           label?: string;
           name?: string;
         };
+        // The criteria this child OWNS (M4). Absent — the default, and every
+        // dispatch written before this lane — leaves everything below inert:
+        // no contract block, no revision stamps, no post-integration re-verify.
+        const ownedCriteria = Array.isArray((input.args as { criteria?: unknown }).criteria)
+          ? ((input.args as { criteria: unknown[] }).criteria.filter(
+              (c): c is string => typeof c === "string" && c.trim().length > 0,
+            ) as string[])
+          : [];
 
         let ownership: Ownership;
         try {
@@ -701,8 +785,31 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
           );
 
           bindDelegatedLoop(loop);
+          const budgetCaps = resolveSubagentBudget(effort, {
+            costCapUsd: input.args.costCapUsd ?? deps.budgetDefaults?.costCapUsd,
+            deadlineMs: input.args.deadlineMs ?? deps.budgetDefaults?.deadlineMs,
+          });
+          // ── The bounded subset of the contract (M4) ──
+          //
+          // The criteria this child owns, by id and text; its owned files; its
+          // share of the budget. And one sentence it cannot talk its way out
+          // of: it returns evidence, never a verdict. The rungs are moved by
+          // the runtime's own check log and by nothing a child writes — this
+          // block says so out loud because a child that believes otherwise
+          // writes a report shaped like an acceptance, and a lead reading it
+          // in a hurry treats it as one.
+          const contractBlock = ownedCriteria.length
+            ? boundedContractBlock(
+                ownedCriteria,
+                deps.criteriaFor?.(ownedCriteria) ?? [],
+                ownership.describe(input.workspaceRoot),
+                budgetCaps,
+                budget.maxTurns,
+              )
+            : "";
           const fullPrompt =
             `Current worker workspace: ${workRoot}. Use this checkout for this follow-up; paths from earlier calls may refer to an older snapshot.\n\n` +
+            contractBlock +
             (context && context.trim() ? `${context.trim()}\n\n${prompt}` : prompt);
           const announcedLabel = childLabel(label, prompt);
           const announcedName =
@@ -728,10 +835,6 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
           // Same contract as the scout's: checked between turns, and a breach
           // stops the worker and returns what it built rather than discarding it.
           // For a worker that matters more, not less — its output is files.
-          const budgetCaps = resolveSubagentBudget(effort, {
-            costCapUsd: input.args.costCapUsd ?? deps.budgetDefaults?.costCapUsd,
-            deadlineMs: input.args.deadlineMs ?? deps.budgetDefaults?.deadlineMs,
-          });
           const costTracker = new CostTracker();
           // Seeded from the checkpoint, not from zero. A `task_id` resumed five
           // times used to get five full cost caps and five fresh deadline
@@ -753,6 +856,15 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
           let mergeConflicts: string[] = [];
           let mergeFailure: string | undefined;
           let workerBranch: string | undefined;
+          // ── The integration record (M4) ──
+          //
+          // `checkRuns` is the evidence the child returns: which command, in
+          // which tree, at which revision. `startedFrom` is the destination as
+          // it stood when this child was dispatched; `notIntegrated` is set
+          // only when the patch did not land, with the reason.
+          const checkRuns: ChildCheckRun[] = [];
+          const startedFrom = ownedCriteria.length ? treeRevision(input.workspaceRoot) : "";
+          let notIntegrated: NotIntegrated | undefined;
           // Mid-run model swap (see subagent.ts): `fallback` used to be ignored
           // here too, so a worker demoted to a fallback model reported in the
           // same voice as one that never left the model it was dispatched to.
@@ -887,6 +999,19 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
               input.signal,
             );
             checkOutcome = checkResult.outcome;
+            if (ownedCriteria.length) {
+              // Stamped with the tree they ran in. A check run with no
+              // revision is a claim about nothing (M4).
+              const childRevision = treeRevision(worktree.path);
+              for (const command of deps.checkCommands ?? []) {
+                checkRuns.push({
+                  command,
+                  passed: !checkResult.failures.some((f) => f.startsWith(`${command} →`)),
+                  where: "child",
+                  revision: childRevision,
+                });
+              }
+            }
             if (checkResult.outcome === "failed") {
               // A failing worker's branch is KEPT and not merged. Merging code
               // that does not compile into the lead's tree turns one worker's
@@ -947,6 +1072,70 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
               workerBranch = merge.branch;
               keepBranch = true;
             }
+            // ── Integration is VERIFIED, not assumed (M4) ──
+            //
+            // Two ways a correct patch fails to integrate, and the run names
+            // whichever happened rather than reporting a merge that did not
+            // happen as one that did.
+            if (ownedCriteria.length) {
+              const returnedTo = treeRevision(input.workspaceRoot);
+              if (merge.conflicts.length > 0) {
+                // The destination moved UNDER the child: the lead, or the
+                // person, edited a file the child owned after it was
+                // dispatched. `mergeWorkerWorktree` compared each destination
+                // file's blob against the dispatch snapshot and wrote nothing,
+                // so the user's edit stands and the child's work is on its
+                // branch. A correct patch on a changed destination is not
+                // "integrated", and this is the sentence that says so.
+                notIntegrated = {
+                  reason: "destination_moved",
+                  detail:
+                    `${merge.conflicts.length} file${merge.conflicts.length === 1 ? "" : "s"} ` +
+                    `this worker owns changed in your tree after it was dispatched ` +
+                    `(${merge.conflicts.slice(0, 4).join(", ")}). Nothing was overwritten: ` +
+                    `your edits stand and the worker's are on ${merge.branch}.`,
+                  startedFrom,
+                  returnedTo,
+                };
+              } else if (merge.merged && checkOutcome === "passed") {
+                // The patch landed and was green in its own checkout. Whether
+                // it is green HERE is a different question, and the only one
+                // the lead actually needs answered — a worker's tree has its
+                // own files and only its own. Re-run the same checks on the
+                // combined tree; a failure that appears only here is an
+                // integration failure, not the child's.
+                const after = await runWorktreeChecks(
+                  input.workspaceRoot,
+                  deps.checkCommands ?? [],
+                  deps.checkTimeoutMs ?? 120_000,
+                  deps.binaryPath,
+                  input.signal,
+                );
+                const combinedRevision = treeRevision(input.workspaceRoot);
+                for (const command of deps.checkCommands ?? []) {
+                  checkRuns.push({
+                    command,
+                    passed: !after.failures.some((f) => f.startsWith(`${command} →`)),
+                    where: "combined",
+                    revision: combinedRevision,
+                  });
+                }
+                if (after.outcome === "failed") {
+                  keepBranch = true;
+                  workerBranch = worktree.branch;
+                  notIntegrated = {
+                    reason: "checks_fail_on_combined_tree",
+                    detail:
+                      "the project's checks passed in the worker's own checkout and fail on " +
+                      `the combined tree: ${after.failures.slice(0, 3).join("; ")}. Its files ` +
+                      "are in your tree and its branch is kept — this is a seam, not the " +
+                      "worker's own failure.",
+                    startedFrom,
+                    returnedTo: combinedRevision,
+                  };
+                }
+              }
+            }
             // The manifest is git's diff, not the model's claim. When the merge
             // produced one it replaces the observed set, because a file the
             // worker wrote and then reverted is not a change.
@@ -1003,6 +1192,7 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
             result.unresolved.unshift(
               `Changes retained because integration failed: ${mergeFailure}`,
             );
+          if (notIntegrated) result.unresolved.unshift(`NOT INTEGRATED — ${notIntegrated.detail}`);
           if (breach) {
             result.unresolved = [`The worker ${describeBreach(breach)}.`, ...result.unresolved];
           }
@@ -1057,6 +1247,12 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
               // envelope and the TUI both read an unqualified success. Typed,
               // it can be counted.
               conflicts: mergeConflicts,
+              // M4: whether the patch LANDED, and why not when it did not.
+              // `integration` already says `retained` for both ways of not
+              // landing; this says which, with the revisions on both sides.
+              integrated: !notIntegrated && integration !== "retained",
+              ...(notIntegrated ? { notIntegrated } : {}),
+              ...(checkRuns.length ? { checkRuns } : {}),
               ...(keepBranch && worktree ? { branch: worktree.branch } : {}),
               ...(isolationNote ? { isolationNote } : {}),
               ...(provisioning ? { provisioning } : {}),

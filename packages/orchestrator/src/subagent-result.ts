@@ -154,6 +154,41 @@ export function toChildStatus(stopReason: string | undefined): ChildLifecycleSta
 }
 
 /** Build the typed summary from what the run observed. */
+// ─── The bounded contract a child is given, and what it returns (M4) ───
+
+/**
+ * One check the runtime ran for a child, with the revision it ran AT.
+ *
+ * A child returns EVIDENCE, never a verdict
+ * (`docs/program/m4-repair-and-delegation.md`). The distinction is the whole
+ * of M4's delegation section: "the tests pass" is a claim about a tree, and a
+ * claim with no tree attached is the one a lead cannot check. `where` says
+ * which tree — the child's own checkout, or the combined tree after its patch
+ * landed — and `revision` says which state of it.
+ */
+export interface ChildCheckRun {
+  readonly command: string;
+  readonly passed: boolean;
+  readonly where: "child" | "combined";
+  /** `treeRevision()` of the tree it ran in: `<short sha>` or `<short sha>+dirty`. */
+  readonly revision: string;
+}
+
+/**
+ * Why a child's patch was NOT integrated, when it was not.
+ *
+ * "A correct patch on a changed destination is not integrated" — the run says
+ * so, with the reason, and the user's edits stand. Absent means it landed.
+ */
+export interface NotIntegrated {
+  readonly reason: "destination_moved" | "checks_fail_on_combined_tree";
+  /** One sentence a person reads. Names the paths or the commands, never prose. */
+  readonly detail: string;
+  /** The revision the child started from, and the one it returned to. */
+  readonly startedFrom: string;
+  readonly returnedTo: string;
+}
+
 export function buildChildSummary(observed: {
   stopReason?: string;
   integration?: "merged" | "retained" | "shared";
