@@ -1440,3 +1440,37 @@ of the twelve tasks are live-ready; the two browser tasks are not on either side
 run happens without the founder's explicit words naming the task count and the arm order**;
 the README says so, and the first authorised run will also be the first live test of both
 adapters, because every flag and parser is `--help`-derived.
+
+### Addendum 16 — M4: a failure has a type, the controller repairs by class once, and a child's patch is integrated only against the tree it returns to
+
+`5e2d554`, `f232163`, `eb36218`; spec in [`program/m4-repair-and-delegation.md`](program/m4-repair-and-delegation.md).
+`repair.ts` classifies a failure from runtime facts alone — provider error shape, check exit
+and output, boundary result, criterion status, progress signatures — into `transport`,
+`check_failed`, `acceptance_mismatch`, `missing_dependency`, `denied`, `no_progress`;
+`missing_dependency` is read before `check_failed` because a runner that never ran did not
+fail, and the lane's own adversarial corpus made it re-anchor the shell shapes after a first
+draft read an assertion message as a missing runner (which would have silently stopped
+repairing real red checks). The arbiter classes each by the class of the failure so progress
+can never propose `complete`. Six authority keys at seven sites, **every one absent by
+default**, each site's inline logic kept as the `legacy()` rollback: `check_failed` buys one
+repair turn naming the failing command and its tail and re-verifies only the commands that
+went red; `acceptance` — M3's second branch, now built — one re-prompt naming the criterion's
+text and never its command (there is no field for one); `missing_dependency` buys nothing;
+`denied` records the boundary and offers no route around it; `transport` retries to its
+bound then abandons, never reaching for another provider; `no_progress` gets one nudge.
+Counts are read from the killed run's own `decision` rows on resume, with a floor the lane
+found by a test going red (one class records its counter after the increment, the others
+before). R4 on the real SIGKILL rig with three controls; R1–R3, R7–R9 green with each key on
+and off; the mutation (every failure classed `transport`) takes R1, R3 and R9 red. A `worker`
+call may name the criteria the child owns: it sees their text, its files and its budget, and
+cannot record evidence by construction (its registry is an allowlist), so a child that
+reports "done" leaves its criteria `unassessed`; integration reports `not integrated` for
+`destination_moved` (the merge validates the whole patch first, the user's bytes untouched)
+and `checks_fail_on_combined_tree` (green in the child's checkout, red here), both carrying
+the revisions; the lead editing a file the child does not own is not a conflict, because a
+false refusal throws a good build away. Supervisor rerun of the ten suites that matter:
+**233 / 0**, lifecycle 47 / 0. Lane's gates: unit 5,502 / 0, integration 376 / 0, spend
+fingerprint unmoved, zero model calls. Seven residual risks and five things deliberately not
+built are in the lane's report; the class driven end to end through a child process is
+`no_progress` (the only one a scripted model reaches), the other counters are pinned on the
+real loop in-process.
