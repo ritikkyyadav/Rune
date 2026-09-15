@@ -72,6 +72,14 @@ export interface ShadowDecisionRow {
   readonly actual: Transition;
   readonly agree: boolean;
   readonly applied: false;
+  /**
+   * The failure class this observation was about (M4), when the site had one.
+   *
+   * Lifted out of `inputs` onto the row so `rune audit` can group by it
+   * without knowing which key each site used, and so "a failure has a type" is
+   * legible in the ledger rather than buried in a bag of booleans.
+   */
+  readonly repairClass?: string;
   readonly supersededBy?: string;
   readonly overheadUs: number;
 }
@@ -154,6 +162,21 @@ const ENUM_INPUTS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
     ]),
   ],
   ["breachKind", new Set(["cost", "time"])],
+  // M4: the failure's TYPE, at every site that can fail. An enum word like
+  // every other string a row may carry — the classifier reads the provider's
+  // message and the check's output, and neither ever reaches a row.
+  [
+    "repairClass",
+    new Set([
+      "transport",
+      "check_failed",
+      "acceptance_mismatch",
+      "missing_dependency",
+      "denied",
+      "no_progress",
+    ]),
+  ],
+  ["repairResponse", new Set(["retry", "repair_turn", "report_only", "stop", "nudge"])],
 ]);
 
 export const OMITTED = "<omitted>";
@@ -407,6 +430,9 @@ export class ShadowArbiter implements ShadowObserver {
         actual: item.actual,
         agree,
         applied: false,
+        ...(typeof item.event.inputs.repairClass === "string"
+          ? { repairClass: item.event.inputs.repairClass }
+          : {}),
         ...(decision.supersededBy ? { supersededBy: decision.supersededBy } : {}),
         overheadUs,
       }),

@@ -111,7 +111,16 @@ export type GuardId =
   | "G9"
   | "R17"
   | "X2"
-  | "VERDICT";
+  | "VERDICT"
+  // ── The six repair classes (M4) ──
+  // One guard id per class in `repair.ts`, so the ladder's table stays a
+  // straight `guard → class` map and a row names the class it acted on.
+  | "REPAIR_TRANSPORT"
+  | "REPAIR_CHECK"
+  | "REPAIR_ACCEPTANCE"
+  | "REPAIR_DEPENDENCY"
+  | "REPAIR_DENIED"
+  | "REPAIR_PROGRESS";
 
 /** Guard → class, straight from §4.1. */
 export const GUARD_CLASS: Readonly<Record<GuardId, DecisionClass>> = {
@@ -138,6 +147,17 @@ export const GUARD_CLASS: Readonly<Record<GuardId, DecisionClass>> = {
   E10: 5,
   E11: 5,
   E12: 5,
+  // M4. A repair's class is the class of the FAILURE, not of the repair: a
+  // denied action is safety whatever the response is, a dead socket is
+  // environment, a red check and a failed criterion are the contract, and a
+  // rut is progress — which is why `REPAIR_PROGRESS` can never propose
+  // `complete`.
+  REPAIR_DENIED: 1,
+  REPAIR_TRANSPORT: 3,
+  REPAIR_DEPENDENCY: 3,
+  REPAIR_CHECK: 4,
+  REPAIR_ACCEPTANCE: 4,
+  REPAIR_PROGRESS: 5,
 };
 
 export const GUARD_IDS = Object.keys(GUARD_CLASS) as GuardId[];
@@ -214,7 +234,18 @@ export interface Decision {
  * exactly M2's behaviour and the rollback position for every branch M3
  * migrates (`docs/program/m3-first-migration.md`, "Migration mechanics").
  */
-export const AUTHORITY_KEYS = ["E4", "acceptance"] as const;
+export const AUTHORITY_KEYS = [
+  "E4",
+  // The six repair classes (M4). Every one absent by default; each is its own
+  // rollback switch, and the `legacy()` closure at its site is what stands
+  // when it is absent.
+  "transport",
+  "check_failed",
+  "acceptance",
+  "missing_dependency",
+  "denied",
+  "no_progress",
+] as const;
 export type AuthorityKey = (typeof AUTHORITY_KEYS)[number];
 
 /**
@@ -667,6 +698,121 @@ function propose(state: RunState | undefined, event: ShadowEvent): Proposal {
         transition: abandoned("no_progress"),
         reason: "no new result and no write for twice the stale-turn limit",
       };
+    // ── The six repair classes (M4) ──
+    //
+    // Each one bounded by the class table in
+    // `docs/program/m4-repair-and-delegation.md`: a limit the SITE passes in
+    // (it is the one that counts, durably, on the run's own rows) and one
+    // response. None of them invents a second route, and none of them reads a
+    // string.
+    case "REPAIR_TRANSPORT": {
+      const attempts = num(i, "attempts");
+      const max = num(i, "maxAttempts");
+      if (attempts === undefined || max === undefined) return missing("attempts", "maxAttempts");
+      if (attempts < max) {
+        return {
+          transition: "working",
+          reason: `transport failure ${attempts} of ${max} — waiting or backing off, then retrying`,
+        };
+      }
+      return {
+        transition: abandoned("environment"),
+        reason: `${attempts} transport failures in a row; the work is not what failed`,
+      };
+    }
+    case "REPAIR_CHECK": {
+      const failed = bool(i, "checkFailed");
+      const turns = num(i, "repairTurns");
+      const max = num(i, "maxRepairTurns");
+      if (failed === undefined || turns === undefined || max === undefined) {
+        return missing("checkFailed", "repairTurns", "maxRepairTurns");
+      }
+      if (!failed) return { transition: "working", reason: "the checks are green" };
+      if (turns < max) {
+        return {
+          transition: "repairing",
+          reason: `one repair turn for the failing check (${turns} of ${max} spent)`,
+        };
+      }
+      // The bound is spent. The finish path below decides, and the verdict
+      // there is what makes the run a named `partial` rather than a silent
+      // retry forever (M4 exit R7).
+      return {
+        transition: "verifying",
+        reason: `${turns} repair turns are spent; the finish decides with the gap named`,
+      };
+    }
+    case "REPAIR_ACCEPTANCE": {
+      const failed = bool(i, "failed");
+      const used = num(i, "repromptsUsed");
+      const max = num(i, "maxReprompts");
+      const turnsLeft = numOf(i, "turnsLeft", undefined);
+      if (failed === undefined || used === undefined || max === undefined) {
+        return missing("failed", "repromptsUsed", "maxReprompts");
+      }
+      if (!failed) return { transition: "working", reason: "no evaluator criterion failed" };
+      if (turnsLeft === undefined) return missing("turnsLeft");
+      if (used < max && turnsLeft > 0) {
+        return {
+          transition: "repairing",
+          reason: "one re-prompt naming the failed criterion's text and the tail of its output",
+        };
+      }
+      return {
+        transition: complete("partial"),
+        reason:
+          turnsLeft > 0
+            ? "the one acceptance re-prompt is spent; the finish is partial with the gap named"
+            : "no turn is left for a re-prompt; the finish is partial with the gap named",
+      };
+    }
+    case "REPAIR_DEPENDENCY": {
+      const missingRunner = bool(i, "missingRunner");
+      if (missingRunner === undefined) return missing("missingRunner");
+      if (!missingRunner) return { transition: "working", reason: "the runner is available" };
+      // No retry, and nothing installed. A runner that is not here is not a
+      // failure of the work, and the criterion it was bound to derives
+      // `needs_review` on its own (`contract.ts`) — the controller's job is
+      // only to refuse to spend a turn on it.
+      return {
+        transition: "verifying",
+        reason: "the runner is not available here; nothing is retried and nothing is installed",
+      };
+    }
+    case "REPAIR_DENIED": {
+      const halted = bool(i, "halted");
+      const denied = bool(i, "denied");
+      if (halted === undefined || denied === undefined) return missing("halted", "denied");
+      if (halted) {
+        return {
+          transition: "blocked(halt)",
+          reason: "a containment halt stopped this action; there is no route around a boundary",
+        };
+      }
+      if (denied) {
+        return {
+          transition: "blocked(ask)",
+          reason: "the action was refused at the boundary; no alternative route is attempted",
+        };
+      }
+      return { transition: "working", reason: "the boundary allowed this action" };
+    }
+    case "REPAIR_PROGRESS": {
+      const changed = bool(i, "evidenceChanged");
+      const nudges = num(i, "nudges");
+      const max = num(i, "maxNudges");
+      if (changed === undefined || nudges === undefined || max === undefined) {
+        return missing("evidenceChanged", "nudges", "maxNudges");
+      }
+      if (changed) return { transition: "working", reason: "the evidence moved; this is progress" };
+      if (nudges < max) {
+        return { transition: "working", reason: `one nudge (${nudges} of ${max} spent)` };
+      }
+      return {
+        transition: abandoned("no_progress"),
+        reason: "the nudge is spent and nothing moved; a re-read is not progress",
+      };
+    }
     default: {
       // A guard with no rule is an unknown, not a guess.
       const never: never = event.guard;

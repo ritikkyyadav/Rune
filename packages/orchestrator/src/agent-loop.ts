@@ -1784,6 +1784,10 @@ export class AgentLoop {
           consecutiveErrors: errors,
           maxConsecutiveErrors: this.config.maxConsecutiveErrors,
           planClosed,
+          // M4: what KIND of failure this was. A dead provider is a transport
+          // failure whatever the plan looked like, and the row says so.
+          repairClass: "transport",
+          repairResponse: "retry",
         },
         planClosed ? "complete(end_turn)" : "abandoned(environment)",
         () => state,
@@ -2707,7 +2711,12 @@ export class AgentLoop {
               this.state = "error";
               this.watch(
                 "E6",
-                { retryable: false, consecutiveErrors },
+                {
+                  retryable: false,
+                  consecutiveErrors,
+                  repairClass: "transport",
+                  repairResponse: "retry",
+                },
                 "abandoned(environment)",
                 () => shadowState(),
               );
@@ -3100,8 +3109,11 @@ export class AgentLoop {
           );
         }
         this.state = "done";
-        this.watch("E3", { halted: true, reportGranted: true }, "complete(report_only)", () =>
-          shadowState(),
+        this.watch(
+          "E3",
+          { halted: true, reportGranted: true, repairClass: "denied", repairResponse: "stop" },
+          "complete(report_only)",
+          () => shadowState(),
         );
         this.report("loop.auto_halt_reported", "warn", "autoHalt", "halted run reported and ended");
         yield* this.handoffEvents("halted");
@@ -5459,8 +5471,11 @@ export class AgentLoop {
         // separate ad-hoc checks, and the arbiter says the same thing once, as
         // a class. Only the latch is observed — never the reason, which is
         // broker prose.
-        this.watch("E3", { halted: true, reportGranted: false }, "blocked(halt)", () =>
-          shadowState("blocked"),
+        this.watch(
+          "E3",
+          { halted: true, reportGranted: false, repairClass: "denied", repairResponse: "stop" },
+          "blocked(halt)",
+          () => shadowState("blocked"),
         );
         this.report("loop.auto_halt", "error", "autoHalt", haltNotice);
         this.appendMessage(
