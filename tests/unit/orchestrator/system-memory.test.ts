@@ -193,3 +193,95 @@ describe("engine/system-memory — maybeReflect scheduling", () => {
     engine.close();
   });
 });
+
+// ─── The dream may not shrink the profile ───
+//
+// The failure this pins is real and dated: 2026-09-15T12:26:08Z, a daily dream
+// on a free model returned 76 output tokens and `saveSystemMemory` replaced a
+// 3,976-byte evergreen profile with 326 bytes ending mid-word. Every call here
+// drives the scripted in-process gateway above — no provider is reached.
+
+/** Roughly the size of the profile that was lost. */
+const REAL_PROFILE = Array.from(
+  { length: 60 },
+  (_, i) => `- a real sentence about how the user works, number ${i}`,
+).join("\n");
+
+describe("engine/system-memory — a dream cannot shrink the profile", () => {
+  it("refuses a truncated completion and leaves the profile byte-identical", async () => {
+    saveSystemMemory(REAL_PROFILE, { updatedAt: "2026-09-01T00:00:00Z" });
+    const engine = makeEngine({ maxTokens: 1500 });
+    seedSession(engine, "Help me refactor my Rust CLI parser");
+    (engine as unknown as { gateway: unknown }).gateway = fakeGateway('Uses "well" as a');
+
+    const res = await engine.reflectSystemMemory({ trigger: "auto" });
+    expect(res.updated).toBe(false);
+    expect(res.reason).toMatch(/refused/i);
+    expect(res.refused?.discardedBytes).toBe(16);
+    expect(res.refused?.previousBytes).toBe(Buffer.byteLength(REAL_PROFILE));
+    expect(loadSystemMemory().content).toBe(REAL_PROFILE);
+    expect(loadSystemMemory().meta.updatedAt).toBe("2026-09-01T00:00:00Z");
+    engine.close();
+  });
+
+  it("does not fold the activity away, so a healthier model sees it again", async () => {
+    saveSystemMemory(REAL_PROFILE, {});
+    const engine = makeEngine({ maxTokens: 1500 });
+    seedSession(engine, "Help me refactor my Rust CLI parser");
+    (engine as unknown as { gateway: unknown }).gateway = fakeGateway("tiny");
+    await engine.reflectSystemMemory({ trigger: "auto" });
+    expect(loadSystemMemory().meta.foldedSeqBySession).toBeUndefined();
+
+    // Second dream, a healthy completion: it goes through and now folds.
+    const good = REAL_PROFILE + "\n- and it learned one more thing";
+    (engine as unknown as { gateway: unknown }).gateway = fakeGateway(good);
+    const res = await engine.reflectSystemMemory({ trigger: "auto" });
+    expect(res.updated).toBe(true);
+    expect(loadSystemMemory().content).toContain("one more thing");
+    expect(Object.keys(loadSystemMemory().meta.foldedSeqBySession ?? {}).length).toBeGreaterThan(0);
+    engine.close();
+  });
+
+  it("keeps the profile it replaces, and `restore` puts it back", async () => {
+    saveSystemMemory(REAL_PROFILE, {});
+    const engine = makeEngine({ maxTokens: 1500 });
+    seedSession(engine, "ship a feature");
+    const rewritten = REAL_PROFILE.replace("number 0", "number zero");
+    (engine as unknown as { gateway: unknown }).gateway = fakeGateway(rewritten);
+
+    expect((await engine.reflectSystemMemory({ trigger: "auto" })).updated).toBe(true);
+    expect(loadSystemMemory().content).toContain("number zero");
+
+    const kept = engine.systemMemoryBackups();
+    expect(kept).toHaveLength(1);
+    const r = engine.restoreSystemMemory();
+    expect(r.restored).toBe(true);
+    expect(loadSystemMemory().content).toBe(REAL_PROFILE);
+    engine.close();
+  });
+
+  it("surfaces the refusal once, and `/memory` can still look it up after", async () => {
+    saveSystemMemory(REAL_PROFILE, {});
+    const engine = makeEngine({ maxTokens: 1500 });
+    seedSession(engine, "do a thing");
+    (engine as unknown as { gateway: unknown }).gateway = fakeGateway("tiny");
+    await engine.reflectSystemMemory({ trigger: "auto" });
+
+    const first = engine.takeSystemMemoryRefusalNotice();
+    expect(first?.reason).toMatch(/floor/);
+    expect(engine.takeSystemMemoryRefusalNotice()).toBeUndefined(); // once
+    // …but the panel's own view of it survives being told.
+    expect(engine.getSystemMemory().meta.lastRefusal?.reason).toMatch(/floor/);
+    engine.close();
+  });
+
+  it("the first profile a dream ever writes is not refused for being short", async () => {
+    const engine = makeEngine({ maxTokens: 1500 });
+    seedSession(engine, "first run");
+    (engine as unknown as { gateway: unknown }).gateway = fakeGateway("- builds CLIs in Rust");
+    const res = await engine.reflectSystemMemory({ trigger: "manual" });
+    expect(res.updated).toBe(true);
+    expect(loadSystemMemory().content).toContain("builds CLIs in Rust");
+    engine.close();
+  });
+});

@@ -189,6 +189,8 @@ const { values, positionals } = parseArgs({
     "max-parallel": { type: "string" },
     mock: { type: "boolean", default: false },
     "stop-after": { type: "string" },
+    // `rune memory restore --from <stamp|path>`: pick a kept copy of the profile.
+    from: { type: "string" },
     // `rune login`: pick an auth method / migrate legacy keys.
     method: { type: "string" },
     migrate: { type: "boolean", default: false },
@@ -310,6 +312,7 @@ if (values.help) {
         `    rune cost [session|last]      Run economics: completions split work vs governance, fresh tokens per call, cache ratio, list estimate\n` +
         `    rune evolve [sub]             Self-evolution — status | scorecard [--by model|workspace] [--days N] | lessons | tune | gardener [--run]\n` +
         `    rune memory [sub]             What Rune remembers about you — show | forget <id> | pin <id> | clear\n` +
+        `                                  restore [--from <stamp>] puts a kept copy of your profile back; backups lists them\n` +
         `    rune notebook [sub]           Learned tactics notebook — list | show <id> | rm <id> | export\n` +
         `    rune skill [sub]              Your own skills — add <path> [--user] | list | remove <name>\n` +
         `    rune telemetry [sub]          Opt-in diagnostics — status | on | off | preview | reset (off by default)\n\n` +
@@ -457,6 +460,31 @@ if (command === "memory") {
     out("  memory cleared");
     process.exit(0);
   }
+  // ── restore the narrative profile from a kept copy ──
+  // Every write to ~/.rune/system-memory.md keeps the file it replaces. This
+  // is the way back when a dream, an edit or a clear took the wrong thing.
+  if (sub === "restore" || sub === "backups") {
+    const { listSystemMemoryBackups, restoreSystemMemory } = await import("@rune/shared");
+    const backups = listSystemMemoryBackups();
+    if (sub === "backups" || arg === "list") {
+      out("");
+      if (!backups.length) out("  No kept copies of the profile yet.");
+      for (const b of backups) out(`  ${b.stamp}  ${b.bytes} bytes  ${b.path}`);
+      out("");
+      out("  rune memory restore [--from <stamp|path>]");
+      out("");
+      process.exit(0);
+    }
+    const fromFlag = values.from as string | undefined;
+    const from = fromFlag ?? (arg && arg !== "restore" ? arg : undefined);
+    const r = restoreSystemMemory(from);
+    out(
+      r.restored
+        ? `  profile restored — ${r.bytes} bytes from ${r.from}`
+        : `  nothing restored — ${r.reason}`,
+    );
+    process.exit(r.restored ? 0 : 1);
+  }
 
   const promoted = store.promoted(workspace);
   const candidates = store.candidates();
@@ -501,6 +529,7 @@ if (command === "memory") {
   }
   out("");
   out("  rune memory show | forget <id> | pin <id> | unpin <id> | clear");
+  out("  rune memory restore [--from <stamp|path>] | rune memory backups");
   out("");
   process.exit(0);
 }
@@ -2159,9 +2188,21 @@ async function main() {
     void engine
       .maybeReflectSystemMemory()
       .then((r) => {
-        if (r.updated && !busy) {
+        if (busy) return;
+        if (r.updated) {
           process.stdout.write(
             `\n  ${green("✦")} ${faint(`system memory refreshed (~${r.tokensAfter ?? 0} tokens) · /memory to view`)}\n`,
+          );
+          showPrompt();
+          return;
+        }
+        // A refused refresh is the one "nothing happened" worth saying out loud:
+        // a model tried to replace the user's profile with a stub.
+        const refusal = engine.takeSystemMemoryRefusalNotice();
+        if (refusal) {
+          process.stdout.write(
+            `\n  ${warn("!")} ${text("System memory refresh refused")} ${faint(`· ${refusal.reason}`)}\n` +
+              `  ${dim(`your ${refusal.previousBytes}-byte profile is unchanged · /memory restore lists the kept copies`)}\n`,
           );
           showPrompt();
         }
@@ -2975,6 +3016,34 @@ async function main() {
           } catch {
             process.stdout.write(`  ${dim("memory unchanged")}\n\n`);
           }
+          showPrompt();
+          return;
+        }
+
+        // ── restore a kept copy of the profile ──
+        if (sub === "restore") {
+          const backups = engine.systemMemoryBackups();
+          if (!backups.length) {
+            process.stdout.write(`  ${dim("No kept copies of the profile yet.")}\n\n`);
+            showPrompt();
+            return;
+          }
+          if (arg.toLowerCase() === "list") {
+            process.stdout.write("\n");
+            for (const b of backups)
+              process.stdout.write(`  ${faint(b.stamp)}  ${dim(`${b.bytes} bytes`)}\n`);
+            process.stdout.write(
+              `\n  ${dim("restore the newest: /memory restore · a specific one: /memory restore <stamp>")}\n\n`,
+            );
+            showPrompt();
+            return;
+          }
+          const r = engine.restoreSystemMemory(arg || undefined);
+          process.stdout.write(
+            r.restored
+              ? `  ${green("✓")} ${text("profile restored")} ${faint(`· ${r.bytes} bytes from ${r.from}`)}\n\n`
+              : `  ${dim(`nothing restored — ${r.reason}`)}\n\n`,
+          );
           showPrompt();
           return;
         }

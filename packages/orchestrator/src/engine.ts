@@ -87,6 +87,9 @@ import {
   loadSystemMemoryMeta,
   saveSystemMemory,
   saveSystemMemoryMeta,
+  saveRefreshedSystemMemory,
+  restoreSystemMemory,
+  listSystemMemoryBackups,
   clearSystemMemory as clearSystemMemoryStore,
   effectiveSchedule,
   describeSchedule,
@@ -114,6 +117,8 @@ import type {
   SessionStatus,
   SessionInfoInternal,
   SystemMemoryMeta,
+  SystemMemoryRefusal,
+  SystemMemoryBackup,
 } from "@rune/shared";
 import { buildGateway, providerStatus } from "./provider-registry";
 import type { EnterpriseRouteConfig } from "./provider-registry";
@@ -4385,6 +4390,35 @@ export class Engine {
     clearSystemMemoryStore();
   }
 
+  /** The kept copies of the profile, newest first — what `/memory restore` can put back. */
+  systemMemoryBackups(): SystemMemoryBackup[] {
+    return listSystemMemoryBackups();
+  }
+
+  /** `rune memory restore [--from <bak>]` / `/memory restore`. */
+  restoreSystemMemory(from?: string): {
+    restored: boolean;
+    from?: string;
+    bytes?: number;
+    reason?: string;
+  } {
+    return restoreSystemMemory(from);
+  }
+
+  /**
+   * A refusal the user has not been told about yet, returned ONCE: reading it
+   * marks it notified in the sidecar. The refusal itself stays there for
+   * `/memory` to keep showing — being told and being able to look are different
+   * things, and a profile that was nearly lost is worth both.
+   */
+  takeSystemMemoryRefusalNotice(): SystemMemoryRefusal | undefined {
+    const meta = loadSystemMemoryMeta();
+    const r = meta.lastRefusal;
+    if (!r || r.notified) return undefined;
+    saveSystemMemoryMeta({ lastRefusal: { ...r, notified: true } });
+    return r;
+  }
+
   /** Ordered provider/model candidates for the dream, per the configured preference. */
   private memoryModelCandidates(
     modelPref: string,
@@ -4475,6 +4509,8 @@ export class Engine {
     tokensBefore: number;
     tokensAfter: number;
     content?: string;
+    /** Set when the shrink floor threw the refresh away (the profile is untouched). */
+    refused?: SystemMemoryRefusal;
   }> {
     const cfg = this.memoryConfig();
     const { content: existing, meta } = loadSystemMemory();
@@ -4524,12 +4560,28 @@ export class Engine {
       const clamped = clampToBudget(out, cfg.maxTokens);
       const tokensAfter = estimateMemoryTokens(clamped);
       const now = new Date().toISOString();
-      saveSystemMemory(clamped, {
-        updatedAt: now,
-        lastReflectedAt: now,
-        tokens: tokensAfter,
-        foldedSeqBySession: { ...(meta.foldedSeqBySession ?? {}), ...digest.foldedSeqBySession },
-      });
+      // The floor runs here, not in the caller: every route to the dream —
+      // manual, auto, the engine host, the SDK — goes through this one save.
+      // A short completion is thrown away and the profile on disk is untouched;
+      // the activity it read is NOT marked folded, so a healthier model gets
+      // the same material next time.
+      const write = saveRefreshedSystemMemory(
+        clamped,
+        {
+          updatedAt: now,
+          lastReflectedAt: now,
+          tokens: tokensAfter,
+          foldedSeqBySession: { ...(meta.foldedSeqBySession ?? {}), ...digest.foldedSeqBySession },
+        },
+        { lastReflectedAt: now },
+      );
+      if (!write.saved && write.refusal) {
+        return {
+          ...unchanged,
+          reason: `the refresh was refused — ${write.refusal.reason}. The profile on disk is unchanged (/memory restore lists the kept copies)`,
+          refused: write.refusal,
+        };
+      }
       return { updated: true, tokensBefore, tokensAfter, content: clamped };
     } finally {
       this.memoryReflecting = false;
@@ -4546,6 +4598,7 @@ export class Engine {
     reason?: string;
     tokensBefore?: number;
     tokensAfter?: number;
+    refused?: SystemMemoryRefusal;
   }> {
     const cfg = this.memoryConfig();
     if (!cfg.enabled) return { updated: false, reason: "memory disabled" };

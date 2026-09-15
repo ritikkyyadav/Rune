@@ -1049,6 +1049,15 @@ export class Tui {
           this.print(
             `  ${ok(glyph("verified"))} ${muted(`system memory refreshed (~${r.tokensAfter ?? 0} tokens) | /memory to view`)}`,
           );
+          return;
+        }
+        // A refused refresh is the one "nothing happened" worth saying out
+        // loud: a model tried to replace the user's profile with a stub.
+        const refusal = engine.takeSystemMemoryRefusalNotice();
+        if (refusal) {
+          this.print(
+            `  ${warn(glyph("failure"))} ${muted(`system memory refresh refused -- ${refusal.reason}`)}\n  ${faint(`your ${refusal.previousBytes}-byte profile is unchanged | /memory restore lists the kept copies`)}`,
+          );
         }
       })
       .catch(() => {});

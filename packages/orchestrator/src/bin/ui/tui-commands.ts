@@ -927,8 +927,39 @@ export const COMMAND_METHODS = {
           return true;
         }
 
+        // -- restore: put a kept copy of the profile back --
+        // Every write to the profile keeps the file it replaces. This is the
+        // way back from a bad dream, a bad edit, or a `/memory clear`.
+        if (sub === "restore") {
+          const backups = engine.systemMemoryBackups();
+          if (!backups.length) {
+            this.print(`  ${muted("No kept copies of the profile yet.")}`);
+            return true;
+          }
+          if (subArg.toLowerCase() === "list") {
+            this.print(
+              [
+                `  ${bold(text("Kept copies of the profile"))}`,
+                ...backups.map((b) => `  ${faint(b.stamp)} ${muted(`${b.bytes} bytes`)}`),
+                `  ${faint("restore the newest: /memory restore | a specific one: /memory restore <stamp>")}`,
+              ].join("\n"),
+            );
+            return true;
+          }
+          const r = engine.restoreSystemMemory(subArg || undefined);
+          this.print(
+            r.restored
+              ? `  ${ok(glyph("verified"))} ${muted(`profile restored | ${r.bytes} bytes from`)} ${faint(r.from ?? "")}`
+              : `  ${danger(glyph("failure"))} ${muted(`nothing restored -- ${r.reason}`)}`,
+          );
+          return true;
+        }
+
         // -- clear --
-        if (sub === "clear" || sub === "reset" || sub === "forget") {
+        // `forget` with an id belongs to the store (below); bare, it is the
+        // old alias for clearing the whole profile. Without the `!subArg`
+        // guard `/memory forget <id>` wiped everything.
+        if (sub === "clear" || sub === "reset" || (sub === "forget" && !subArg)) {
           engine.clearSystemMemory();
           this.print(`  ${ok(glyph("verified"))} ${muted("system memory cleared")}`);
           return true;
@@ -985,6 +1016,21 @@ export const COMMAND_METHODS = {
           `  ${bold(text("System memory"))}${mem.enabled ? "" : ` ${faint("(disabled)")}`}`,
           `  ${faint(`cadence: ${mem.scheduleLabel} | ~${fmtTok(mem.tokens)}/${fmtTok(mem.maxTokens)} tokens | updated ${last} | dreamed ${dreamt}`)}`,
         ];
+        // A refresh the floor turned away stays on the panel until a later one
+        // succeeds: the user should be able to come back and look at the day a
+        // model nearly replaced their profile with a stub.
+        const refusal = mem.meta.lastRefusal;
+        if (refusal) {
+          head.push(
+            `  ${warn(glyph("failure"))} ${muted(`a refresh was refused ${this.relTime(refusal.at)} -- ${refusal.reason}`)}`,
+          );
+        }
+        const kept = engine.systemMemoryBackups();
+        if (kept.length) {
+          head.push(
+            `  ${faint(`${kept.length} kept cop${kept.length === 1 ? "y" : "ies"} | restore: /memory restore [stamp] | list: /memory restore list`)}`,
+          );
+        }
         // ── what the run learned on its own ──
         // Shown with ids and provenance, because the only way to trust a
         // learned memory is to be able to see where it came from and delete it.

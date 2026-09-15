@@ -12,8 +12,8 @@
 // butter-smooth for small context windows. It is refreshed either manually
 // (`/memory update`) or automatically on a user-chosen cadence (the "dream").
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
-import { dirname, join } from "path";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync } from "fs";
+import { basename, dirname, join } from "path";
 import { getRuneHome } from "./paths.js";
 
 // ─── Types ───
@@ -27,6 +27,24 @@ export interface ParsedSchedule {
   days?: number;
 }
 
+/**
+ * A refreshed profile the floor turned away, kept in the meta sidecar so the
+ * product can say what happened rather than leaving the user to notice that
+ * their profile got smaller.
+ */
+export interface SystemMemoryRefusal {
+  /** ISO timestamp of the refusal. */
+  at: string;
+  /** Why it was refused, in the words shown to the user. */
+  reason: string;
+  /** Bytes of the completion that was thrown away. */
+  discardedBytes: number;
+  /** Bytes of the profile that was kept. */
+  previousBytes: number;
+  /** Set once the refusal has been shown in the transcript. */
+  notified?: boolean;
+}
+
 export interface SystemMemoryMeta {
   /** ISO timestamp the content last changed (dream, manual add/edit). */
   updatedAt?: string;
@@ -38,6 +56,8 @@ export interface SystemMemoryMeta {
   tokens?: number;
   /** Per-session high-water seq already folded into memory (avoids re-reading). */
   foldedSeqBySession?: Record<string, number>;
+  /** The most recent refresh the shrink floor refused (see saveRefreshedSystemMemory). */
+  lastRefusal?: SystemMemoryRefusal;
 }
 
 export interface SystemMemory {
@@ -123,6 +143,18 @@ function sanitizeMeta(raw: Record<string, unknown>): SystemMemoryMeta {
   if (typeof raw.lastReflectedAt === "string") m.lastReflectedAt = raw.lastReflectedAt;
   if (typeof raw.schedule === "string") m.schedule = raw.schedule;
   if (typeof raw.tokens === "number") m.tokens = raw.tokens;
+  if (raw.lastRefusal && typeof raw.lastRefusal === "object") {
+    const r = raw.lastRefusal as Record<string, unknown>;
+    if (typeof r.at === "string" && typeof r.reason === "string") {
+      m.lastRefusal = {
+        at: r.at,
+        reason: r.reason,
+        discardedBytes: typeof r.discardedBytes === "number" ? r.discardedBytes : 0,
+        previousBytes: typeof r.previousBytes === "number" ? r.previousBytes : 0,
+        ...(r.notified === true ? { notified: true } : {}),
+      };
+    }
+  }
   if (raw.foldedSeqBySession && typeof raw.foldedSeqBySession === "object") {
     const folded: Record<string, number> = {};
     for (const [k, v] of Object.entries(raw.foldedSeqBySession as Record<string, unknown>)) {
@@ -138,9 +170,138 @@ function ensureDir(filePath: string): void {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 }
 
+// ─── Backups and the shrink floor ───
+//
+// The profile is the one file in Rune that a single model completion could
+// REPLACE wholesale. On 2026-09-15 a daily dream returned 76 tokens and the
+// founder's 3,976-byte evergreen profile became 326 bytes ending mid-word.
+// There was no diff, no backup and no floor. Two rules close that:
+//
+//   1. Every write keeps the file it is about to replace, newest five.
+//   2. A REFRESHED profile (the dream, which is a machine replacing the whole
+//      file unasked) has to be plausibly the same profile: not less than half
+//      of what it replaces, and not a stub where a real profile stood.
+//
+// A person shortening their own profile by hand is not covered by rule 2 —
+// they meant it, and rule 1 keeps the old copy for them anyway.
+
+/** How many `.bak-*` copies of the profile are kept. */
+export const MAX_SYSTEM_MEMORY_BACKUPS = 5;
+/** A refresh may not fall below this fraction of the profile it replaces. */
+export const PROFILE_SHRINK_FLOOR_RATIO = 0.5;
+/** Below this many bytes a refresh is a stub, when the profile it replaces was substantial. */
+export const PROFILE_MIN_BYTES = 400;
+/** A previous profile at least this large is "substantial" for PROFILE_MIN_BYTES. */
+export const PROFILE_SUBSTANTIAL_BYTES = 800;
+
+export interface SystemMemoryBackup {
+  path: string;
+  /** The timestamp encoded in the filename (filesystem-safe ISO 8601). */
+  stamp: string;
+  bytes: number;
+}
+
+/** Filenames carry a colon-free ISO 8601 stamp so they sort lexicographically everywhere. */
+function backupStamp(now: Date): string {
+  return now.toISOString().replace(/:/g, "-");
+}
+
+const BAK_SUFFIX = ".bak-";
+
+/** Every kept copy of the profile, newest first. Never throws. */
+export function listSystemMemoryBackups(): SystemMemoryBackup[] {
+  try {
+    const p = getSystemMemoryPath();
+    const dir = dirname(p);
+    const prefix = basename(p) + BAK_SUFFIX;
+    if (!existsSync(dir)) return [];
+    const out: SystemMemoryBackup[] = [];
+    for (const name of readdirSync(dir)) {
+      if (!name.startsWith(prefix)) continue;
+      const full = join(dir, name);
+      let bytes = 0;
+      try {
+        bytes = Buffer.byteLength(readFileSync(full, "utf-8"));
+      } catch {
+        continue;
+      }
+      out.push({ path: full, stamp: name.slice(prefix.length), bytes });
+    }
+    // The stamp is fixed-width ISO, so a string sort IS a time sort.
+    return out.sort((a, b) => (a.stamp < b.stamp ? 1 : a.stamp > b.stamp ? -1 : 0));
+  } catch {
+    return [];
+  }
+}
+
+/** Drop all but the newest `keep` backups. Returns the paths removed. Never throws. */
+export function pruneSystemMemoryBackups(keep = MAX_SYSTEM_MEMORY_BACKUPS): string[] {
+  const removed: string[] = [];
+  for (const b of listSystemMemoryBackups().slice(Math.max(0, keep))) {
+    try {
+      unlinkSync(b.path);
+      removed.push(b.path);
+    } catch {
+      // ignore — a backup we cannot remove is not worth failing a save over
+    }
+  }
+  return removed;
+}
+
+/**
+ * Copy the profile as it stands to `system-memory.md.bak-<stamp>` and prune to
+ * the newest MAX_SYSTEM_MEMORY_BACKUPS. Returns the backup path, or undefined
+ * when there was nothing to keep (no file, or an empty one). Never throws.
+ */
+export function backupSystemMemory(now: Date = new Date()): string | undefined {
+  try {
+    const p = getSystemMemoryPath();
+    if (!existsSync(p)) return undefined;
+    const current = readFileSync(p, "utf-8");
+    if (!current.trim()) return undefined;
+    let dest = p + BAK_SUFFIX + backupStamp(now);
+    // Two saves inside the same millisecond must not silently become one.
+    if (existsSync(dest)) {
+      let n = 2;
+      while (existsSync(`${dest}.${n}`) && n < 100) n++;
+      dest = `${dest}.${n}`;
+    }
+    ensureDir(dest);
+    writeFileSync(dest, current);
+    pruneSystemMemoryBackups();
+    return dest;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The floor, as a sentence or nothing. `previous` is the profile on disk,
+ * `next` the refreshed one. Bytes, not tokens: the failure this guards was
+ * measured in bytes and a byte is a thing the user can check.
+ */
+export function profileShrinkReason(previous: string, next: string): string | undefined {
+  const prevBytes = Buffer.byteLength(previous.trim());
+  const nextBytes = Buffer.byteLength(next.trim());
+  if (prevBytes === 0) return undefined;
+  if (nextBytes === 0) return `the refresh was empty and the profile on disk is ${prevBytes} bytes`;
+  // The absolute floor is asked first because it is the more specific thing to
+  // say about the shape that actually happened — a stub where a real profile
+  // stood. (For any previous over 800 bytes the half-rule below would also
+  // refuse it; this one names the reason a reader recognises.)
+  if (prevBytes > PROFILE_SUBSTANTIAL_BYTES && nextBytes < PROFILE_MIN_BYTES) {
+    return `the refresh is ${nextBytes} bytes, under the ${PROFILE_MIN_BYTES}-byte floor for a profile that was ${prevBytes} bytes`;
+  }
+  if (nextBytes < prevBytes * PROFILE_SHRINK_FLOOR_RATIO) {
+    return `the refresh is ${nextBytes} bytes against ${prevBytes} on disk — less than half the profile it replaces`;
+  }
+  return undefined;
+}
+
 /**
  * Persist the memory content (md) and merge a meta patch (json). Never throws —
  * a write failure must not crash the CLI (the in-memory state already applied).
+ * Keeps the file it replaces (see backupSystemMemory).
  * Returns the merged meta that was written.
  */
 export function saveSystemMemory(
@@ -150,12 +311,100 @@ export function saveSystemMemory(
   const text = content.trim();
   try {
     const p = getSystemMemoryPath();
+    backupSystemMemory();
     ensureDir(p);
     writeFileSync(p, text ? text + "\n" : "");
   } catch {
     // ignore — persistence failed but the caller's in-memory state still applied
   }
   return saveSystemMemoryMeta(metaPatch ?? {});
+}
+
+/**
+ * The dream's save path: the same write, with the floor in front of it.
+ *
+ * On a refusal nothing on disk changes except the meta sidecar, which records
+ * what was thrown away so `/memory` and the transcript can say so. `refusedMeta`
+ * is what the caller still wants recorded when the save does not happen —
+ * typically `lastReflectedAt` alone, so a rotting model does not re-run the
+ * same dream on every launch while the activity it read stays unfolded.
+ */
+export function saveRefreshedSystemMemory(
+  content: string,
+  metaPatch: Partial<SystemMemoryMeta>,
+  refusedMeta?: Partial<SystemMemoryMeta>,
+): { saved: boolean; refusal?: SystemMemoryRefusal; meta: SystemMemoryMeta } {
+  const { content: previous } = loadSystemMemory();
+  const reason = profileShrinkReason(previous, content);
+  if (reason) {
+    const refusal: SystemMemoryRefusal = {
+      at: new Date().toISOString(),
+      reason,
+      discardedBytes: Buffer.byteLength(content.trim()),
+      previousBytes: Buffer.byteLength(previous.trim()),
+    };
+    const meta = saveSystemMemoryMeta({ ...(refusedMeta ?? {}), lastRefusal: refusal });
+    return { saved: false, refusal, meta };
+  }
+  return { saved: true, meta: saveSystemMemory(content, metaPatch) };
+}
+
+/**
+ * Put a kept copy back. `from` names a specific backup (full path, basename or
+ * stamp); without it the newest one wins.
+ *
+ * A restore deliberately does NOT take a backup of what it replaces. If it did,
+ * the profile the user is undoing would become the newest backup and a second
+ * `restore` would hand it straight back — an undo that alternates is not an
+ * undo. The backup being restored from stays on disk, so restoring twice is the
+ * same as restoring once, and every other kept copy is still there to pick by
+ * name.
+ */
+export function restoreSystemMemory(from?: string): {
+  restored: boolean;
+  from?: string;
+  bytes?: number;
+  reason?: string;
+} {
+  const backups = listSystemMemoryBackups();
+  let chosen: SystemMemoryBackup | undefined;
+  if (from) {
+    chosen =
+      backups.find((b) => b.path === from) ??
+      backups.find((b) => basename(b.path) === from) ??
+      backups.find((b) => b.stamp === from);
+    if (!chosen) return { restored: false, reason: `no backup named ${from}` };
+  } else {
+    chosen = backups[0];
+    if (!chosen) return { restored: false, reason: "no backup to restore" };
+  }
+  let text: string;
+  try {
+    text = readFileSync(chosen.path, "utf-8");
+  } catch {
+    return { restored: false, reason: `could not read ${chosen.path}` };
+  }
+  const body = text.trim();
+  try {
+    const p = getSystemMemoryPath();
+    ensureDir(p);
+    writeFileSync(p, body ? body + "\n" : "");
+  } catch {
+    return { restored: false, reason: `could not write ${getSystemMemoryPath()}` };
+  }
+  // The damage is undone, so the refusal that recorded it is no longer news.
+  const merged = { ...loadSystemMemoryMeta() };
+  delete merged.lastRefusal;
+  merged.updatedAt = new Date().toISOString();
+  merged.tokens = estimateMemoryTokens(body);
+  try {
+    const mp = getSystemMemoryMetaPath();
+    ensureDir(mp);
+    writeFileSync(mp, JSON.stringify(merged, null, 2) + "\n");
+  } catch {
+    // ignore — the profile itself is back, which is what was asked for
+  }
+  return { restored: true, from: chosen.path, bytes: Buffer.byteLength(body) };
 }
 
 /** Merge a patch into the meta sidecar (leaves the md untouched). Never throws. */
@@ -179,6 +428,9 @@ export function clearSystemMemory(): void {
   const schedule = loadSystemMemoryMeta().schedule;
   try {
     const p = getSystemMemoryPath();
+    // A wipe is a write like any other: the copy is what makes `/memory clear`
+    // a decision the user can take back.
+    backupSystemMemory();
     ensureDir(p);
     writeFileSync(p, "");
   } catch {
