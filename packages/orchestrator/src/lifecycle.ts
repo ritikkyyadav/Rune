@@ -604,11 +604,17 @@ export function inheritedBudget(
  * survives exactly the kill this rule exists for, while a projection is only
  * as fresh as its last emission.
  *
- * Scoped to the LAST run in the log: rows before the most recent
- * `session_started` belong to earlier runs, which either finished or already
- * handed their count forward. Only `working` is counted — a `verifying` or an
- * `abandoned(...)` decision ended the retrying, and counting it would spend an
- * allowance the run never used.
+ * Cleared on `session_ended`, not on `session_started` — the same correction
+ * `inheritedRepairTurns` carries. A `session_started` is the marker a RESTART
+ * writes, so clearing there handed the whole allowance back at every crash:
+ * exactly the defect this counter exists to prevent, in the counter written to
+ * prevent it. A run that reached its `finally` finished and handed nothing
+ * forward; a SIGKILL runs no `finally` at all, which is the pair
+ * `previousRunWasInterrupted` reads.
+ *
+ * Only `working` is counted — a `verifying` or an `abandoned(...)` decision
+ * ended the retrying, and counting it would spend an allowance the run never
+ * used.
  *
  * Called under the same `previousRunWasInterrupted` gate as `inheritedBudget`.
  */
@@ -617,7 +623,7 @@ export function inheritedEmptyCompletions(
 ): number {
   let seen = 0;
   for (const { event } of events) {
-    if (event.type === "checkpoint" && event.payload?.summary === "session_started") {
+    if (event.type === "checkpoint" && event.payload?.summary === "session_ended") {
       seen = 0;
       continue;
     }

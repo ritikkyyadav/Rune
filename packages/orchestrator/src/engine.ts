@@ -85,6 +85,7 @@ import {
   getPreset,
   loadSystemMemory,
   loadSystemMemoryMeta,
+  loadConfig,
   saveSystemMemory,
   saveSystemMemoryMeta,
   saveRefreshedSystemMemory,
@@ -120,6 +121,7 @@ import type {
   SystemMemoryRefusal,
   SystemMemoryBackup,
 } from "@rune/shared";
+import { DEFAULT_UI_LAYOUT, parseUiLayout } from "./bin/ui/layout";
 import { buildGateway, providerStatus } from "./provider-registry";
 import type { EnterpriseRouteConfig } from "./provider-registry";
 import type { ProviderStatusRow, BuildGatewayOpts } from "./provider-registry";
@@ -4871,6 +4873,15 @@ export class Engine {
       case "controller_authority": {
         const owned = [...parseAuthority(this.config.controller?.authority)];
         return owned.length > 0 ? owned.join(",") : "none";
+      }
+      case "layout": {
+        // The CONFIGURED value, not the one this process is drawing: `layout`
+        // takes effect at the next launch, so after a `/config layout split`
+        // the live `uiLayout()` still says `single` and would report the value
+        // being replaced. Read from the file for the same reason the writer
+        // writes to it. Lane D's prescribed hunk was `this.config.ui?.layout`,
+        // which does not compile — `ui` is on RuneConfig, not EngineConfig.
+        return parseUiLayout(loadConfig(this.config.workspaceRoot).ui?.layout) ?? DEFAULT_UI_LAYOUT;
       }
       case "sandbox_required":
         return String(this.config.sandboxRequireOs === true);

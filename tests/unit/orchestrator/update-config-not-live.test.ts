@@ -24,11 +24,13 @@
  */
 
 import { describe, test, expect, beforeEach, afterAll } from "bun:test";
-import { mkdtempSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { loadConfig } from "../../../packages/shared/src/index";
+import { Engine } from "../../../packages/orchestrator/src/engine";
+import { runSettingsCommand } from "../../../packages/orchestrator/src/settings-command";
 import { CONFIG_SETTINGS } from "../../../packages/orchestrator/src/config-settings";
 import { createUpdateConfigTool } from "../../../packages/orchestrator/src/update-config-tool";
 import {
@@ -65,6 +67,27 @@ function switchThatRefusesLayout() {
     },
   };
 }
+
+/** A no-provider Engine over the scratch home — nothing here spends or dials out. */
+const engineConfig = () => ({
+  model: "gemini-2.5-flash",
+  provider: "google" as const,
+  workspaceRoot: home,
+  dbPath: join(home, "rune.db"),
+  toolsBinaryPath: "rune-tools",
+  yoloMode: false,
+  enableCheckpoints: false,
+  enableSecurity: false,
+  enableRateLimiting: false,
+  enableHooks: false,
+  enableMcp: false,
+  enableSkills: false,
+  enableVerification: false,
+});
+
+/** The `/config` row for one key, rendered by the real settings renderer. */
+const settingsLine = async (engine: Engine, key: string) =>
+  (await runSettingsCommand(engine, "list")).split("\n").find((l) => l.startsWith(key + ":"));
 
 const run = (tool: ReturnType<typeof createUpdateConfigTool>, setting: string, value: string) =>
   tool.execute({
@@ -152,5 +175,50 @@ describe("a non-live setting persists", () => {
     const out = await run(tool, "doctrine", "jit");
     expect(out.success).toBe(true);
     expect(out.result).toContain("applied now");
+  });
+});
+
+// ─── …and the hint says what was written ───
+//
+// Lane D's LOW #30: `Engine.readConfigSetting` had no `case "layout"`, so
+// `/config` showed `layout: per effort` — the placeholder for a key the engine
+// cannot answer — beside a value that is now genuinely written and honoured.
+// Lane D prescribed `this.config.ui?.layout`; `ui` is on RuneConfig, not
+// EngineConfig, so the arm reads the file the writer writes.
+
+describe("the /config hint reads the written layout back", () => {
+  test("`per effort` is what an unanswered key looks like, and layout is answered", async () => {
+    const engine = new Engine(engineConfig());
+    try {
+      // Nothing written: the launch default, never undefined.
+      expect(engine.readConfigSetting("layout")).toBe(DEFAULT_UI_LAYOUT);
+      expect(await settingsLine(engine, "layout")).toBe(`layout: ${DEFAULT_UI_LAYOUT}`);
+      // A key the engine genuinely cannot answer still renders the placeholder,
+      // so the assertion above is about `layout` and not about the renderer.
+      expect(engine.readConfigSetting("no_such_setting")).toBeUndefined();
+
+      await run(
+        createUpdateConfigTool({
+          applyLive: switchThatRefusesLayout().applyLive,
+          readSetting: (k) => engine.readConfigSetting(k),
+        }),
+        "layout",
+        "split",
+      );
+      expect(engine.readConfigSetting("layout")).toBe("split");
+      expect(await settingsLine(engine, "layout")).toBe("layout: split");
+    } finally {
+      engine.close();
+    }
+  });
+
+  test("a typo in config.toml reads back as the default, not as the typo", async () => {
+    const engine = new Engine(engineConfig());
+    try {
+      writeFileSync(cfg, '[ui]\nlayout = "hexagonal"\n');
+      expect(engine.readConfigSetting("layout")).toBe(DEFAULT_UI_LAYOUT);
+    } finally {
+      engine.close();
+    }
   });
 });
