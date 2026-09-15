@@ -1376,3 +1376,31 @@ full unit suite: 5,355 / 0 / 1 skip. Left open, named by the lane: `/config`'s c
 hint for `layout` (one `case` in `engine.ts`), the Phase 4 layout document still describing
 the split as the default, and no breath capture at 80×24 or in ASCII mode. Not installed at
 the time of writing — the closing pass below installs it.
+
+### Addendum 13 — the closing gate caught the memory lane twice: a regression, and a write into the founder's real profile
+
+The fast gates on `6696fa2` were green except `bun run eval`: `compaction_reclaims_and_keeps_a_tail`
+failed (`compaction #2 … freed only 15.0%`, a 15% floor) and governance rose from 0.27 to
+0.32 completions per task. Sent back to the memory lane with three suspected shapes; **all
+three were wrong**, and the lane proved it with four measured runs rather than a plausible
+fix: deleting the learned store changed nothing; pointing the legacy narrative profile at an
+empty file restored 63/63 at 0.27. Cause: the lane's injection change had moved the evergreen
+narrative (`~/.rune/system-memory.md`, ~1,000 tokens on this machine) out of the system
+prefix into the message array, so compaction fired harder, each fold freed less, and the
+extra summariser round trips were the governance rise. Fixed in `ba1f3f6`: the narrative is
+back in the prefix; the learned block is one message compaction may fold; with nothing
+promoted an engine with memory and one without send **byte-identical** requests (a test now
+pins it). Eval **63 / 63 at 0.27**, baseline not re-anchored; rerun by the supervisor.
+
+**The incident.** While root-causing, the lane found **thirty entries the mock eval had
+written into the founder's real profile** (`~/.rune/memory/entries/`, scoped to dead temp
+workspaces): the learned store had been on for any Engine built without a `memory` key, the
+opposite of the notebook's opt-in rule two fields away. This breached this program's standing
+rule that nothing touches `~/.rune`. The entries were backed up and removed, the directory no
+longer exists, and the store is now opt-in at the Engine boundary (`learned` requires a
+`memory` config; `enabled` keeps its old meaning so two pre-existing cadence tests stayed
+right rather than being edited). The interactive CLI passes the config's memory section and
+the defaults turn learning on, so the founder's own sessions learn; evals and SDK callers do
+not. `rm -rf ~/.rune/memory && bun run eval` was verified not to recreate it. Unit
+**5,351 / 0**, integration **366 / 0** by the lane. Recorded here because a rule that was
+broken and quietly repaired is worth less than one broken and written down.
