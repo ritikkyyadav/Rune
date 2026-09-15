@@ -1833,3 +1833,19 @@ on a first-ever install. This is hosted evidence of a stranger's machine, which 
 is, and it is the Phase 7 platform claim the handoff asked for on Linux and macOS. **Still
 not hosted:** `ci.yml` (lint, tests, build, integration on hosted runners) runs for this branch
 only on a pull request, which is the founder's step; Windows remains reasoned, not run.
+
+### Addendum 31 — the last three mediums of the third pass, on the UI
+
+`a28ccf7`. The working row is fitted to its own measure: the verb stays whole, the subject is
+middle-elided tail-weighted so a filename survives, the elapsed clock is paid for first and
+never elided; the shimmer is computed on the fitted text and the phrase is bounded so the
+window can never leap a cell (worst step now four cells at 80 columns, six at the cap; was
+eleven to nineteen). The held panel's window anchors on the row the selection is standing on
+— the last marker, not the first — so every selection's own row is on screen and the last
+held step is reachable. The pulse advances one frame per paint through a paint clock: a slow
+terminal breathes slower instead of skipping levels, and at 90 ms the clock equals the wall
+clock. Scoped out and named: the agents panel's per-card marks still read the wall clock.
+Each claim mutation-tested; the three verification files promoted into `ui-working` and
+`ui-footer-picker` and removed; `tests/verification/` is empty. Lane's gates: typecheck
+clean, UI suites 812 / 0 unsandboxed, full unit 5,815 / 0 / 1 skip, Prettier clean. The
+founder's own `928bee0` was read first and left untouched.
