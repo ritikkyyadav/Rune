@@ -50,6 +50,29 @@ pub(crate) fn escape_sbpl(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// Rune's home directory — the one place the crate writes anything of its own.
+///
+/// `RUNE_HOME` (and `GEAR_HOME`, the previous name, for compatibility) name the
+/// directory itself, not its parent: that is the contract the TypeScript side
+/// has honoured since `packages/shared/src/paths.ts`, and every rig, capture
+/// script and test harness in this repo sets it expecting a scratch profile.
+/// The crate ignored it until now, so every sandboxed `bash` call made by a
+/// test run appended to the founder's real `~/.rune/audit.jsonl`. An empty or
+/// whitespace-only value is treated as unset rather than as the current
+/// directory.
+pub fn rune_home() -> PathBuf {
+    for key in ["RUNE_HOME", "GEAR_HOME"] {
+        if let Ok(value) = std::env::var(key)
+            && !value.trim().is_empty()
+        {
+            return PathBuf::from(value);
+        }
+    }
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join(".rune")
+}
+
 /// Credential and secret stores that stay unreadable under every profile, even
 /// where reads are otherwise broad. One list, because two lists become one
 /// list plus an omission.
@@ -181,7 +204,6 @@ pub struct SandboxConfig {
 
 impl Default for SandboxConfig {
     fn default() -> Self {
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
         Self {
             workspace_root: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             timeout_ms: 30_000,
@@ -191,7 +213,7 @@ impl Default for SandboxConfig {
             deny_read_paths: Vec::new(),
             deny_write_paths: Vec::new(),
             env_overrides: HashMap::new(),
-            audit_log_path: home.join(".rune").join("audit.jsonl"),
+            audit_log_path: rune_home().join("audit.jsonl"),
         }
     }
 }

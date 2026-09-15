@@ -27,8 +27,10 @@ pub struct AuditEntry {
 /// Hash-chained JSONL audit log.
 ///
 /// Each entry's `entry_hash` is computed as `SHA-256(prev_hash|fields...)`,
-/// forming a tamper-evident chain. The log file lives at `~/.rune/audit.jsonl`
-/// by default.
+/// forming a tamper-evident chain. The log file lives at `audit.jsonl` inside
+/// Rune's home — `~/.rune` by default, or wherever `RUNE_HOME` / `GEAR_HOME`
+/// points, so a scratch profile keeps a test run's receipts out of the
+/// founder's own log (see [`crate::rune_home`]).
 pub struct AuditLog {
     path: PathBuf,
     prev_hash: String,
