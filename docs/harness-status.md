@@ -1418,3 +1418,25 @@ three asks of 2026-09-15 are therefore implemented, tested and installed; the me
 filter and the indicator's phrases are the two things only real use will grade, and
 `rune memory` is the scorecard for the first. Gates for this tree: Addendum 13's eval and the
 lanes' suites; the full gate list will be rerun once the M4 and adapter lanes land.
+
+### Addendum 15 — a Claude Code arm and a Codex arm, validated offline, idle until the founder's word
+
+`f559c50`, `3926f19`; spec in [`program/comparator-adapters.md`](program/comparator-adapters.md).
+The comparison rig has two new arms beside OpenCode's, all three behind one `runArm`
+interface (the OpenCode arm calls the shared harness rather than copying it; a test asserts
+its argv and env are byte-identical). `claude` and `codex` were invoked only for `--help` and
+`--version`: **claude 2.1.270**, **codex-cli 0.154.0**, recorded in every result row. The
+Claude Code arm runs `--print --output-format json` with the tool's own permission mechanism
+confined to the fixture directory and a dollar ceiling; the Codex arm runs `exec --json` at
+the workspace-write sandbox with network off, both with reasoning at `high`. Each arm keeps
+only its own auth and loses every other credential-shaped name and every `RUNE_*`. Twenty
+offline tests: exact argv, cwd and env; thirteen synthetic, credential-free recorded outputs
+(success, quota, auth, timeout, malformed, and the scored edge shapes); the dry run proven
+with fake binaries whose argv log reads exactly `--version`; and the `RUNE_EVAL_BUDGET_USD`
+door in front of the new arms. Parity stated rather than assumed: the four arms cannot share
+a model (two families), reasoning levels share only a name, only Rune and Claude Code have a
+dollar ceiling, and on these accounts a run spends **subscription quota, not dollars**. Ten
+of the twelve tasks are live-ready; the two browser tasks are not on either side. **No live
+run happens without the founder's explicit words naming the task count and the arm order**;
+the README says so, and the first authorised run will also be the first live test of both
+adapters, because every flag and parser is `--help`-derived.
