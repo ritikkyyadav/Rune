@@ -1209,3 +1209,38 @@ suites that matter: **404 / 0**. Lane's gates: integration **344 / 0 / 7 skip**,
 **5,121 / 1 fail / 1 skip** — the one failure is V6 #6, lane B's budget guard, not this lane's.
 Spend fingerprint unmoved. Left for lane B: the `--help` text and the corpus checks' root
 resolution (`process.cwd()`), both written out in the lane's report.
+
+### Addendum 8 — Lane F: the frontend and architecture loops, as doctrine and as record
+
+`024dba3`, `5caf984`, `224040e`, `272d05e`, `95c3d54` (original Phase 5). **F1** — `frontend`
+and `architecture` are just-in-time doctrine sections routed by request shape, no longer a
+slice of the fixed prefix; routing now runs per user message, which also closes the Phase 3
+residue that a mid-run steer got no routing at all; a plain fix request pays zero bytes (the
+test measures the whole first request). **F2** — a frontend-shaped run with no browser
+mounted says so on the first turn, in a harness note before the first completion, and in the
+read-back's `leave`; `rune doctor` prints a browser line (config state, the MCP module,
+Chromium builds in Playwright's cache); a capture naming an origin the run did not serve is
+refused, pinned three ways. **F3** — `docs/program/visual-rubric.json` (`visual-rubric@1`,
+eight criteria: hierarchy, spacing rhythm, type scale, contrast, responsive integrity, state
+clarity, focus visibility, reference consistency) and `visual-review.ts`: the reviewer must
+be a different model family, is blind by type (the prompt has no field for the request), and
+produces `pass | fail | unclear` with a quote and never a number (`8/10` and `B+` are struck,
+`390px` and `3:1` kept); with no independent reviewer configured it records `no independent
+reviewer` and makes no call; the evidence lands on a `method: review` criterion, which M1
+derives as `needs_review` — a second model supplements and cannot certify. **F4** — plan steps
+carry `interface`, `invariant`, `migration`, `acceptance`, `dependsOn` when the model supplies
+them (the runtime invents none); a step closing over an open dependency is refused
+(`open_dependency`); a failing check on a step that rests on an upstream interface requests
+one replan naming it. **F5** — two fixtures under `tests/integration/fixtures/phase5/`: a form
+with states, and a three-module change whose step 3 breaks on step 1's interface — the
+inconsistent step 3 scores 5 of 7, with exactly the two criteria that exercise the interface
+through step 3's caller red while the broken build still exits 0.
+
+Supervisor rerun of the ten suites that matter: **144 / 0**. Lane's gates: unit 5,188 / 0 /
+1 skip, integration 358 / 0 / 7 skip, lifecycle 47 / 0, and the browser sandbox suite 2 / 0
+against real Chromium 151 (a real Playwright module installed into a scratch directory
+outside the repo, since bun's cache cannot resolve one). **Not done, with hunks in the lane's
+report:** `rune audit` naming the screenshots and the `leave` pre-flight reaching the live
+brief field (both now in a follow-up), and nothing calls the visual reviewer in a live run —
+no reviewer budget is authorised, and **no claim about design quality is made: the rubric has
+never been run by a real reviewer.**
