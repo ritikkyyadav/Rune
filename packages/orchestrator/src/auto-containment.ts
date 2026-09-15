@@ -291,11 +291,24 @@ const CONTROL_DIRS = new Set([".rune", ".gear", ".alan"]);
 // every future session, so a shell line that rewrites it rewrites what every
 // later run is briefed with. That is a change to Rune's own controls by any
 // reading — it outranks `config.toml`, which at least only binds this machine.
+// `.env` and any `*.key` / `*.pem` are here for the reason the launcher makes
+// plain: the home's env file is sourced into every invocation of the installed
+// binary, so a shell line that rewrites it rewrites the credentials of every
+// later run. A bare `.env` has no stem for the `secrets?` alternative to match,
+// which is why it is named outright.
 const CONTROL_FILE_RE =
-  /^(?:config\.toml|hooks\.json|mcp\.json|sandbox\.json|loop\.md|org\.pub|system-memory\.(?:md|json)|policy(?:[._-].*)?\.(?:json|toml)|(?:secrets?|keys?|credentials?)(?:[._-].*)?\.(?:json|toml|txt|env))$/i;
+  /^(?:config\.toml|hooks\.json|mcp\.json|sandbox\.json|loop\.md|org\.pub|system-memory\.(?:md|json)|\.env(?:\..*)?|.*\.(?:key|pem)|policy(?:[._-].*)?\.(?:json|toml)|(?:secrets?|keys?|credentials?)(?:[._-].*)?\.(?:json|toml|txt|env))$/i;
 // `memory` is the structured store (`~/.rune/memory/entries/*.json`). Same
 // reasoning: an entry promotes into every future session's briefing, marked
 // with whatever provenance the file claims.
+//
+// `acceptance-pins` is the acceptance vault (V8 critical 3). It is the harness's
+// copy of the oracle a run is measured by, kept outside the workspace precisely
+// so the work cannot reach it — and the commit series that invented it added
+// `memory` to this list and left it off. One `rm -rf ~/.rune/acceptance-pins`
+// from inside a run restored the pre-fix behaviour without a single guardrail
+// event. `staging` and `evidence` are the same argument for the bytes a verdict
+// is computed from: a run that edits them edits its own receipt.
 const CONTROL_SUBDIRS = new Set([
   "skills",
   "plugins",
@@ -304,6 +317,9 @@ const CONTROL_SUBDIRS = new Set([
   "policy",
   "policies",
   "memory",
+  "acceptance-pins",
+  "staging",
+  "evidence",
 ]);
 
 /**
@@ -337,7 +353,12 @@ function scanControlSegments(parts: string[]): boolean {
     if (!CONTROL_DIRS.has(parts[i]!.toLowerCase())) continue;
     const next = parts[i + 1]!.toLowerCase();
     const isLeaf = i + 1 === parts.length - 1;
-    if (isLeaf && CONTROL_FILE_RE.test(next)) return true;
+    // A control directory NAMED as the last segment is the control surface
+    // itself, not a path into one: `rm -rf ~/.rune/acceptance-pins` and
+    // `rm -rf ~/.rune/memory` reach further than any write into either. The
+    // leaf was only ever tested against the FILE list, so both were ordinary
+    // out-of-workspace writes in 4th gear.
+    if (isLeaf && (CONTROL_FILE_RE.test(next) || CONTROL_SUBDIRS.has(next))) return true;
     if (!isLeaf && CONTROL_SUBDIRS.has(next)) return true;
   }
   return false;

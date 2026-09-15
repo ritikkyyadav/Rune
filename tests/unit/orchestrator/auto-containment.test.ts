@@ -308,6 +308,44 @@ describe("the five breaker gaps the corpus found", () => {
     expect(shellGuardrailChange(bash("cat ~/.rune/system-memory.md"))).toBeUndefined();
   });
 
+  test("the acceptance vault is one of Rune's controls (V8 critical 3)", () => {
+    // Promoted from `tests/verification/v8-acceptance-vault.test.ts`. The vault
+    // at `~/.rune/acceptance-pins/<workspace hash>` holds the ONLY copy of the
+    // oracle a run is graded by that the run itself cannot rewrite — and the
+    // same commit series that put `memory` on this list left the directory it
+    // had just invented off it. `rm -rf` on it was an ordinary out-of-workspace
+    // write in 4th gear, and it restored V7 critical 3 with no guardrail event.
+    expect(isSelfProtectionPath(ROOT, "~/.rune/acceptance-pins/abc/pinned.json")).toBe(true);
+    expect(isSelfProtectionPath(ROOT, "~/.rune/acceptance-pins/abc/files/check.mjs")).toBe(true);
+    expect(shellGuardrailChange(bash("rm -rf ~/.rune/acceptance-pins"))).toContain(
+      "through the shell",
+    );
+    // The bytes a verdict is computed from, by the same argument.
+    expect(isSelfProtectionPath(ROOT, "~/.rune/staging/run-1/check.mjs")).toBe(true);
+    expect(isSelfProtectionPath(ROOT, "~/.rune/evidence/run-1.json")).toBe(true);
+    // And a control directory NAMED as the leaf is the surface itself: the leaf
+    // was only ever tested against the file list, so `rm -rf` on any of these
+    // — `memory` included, which has been on the list since V7 — passed.
+    expect(isSelfProtectionPath(ROOT, "~/.rune/memory")).toBe(true);
+    expect(isSelfProtectionPath(ROOT, "~/.rune/hooks")).toBe(true);
+    expect(shellGuardrailChange(bash("rm -rf ~/.rune/memory"))).toContain("through the shell");
+  });
+
+  test("the home's credentials are controls too (V8 finding 14)", () => {
+    // The installed launcher sources `~/.rune/.env` into every invocation, so a
+    // shell line that rewrites it rewrites what every later run authenticates
+    // with. A bare `.env` has no stem for the `secrets?` alternative to match.
+    expect(isSelfProtectionPath(ROOT, "~/.rune/.env")).toBe(true);
+    expect(isSelfProtectionPath(ROOT, "~/.rune/.env.local")).toBe(true);
+    expect(isSelfProtectionPath(ROOT, "~/.rune/org.key")).toBe(true);
+    expect(isSelfProtectionPath(ROOT, "~/.rune/client.pem")).toBe(true);
+    expect(shellGuardrailChange(bash("echo OPENAI_API_KEY=x >> ~/.rune/.env"))).toContain(
+      "through the shell",
+    );
+    // An ordinary project `.env` is nobody's control surface.
+    expect(isSelfProtectionPath(ROOT, `${ROOT}/.env`)).toBe(false);
+  });
+
   test("reading the rules is not breaking them", () => {
     // A mutation is required. An agent that reads `.rune/config.toml` to find
     // out what it is allowed to do is doing the right thing.
