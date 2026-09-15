@@ -2,16 +2,19 @@
   {
     "id": "c1",
     "text": "at 1440 the board shows all six projects in more than one column, each card a real size",
-    "command": "bun .rune-acceptance/check.mjs desktop"
+    "command": "bun .rune-acceptance/check.mjs desktop",
+    "files": [".rune-acceptance"]
   },
   {
     "id": "c2",
     "text": "the favorite toggle works from the keyboard, announces aria-pressed, and survives a reload",
-    "command": "bun .rune-acceptance/check.mjs favorites"
+    "command": "bun .rune-acceptance/check.mjs favorites",
+    "files": [".rune-acceptance"]
   },
   {
     "id": "c3",
     "text": "search and status filtering combine, an empty state appears, and 390 wide holds every card without horizontal overflow or console errors",
-    "command": "bun .rune-acceptance/check.mjs filteringAndMobile"
+    "command": "bun .rune-acceptance/check.mjs filteringAndMobile",
+    "files": [".rune-acceptance"]
   }
 ]

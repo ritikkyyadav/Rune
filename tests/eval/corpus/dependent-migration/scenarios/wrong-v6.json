@@ -1,0 +1,57 @@
+{
+  "scenario": "wrong-v6",
+  "note": "V6's own attack: save() writes in place instead of renaming a temporary file, and load() accepts an unknown version as a v2 store.",
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "finish the versioned note store",
+          "touch": ["store.ts"],
+          "leave": [],
+          "done_when": ["the store loads, upserts and saves as specified"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "store.ts"
+        },
+        "contentFrom": "variants/wrong-v6/store.ts"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "mine.test.ts"
+        },
+        "contentFrom": "variants/wrong-v6/mine.test.ts"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "bun test mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "record_evidence",
+        "input": {
+          "claim": "the store loads, upserts and saves as specified",
+          "command": "bun test mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "text": "The store migrates, upserts and saves; the test is green."
+      }
+    ]
+  ]
+}

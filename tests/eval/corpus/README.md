@@ -243,9 +243,18 @@ bun run tests/eval/corpus/run-offline.ts --out docs/evidence/corpus-offline-<dat
 | dirty-worktree         | 5         | 0 / 4             | 0 / 1           | 1       | 4        |
 | **total**              | **60**    | **0 / 48**        | **4 / 12**      | **12**  | **44**   |
 
-**No false completions.** Every omission, wrong change, silent run and cut-off
-run reached `partial` or `unmet` with the failed evaluator criterion named. On
-this set, the acceptance oracle does the job it was built for.
+**No false completions — of the arms the author wrote.** Every omission, wrong
+change, silent run and cut-off run in the table above reached `partial` or
+`unmet` with the failed evaluator criterion named.
+
+That sentence is the whole claim, and `0 / 48` must not be read as a statement
+about the ORACLE. An adversarial pass (V6, 2026-09-15) wrote wrong solutions for
+three of three families it attacked, and all three passed **every** acceptance
+criterion of their task while breaking a requirement the prompt states in words;
+`cache-plan`'s omission arm, meanwhile, was caught by its step COUNT and not by
+its omission. The acceptance has since been hardened and those four attacks are
+arms of the corpus — see the second run below. What a run of this corpus
+measures is the harness against the failures somebody thought of.
 
 Two defects on the other side, both found by `correct` arms that should have
 reached `met`:
@@ -280,6 +289,41 @@ Also observed, not a defect: 232 harness re-prompts across 60 rows (2 to 6 per
 run — the finish gate and the loop nudges), and a 209-second total wall time
 for the whole corpus.
 
+## The second run: the attacks are arms, and the acceptance is harder
+
+[`docs/evidence/corpus-offline-20260915.json`](../../../docs/evidence/corpus-offline-20260915.json),
+64 rows, 0 skipped, 0 model calls.
+
+| family                 | attempted | false completions | false negatives | cut off | detected |
+| ---------------------- | --------- | ----------------- | --------------- | ------- | -------- |
+| fix                    | 16        | 0 / 13            | 0 / 3           | 3       | 13       |
+| omission-prone feature | 11        | 0 / 9             | 0 / 2           | 2       | 9        |
+| migration              | 11        | 0 / 9             | 0 / 2           | 2       | 9        |
+| frontend               | 10        | 0 / 8             | 0 / 2           | 2       | 8        |
+| research               | 11        | 0 / 9             | 2 / 2           | 2       | 7        |
+| dirty-worktree         | 5         | 0 / 4             | 0 / 1           | 1       | 4        |
+| **total**              | **64**    | **0 / 52**        | **2 / 12**      | **12**  | **50**   |
+
+Four things moved between the runs, and none of them is "the oracle got
+better on its own":
+
+1. **The four attack arms are in the denominator** (`wrong-v6`, on
+   `csv-state-machine`, `health-endpoint-and-changelog`, `dependent-migration`
+   and `cache-plan`), and all four are detected — because the acceptance they
+   used to pass now names what they break.
+2. **The frontend false negatives are gone.** The acceptance now runs from
+   OUTSIDE the workspace, staged at intake, and the two browser criteria name
+   the directory their entry script loads (`files`). Both `correct` frontend
+   rows reach `met`; the `stale` mechanism above is closed by the same lane that
+   stamped a citation's revision at check time.
+3. **The research false negatives remain**, and they are defect 2 above,
+   unchanged: a question or a plan cannot reach `met` through its own citation.
+   Two of twelve `correct` rows still end `partial` with every evaluator
+   criterion satisfied.
+4. **`0 / 52` is still not a statement about the oracle.** It is a statement
+   about fifty-two arms, four of which an adversary wrote. The next attack is
+   the next measurement.
+
 ## Changes
 
 Every change to the frozen set goes here, dated, with the reason.
@@ -308,3 +352,41 @@ Every change to the frozen set goes here, dated, with the reason.
   screenshots into `.rune-acceptance/` rather than the workspace root. This did
   NOT fix the `stale` finding above (it was tested and ruled out), but an
   evaluator's artifacts do not belong in the tree it is judging.
+- **2026-09-15, after V6** — every check addresses the tree through
+  `process.cwd()` instead of `import.meta.url`. The runtime now copies an
+  in-workspace acceptance script OUT of the workspace at intake and runs it from
+  there with `cwd` = the workspace, so a path resolved from the script's own URL
+  points at the staging directory. The two browser tasks' criteria also declare
+  `files: [".rune-acceptance"]`, because their entry script LOADS `browser.mjs`
+  and reads `env.json` beside it and the runtime stages only what the command
+  itself names. This is what closed the two frontend false negatives.
+- **2026-09-15, after V6** — three acceptance checks were hardened, because an
+  adversarial pass wrote a wrong solution for each that passed every criterion:
+  - `csv-state-machine` `c2` now asserts that whitespace outside quotes is data
+    and that a BOM anywhere but the very front is data ("Keep whitespace inside
+    cells exactly", "an optional LEADING BOM" — both stated in the prompt,
+    neither checked). The attacking parser trimmed unquoted fields and stripped
+    every BOM.
+  - `health-endpoint-and-changelog` `c1` now bounds `uptimeMs` by the time
+    elapsed since the module was imported (`Date.now()` satisfied "is a number"
+    and nothing else), and `c3` requires the Unreleased section to record the
+    `/health` ROUTE rather than to contain the word "health" — the attacking
+    changelog said "Renamed the internal healthCheck helper. No routes were
+    added or changed." and passed.
+  - `dependent-migration` `c1` now requires an unknown store version to throw,
+    and `c3` asserts atomicity the only way that does not race it: `save` must
+    replace a read-only destination file, which a temporary file plus `rename`
+    can do and a plain `writeFile` cannot.
+  - `explain-quote-handling` `c1` gained "what the parser does NOT do", which
+    the prompt asks for in words and no criterion read.
+- **2026-09-15, after V6** — `cache-plan` gained `c2`, "the plan says when a
+  cached entry expires and what two concurrent misses do, and ends with the
+  risks". Its `omission` arm — "expiry and single-flight are never planned" —
+  was caught only by `c1`'s step COUNT: the same omission padded to three
+  well-shaped steps passed both criteria, so the row measured shape and was
+  reported as an omission caught.
+- **2026-09-15, after V6** — a task may declare arms beyond the pinned five
+  (`extraScenarios` in `task.json`, read by `armsFor`). Four tasks declare
+  `wrong-v6`: the attacker's own solutions, verbatim, so the attacks are in the
+  false-completion denominator instead of in a footnote. The pinned five are
+  unchanged for every task, and the first run's numbers stand as recorded.

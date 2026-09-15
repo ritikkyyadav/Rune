@@ -31,6 +31,7 @@ import { UsageProvider } from "../../helpers/usage-provider";
 
 import {
   SCENARIOS,
+  armsFor,
   TASK_IDS,
   browserAvailable,
   loadAcceptance,
@@ -284,13 +285,19 @@ export async function runOffline(options: {
   scenarios?: ScenarioName[];
 }) {
   const ids = TASK_IDS.filter((id) => !options.tasks || options.tasks.includes(id));
-  const arms = SCENARIOS.filter((name) => !options.scenarios || options.scenarios.includes(name));
+  const tasks = ids.map(loadTask);
+  // The arms a run actually drives: the pinned five for every task, plus the
+  // attack arms a task declares. `arms` below is the union, for the protocol
+  // block; each task is driven with its own list.
+  const armsOf = (task: CorpusTask): ScenarioName[] =>
+    armsFor(task).filter((name) => !options.scenarios || options.scenarios.includes(name));
+  const arms = [...new Set(tasks.flatMap(armsOf))];
   if (!ids.length || !arms.length) throw new Error("no such task or scenario");
 
   const rows: Row[] = [];
-  for (const id of ids) {
-    const task = loadTask(id);
-    for (const name of arms) {
+  for (const task of tasks) {
+    const id = task.id;
+    for (const name of armsOf(task)) {
       const row = await runRow(task, name);
       rows.push(row);
       const detail =
@@ -327,7 +334,9 @@ export async function runOffline(options: {
     protocol: {
       tasks: ids,
       scenarios: arms,
-      complete: ids.length === TASK_IDS.length && arms.length === SCENARIOS.length,
+      complete:
+        ids.length === TASK_IDS.length &&
+        tasks.every((task) => armsOf(task).length === armsFor(task).length),
       engine:
         "checkpoints, security, rate limiting, hooks, MCP, skills, verification, repo map, playbook and memory off — the same configuration M1's acceptance integration tests use, so the rows are comparable to those.",
       classification: {

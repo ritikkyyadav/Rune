@@ -1,0 +1,66 @@
+{
+  "scenario": "wrong-v6",
+  "note": "V6's own attack: uptimeMs is the wall clock, and the changelog entry says the word health while recording that no route changed.",
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "add the health route and note it in the changelog",
+          "touch": ["server.ts", "CHANGELOG.md"],
+          "leave": [],
+          "done_when": ["the new route answers and the release note is written"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "server.ts"
+        },
+        "contentFrom": "variants/wrong-v6/server.ts"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "CHANGELOG.md"
+        },
+        "contentFrom": "variants/wrong-v6/CHANGELOG.md"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "mine.test.ts"
+        },
+        "contentFrom": "variants/wrong-v6/mine.test.ts"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "bun test mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "record_evidence",
+        "input": {
+          "claim": "the new route answers and the release note is written",
+          "command": "bun test mine.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "text": "/health answers with ok and uptime, and the changelog is updated."
+      }
+    ]
+  ]
+}

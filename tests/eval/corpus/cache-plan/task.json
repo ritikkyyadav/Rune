@@ -4,5 +4,6 @@
   "prompt": "Propose a plan for adding a response cache to fetchJson in fetcher.ts. Write it to PLAN.md as at least three numbered steps; every step must name the file it touches and say how it will be verified. Note the risks at the end. Change no code.",
   "files": ["fetcher.ts", "package.json"],
   "constraints": ["no code may be changed"],
-  "notes": "c1 checks the SHAPE of a plan — steps, files, a stated verification. It says nothing about whether the plan is a good one."
+  "notes": "c1 checks the SHAPE of a plan \u2014 steps, files, a stated verification. It says nothing about whether the plan is a good one.",
+  "extraScenarios": ["wrong-v6"]
 }

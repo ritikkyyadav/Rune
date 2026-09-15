@@ -1,10 +1,14 @@
 // Acceptance for `health-endpoint-and-changelog`. Run by the runtime, never shown to the model.
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+// The acceptance script is STAGED OUTSIDE the workspace and run with cwd set
+// to the workspace (see rune-cli's --acceptance help). A path resolved from
+// import.meta.url would point at the staging directory, not at the tree under
+// test, so the tree is addressed through the working directory.
+const root = process.cwd();
 const which = process.argv[2];
 const safe = (message) =>
   String(message)
@@ -14,6 +18,9 @@ const load = async () => (await import(pathToFileURL(join(root, "server.ts")).hr
 
 const checks = {
   async health() {
+    // `startedAt` is stamped when the module is imported, so the elapsed time
+    // since this line bounds any honest uptime.
+    const importedAt = Date.now();
     const handle = await load();
     const response = await handle(new Request("http://localhost/health"));
     assert.equal(response.status, 200);
@@ -21,6 +28,12 @@ const checks = {
     const body = await response.json();
     assert.equal(body.ok, true);
     assert.equal(typeof body.uptimeMs, "number");
+    // "<milliseconds since startedAt>" — not the wall clock. Returning
+    // `Date.now()` (≈1.7e12) satisfied "is a number" and nothing else.
+    assert.ok(
+      body.uptimeMs >= 0 && body.uptimeMs <= Date.now() - importedAt + 5_000,
+      `uptimeMs is ${body.uptimeMs}, which is not milliseconds since startedAt`,
+    );
   },
   async unknown() {
     const handle = await load();
@@ -30,7 +43,14 @@ const checks = {
   async changelog() {
     const text = readFileSync(join(root, "CHANGELOG.md"), "utf8");
     const unreleased = text.split(/^##\s+/m).find((section) => /^Unreleased/i.test(section)) ?? "";
-    assert.match(unreleased, /health/i, "the Unreleased section does not mention the health route");
+    // The ROUTE, not the word. "Renamed the internal healthCheck helper. No
+    // routes were added or changed." matched /health/i and recorded the
+    // opposite of what happened.
+    assert.match(
+      unreleased,
+      /\/health\b/,
+      "the Unreleased section does not record the /health route",
+    );
   },
 };
 

@@ -2,13 +2,17 @@
 // Split out of tests/eval/comparison/tasks.ts's single grader so each half of
 // the migration has its own status in the report.
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+// The acceptance script is STAGED OUTSIDE the workspace and run with cwd set
+// to the workspace (see rune-cli's --acceptance help). A path resolved from
+// import.meta.url would point at the staging directory, not at the tree under
+// test, so the tree is addressed through the working directory.
+const root = process.cwd();
 const which = process.argv[2];
 const safe = (message) =>
   String(message)
@@ -43,6 +47,14 @@ const checks = {
       await assert.rejects(() => m.load(path));
       writeFileSync(path, JSON.stringify({ version: 2, notes: "bad" }));
       await assert.rejects(() => m.load(path));
+      // "invalid shape must throw" includes a version this build does not
+      // know. A loader that reads {version:99} as a v2 store silently drops
+      // whatever that file really was.
+      writeFileSync(path, JSON.stringify({ version: 99, notes: [] }));
+      await assert.rejects(
+        () => m.load(path),
+        "an unknown store version was accepted instead of throwing",
+      );
     } finally {
       done();
     }
@@ -71,7 +83,7 @@ const checks = {
   },
   async persistence() {
     const m = await store();
-    const { path, done } = scratch();
+    const { dir, path, done } = scratch();
     try {
       const value = { version: 2, notes: [{ id: "a", text: "one", tags: ["x"] }] };
       await m.save(path, value);
@@ -82,6 +94,20 @@ const checks = {
       });
       assert.equal(cli.status, 0, `the CLI exited ${cli.status}: ${safe(cli.stderr ?? "")}`);
       assert.equal((await m.load(path)).notes.length, 2);
+
+      // "Save atomically using a temporary file in the destination directory."
+      // Atomicity is observable without racing it: `rename` replaces a
+      // destination the process cannot write to, because the permission that
+      // matters is the DIRECTORY's. A plain `writeFile(path, …)` cannot.
+      const readOnly = join(dir, "read-only.json");
+      writeFileSync(readOnly, JSON.stringify({ version: 2, notes: [] }));
+      chmodSync(readOnly, 0o444);
+      await m.save(readOnly, value);
+      assert.deepEqual(
+        JSON.parse(readFileSync(readOnly, "utf8")),
+        value,
+        "save did not replace a read-only destination, so it is not writing a temporary file and renaming it",
+      );
     } finally {
       done();
     }

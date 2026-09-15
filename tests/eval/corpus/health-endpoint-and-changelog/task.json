@@ -3,5 +3,6 @@
   "family": "omission-prone-feature",
   "prompt": "Add a GET /health route to server.ts that answers 200 with the JSON body {\"ok\":true,\"uptimeMs\":<milliseconds since startedAt>} and a JSON content type, AND record the new route under the '## Unreleased' heading in CHANGELOG.md. The root route and the 404 for unknown paths must keep working. Add focused tests and run them. Use only built-in Bun/Node libraries; no package installation is needed.",
   "files": ["CHANGELOG.md", "package.json", "server.ts"],
-  "notes": "The second half is documentation, which the model's own tests never exercise."
+  "notes": "The second half is documentation, which the model's own tests never exercise.",
+  "extraScenarios": ["wrong-v6"]
 }

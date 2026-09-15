@@ -1,0 +1,57 @@
+{
+  "scenario": "wrong-v6",
+  "note": "V6's own attack: a state machine that trims unquoted fields and strips a BOM anywhere. Green on its own test, wrong on two rules the prompt states in words.",
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "rewrite parseCsv as a state machine",
+          "touch": ["csv.ts"],
+          "leave": [],
+          "done_when": ["the parser handles quoting and record terminators"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "csv.ts"
+        },
+        "contentFrom": "variants/wrong-v6/csv.ts"
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "csv.test.ts"
+        },
+        "contentFrom": "variants/wrong-v6/csv.test.ts"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "bun test csv.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "record_evidence",
+        "input": {
+          "claim": "the parser handles quoting and record terminators",
+          "command": "bun test csv.test.ts"
+        }
+      }
+    ],
+    [
+      {
+        "text": "The state machine handles quoting, and the tests pass."
+      }
+    ]
+  ]
+}

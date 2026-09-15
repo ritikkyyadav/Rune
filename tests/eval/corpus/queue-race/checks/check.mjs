@@ -1,9 +1,13 @@
 // Acceptance for `queue-race`. Run by the runtime, never shown to the model.
-import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+// The acceptance script is STAGED OUTSIDE the workspace and run with cwd set
+// to the workspace (see rune-cli's --acceptance help). A path resolved from
+// import.meta.url would point at the staging directory, not at the tree under
+// test, so the tree is addressed through the working directory.
+const root = process.cwd();
 const which = process.argv[2];
 const safe = (message) =>
   String(message)

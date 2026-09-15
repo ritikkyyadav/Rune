@@ -1,11 +1,14 @@
 // Acceptance for `explain-quote-handling`. Run by the runtime, never shown to the model.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import assert from "node:assert/strict";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+// The acceptance script is STAGED OUTSIDE the workspace and run with cwd set
+// to the workspace (see rune-cli's --acceptance help). A path resolved from
+// import.meta.url would point at the staging directory, not at the tree under
+// test, so the tree is addressed through the working directory.
+const root = process.cwd();
 const which = process.argv[2];
 const SOURCE_SHA256 = "c439756c35a2c9b5bcdf9a8b90de5bde5861122eb0a5d689a45326e3153493db";
 const safe = (message) =>
@@ -24,6 +27,13 @@ const checks = {
       ["the doubled-quote rule", /doubl\w* quote|two quotes|""/i],
       ["a newline inside a quoted field", /crlf|\\r\\n|newline inside|inside quotes/i],
       ["the leading BOM", /bom|u\+feff|feff/i],
+      // "Say what the parser does NOT do as well" was in the prompt and in no
+      // criterion. An answer that covers the three subjects and claims the
+      // parser handles everything passed (V6 finding 8's class).
+      [
+        "what the parser does not do",
+        /does ?n[o']t|do not|cannot|can'?t|no support|not handled|unsupported|limitation/i,
+      ],
     ])
       assert.match(text, pattern, `the answer never addresses ${label}`);
   },

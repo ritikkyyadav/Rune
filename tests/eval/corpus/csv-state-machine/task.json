@@ -3,5 +3,6 @@
   "family": "fix",
   "source": "tests/eval/comparison/tasks.ts (verbatim; pinned by sanity.test.ts)",
   "prompt": "Repair parseCsv in csv.ts. Preserve the exported function and make it handle comma-separated fields, quoted commas, doubled quotes, embedded LF/CRLF inside quotes, empty fields and records, a final record without newline, and an optional leading UTF-8 BOM. Return [] for empty input, and do not add a spurious record for a trailing line terminator. Throw on an unterminated quoted field. Keep whitespace inside cells exactly. Add focused tests and run them. Use only built-in Bun/Node libraries; no package installation is needed.",
-  "files": ["csv.ts", "package.json"]
+  "files": ["csv.ts", "package.json"],
+  "extraScenarios": ["wrong-v6"]
 }

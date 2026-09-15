@@ -2,16 +2,19 @@
   {
     "id": "c1",
     "text": "submit stays disabled until the form is valid, and an invalid field is announced and bound to its input",
-    "command": "bun .rune-acceptance/check.mjs validation"
+    "command": "bun .rune-acceptance/check.mjs validation",
+    "files": [".rune-acceptance"]
   },
   {
     "id": "c2",
-    "text": "tab moves email → password → confirm → submit, and the focused control shows a focus ring",
-    "command": "bun .rune-acceptance/check.mjs keyboard"
+    "text": "tab moves email \u2192 password \u2192 confirm \u2192 submit, and the focused control shows a focus ring",
+    "command": "bun .rune-acceptance/check.mjs keyboard",
+    "files": [".rune-acceptance"]
   },
   {
     "id": "c3",
     "text": "a valid submit shows a status confirmation, and 390 wide neither overflows nor logs console errors",
-    "command": "bun .rune-acceptance/check.mjs successAndMobile"
+    "command": "bun .rune-acceptance/check.mjs successAndMobile",
+    "files": [".rune-acceptance"]
   }
 ]

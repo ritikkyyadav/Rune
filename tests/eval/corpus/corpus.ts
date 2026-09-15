@@ -34,10 +34,25 @@ export const CHECK_DIR = ".rune-acceptance";
 export type Family =
   "fix" | "omission-prone-feature" | "migration" | "frontend" | "research" | "dirty-worktree";
 
-export type ScenarioName = "correct" | "omission" | "wrong" | "silent" | "stopped";
+export type ScenarioName = "correct" | "omission" | "wrong" | "silent" | "stopped" | "wrong-v6";
 
 /** The arm order, pinned. Changing it changes what the report's rows mean. */
 export const SCENARIOS: ScenarioName[] = ["correct", "omission", "wrong", "silent", "stopped"];
+
+/**
+ * Extra arms a task carries beyond the pinned five.
+ *
+ * The five are every task's; these are the ones an ATTACK produced. V6 wrote
+ * wrong solutions for three tasks that passed every acceptance criterion, and a
+ * fourth arm for `cache-plan` whose omission the acceptance could not see — so
+ * `0 / 48` was a property of the arms the author thought of, not of the oracle.
+ * Adding them as arms is what makes that visible in the denominator instead of
+ * in a footnote: a task declares them in `task.json`, and a run that skips them
+ * is not a complete run.
+ */
+export function armsFor(task: CorpusTask): ScenarioName[] {
+  return [...SCENARIOS, ...(task.extraScenarios ?? [])];
+}
 
 /**
  * The twelve tasks, in their pinned order.
@@ -79,6 +94,8 @@ export interface CorpusTask {
   constraints?: string[];
   /** Anything a reader of the report needs to know about this task. */
   notes?: string;
+  /** Arms beyond the pinned five — see `armsFor`. */
+  extraScenarios?: ScenarioName[];
   dir: string;
 }
 

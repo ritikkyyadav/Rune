@@ -1,0 +1,48 @@
+{
+  "scenario": "wrong-v6",
+  "note": "V6's own attack: the omission arm's omission padded to three well-shaped steps \u2014 no expiry, no single-flight, no risks.",
+  "turns": [
+    [
+      {
+        "tool": "read_back",
+        "input": {
+          "reading": "plan a response cache",
+          "touch": ["PLAN.md"],
+          "leave": [],
+          "done_when": ["the plan names its steps, files and checks"]
+        }
+      }
+    ],
+    [
+      {
+        "tool": "write_file",
+        "input": {
+          "path": "PLAN.md"
+        },
+        "contentFrom": "variants/wrong-v6/PLAN.md"
+      }
+    ],
+    [
+      {
+        "tool": "bash",
+        "input": {
+          "command": "grep -c '##' PLAN.md"
+        }
+      }
+    ],
+    [
+      {
+        "tool": "record_evidence",
+        "input": {
+          "claim": "the plan names its steps, files and checks",
+          "command": "grep -c '##' PLAN.md"
+        }
+      }
+    ],
+    [
+      {
+        "text": "PLAN.md sets out three numbered steps, each with its file and its check."
+      }
+    ]
+  ]
+}

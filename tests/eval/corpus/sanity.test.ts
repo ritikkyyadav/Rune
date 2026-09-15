@@ -24,6 +24,7 @@ import { join } from "node:path";
 import { COMPARISON_TASKS } from "../comparison/tasks";
 import {
   SCENARIOS,
+  armsFor,
   TASK_IDS,
   applyTree,
   browserAvailable,
@@ -94,7 +95,8 @@ describe("the corpus is twelve well-formed tasks", () => {
       }
       // The solution is what makes the acceptance falsifiable.
       expect(solutionFiles(task).length).toBeGreaterThan(0);
-      for (const name of SCENARIOS) {
+      // Every arm this task declares, the pinned five and its attack arms.
+      for (const name of armsFor(task)) {
         const scenario = loadScenario(task, name);
         expect(scenario.scenario).toBe(name);
         expect(scenario.turns.length).toBeGreaterThan(0);
@@ -170,5 +172,43 @@ describe("each task's acceptance passes against a hand-written correct solution"
       },
       240_000,
     );
+  }
+});
+
+/**
+ * The attack arms V6 wrote, and what they are for.
+ *
+ * `0 / 48` was a property of the twelve arms the author thought of, not of the
+ * acceptance: three wrong solutions passed every criterion of their task while
+ * breaking a requirement the prompt states in words, and `cache-plan`'s
+ * omission arm was caught by its step COUNT rather than by its omission. Each
+ * attack is now an arm, so it is in the denominator; and each one's tree must
+ * FAIL the hardened acceptance, or the hardening did not happen.
+ */
+describe("the wrong-v6 attack arms fail the acceptance they used to pass", () => {
+  for (const id of [
+    "csv-state-machine",
+    "health-endpoint-and-changelog",
+    "dependent-migration",
+    "cache-plan",
+  ]) {
+    test(id, () => {
+      const task = loadTask(id);
+      expect(armsFor(task)).toContain("wrong-v6");
+      expect(loadScenario(task, "wrong-v6").note.length).toBeGreaterThan(10);
+      const root = mkdtempSync(join(tmpdir(), `corpus-wrong-v6-${id}-`));
+      try {
+        materialise(task, root);
+        applyTree(task, root, "variants/wrong-v6");
+        const failed = loadAcceptance(task).filter(
+          (criterion) =>
+            spawnSync("bash", ["-lc", criterion.command!], { cwd: root, encoding: "utf8" })
+              .status !== 0,
+        );
+        expect(failed.map((criterion) => criterion.id)).not.toEqual([]);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
   }
 });

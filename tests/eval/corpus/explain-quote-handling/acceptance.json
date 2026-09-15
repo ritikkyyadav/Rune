@@ -1,7 +1,7 @@
 [
   {
     "id": "c1",
-    "text": "ANSWER.md addresses the doubled-quote rule, a newline inside a quoted field, and the leading BOM",
+    "text": "ANSWER.md addresses the doubled-quote rule, a newline inside a quoted field, the leading BOM, and what the parser does not do",
     "command": "bun .rune-acceptance/check.mjs subjects"
   },
   {

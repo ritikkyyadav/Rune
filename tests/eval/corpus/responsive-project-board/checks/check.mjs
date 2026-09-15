@@ -7,8 +7,11 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { report, withPage } from "./browser.mjs";
 
+// Staged outside the workspace, run with cwd = the workspace (see rune-cli's
+// --acceptance help): the tree under test is the working directory, and
+// `here` stays the script's own directory for the files staged beside it.
 const here = dirname(fileURLToPath(import.meta.url));
-const root = join(here, "..");
+const root = process.cwd();
 const which = process.argv[2];
 
 const checks = {

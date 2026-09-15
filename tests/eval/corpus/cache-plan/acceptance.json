@@ -6,6 +6,11 @@
   },
   {
     "id": "c2",
+    "text": "the plan says when a cached entry expires and what two concurrent misses do, and ends with the risks",
+    "command": "bun .rune-acceptance/check.mjs covers"
+  },
+  {
+    "id": "c3",
     "text": "no code was changed by a task that asked for a plan",
     "command": "bun .rune-acceptance/check.mjs sourceUntouched"
   }

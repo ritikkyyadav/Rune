@@ -1,7 +1,7 @@
 [
   {
     "id": "c1",
-    "text": "GET /health answers 200 with JSON carrying ok:true and a numeric uptimeMs",
+    "text": "GET /health answers 200 with JSON carrying ok:true and uptimeMs measured in milliseconds since startedAt, not the wall clock",
     "command": "bun .rune-acceptance/check.mjs health"
   },
   {
@@ -11,7 +11,7 @@
   },
   {
     "id": "c3",
-    "text": "the Unreleased section of CHANGELOG.md records the new route",
+    "text": "the Unreleased section of CHANGELOG.md records the /health route by path",
     "command": "bun .rune-acceptance/check.mjs changelog"
   }
 ]

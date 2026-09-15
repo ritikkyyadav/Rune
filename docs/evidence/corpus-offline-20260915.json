@@ -1,0 +1,3824 @@
+{
+  "schema": 1,
+  "kind": "corpus-offline",
+  "generatedAt": "2026-09-15T07:56:04.317Z",
+  "measures": "the harness's ability to tell a finished task from an unfinished one. The provider is a fixed script: nothing here measures a model.",
+  "modelCalls": 0,
+  "spendUsd": 0,
+  "provenance": {
+    "head": "95c3d5469573fcc361fa734343c564cadd2ba80f",
+    "dirty": true,
+    "dirtyPatchSha256": "9c8035295cb7778a18b7bcf22aa8aa6e0d1f394a60cb6c6fe26bbcc225934ff7",
+    "toolsBinary": "/Users/ritikyadav890/project/alan/target/release/rune-tools",
+    "toolsBinarySha256": "c5b44f6e3620aae0cf82941a9e155fb95097815b1cd673eb9c98aa1347a28416",
+    "bun": "1.3.14",
+    "node": "24.3.0",
+    "platform": "darwin-arm64",
+    "playwright": {
+      "available": true,
+      "module": "/tmp/pw/node_modules/playwright/index.mjs"
+    }
+  },
+  "protocol": {
+    "tasks": [
+      "csv-state-machine",
+      "off-by-one-window",
+      "queue-race",
+      "health-endpoint-and-changelog",
+      "note-field-and-exporter",
+      "dependent-migration",
+      "three-module-dependent",
+      "responsive-project-board",
+      "signup-form-states",
+      "explain-quote-handling",
+      "cache-plan",
+      "working-tree-integration"
+    ],
+    "scenarios": [
+      "correct",
+      "omission",
+      "wrong",
+      "silent",
+      "stopped",
+      "wrong-v6"
+    ],
+    "complete": true,
+    "engine": "checkpoints, security, rate limiting, hooks, MCP, skills, verification, repo map, playbook and memory off — the same configuration M1's acceptance integration tests use, so the rows are comparable to those.",
+    "classification": {
+      "false completion": "an omission / wrong / silent / stopped run whose verdict is `met`",
+      "false negative": "a correct run whose verdict is not `met`",
+      "cut off": "a stopped run that did not report `met`",
+      "detected": "the verdict matched what the arm actually was",
+      "skipped": "the acceptance could not run here; excluded from every denominator"
+    }
+  },
+  "totals": {
+    "rows": 64,
+    "attempted": 64,
+    "skipped": 0,
+    "falseCompletions": 0,
+    "falseCompletionDenominator": 52,
+    "falseCompletionRate": 0,
+    "falseNegatives": 2,
+    "correctAttempted": 12,
+    "falseNegativeRate": 0.1667,
+    "cutOff": 12,
+    "detected": 50
+  },
+  "families": {
+    "dirty-worktree": {
+      "rows": 5,
+      "attempted": 5,
+      "skipped": 0,
+      "falseCompletions": 0,
+      "falseCompletionDenominator": 4,
+      "falseCompletionRate": 0,
+      "falseNegatives": 0,
+      "correctAttempted": 1,
+      "falseNegativeRate": 0,
+      "cutOff": 1,
+      "detected": 4
+    },
+    "fix": {
+      "rows": 16,
+      "attempted": 16,
+      "skipped": 0,
+      "falseCompletions": 0,
+      "falseCompletionDenominator": 13,
+      "falseCompletionRate": 0,
+      "falseNegatives": 0,
+      "correctAttempted": 3,
+      "falseNegativeRate": 0,
+      "cutOff": 3,
+      "detected": 13
+    },
+    "frontend": {
+      "rows": 10,
+      "attempted": 10,
+      "skipped": 0,
+      "falseCompletions": 0,
+      "falseCompletionDenominator": 8,
+      "falseCompletionRate": 0,
+      "falseNegatives": 0,
+      "correctAttempted": 2,
+      "falseNegativeRate": 0,
+      "cutOff": 2,
+      "detected": 8
+    },
+    "migration": {
+      "rows": 11,
+      "attempted": 11,
+      "skipped": 0,
+      "falseCompletions": 0,
+      "falseCompletionDenominator": 9,
+      "falseCompletionRate": 0,
+      "falseNegatives": 0,
+      "correctAttempted": 2,
+      "falseNegativeRate": 0,
+      "cutOff": 2,
+      "detected": 9
+    },
+    "omission-prone-feature": {
+      "rows": 11,
+      "attempted": 11,
+      "skipped": 0,
+      "falseCompletions": 0,
+      "falseCompletionDenominator": 9,
+      "falseCompletionRate": 0,
+      "falseNegatives": 0,
+      "correctAttempted": 2,
+      "falseNegativeRate": 0,
+      "cutOff": 2,
+      "detected": 9
+    },
+    "research": {
+      "rows": 11,
+      "attempted": 11,
+      "skipped": 0,
+      "falseCompletions": 0,
+      "falseCompletionDenominator": 9,
+      "falseCompletionRate": 0,
+      "falseNegatives": 2,
+      "correctAttempted": 2,
+      "falseNegativeRate": 1,
+      "cutOff": 2,
+      "detected": 7
+    }
+  },
+  "scenarios": {
+    "correct": {
+      "rows": 12,
+      "attempted": 12,
+      "skipped": 0,
+      "falseCompletions": 0,
+      "falseCompletionDenominator": 0,
+      "falseCompletionRate": null,
+      "falseNegatives": 2,
+      "correctAttempted": 12,
+      "falseNegativeRate": 0.1667,
+      "cutOff": 0,
+      "detected": 10
+    },
+    "omission": {
+      "rows": 12,
+      "attempted": 12,
+      "skipped": 0,
+      "falseCompletions": 0,
+      "falseCompletionDenominator": 12,
+      "falseCompletionRate": 0,
+      "falseNegatives": 0,
+      "correctAttempted": 0,
+      "falseNegativeRate": null,
+      "cutOff": 0,
+      "detected": 12
+    },
+    "wrong": {
+      "rows": 12,
+      "attempted": 12,
+      "skipped": 0,
+      "falseCompletions": 0,
+      "falseCompletionDenominator": 12,
+      "falseCompletionRate": 0,
+      "falseNegatives": 0,
+      "correctAttempted": 0,
+      "falseNegativeRate": null,
+      "cutOff": 0,
+      "detected": 12
+    },
+    "silent": {
+      "rows": 12,
+      "attempted": 12,
+      "skipped": 0,
+      "falseCompletions": 0,
+      "falseCompletionDenominator": 12,
+      "falseCompletionRate": 0,
+      "falseNegatives": 0,
+      "correctAttempted": 0,
+      "falseNegativeRate": null,
+      "cutOff": 0,
+      "detected": 12
+    },
+    "stopped": {
+      "rows": 12,
+      "attempted": 12,
+      "skipped": 0,
+      "falseCompletions": 0,
+      "falseCompletionDenominator": 12,
+      "falseCompletionRate": 0,
+      "falseNegatives": 0,
+      "correctAttempted": 0,
+      "falseNegativeRate": null,
+      "cutOff": 12,
+      "detected": 0
+    },
+    "wrong-v6": {
+      "rows": 4,
+      "attempted": 4,
+      "skipped": 0,
+      "falseCompletions": 0,
+      "falseCompletionDenominator": 4,
+      "falseCompletionRate": 0,
+      "falseNegatives": 0,
+      "correctAttempted": 0,
+      "falseNegativeRate": null,
+      "cutOff": 0,
+      "detected": 4
+    }
+  },
+  "rows": [
+    {
+      "task": "csv-state-machine",
+      "family": "fix",
+      "scenario": "correct",
+      "note": "A full state machine, with the model's own tests written and run.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "met",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the parser handles quoting and record terminators",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "parseCsv returns [] for empty input, adds no record for a trailing terminator, and keeps empty fields and empty records",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "a quoted field carries commas, doubled quotes, CRLF and a leading BOM; whitespace outside quotes is data, and a BOM anywhere but the front is data",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "an unterminated quoted field throws",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 773
+    },
+    {
+      "task": "csv-state-machine",
+      "family": "fix",
+      "scenario": "omission",
+      "note": "Everything but the unterminated-quote error; the model's own tests never ask for it.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the parser handles quoting and record terminators",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "parseCsv returns [] for empty input, adds no record for a trailing terminator, and keeps empty fields and empty records",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "a quoted field carries commas, doubled quotes, CRLF and a leading BOM; whitespace outside quotes is data, and a BOM anywhere but the front is data",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "an unterminated quoted field throws",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "an unterminated quoted field throws",
+          "why": "failed: acceptance failed: unterminated — Missing expected exception."
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-csv-state-machine-omission-2dX4dN/home/rune-acceptance-dJWgkm/.rune-acceptance/check.mjs unterminated` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "an unterminated quoted field throws → failed"
+      ],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 667
+    },
+    {
+      "task": "csv-state-machine",
+      "family": "fix",
+      "scenario": "wrong",
+      "note": "A split-based parser: plausible, green on its own test, wrong on doubled quotes and the BOM.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the parser handles quoting and record terminators",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "parseCsv returns [] for empty input, adds no record for a trailing terminator, and keeps empty fields and empty records",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "a quoted field carries commas, doubled quotes, CRLF and a leading BOM; whitespace outside quotes is data, and a BOM anywhere but the front is data",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "an unterminated quoted field throws",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "a quoted field carries commas, doubled quotes, CRLF and a leading BOM; whitespace outside quotes is data, and a BOM anywhere but the front is data",
+          "why": "failed: ]"
+        },
+        {
+          "criterion": "an unterminated quoted field throws",
+          "why": "failed: acceptance failed: unterminated — Missing expected exception."
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-csv-state-machine-wrong-lsHsfu/home/rune-acceptance-dnNfr5/.rune-acceptance/check.mjs quoted` last failed"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-csv-state-machine-wrong-lsHsfu/home/rune-acceptance-dnNfr5/.rune-acceptance/check.mjs unterminated` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "a quoted field carries commas, doubled quotes, CRLF and a leading BOM; whitespace outside quotes is data, and a BOM anywhere but the front is data → failed",
+        "an unterminated quoted field throws → failed"
+      ],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 659
+    },
+    {
+      "task": "csv-state-machine",
+      "family": "fix",
+      "scenario": "silent",
+      "note": "A half-finished edit and an empty completion: no read_back, no claim, no text.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "parseCsv returns [] for empty input, adds no record for a trailing terminator, and keeps empty fields and empty records",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "a quoted field carries commas, doubled quotes, CRLF and a leading BOM; whitespace outside quotes is data, and a BOM anywhere but the front is data",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "an unterminated quoted field throws",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "parseCsv returns [] for empty input, adds no record for a trailing terminator, and keeps empty fields and empty records",
+          "why": "failed: ]"
+        },
+        {
+          "criterion": "a quoted field carries commas, doubled quotes, CRLF and a leading BOM; whitespace outside quotes is data, and a BOM anywhere but the front is data",
+          "why": "failed: ]"
+        },
+        {
+          "criterion": "an unterminated quoted field throws",
+          "why": "failed: acceptance failed: unterminated — Missing expected exception."
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-csv-state-machine-silent-LcI2FQ/home/rune-acceptance-NF2Ebk/.rune-acceptance/check.mjs empty` last failed"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-csv-state-machine-silent-LcI2FQ/home/rune-acceptance-NF2Ebk/.rune-acceptance/check.mjs quoted` last failed"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-csv-state-machine-silent-LcI2FQ/home/rune-acceptance-NF2Ebk/.rune-acceptance/check.mjs unterminated` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "parseCsv returns [] for empty input, adds no record for a trailing terminator, and keeps empty fields and empty records → failed",
+        "a quoted field carries commas, doubled quotes, CRLF and a leading BOM; whitespace outside quotes is data, and a BOM anywhere but the front is data → failed",
+        "an unterminated quoted field throws → failed"
+      ],
+      "harnessRePrompts": 4,
+      "completions": 1,
+      "providerTurns": 5,
+      "wallMs": 461
+    },
+    {
+      "task": "csv-state-machine",
+      "family": "fix",
+      "scenario": "stopped",
+      "note": "The turn ceiling closes the run before the parser is finished.",
+      "classification": "cut off",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "max_turns",
+        "status": "max_turns"
+      },
+      "criteria": [
+        {
+          "text": "the parser handles quoting and record terminators",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "parseCsv returns [] for empty input, adds no record for a trailing terminator, and keeps empty fields and empty records",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "a quoted field carries commas, doubled quotes, CRLF and a leading BOM; whitespace outside quotes is data, and a BOM anywhere but the front is data",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "an unterminated quoted field throws",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [
+        "parseCsv returns [] for empty input, adds no record for a trailing terminator, and keeps empty fields and empty records → unassessed",
+        "a quoted field carries commas, doubled quotes, CRLF and a leading BOM; whitespace outside quotes is data, and a BOM anywhere but the front is data → unassessed",
+        "an unterminated quoted field throws → unassessed"
+      ],
+      "harnessRePrompts": 2,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 331
+    },
+    {
+      "task": "csv-state-machine",
+      "family": "fix",
+      "scenario": "wrong-v6",
+      "note": "V6's own attack: a state machine that trims unquoted fields and strips a BOM anywhere. Green on its own test, wrong on two rules the prompt states in words.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the parser handles quoting and record terminators",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "parseCsv returns [] for empty input, adds no record for a trailing terminator, and keeps empty fields and empty records",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "a quoted field carries commas, doubled quotes, CRLF and a leading BOM; whitespace outside quotes is data, and a BOM anywhere but the front is data",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "an unterminated quoted field throws",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "a quoted field carries commas, doubled quotes, CRLF and a leading BOM; whitespace outside quotes is data, and a BOM anywhere but the front is data",
+          "why": "failed: ]"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-csv-state-machine-wrong-v6-ts4Hba/home/rune-acceptance-auBa8m/.rune-acceptance/check.mjs quoted` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "a quoted field carries commas, doubled quotes, CRLF and a leading BOM; whitespace outside quotes is data, and a BOM anywhere but the front is data → failed"
+      ],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 706
+    },
+    {
+      "task": "off-by-one-window",
+      "family": "fix",
+      "scenario": "correct",
+      "note": "The loop bound is corrected and the supplied test is left alone.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "met",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the failing window test passes without the test being edited",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "slidingMax returns one window per starting position, the last one included",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "a window longer than the input yields nothing, and a size that is not a positive integer throws",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the supplied failing test was fixed, not edited",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 697
+    },
+    {
+      "task": "off-by-one-window",
+      "family": "fix",
+      "scenario": "omission",
+      "note": "The bound is fixed; the positive-integer guard is dropped along the way.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the failing window test passes without the test being edited",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "slidingMax returns one window per starting position, the last one included",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "a window longer than the input yields nothing, and a size that is not a positive integer throws",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the supplied failing test was fixed, not edited",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "a window longer than the input yields nothing, and a size that is not a positive integer throws",
+          "why": "failed: acceptance failed: edges — Missing expected exception."
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-off-by-one-window-omission-MkMMZ4/home/rune-acceptance-tCFEKA/.rune-acceptance/check.mjs edges` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "a window longer than the input yields nothing, and a size that is not a positive integer throws → failed"
+      ],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 688
+    },
+    {
+      "task": "off-by-one-window",
+      "family": "fix",
+      "scenario": "wrong",
+      "note": "The inner loop is off by one and the supplied test is rewritten to agree with it.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the failing window test passes without the test being edited",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "slidingMax returns one window per starting position, the last one included",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "a window longer than the input yields nothing, and a size that is not a positive integer throws",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the supplied failing test was fixed, not edited",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "slidingMax returns one window per starting position, the last one included",
+          "why": "failed: ]"
+        },
+        {
+          "criterion": "the supplied failing test was fixed, not edited",
+          "why": "failed: - '64640ce6a020413b43cab07fa265ae4312fed48b34cd71f3228f4de6fc8044b8'"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-off-by-one-window-wrong-h9J9b0/home/rune-acceptance-WrM82S/.rune-acceptance/check.mjs windows` last failed"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-off-by-one-window-wrong-h9J9b0/home/rune-acceptance-WrM82S/.rune-acceptance/check.mjs testUntouched` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "slidingMax returns one window per starting position, the last one included → failed",
+        "the supplied failing test was fixed, not edited → failed"
+      ],
+      "harnessRePrompts": 4,
+      "completions": 1,
+      "providerTurns": 6,
+      "wallMs": 686
+    },
+    {
+      "task": "off-by-one-window",
+      "family": "fix",
+      "scenario": "silent",
+      "note": "A comment where the fix should be, then an empty completion.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "slidingMax returns one window per starting position, the last one included",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "a window longer than the input yields nothing, and a size that is not a positive integer throws",
+          "status": "stale",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the supplied failing test was fixed, not edited",
+          "status": "stale",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "slidingMax returns one window per starting position, the last one included",
+          "why": "failed: ]"
+        },
+        {
+          "criterion": "a window longer than the input yields nothing, and a size that is not a positive integer throws",
+          "why": "stale: the workspace moved since the evidence was taken"
+        },
+        {
+          "criterion": "the supplied failing test was fixed, not edited",
+          "why": "stale: the workspace moved since the evidence was taken"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-off-by-one-window-silent-QQ703h/home/rune-acceptance-sDEGsn/.rune-acceptance/check.mjs windows` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "slidingMax returns one window per starting position, the last one included → failed",
+        "a window longer than the input yields nothing, and a size that is not a positive integer throws → stale",
+        "the supplied failing test was fixed, not edited → stale"
+      ],
+      "harnessRePrompts": 4,
+      "completions": 1,
+      "providerTurns": 5,
+      "wallMs": 470
+    },
+    {
+      "task": "off-by-one-window",
+      "family": "fix",
+      "scenario": "stopped",
+      "note": "The turn ceiling closes the run with the fix still not applied.",
+      "classification": "cut off",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "max_turns",
+        "status": "max_turns"
+      },
+      "criteria": [
+        {
+          "text": "the failing window test passes without the test being edited",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "slidingMax returns one window per starting position, the last one included",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "a window longer than the input yields nothing, and a size that is not a positive integer throws",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the supplied failing test was fixed, not edited",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [
+        "slidingMax returns one window per starting position, the last one included → unassessed",
+        "a window longer than the input yields nothing, and a size that is not a positive integer throws → unassessed",
+        "the supplied failing test was fixed, not edited → unassessed"
+      ],
+      "harnessRePrompts": 2,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 326
+    },
+    {
+      "task": "queue-race",
+      "family": "fix",
+      "scenario": "correct",
+      "note": "The index is claimed synchronously and the pool is capped.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "met",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "each item runs once and the limit is respected",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "every item is processed exactly once and the results keep the input order",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "no more than `limit` workers run at the same time, and the limit is actually used",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "an empty list and a limit of one both behave",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 902
+    },
+    {
+      "task": "queue-race",
+      "family": "fix",
+      "scenario": "omission",
+      "note": "The double-processing is fixed by running everything at once: the limit is gone.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "each item runs once and the limit is respected",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "every item is processed exactly once and the results keep the input order",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "no more than `limit` workers run at the same time, and the limit is actually used",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "an empty list and a limit of one both behave",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "no more than `limit` workers run at the same time, and the limit is actually used",
+          "why": "failed: acceptance failed: concurrency — peak concurrency was 8, limit was 2"
+        },
+        {
+          "criterion": "an empty list and a limit of one both behave",
+          "why": "failed: 3 !== 1"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-queue-race-omission-vsznQG/home/rune-acceptance-CC2ziW/.rune-acceptance/check.mjs concurrency` last failed"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-queue-race-omission-vsznQG/home/rune-acceptance-CC2ziW/.rune-acceptance/check.mjs edges` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "no more than `limit` workers run at the same time, and the limit is actually used → failed",
+        "an empty list and a limit of one both behave → failed"
+      ],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 803
+    },
+    {
+      "task": "queue-race",
+      "family": "fix",
+      "scenario": "wrong",
+      "note": "The race is fixed, but results are pushed in completion order.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "each item runs once and the limit is respected",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "every item is processed exactly once and the results keep the input order",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "no more than `limit` workers run at the same time, and the limit is actually used",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "an empty list and a limit of one both behave",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "every item is processed exactly once and the results keep the input order",
+          "why": "failed: ]"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-queue-race-wrong-lUikSr/home/rune-acceptance-nNlwYy/.rune-acceptance/check.mjs once` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "every item is processed exactly once and the results keep the input order → failed"
+      ],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 894
+    },
+    {
+      "task": "queue-race",
+      "family": "fix",
+      "scenario": "silent",
+      "note": "A TODO where the claim should be, then an empty completion.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "every item is processed exactly once and the results keep the input order",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "no more than `limit` workers run at the same time, and the limit is actually used",
+          "status": "stale",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "an empty list and a limit of one both behave",
+          "status": "stale",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "every item is processed exactly once and the results keep the input order",
+          "why": "failed: 3 !== 1"
+        },
+        {
+          "criterion": "no more than `limit` workers run at the same time, and the limit is actually used",
+          "why": "stale: the workspace moved since the evidence was taken"
+        },
+        {
+          "criterion": "an empty list and a limit of one both behave",
+          "why": "stale: the workspace moved since the evidence was taken"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-queue-race-silent-Sqzdwx/home/rune-acceptance-ogfHMj/.rune-acceptance/check.mjs once` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "every item is processed exactly once and the results keep the input order → failed",
+        "no more than `limit` workers run at the same time, and the limit is actually used → stale",
+        "an empty list and a limit of one both behave → stale"
+      ],
+      "harnessRePrompts": 4,
+      "completions": 1,
+      "providerTurns": 5,
+      "wallMs": 701
+    },
+    {
+      "task": "queue-race",
+      "family": "fix",
+      "scenario": "stopped",
+      "note": "The turn ceiling closes the run with the race still in place.",
+      "classification": "cut off",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "max_turns",
+        "status": "max_turns"
+      },
+      "criteria": [
+        {
+          "text": "each item runs once and the limit is respected",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "every item is processed exactly once and the results keep the input order",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "no more than `limit` workers run at the same time, and the limit is actually used",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "an empty list and a limit of one both behave",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [
+        "every item is processed exactly once and the results keep the input order → unassessed",
+        "no more than `limit` workers run at the same time, and the limit is actually used → unassessed",
+        "an empty list and a limit of one both behave → unassessed"
+      ],
+      "harnessRePrompts": 2,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 336
+    },
+    {
+      "task": "health-endpoint-and-changelog",
+      "family": "omission-prone-feature",
+      "scenario": "correct",
+      "note": "Both halves: the JSON route and the Unreleased entry.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "met",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the new route answers and the release note is written",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "GET /health answers 200 with JSON carrying ok:true and uptimeMs measured in milliseconds since startedAt, not the wall clock",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the root route still answers and an unknown path is still 404",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the Unreleased section of CHANGELOG.md records the /health route by path",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 718
+    },
+    {
+      "task": "health-endpoint-and-changelog",
+      "family": "omission-prone-feature",
+      "scenario": "omission",
+      "note": "The route lands; the changelog is forgotten. The model's own tests are green.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the new route answers and the release note is written",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "GET /health answers 200 with JSON carrying ok:true and uptimeMs measured in milliseconds since startedAt, not the wall clock",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the root route still answers and an unknown path is still 404",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the Unreleased section of CHANGELOG.md records the /health route by path",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the Unreleased section of CHANGELOG.md records the /health route by path",
+          "why": "failed: acceptance failed: changelog — the Unreleased section does not record the /health route"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-health-endpoint-and-changelog-omission-mPQtcf/home/rune-acceptance-ttaJAc/.rune-acceptance/check.mjs changelog` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "the Unreleased section of CHANGELOG.md records the /health route by path → failed"
+      ],
+      "harnessRePrompts": 4,
+      "completions": 1,
+      "providerTurns": 6,
+      "wallMs": 665
+    },
+    {
+      "task": "health-endpoint-and-changelog",
+      "family": "omission-prone-feature",
+      "scenario": "wrong",
+      "note": "The route answers plain text instead of JSON; the changelog is written anyway.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the new route answers and the release note is written",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "GET /health answers 200 with JSON carrying ok:true and uptimeMs measured in milliseconds since startedAt, not the wall clock",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the root route still answers and an unknown path is still 404",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the Unreleased section of CHANGELOG.md records the /health route by path",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "GET /health answers 200 with JSON carrying ok:true and uptimeMs measured in milliseconds since startedAt, not the wall clock",
+          "why": "failed: 'text/plain'"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-health-endpoint-and-changelog-wrong-Mjxbuh/home/rune-acceptance-OwAGyC/.rune-acceptance/check.mjs health` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "GET /health answers 200 with JSON carrying ok:true and uptimeMs measured in milliseconds since startedAt, not the wall clock → failed"
+      ],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 669
+    },
+    {
+      "task": "health-endpoint-and-changelog",
+      "family": "omission-prone-feature",
+      "scenario": "silent",
+      "note": "A TODO where the route should be, then an empty completion.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "GET /health answers 200 with JSON carrying ok:true and uptimeMs measured in milliseconds since startedAt, not the wall clock",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the root route still answers and an unknown path is still 404",
+          "status": "stale",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the Unreleased section of CHANGELOG.md records the /health route by path",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "GET /health answers 200 with JSON carrying ok:true and uptimeMs measured in milliseconds since startedAt, not the wall clock",
+          "why": "failed: 404 !== 200"
+        },
+        {
+          "criterion": "the root route still answers and an unknown path is still 404",
+          "why": "stale: the workspace moved since the evidence was taken"
+        },
+        {
+          "criterion": "the Unreleased section of CHANGELOG.md records the /health route by path",
+          "why": "failed: acceptance failed: changelog — the Unreleased section does not record the /health route"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-health-endpoint-and-changelog-silent-Nht6Fk/home/rune-acceptance-iutzPD/.rune-acceptance/check.mjs health` last failed"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-health-endpoint-and-changelog-silent-Nht6Fk/home/rune-acceptance-iutzPD/.rune-acceptance/check.mjs changelog` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "GET /health answers 200 with JSON carrying ok:true and uptimeMs measured in milliseconds since startedAt, not the wall clock → failed",
+        "the root route still answers and an unknown path is still 404 → stale",
+        "the Unreleased section of CHANGELOG.md records the /health route by path → failed"
+      ],
+      "harnessRePrompts": 3,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 439
+    },
+    {
+      "task": "health-endpoint-and-changelog",
+      "family": "omission-prone-feature",
+      "scenario": "stopped",
+      "note": "The turn ceiling closes the run with neither half finished.",
+      "classification": "cut off",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "max_turns",
+        "status": "max_turns"
+      },
+      "criteria": [
+        {
+          "text": "the new route answers and the release note is written",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "GET /health answers 200 with JSON carrying ok:true and uptimeMs measured in milliseconds since startedAt, not the wall clock",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the root route still answers and an unknown path is still 404",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the Unreleased section of CHANGELOG.md records the /health route by path",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [
+        "GET /health answers 200 with JSON carrying ok:true and uptimeMs measured in milliseconds since startedAt, not the wall clock → unassessed",
+        "the root route still answers and an unknown path is still 404 → unassessed",
+        "the Unreleased section of CHANGELOG.md records the /health route by path → unassessed"
+      ],
+      "harnessRePrompts": 2,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 300
+    },
+    {
+      "task": "health-endpoint-and-changelog",
+      "family": "omission-prone-feature",
+      "scenario": "wrong-v6",
+      "note": "V6's own attack: uptimeMs is the wall clock, and the changelog entry says the word health while recording that no route changed.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the new route answers and the release note is written",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "GET /health answers 200 with JSON carrying ok:true and uptimeMs measured in milliseconds since startedAt, not the wall clock",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the root route still answers and an unknown path is still 404",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the Unreleased section of CHANGELOG.md records the /health route by path",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "GET /health answers 200 with JSON carrying ok:true and uptimeMs measured in milliseconds since startedAt, not the wall clock",
+          "why": "failed: acceptance failed: health — uptimeMs is 1789458766645, which is not milliseconds since ..."
+        },
+        {
+          "criterion": "the Unreleased section of CHANGELOG.md records the /health route by path",
+          "why": "failed: acceptance failed: changelog — the Unreleased section does not record the /health route"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-health-endpoint-and-changelog-wrong-v6-KXIQaX/home/rune-acceptance-9DverY/.rune-acceptance/check.mjs health` last failed"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-health-endpoint-and-changelog-wrong-v6-KXIQaX/home/rune-acceptance-9DverY/.rune-acceptance/check.mjs changelog` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "GET /health answers 200 with JSON carrying ok:true and uptimeMs measured in milliseconds since startedAt, not the wall clock → failed",
+        "the Unreleased section of CHANGELOG.md records the /health route by path → failed"
+      ],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 671
+    },
+    {
+      "task": "note-field-and-exporter",
+      "family": "omission-prone-feature",
+      "scenario": "correct",
+      "note": "Both halves, with RFC 4180 quoting in the exporter.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "met",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "notes carry tags and the export carries them too",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "createNote accepts tags and defaults them to an empty list",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "toCsv writes the header id,text,tags and joins a note's tags with a semicolon",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "a field holding a comma or a quote is quoted in the exported CSV",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 743
+    },
+    {
+      "task": "note-field-and-exporter",
+      "family": "omission-prone-feature",
+      "scenario": "omission",
+      "note": "The type gains tags; the exporter is never touched.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "notes carry tags and the export carries them too",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "createNote accepts tags and defaults them to an empty list",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "toCsv writes the header id,text,tags and joins a note's tags with a semicolon",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "a field holding a comma or a quote is quoted in the exported CSV",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "notes carry tags and the export carries them too",
+          "why": "no check bound: `bun test mine.test.ts` was set aside — it never reads notes.ts, which is what this criterion is about"
+        },
+        {
+          "criterion": "toCsv writes the header id,text,tags and joins a note's tags with a semicolon",
+          "why": "failed: ^"
+        },
+        {
+          "criterion": "a field holding a comma or a quote is quoted in the exported CSV",
+          "why": "failed: ^"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-note-field-and-exporter-omission-nsJqM5/home/rune-acceptance-FPaQvJ/.rune-acceptance/check.mjs column` last failed"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-note-field-and-exporter-omission-nsJqM5/home/rune-acceptance-FPaQvJ/.rune-acceptance/check.mjs quoting` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "toCsv writes the header id,text,tags and joins a note's tags with a semicolon → failed",
+        "a field holding a comma or a quote is quoted in the exported CSV → failed"
+      ],
+      "harnessRePrompts": 4,
+      "completions": 1,
+      "providerTurns": 6,
+      "wallMs": 588
+    },
+    {
+      "task": "note-field-and-exporter",
+      "family": "omission-prone-feature",
+      "scenario": "wrong",
+      "note": "The column arrives joined with a comma and never quoted.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "notes carry tags and the export carries them too",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "createNote accepts tags and defaults them to an empty list",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "toCsv writes the header id,text,tags and joins a note's tags with a semicolon",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "a field holding a comma or a quote is quoted in the exported CSV",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "notes carry tags and the export carries them too",
+          "why": "no check bound: `bun test mine.test.ts` was set aside — it never reads notes.ts, which is what this criterion is about"
+        },
+        {
+          "criterion": "toCsv writes the header id,text,tags and joins a note's tags with a semicolon",
+          "why": "failed: ^"
+        },
+        {
+          "criterion": "a field holding a comma or a quote is quoted in the exported CSV",
+          "why": "failed: ^"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-note-field-and-exporter-wrong-CJoV6F/home/rune-acceptance-LVO7nC/.rune-acceptance/check.mjs column` last failed"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-note-field-and-exporter-wrong-CJoV6F/home/rune-acceptance-LVO7nC/.rune-acceptance/check.mjs quoting` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "toCsv writes the header id,text,tags and joins a note's tags with a semicolon → failed",
+        "a field holding a comma or a quote is quoted in the exported CSV → failed"
+      ],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 674
+    },
+    {
+      "task": "note-field-and-exporter",
+      "family": "omission-prone-feature",
+      "scenario": "silent",
+      "note": "The type changes; the exporter does not; nothing is said.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "createNote accepts tags and defaults them to an empty list",
+          "status": "stale",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "toCsv writes the header id,text,tags and joins a note's tags with a semicolon",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "a field holding a comma or a quote is quoted in the exported CSV",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "createNote accepts tags and defaults them to an empty list",
+          "why": "stale: the workspace moved since the evidence was taken"
+        },
+        {
+          "criterion": "toCsv writes the header id,text,tags and joins a note's tags with a semicolon",
+          "why": "failed: ^"
+        },
+        {
+          "criterion": "a field holding a comma or a quote is quoted in the exported CSV",
+          "why": "failed: ^"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-note-field-and-exporter-silent-HRSnoI/home/rune-acceptance-f5DCaQ/.rune-acceptance/check.mjs column` last failed"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-note-field-and-exporter-silent-HRSnoI/home/rune-acceptance-f5DCaQ/.rune-acceptance/check.mjs quoting` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "createNote accepts tags and defaults them to an empty list → stale",
+        "toCsv writes the header id,text,tags and joins a note's tags with a semicolon → failed",
+        "a field holding a comma or a quote is quoted in the exported CSV → failed"
+      ],
+      "harnessRePrompts": 3,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 445
+    },
+    {
+      "task": "note-field-and-exporter",
+      "family": "omission-prone-feature",
+      "scenario": "stopped",
+      "note": "The turn ceiling closes the run after the type change only.",
+      "classification": "cut off",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "max_turns",
+        "status": "max_turns"
+      },
+      "criteria": [
+        {
+          "text": "notes carry tags and the export carries them too",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "createNote accepts tags and defaults them to an empty list",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "toCsv writes the header id,text,tags and joins a note's tags with a semicolon",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "a field holding a comma or a quote is quoted in the exported CSV",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [
+        "createNote accepts tags and defaults them to an empty list → unassessed",
+        "toCsv writes the header id,text,tags and joins a note's tags with a semicolon → unassessed",
+        "a field holding a comma or a quote is quoted in the exported CSV → unassessed"
+      ],
+      "harnessRePrompts": 2,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 300
+    },
+    {
+      "task": "dependent-migration",
+      "family": "migration",
+      "scenario": "correct",
+      "note": "Migration, pure upsert and an atomic save, with the CLI still working.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "met",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the store loads, upserts and saves as specified",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "a missing file is an empty v2 store, a v1 file migrates without losing values, and corrupt JSON, a misshapen store or an unknown version throws",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "upsert returns a new store, replaces an id in place, appends new ids, and normalizes tags",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "save writes the store where the CLI can read it back, creating missing parents, and replaces the destination atomically through a temporary file",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 4,
+      "completions": 1,
+      "providerTurns": 6,
+      "wallMs": 688
+    },
+    {
+      "task": "dependent-migration",
+      "family": "migration",
+      "scenario": "omission",
+      "note": "Everything but the v1 migration; the model's tests never load a v1 file.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the store loads, upserts and saves as specified",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "a missing file is an empty v2 store, a v1 file migrates without losing values, and corrupt JSON, a misshapen store or an unknown version throws",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "upsert returns a new store, replaces an id in place, appends new ids, and normalizes tags",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "save writes the store where the CLI can read it back, creating missing parents, and replaces the destination atomically through a temporary file",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the store loads, upserts and saves as specified",
+          "why": "no check bound: `bun test mine.test.ts` was set aside — it never reads store.ts, which is what this criterion is about"
+        },
+        {
+          "criterion": "a missing file is an empty v2 store, a v1 file migrates without losing values, and corrupt JSON, a misshapen store or an unknown version throws",
+          "why": "failed: acceptance failed: migration — unknown store version"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-dependent-migration-omission-blaiAm/home/rune-acceptance-ZazxRu/.rune-acceptance/check.mjs migration` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "a missing file is an empty v2 store, a v1 file migrates without losing values, and corrupt JSON, a misshapen store or an unknown version throws → failed"
+      ],
+      "harnessRePrompts": 4,
+      "completions": 1,
+      "providerTurns": 6,
+      "wallMs": 619
+    },
+    {
+      "task": "dependent-migration",
+      "family": "migration",
+      "scenario": "wrong",
+      "note": "upsert mutates its input and moves a replaced id to the end.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the store loads, upserts and saves as specified",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "a missing file is an empty v2 store, a v1 file migrates without losing values, and corrupt JSON, a misshapen store or an unknown version throws",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "upsert returns a new store, replaces an id in place, appends new ids, and normalizes tags",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "save writes the store where the CLI can read it back, creating missing parents, and replaces the destination atomically through a temporary file",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the store loads, upserts and saves as specified",
+          "why": "no check bound: `bun test mine.test.ts` was set aside — it never reads store.ts, which is what this criterion is about"
+        },
+        {
+          "criterion": "upsert returns a new store, replaces an id in place, appends new ids, and normalizes tags",
+          "why": "failed: - '{\"version\":2,\"notes\":[{\"id\":\"a\",\"text\":\"old\",\"tags\":[]},{\"id\":\"b\",\"text\":\"b\",\"tags\":..."
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-dependent-migration-wrong-Tns33J/home/rune-acceptance-393Jff/.rune-acceptance/check.mjs upsert` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "upsert returns a new store, replaces an id in place, appends new ids, and normalizes tags → failed"
+      ],
+      "harnessRePrompts": 4,
+      "completions": 1,
+      "providerTurns": 6,
+      "wallMs": 613
+    },
+    {
+      "task": "dependent-migration",
+      "family": "migration",
+      "scenario": "silent",
+      "note": "load and save land; upsert is left returning its input; nothing is said.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "a missing file is an empty v2 store, a v1 file migrates without losing values, and corrupt JSON, a misshapen store or an unknown version throws",
+          "status": "stale",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "upsert returns a new store, replaces an id in place, appends new ids, and normalizes tags",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "save writes the store where the CLI can read it back, creating missing parents, and replaces the destination atomically through a temporary file",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "a missing file is an empty v2 store, a v1 file migrates without losing values, and corrupt JSON, a misshapen store or an unknown version throws",
+          "why": "stale: the workspace moved since the evidence was taken"
+        },
+        {
+          "criterion": "upsert returns a new store, replaces an id in place, appends new ids, and normalizes tags",
+          "why": "failed: text: 'b'"
+        },
+        {
+          "criterion": "save writes the store where the CLI can read it back, creating missing parents, and replaces the destination atomically through a temporary file",
+          "why": "failed: 1 !== 2"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-dependent-migration-silent-Ff1mPX/home/rune-acceptance-0MQCGK/.rune-acceptance/check.mjs upsert` last failed"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-dependent-migration-silent-Ff1mPX/home/rune-acceptance-0MQCGK/.rune-acceptance/check.mjs persistence` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "a missing file is an empty v2 store, a v1 file migrates without losing values, and corrupt JSON, a misshapen store or an unknown version throws → stale",
+        "upsert returns a new store, replaces an id in place, appends new ids, and normalizes tags → failed",
+        "save writes the store where the CLI can read it back, creating missing parents, and replaces the destination atomically through a temporary file → failed"
+      ],
+      "harnessRePrompts": 3,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 468
+    },
+    {
+      "task": "dependent-migration",
+      "family": "migration",
+      "scenario": "stopped",
+      "note": "The turn ceiling closes the run with upsert unimplemented.",
+      "classification": "cut off",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "max_turns",
+        "status": "max_turns"
+      },
+      "criteria": [
+        {
+          "text": "the store loads, upserts and saves as specified",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "a missing file is an empty v2 store, a v1 file migrates without losing values, and corrupt JSON, a misshapen store or an unknown version throws",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "upsert returns a new store, replaces an id in place, appends new ids, and normalizes tags",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "save writes the store where the CLI can read it back, creating missing parents, and replaces the destination atomically through a temporary file",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [
+        "a missing file is an empty v2 store, a v1 file migrates without losing values, and corrupt JSON, a misshapen store or an unknown version throws → unassessed",
+        "upsert returns a new store, replaces an id in place, appends new ids, and normalizes tags → unassessed",
+        "save writes the store where the CLI can read it back, creating missing parents, and replaces the destination atomically through a temporary file → unassessed"
+      ],
+      "harnessRePrompts": 2,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 307
+    },
+    {
+      "task": "dependent-migration",
+      "family": "migration",
+      "scenario": "wrong-v6",
+      "note": "V6's own attack: save() writes in place instead of renaming a temporary file, and load() accepts an unknown version as a v2 store.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the store loads, upserts and saves as specified",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "a missing file is an empty v2 store, a v1 file migrates without losing values, and corrupt JSON, a misshapen store or an unknown version throws",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "upsert returns a new store, replaces an id in place, appends new ids, and normalizes tags",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "save writes the store where the CLI can read it back, creating missing parents, and replaces the destination atomically through a temporary file",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the store loads, upserts and saves as specified",
+          "why": "no check bound: `bun test mine.test.ts` was set aside — it never reads store.ts, which is what this criterion is about"
+        },
+        {
+          "criterion": "a missing file is an empty v2 store, a v1 file migrates without losing values, and corrupt JSON, a misshapen store or an unknown version throws",
+          "why": "failed: acceptance failed: migration — Missing expected rejection: an unknown store version was..."
+        },
+        {
+          "criterion": "save writes the store where the CLI can read it back, creating missing parents, and replaces the destination atomically through a temporary file",
+          "why": "failed: acceptance failed: persistence — EACCES: permission denied, open '/var/folders/y7/k0gsl..."
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-dependent-migration-wrong-v6-XHiEGa/home/rune-acceptance-K5NJ0G/.rune-acceptance/check.mjs migration` last failed"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-dependent-migration-wrong-v6-XHiEGa/home/rune-acceptance-K5NJ0G/.rune-acceptance/check.mjs persistence` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "a missing file is an empty v2 store, a v1 file migrates without losing values, and corrupt JSON, a misshapen store or an unknown version throws → failed",
+        "save writes the store where the CLI can read it back, creating missing parents, and replaces the destination atomically through a temporary file → failed"
+      ],
+      "harnessRePrompts": 4,
+      "completions": 1,
+      "providerTurns": 6,
+      "wallMs": 614
+    },
+    {
+      "task": "three-module-dependent",
+      "family": "migration",
+      "scenario": "correct",
+      "note": "All three steps, in order, with the interface each later step assumed.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "met",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "all three modules move to the new token shape",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "step 1: tokenize returns typed tokens {kind:'word'|'number', value}",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "step 2: buildRecord reads the token kinds rather than re-testing the text",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "step 3: report runs the whole pipeline and prints the sum and the count",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 6,
+      "completions": 1,
+      "providerTurns": 8,
+      "wallMs": 831
+    },
+    {
+      "task": "three-module-dependent",
+      "family": "migration",
+      "scenario": "omission",
+      "note": "Steps 1 and 2 land; step 3 is left calling the builder with raw strings.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "all three modules move to the new token shape",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "step 1: tokenize returns typed tokens {kind:'word'|'number', value}",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "step 2: buildRecord reads the token kinds rather than re-testing the text",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "step 3: report runs the whole pipeline and prints the sum and the count",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "step 3: report runs the whole pipeline and prints the sum and the count",
+          "why": "failed: - 'alpha: 6 over 3'"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-three-module-dependent-omission-5O3RsK/home/rune-acceptance-aGFjBE/.rune-acceptance/check.mjs report` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "step 3: report runs the whole pipeline and prints the sum and the count → failed"
+      ],
+      "harnessRePrompts": 6,
+      "completions": 1,
+      "providerTurns": 8,
+      "wallMs": 832
+    },
+    {
+      "task": "three-module-dependent",
+      "family": "migration",
+      "scenario": "wrong",
+      "note": "Every token is labelled `word`; the builder re-tests the text, so only step 1's stated interface is violated and the end of the pipeline is green.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "all three modules move to the new token shape",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "step 1: tokenize returns typed tokens {kind:'word'|'number', value}",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "step 2: buildRecord reads the token kinds rather than re-testing the text",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "step 3: report runs the whole pipeline and prints the sum and the count",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "step 1: tokenize returns typed tokens {kind:'word'|'number', value}",
+          "why": "failed: ]"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-three-module-dependent-wrong-kNnd3o/home/rune-acceptance-Qbozc9/.rune-acceptance/check.mjs tokens` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "step 1: tokenize returns typed tokens {kind:'word'|'number', value} → failed"
+      ],
+      "harnessRePrompts": 6,
+      "completions": 1,
+      "providerTurns": 8,
+      "wallMs": 842
+    },
+    {
+      "task": "three-module-dependent",
+      "family": "migration",
+      "scenario": "silent",
+      "note": "Step 1 only, which breaks step 2, and nothing is said about it.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "step 1: tokenize returns typed tokens {kind:'word'|'number', value}",
+          "status": "stale",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "step 2: buildRecord reads the token kinds rather than re-testing the text",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "step 3: report runs the whole pipeline and prints the sum and the count",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "step 1: tokenize returns typed tokens {kind:'word'|'number', value}",
+          "why": "stale: the workspace moved since the evidence was taken"
+        },
+        {
+          "criterion": "step 2: buildRecord reads the token kinds rather than re-testing the text",
+          "why": "failed: }"
+        },
+        {
+          "criterion": "step 3: report runs the whole pipeline and prints the sum and the count",
+          "why": "failed: - 'alpha: 6 over 3'"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-three-module-dependent-silent-7Dxcnn/home/rune-acceptance-k3vYfO/.rune-acceptance/check.mjs builder` last failed"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-three-module-dependent-silent-7Dxcnn/home/rune-acceptance-k3vYfO/.rune-acceptance/check.mjs report` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "step 1: tokenize returns typed tokens {kind:'word'|'number', value} → stale",
+        "step 2: buildRecord reads the token kinds rather than re-testing the text → failed",
+        "step 3: report runs the whole pipeline and prints the sum and the count → failed"
+      ],
+      "harnessRePrompts": 3,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 453
+    },
+    {
+      "task": "three-module-dependent",
+      "family": "migration",
+      "scenario": "stopped",
+      "note": "The turn ceiling closes the run after step 1.",
+      "classification": "cut off",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "max_turns",
+        "status": "max_turns"
+      },
+      "criteria": [
+        {
+          "text": "all three modules move to the new token shape",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "step 1: tokenize returns typed tokens {kind:'word'|'number', value}",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "step 2: buildRecord reads the token kinds rather than re-testing the text",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "step 3: report runs the whole pipeline and prints the sum and the count",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [
+        "step 1: tokenize returns typed tokens {kind:'word'|'number', value} → unassessed",
+        "step 2: buildRecord reads the token kinds rather than re-testing the text → unassessed",
+        "step 3: report runs the whole pipeline and prints the sum and the count → unassessed"
+      ],
+      "harnessRePrompts": 2,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 303
+    },
+    {
+      "task": "responsive-project-board",
+      "family": "frontend",
+      "scenario": "correct",
+      "note": "The full board: grid, combined filtering, persisted favorites, empty state.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "met",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the board renders, filters and remembers favorites",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "at 1440 the board shows all six projects in more than one column, each card a real size",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the favorite toggle works from the keyboard, announces aria-pressed, and survives a reload",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "search and status filtering combine, an empty state appears, and 390 wide holds every card without horizontal overflow or console errors",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 6,
+      "completions": 1,
+      "providerTurns": 8,
+      "wallMs": 4533
+    },
+    {
+      "task": "responsive-project-board",
+      "family": "frontend",
+      "scenario": "omission",
+      "note": "Everything but persistence: favorites toggle and are forgotten on reload.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the board renders, filters and remembers favorites",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "at 1440 the board shows all six projects in more than one column, each card a real size",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the favorite toggle works from the keyboard, announces aria-pressed, and survives a reload",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "search and status filtering combine, an empty state appears, and 390 wide holds every card without horizontal overflow or console errors",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the favorite toggle works from the keyboard, announces aria-pressed, and survives a reload",
+          "why": "failed: 'false' !== 'true'"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-responsive-project-board-omission-mnbsVc/home/rune-acceptance-VbN1LA/.rune-acceptance/check.mjs favorites` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "the favorite toggle works from the keyboard, announces aria-pressed, and survives a reload → failed"
+      ],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 4304
+    },
+    {
+      "task": "responsive-project-board",
+      "family": "frontend",
+      "scenario": "wrong",
+      "note": "A search overrides the status filter instead of combining with it, so the empty state never appears.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the board renders, filters and remembers favorites",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "at 1440 the board shows all six projects in more than one column, each card a real size",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the favorite toggle works from the keyboard, announces aria-pressed, and survives a reload",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "search and status filtering combine, an empty state appears, and 390 wide holds every card without horizontal overflow or console errors",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "search and status filtering combine, an empty state appears, and 390 wide holds every card without horizontal overflow or console errors",
+          "why": "failed: 1 !== 0"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-responsive-project-board-wrong-cNCeCU/home/rune-acceptance-XCz1IC/.rune-acceptance/check.mjs filteringAndMobile` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "search and status filtering combine, an empty state appears, and 390 wide holds every card without horizontal overflow or console errors → failed"
+      ],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 3807
+    },
+    {
+      "task": "responsive-project-board",
+      "family": "frontend",
+      "scenario": "silent",
+      "note": "A heading and a TODO, then an empty completion.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "at 1440 the board shows all six projects in more than one column, each card a real size",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the favorite toggle works from the keyboard, announces aria-pressed, and survives a reload",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "search and status filtering combine, an empty state appears, and 390 wide holds every card without horizontal overflow or console errors",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "at 1440 the board shows all six projects in more than one column, each card a real size",
+          "why": "failed: \u001b[2m - waiting for locator('[data-project-id=\"kestrel\"]') to be visible\u001b[22m"
+        },
+        {
+          "criterion": "the favorite toggle works from the keyboard, announces aria-pressed, and survives a reload",
+          "why": "failed: \u001b[2m - waiting for locator('[data-project-id=\"kestrel\"]') to be visible\u001b[22m"
+        },
+        {
+          "criterion": "search and status filtering combine, an empty state appears, and 390 wide holds every card without horizontal overflow or console errors",
+          "why": "failed: \u001b[2m - waiting for locator('[data-project-id=\"kestrel\"]') to be visible\u001b[22m"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-responsive-project-board-silent-O8AQCP/home/rune-acceptance-urbiLj/.rune-acceptance/check.mjs desktop` last failed"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-responsive-project-board-silent-O8AQCP/home/rune-acceptance-urbiLj/.rune-acceptance/check.mjs favorites` last failed"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-responsive-project-board-silent-O8AQCP/home/rune-acceptance-urbiLj/.rune-acceptance/check.mjs filteringAndMobile` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "at 1440 the board shows all six projects in more than one column, each card a real size → failed",
+        "the favorite toggle works from the keyboard, announces aria-pressed, and survives a reload → failed",
+        "search and status filtering combine, an empty state appears, and 390 wide holds every card without horizontal overflow or console errors → failed"
+      ],
+      "harnessRePrompts": 4,
+      "completions": 1,
+      "providerTurns": 5,
+      "wallMs": 92598
+    },
+    {
+      "task": "responsive-project-board",
+      "family": "frontend",
+      "scenario": "stopped",
+      "note": "The turn ceiling closes the run with the board still a placeholder.",
+      "classification": "cut off",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "max_turns",
+        "status": "max_turns"
+      },
+      "criteria": [
+        {
+          "text": "the board renders, filters and remembers favorites",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "at 1440 the board shows all six projects in more than one column, each card a real size",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the favorite toggle works from the keyboard, announces aria-pressed, and survives a reload",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "search and status filtering combine, an empty state appears, and 390 wide holds every card without horizontal overflow or console errors",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [
+        "at 1440 the board shows all six projects in more than one column, each card a real size → unassessed",
+        "the favorite toggle works from the keyboard, announces aria-pressed, and survives a reload → unassessed",
+        "search and status filtering combine, an empty state appears, and 390 wide holds every card without horizontal overflow or console errors → unassessed"
+      ],
+      "harnessRePrompts": 2,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 255
+    },
+    {
+      "task": "signup-form-states",
+      "family": "frontend",
+      "scenario": "correct",
+      "note": "Validation, announced errors, keyboard order and a status confirmation.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "met",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the form validates and confirms",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "submit stays disabled until the form is valid, and an invalid field is announced and bound to its input",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "tab moves email → password → confirm → submit, and the focused control shows a focus ring",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "a valid submit shows a status confirmation, and 390 wide neither overflows nor logs console errors",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 6,
+      "completions": 1,
+      "providerTurns": 8,
+      "wallMs": 2964
+    },
+    {
+      "task": "signup-form-states",
+      "family": "frontend",
+      "scenario": "omission",
+      "note": "Every rule is enforced and no message is ever surfaced.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the form validates and confirms",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "submit stays disabled until the form is valid, and an invalid field is announced and bound to its input",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "tab moves email → password → confirm → submit, and the focused control shows a focus ring",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "a valid submit shows a status confirmation, and 390 wide neither overflows nor logs console errors",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "submit stays disabled until the form is valid, and an invalid field is announced and bound to its input",
+          "why": "failed: \u001b[2m - waiting for locator('[role=\"alert\"]:visible').first() to be visible\u001b[22m"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-signup-form-states-omission-LH2NND/home/rune-acceptance-Fyfd3z/.rune-acceptance/check.mjs validation` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "submit stays disabled until the form is valid, and an invalid field is announced and bound to its input → failed"
+      ],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 6866
+    },
+    {
+      "task": "signup-form-states",
+      "family": "frontend",
+      "scenario": "wrong",
+      "note": "The confirmation is never compared, so a mismatch submits happily.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the form validates and confirms",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "submit stays disabled until the form is valid, and an invalid field is announced and bound to its input",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "tab moves email → password → confirm → submit, and the focused control shows a focus ring",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "a valid submit shows a status confirmation, and 390 wide neither overflows nor logs console errors",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "submit stays disabled until the form is valid, and an invalid field is announced and bound to its input",
+          "why": "failed: false !== true"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-signup-form-states-wrong-nSOyYz/home/rune-acceptance-0Xw338/.rune-acceptance/check.mjs validation` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "submit stays disabled until the form is valid, and an invalid field is announced and bound to its input → failed"
+      ],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 2948
+    },
+    {
+      "task": "signup-form-states",
+      "family": "frontend",
+      "scenario": "silent",
+      "note": "Two fields, no validation, no confirmation, and nothing said.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "submit stays disabled until the form is valid, and an invalid field is announced and bound to its input",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "tab moves email → password → confirm → submit, and the focused control shows a focus ring",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "a valid submit shows a status confirmation, and 390 wide neither overflows nor logs console errors",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "submit stays disabled until the form is valid, and an invalid field is announced and bound to its input",
+          "why": "failed: false !== true"
+        },
+        {
+          "criterion": "tab moves email → password → confirm → submit, and the focused control shows a focus ring",
+          "why": "failed: \u001b[2m - waiting for getByLabel('Confirm password', { exact: true })\u001b[22m"
+        },
+        {
+          "criterion": "a valid submit shows a status confirmation, and 390 wide neither overflows nor logs console errors",
+          "why": "failed: \u001b[2m - waiting for getByLabel('Confirm password', { exact: true })\u001b[22m"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-signup-form-states-silent-fujzxy/home/rune-acceptance-BOWD3J/.rune-acceptance/check.mjs validation` last failed"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-signup-form-states-silent-fujzxy/home/rune-acceptance-BOWD3J/.rune-acceptance/check.mjs keyboard` last failed"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-signup-form-states-silent-fujzxy/home/rune-acceptance-BOWD3J/.rune-acceptance/check.mjs successAndMobile` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "submit stays disabled until the form is valid, and an invalid field is announced and bound to its input → failed",
+        "tab moves email → password → confirm → submit, and the focused control shows a focus ring → failed",
+        "a valid submit shows a status confirmation, and 390 wide neither overflows nor logs console errors → failed"
+      ],
+      "harnessRePrompts": 4,
+      "completions": 1,
+      "providerTurns": 5,
+      "wallMs": 62810
+    },
+    {
+      "task": "signup-form-states",
+      "family": "frontend",
+      "scenario": "stopped",
+      "note": "The turn ceiling closes the run with the form half built.",
+      "classification": "cut off",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "max_turns",
+        "status": "max_turns"
+      },
+      "criteria": [
+        {
+          "text": "the form validates and confirms",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "submit stays disabled until the form is valid, and an invalid field is announced and bound to its input",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "tab moves email → password → confirm → submit, and the focused control shows a focus ring",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "a valid submit shows a status confirmation, and 390 wide neither overflows nor logs console errors",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [
+        "submit stays disabled until the form is valid, and an invalid field is announced and bound to its input → unassessed",
+        "tab moves email → password → confirm → submit, and the focused control shows a focus ring → unassessed",
+        "a valid submit shows a status confirmation, and 390 wide neither overflows nor logs console errors → unassessed"
+      ],
+      "harnessRePrompts": 2,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 223
+    },
+    {
+      "task": "explain-quote-handling",
+      "family": "research",
+      "scenario": "correct",
+      "note": "All three subjects plus the limits, and not one line of code touched.",
+      "classification": "false negative",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the explanation covers every asked-for subject",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "ANSWER.md addresses the doubled-quote rule, a newline inside a quoted field, the leading BOM, and what the parser does not do",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "no source file was modified by a task that asked for none",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the explanation covers every asked-for subject",
+          "why": "needs_review: ok — execution receipt only — ran, exit 0, not a recognised check; not replayed on the parent"
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 3,
+      "completions": 1,
+      "providerTurns": 5,
+      "wallMs": 318
+    },
+    {
+      "task": "explain-quote-handling",
+      "family": "research",
+      "scenario": "omission",
+      "note": "The doubled quote and the CRLF are explained; the BOM is never mentioned.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the explanation covers every asked-for subject",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "ANSWER.md addresses the doubled-quote rule, a newline inside a quoted field, the leading BOM, and what the parser does not do",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "no source file was modified by a task that asked for none",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the explanation covers every asked-for subject",
+          "why": "needs_review: ok — execution receipt only — ran, exit 0, not a recognised check; not replayed on the parent"
+        },
+        {
+          "criterion": "ANSWER.md addresses the doubled-quote rule, a newline inside a quoted field, the leading BOM, and what the parser does not do",
+          "why": "failed: acceptance failed: subjects — the answer never addresses the leading BOM"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-explain-quote-handling-omission-VSgW1W/home/rune-acceptance-0s7x8w/.rune-acceptance/check.mjs subjects` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "ANSWER.md addresses the doubled-quote rule, a newline inside a quoted field, the leading BOM, and what the parser does not do → failed"
+      ],
+      "harnessRePrompts": 3,
+      "completions": 1,
+      "providerTurns": 5,
+      "wallMs": 326
+    },
+    {
+      "task": "explain-quote-handling",
+      "family": "research",
+      "scenario": "wrong",
+      "note": "Every subject named and each one described backwards — and csv.ts edited on the way past.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the explanation covers every asked-for subject",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "ANSWER.md addresses the doubled-quote rule, a newline inside a quoted field, the leading BOM, and what the parser does not do",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "no source file was modified by a task that asked for none",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the explanation covers every asked-for subject",
+          "why": "no check bound"
+        },
+        {
+          "criterion": "ANSWER.md addresses the doubled-quote rule, a newline inside a quoted field, the leading BOM, and what the parser does not do",
+          "why": "failed: acceptance failed: subjects — the answer never addresses what the parser does not do"
+        },
+        {
+          "criterion": "no source file was modified by a task that asked for none",
+          "why": "failed: - 'c439756c35a2c9b5bcdf9a8b90de5bde5861122eb0a5d689a45326e3153493db'"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-explain-quote-handling-wrong-jl56ac/home/rune-acceptance-j8zBoe/.rune-acceptance/check.mjs subjects` last failed"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-explain-quote-handling-wrong-jl56ac/home/rune-acceptance-j8zBoe/.rune-acceptance/check.mjs sourceUntouched` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "ANSWER.md addresses the doubled-quote rule, a newline inside a quoted field, the leading BOM, and what the parser does not do → failed",
+        "no source file was modified by a task that asked for none → failed"
+      ],
+      "harnessRePrompts": 4,
+      "completions": 1,
+      "providerTurns": 6,
+      "wallMs": 448
+    },
+    {
+      "task": "explain-quote-handling",
+      "family": "research",
+      "scenario": "silent",
+      "note": "One sentence in ANSWER.md and an empty completion.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "ANSWER.md addresses the doubled-quote rule, a newline inside a quoted field, the leading BOM, and what the parser does not do",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "no source file was modified by a task that asked for none",
+          "status": "stale",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "ANSWER.md addresses the doubled-quote rule, a newline inside a quoted field, the leading BOM, and what the parser does not do",
+          "why": "failed: acceptance failed: subjects — the answer is too short to be an explanation"
+        },
+        {
+          "criterion": "no source file was modified by a task that asked for none",
+          "why": "stale: the workspace moved since the evidence was taken"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-explain-quote-handling-silent-SS1NyF/home/rune-acceptance-kk1j13/.rune-acceptance/check.mjs subjects` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "ANSWER.md addresses the doubled-quote rule, a newline inside a quoted field, the leading BOM, and what the parser does not do → failed",
+        "no source file was modified by a task that asked for none → stale"
+      ],
+      "harnessRePrompts": 3,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 323
+    },
+    {
+      "task": "explain-quote-handling",
+      "family": "research",
+      "scenario": "stopped",
+      "note": "The turn ceiling closes the run with the answer a stub.",
+      "classification": "cut off",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "max_turns",
+        "status": "max_turns"
+      },
+      "criteria": [
+        {
+          "text": "the explanation covers every asked-for subject",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "ANSWER.md addresses the doubled-quote rule, a newline inside a quoted field, the leading BOM, and what the parser does not do",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "no source file was modified by a task that asked for none",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [
+        "ANSWER.md addresses the doubled-quote rule, a newline inside a quoted field, the leading BOM, and what the parser does not do → unassessed",
+        "no source file was modified by a task that asked for none → unassessed"
+      ],
+      "harnessRePrompts": 2,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 229
+    },
+    {
+      "task": "cache-plan",
+      "family": "research",
+      "scenario": "correct",
+      "note": "Three steps, each naming a file and a verification, plus the risks.",
+      "classification": "false negative",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the plan names its steps, files and checks",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "PLAN.md holds at least three numbered steps, each naming a file it touches and how it will be verified",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the plan says when a cached entry expires and what two concurrent misses do, and ends with the risks",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "no code was changed by a task that asked for a plan",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the plan names its steps, files and checks",
+          "why": "needs_review: ok — execution receipt only — ran, exit 0, not a recognised check; not replayed on the parent"
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 3,
+      "completions": 1,
+      "providerTurns": 5,
+      "wallMs": 418
+    },
+    {
+      "task": "cache-plan",
+      "family": "research",
+      "scenario": "omission",
+      "note": "Two steps; expiry and single-flight are never planned.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the plan names its steps, files and checks",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "PLAN.md holds at least three numbered steps, each naming a file it touches and how it will be verified",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the plan says when a cached entry expires and what two concurrent misses do, and ends with the risks",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "no code was changed by a task that asked for a plan",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the plan names its steps, files and checks",
+          "why": "needs_review: ok — execution receipt only — ran, exit 0, not a recognised check; not replayed on the parent"
+        },
+        {
+          "criterion": "PLAN.md holds at least three numbered steps, each naming a file it touches and how it will be verified",
+          "why": "failed: acceptance failed: steps — the plan has 2 numbered steps, fewer than three"
+        },
+        {
+          "criterion": "the plan says when a cached entry expires and what two concurrent misses do, and ends with the risks",
+          "why": "failed: acceptance failed: covers — the plan never says what two concurrent misses for one URL do"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-cache-plan-omission-0rFT9N/home/rune-acceptance-ajX5iP/.rune-acceptance/check.mjs steps` last failed"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-cache-plan-omission-0rFT9N/home/rune-acceptance-ajX5iP/.rune-acceptance/check.mjs covers` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "PLAN.md holds at least three numbered steps, each naming a file it touches and how it will be verified → failed",
+        "the plan says when a cached entry expires and what two concurrent misses do, and ends with the risks → failed"
+      ],
+      "harnessRePrompts": 3,
+      "completions": 1,
+      "providerTurns": 5,
+      "wallMs": 415
+    },
+    {
+      "task": "cache-plan",
+      "family": "research",
+      "scenario": "wrong",
+      "note": "Three headings with nothing in them, and the code changed anyway.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the plan names its steps, files and checks",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "PLAN.md holds at least three numbered steps, each naming a file it touches and how it will be verified",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the plan says when a cached entry expires and what two concurrent misses do, and ends with the risks",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "no code was changed by a task that asked for a plan",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the plan names its steps, files and checks",
+          "why": "needs_review: ok — execution receipt only — ran, exit 0, not a recognised check; not replayed on the parent"
+        },
+        {
+          "criterion": "PLAN.md holds at least three numbered steps, each naming a file it touches and how it will be verified",
+          "why": "failed: acceptance failed: steps — step 1 names no file"
+        },
+        {
+          "criterion": "the plan says when a cached entry expires and what two concurrent misses do, and ends with the risks",
+          "why": "failed: acceptance failed: covers — the plan never says what two concurrent misses for one URL do"
+        },
+        {
+          "criterion": "no code was changed by a task that asked for a plan",
+          "why": "failed: - '117791f1b331e4f22d95962d866d10cef4b159b16b045135f0ebecf465460c58'"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-cache-plan-wrong-XWN8Fx/home/rune-acceptance-Kffl4U/.rune-acceptance/check.mjs steps` last failed"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-cache-plan-wrong-XWN8Fx/home/rune-acceptance-Kffl4U/.rune-acceptance/check.mjs covers` last failed"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-cache-plan-wrong-XWN8Fx/home/rune-acceptance-Kffl4U/.rune-acceptance/check.mjs sourceUntouched` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "PLAN.md holds at least three numbered steps, each naming a file it touches and how it will be verified → failed",
+        "the plan says when a cached entry expires and what two concurrent misses do, and ends with the risks → failed",
+        "no code was changed by a task that asked for a plan → failed"
+      ],
+      "harnessRePrompts": 4,
+      "completions": 1,
+      "providerTurns": 6,
+      "wallMs": 500
+    },
+    {
+      "task": "cache-plan",
+      "family": "research",
+      "scenario": "silent",
+      "note": "A two-line PLAN.md and an empty completion.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "PLAN.md holds at least three numbered steps, each naming a file it touches and how it will be verified",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the plan says when a cached entry expires and what two concurrent misses do, and ends with the risks",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "no code was changed by a task that asked for a plan",
+          "status": "stale",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "PLAN.md holds at least three numbered steps, each naming a file it touches and how it will be verified",
+          "why": "failed: acceptance failed: steps — the plan has 0 numbered steps, fewer than three"
+        },
+        {
+          "criterion": "the plan says when a cached entry expires and what two concurrent misses do, and ends with the risks",
+          "why": "failed: acceptance failed: covers — the plan never says when a cached entry stops being used"
+        },
+        {
+          "criterion": "no code was changed by a task that asked for a plan",
+          "why": "stale: the workspace moved since the evidence was taken"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-cache-plan-silent-fjwiT7/home/rune-acceptance-VEAGwE/.rune-acceptance/check.mjs steps` last failed"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-cache-plan-silent-fjwiT7/home/rune-acceptance-VEAGwE/.rune-acceptance/check.mjs covers` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "PLAN.md holds at least three numbered steps, each naming a file it touches and how it will be verified → failed",
+        "the plan says when a cached entry expires and what two concurrent misses do, and ends with the risks → failed",
+        "no code was changed by a task that asked for a plan → stale"
+      ],
+      "harnessRePrompts": 3,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 372
+    },
+    {
+      "task": "cache-plan",
+      "family": "research",
+      "scenario": "stopped",
+      "note": "The turn ceiling closes the run with the plan a stub.",
+      "classification": "cut off",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "max_turns",
+        "status": "max_turns"
+      },
+      "criteria": [
+        {
+          "text": "the plan names its steps, files and checks",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "PLAN.md holds at least three numbered steps, each naming a file it touches and how it will be verified",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the plan says when a cached entry expires and what two concurrent misses do, and ends with the risks",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "no code was changed by a task that asked for a plan",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [
+        "PLAN.md holds at least three numbered steps, each naming a file it touches and how it will be verified → unassessed",
+        "the plan says when a cached entry expires and what two concurrent misses do, and ends with the risks → unassessed",
+        "no code was changed by a task that asked for a plan → unassessed"
+      ],
+      "harnessRePrompts": 2,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 233
+    },
+    {
+      "task": "cache-plan",
+      "family": "research",
+      "scenario": "wrong-v6",
+      "note": "V6's own attack: the omission arm's omission padded to three well-shaped steps — no expiry, no single-flight, no risks.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the plan names its steps, files and checks",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "PLAN.md holds at least three numbered steps, each naming a file it touches and how it will be verified",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the plan says when a cached entry expires and what two concurrent misses do, and ends with the risks",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "no code was changed by a task that asked for a plan",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the plan names its steps, files and checks",
+          "why": "needs_review: ok — execution receipt only — ran, exit 0, not a recognised check; not replayed on the parent"
+        },
+        {
+          "criterion": "the plan says when a cached entry expires and what two concurrent misses do, and ends with the risks",
+          "why": "failed: acceptance failed: covers — the plan has no risks section, which the prompt asks for at..."
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-cache-plan-wrong-v6-xSSPHW/home/rune-acceptance-rj2ekO/.rune-acceptance/check.mjs covers` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "the plan says when a cached entry expires and what two concurrent misses do, and ends with the risks → failed"
+      ],
+      "harnessRePrompts": 3,
+      "completions": 1,
+      "providerTurns": 5,
+      "wallMs": 426
+    },
+    {
+      "task": "working-tree-integration",
+      "family": "dirty-worktree",
+      "scenario": "correct",
+      "note": "Refunds skipped, currencies validated, totals in minor units, money.ts untouched.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "met",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "orders are summarized in minor units without touching the money API",
+          "status": "satisfied",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "summarizeOrders ignores refunded rows and totals minor units per currency, zeros and negatives included",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "an invalid currency, an over-precise amount and an unsafe total all throw",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the untracked money.ts is byte-identical to the one that was in the working tree",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 4,
+      "completions": 1,
+      "providerTurns": 6,
+      "wallMs": 677
+    },
+    {
+      "task": "working-tree-integration",
+      "family": "dirty-worktree",
+      "scenario": "omission",
+      "note": "The currency code is never validated.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "orders are summarized in minor units without touching the money API",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "summarizeOrders ignores refunded rows and totals minor units per currency, zeros and negatives included",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "an invalid currency, an over-precise amount and an unsafe total all throw",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the untracked money.ts is byte-identical to the one that was in the working tree",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "orders are summarized in minor units without touching the money API",
+          "why": "no check bound: `bun test mine.test.ts` was set aside — it never reads orders.ts, which is what this criterion is about"
+        },
+        {
+          "criterion": "an invalid currency, an over-precise amount and an unsafe total all throw",
+          "why": "failed: acceptance failed: rejects — Missing expected exception: an invalid currency must throw"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-working-tree-integration-omission-rBZagB/home/rune-acceptance-DOb2ji/.rune-acceptance/check.mjs rejects` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "an invalid currency, an over-precise amount and an unsafe total all throw → failed"
+      ],
+      "harnessRePrompts": 4,
+      "completions": 1,
+      "providerTurns": 6,
+      "wallMs": 605
+    },
+    {
+      "task": "working-tree-integration",
+      "family": "dirty-worktree",
+      "scenario": "wrong",
+      "note": "The protected working-tree API is loosened so a three-decimal amount parses.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "orders are summarized in minor units without touching the money API",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "summarizeOrders ignores refunded rows and totals minor units per currency, zeros and negatives included",
+          "status": "satisfied",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "an invalid currency, an over-precise amount and an unsafe total all throw",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the untracked money.ts is byte-identical to the one that was in the working tree",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "orders are summarized in minor units without touching the money API",
+          "why": "no check bound: `bun test mine.test.ts` was set aside — it never reads orders.ts, which is what this criterion is about"
+        },
+        {
+          "criterion": "an invalid currency, an over-precise amount and an unsafe total all throw",
+          "why": "failed: acceptance failed: rejects — Missing expected exception: a three-decimal amount must throw"
+        },
+        {
+          "criterion": "the untracked money.ts is byte-identical to the one that was in the working tree",
+          "why": "failed: - '5149aab241daf0ddb2153790ba8ddf18fca24212c8620a8a9a2b32138b1626d1'"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-working-tree-integration-wrong-SeoH47/home/rune-acceptance-2c8c3O/.rune-acceptance/check.mjs rejects` last failed"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-working-tree-integration-wrong-SeoH47/home/rune-acceptance-2c8c3O/.rune-acceptance/check.mjs protectedApi` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "an invalid currency, an over-precise amount and an unsafe total all throw → failed",
+        "the untracked money.ts is byte-identical to the one that was in the working tree → failed"
+      ],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 695
+    },
+    {
+      "task": "working-tree-integration",
+      "family": "dirty-worktree",
+      "scenario": "silent",
+      "note": "A stub with a TODO, then an empty completion.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "summarizeOrders ignores refunded rows and totals minor units per currency, zeros and negatives included",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "an invalid currency, an over-precise amount and an unsafe total all throw",
+          "status": "failed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the untracked money.ts is byte-identical to the one that was in the working tree",
+          "status": "stale",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "summarizeOrders ignores refunded rows and totals minor units per currency, zeros and negatives included",
+          "why": "failed: acceptance failed: summary — invalid amount"
+        },
+        {
+          "criterion": "an invalid currency, an over-precise amount and an unsafe total all throw",
+          "why": "failed: acceptance failed: rejects — Missing expected exception: an invalid currency must throw"
+        },
+        {
+          "criterion": "the untracked money.ts is byte-identical to the one that was in the working tree",
+          "why": "stale: the workspace moved since the evidence was taken"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-working-tree-integration-silent-QwgU8U/home/rune-acceptance-AHr7cr/.rune-acceptance/check.mjs summary` last failed"
+        },
+        {
+          "criterion": "the checks",
+          "why": "`bun /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/corpus-working-tree-integration-silent-QwgU8U/home/rune-acceptance-AHr7cr/.rune-acceptance/check.mjs rejects` last failed"
+        }
+      ],
+      "evaluatorFailed": [
+        "summarizeOrders ignores refunded rows and totals minor units per currency, zeros and negatives included → failed",
+        "an invalid currency, an over-precise amount and an unsafe total all throw → failed",
+        "the untracked money.ts is byte-identical to the one that was in the working tree → stale"
+      ],
+      "harnessRePrompts": 3,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 457
+    },
+    {
+      "task": "working-tree-integration",
+      "family": "dirty-worktree",
+      "scenario": "stopped",
+      "note": "The turn ceiling closes the run with the summary unimplemented.",
+      "classification": "cut off",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "max_turns",
+        "status": "max_turns"
+      },
+      "criteria": [
+        {
+          "text": "orders are summarized in minor units without touching the money API",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        },
+        {
+          "text": "summarizeOrders ignores refunded rows and totals minor units per currency, zeros and negatives included",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "an invalid currency, an over-precise amount and an unsafe total all throw",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        },
+        {
+          "text": "the untracked money.ts is byte-identical to the one that was in the working tree",
+          "status": "unassessed",
+          "source": "evaluator",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [
+        "summarizeOrders ignores refunded rows and totals minor units per currency, zeros and negatives included → unassessed",
+        "an invalid currency, an over-precise amount and an unsafe total all throw → unassessed",
+        "the untracked money.ts is byte-identical to the one that was in the working tree → unassessed"
+      ],
+      "harnessRePrompts": 2,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 304
+    }
+  ]
+}

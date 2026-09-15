@@ -6,7 +6,7 @@
   },
   {
     "id": "c2",
-    "text": "a quoted field carries commas, doubled quotes, CRLF and a leading BOM, and inner whitespace survives",
+    "text": "a quoted field carries commas, doubled quotes, CRLF and a leading BOM; whitespace outside quotes is data, and a BOM anywhere but the front is data",
     "command": "bun .rune-acceptance/check.mjs quoted"
   },
   {
