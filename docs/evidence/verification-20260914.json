@@ -335,5 +335,48 @@
       "toolsSmoke": "green"
     },
     "secondVerifierPass": "launched on 8024ac0; report .codex/audit-20260910/handoff/m0/verify-batch-2-report.md"
+  },
+  "afterFoundersCorrections": {
+    "date": "2026-09-15 evening",
+    "commits": "7ea2bc6, 4ae5439 (pulse); 521f2f3..77c2ff3 (closing fixes); 034fb8a, 400c46a, c68a349 (memory modes); 3e1cea3..7d3d1ca (Fix lane C); 44a4e43..a20d500 (Fix lane D); 82b614b (eval scratch home)",
+    "gatesAt": "c68a349",
+    "gateLogs": ".codex/audit-20260910/handoff/m0/gates/c68a349-20260915T141517Z/",
+    "gates": {
+      "unit": "5,700 ran / 0 fail (419 files)",
+      "integration": "394 ran / 0 fail (65 files)",
+      "lifecycle": "47 / 0",
+      "typecheck": "15/15",
+      "lint": "7/7",
+      "format": "clean",
+      "cargoFmt": "clean",
+      "cargoTest": "110 / 0",
+      "clippy": "0 warnings",
+      "eval": "63/63 at 0.27, baseline unchanged",
+      "autoSafetyOffline": "P 92.8 / R 89.1 / F1 90.9, 0 live requests",
+      "gitDiffCheck": "clean",
+      "prettier": "clean"
+    },
+    "installed": {
+      "version": "Rune v0.4.1-dev+c68a349",
+      "cliSha256": "bfad16ef017c4fa5cda6699b933b3e475ce0fade8753538a82128948fc93f221",
+      "doctorBuildLine": "current \u2014 gear/phase-0-stabilize@c68a3490+dirty",
+      "toolsSmoke": "green",
+      "runeMemoryScratchHome": "Memory: auto \u2014 Rune decides when to update its memory"
+    },
+    "secondVerifierPass": {
+      "report": ".codex/audit-20260910/handoff/m0/verify-batch-2-report.md",
+      "critical": 4,
+      "high": 11,
+      "medium": 10,
+      "low": 8,
+      "closedBy": [
+        "Fix lane C 3e1cea3..7d3d1ca",
+        "Fix lane D 44a4e43..a20d500",
+        "closing fixes 521f2f3..77c2ff3",
+        "eval scratch home 82b614b"
+      ],
+      "lowsOpenInBacklog": true
+    },
+    "thirdVerifierPass": "not yet run; before M6"
   }
 }

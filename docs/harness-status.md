@@ -1657,3 +1657,36 @@ cadence tests were replaced with mode and no-clock assertions; the backup, floor
 ten safety tests are untouched. Supervisor rerun: memory suites **247 / 0**; UI suites and the
 mode tests green after the TUI hunks; typecheck clean. Lane's gates: unit 5,695 / 0 / 5 skip,
 integration 387 / 0 / 7 skip, eval 63 / 63 at 0.27, prompt-size tests 335 / 0.
+
+### Addendum 24 — the closing pass of 2026-09-15 evening: gated, installed, and what the founder now runs
+
+The handoff's full gate list on `c68a349`, logs kept in
+`.codex/audit-20260910/handoff/m0/gates/c68a349-20260915T141517Z/`: unit **5,700 ran / 0 fail**
+(419 files), integration **394 ran / 0 fail** (65 files), lifecycle 47 / 0, typecheck 15 / 15,
+lint 7 / 7, format and Prettier clean, cargo fmt clean, cargo test 110 / 0, clippy 0 warnings,
+mock eval 63 / 63 at 0.27 with the baseline unchanged, auto-safety offline P 92.8 / R 89.1 /
+F1 90.9 with 0 live requests, `git diff --check` clean. Installed without an override:
+**Rune v0.4.1-dev+c68a349**, CLI `bfad16ef017c4fa5cda6699b933b3e475ce0fade8753538a82128948fc93f221`,
+native unchanged. On the binary: doctor's build line current and its browser line honest,
+tools-smoke green, lifecycle ** 47 pass 0 fail ** through `RUNE_SCENARIO_CLI`, and `rune memory` under a
+scratch home prints `Memory: auto — Rune decides when to update its memory` and the empty-store
+sentence.
+
+**What this binary carries that the afternoon's did not:** the memory store read through its
+guard with the memory directory and the profile as control paths; the acceptance oracle pinned
+across sessions; a missing module classed as a failed check; the repair and empty-completion
+bounds surviving every crash; the evaluator re-prompt naming an id and an output tail only; the
+Rust sandbox honouring `RUNE_HOME` for its audit log; adapter env as an allow-list and the
+series budget; reviewer independence by lineage; the dependency refusal without bypasses; the
+layout setting that actually saves; the footer picker that follows the selection; a browser
+that mounted but cannot launch pre-flighted; the profile that cannot shrink and keeps its last
+five copies with `/memory restore`; memory's three modes with no clock; and the pulse that is
+Rune's own and eases. Every controller key is still absent by default.
+
+**Still true:** no live model call anywhere; Windows and Linux unrun; the CI jobs never
+executed (unpushed); the visual rubric never run by an independent reviewer; the comparator
+arms idle until the founder authorises a series by task count and arm order; the founder's
+pre-overwrite profile has no backup; M6 and Phase 6 not started; the second verifier's lows
+open in the backlog. A third adversarial pass over the fix lanes C and D, the closing lane,
+the pulse rework and the memory modes has not yet run; per the founder's loop it runs before
+M6.

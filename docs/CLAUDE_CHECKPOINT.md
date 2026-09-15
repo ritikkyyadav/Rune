@@ -4,9 +4,9 @@
 current state, the authoritative implemented / tested / installed / pending list, and the
 next executable step are in
 [harness-status, "2026-09-14 (later)"](harness-status.md#2026-09-14-later--m1-lands-the-wizard-takes-the-frame-the-tree-is-gated-and-installed-and-the-walkthrough-finds-what-the-tests-could-not)
-and its addendum. Tree at `e3fb2eb` (2026-09-15 morning): clean apart from the untracked
+and its addendum. Tree at `c68a349` (2026-09-15 evening; see the note below for the morning state): clean apart from the untracked
 `scripts/tui-capture/first-run-frame.ts`; forty-odd commits since `4869e4c` unpushed (push is
-the founder's). Installed `v0.4.1-dev+e3fb2eb`. Done since: M2, M3's first branch, the M5
+the founder's). Installed `v0.4.1-dev+c68a349` (evening): the founder's corrections (single column, eased pulse, memory with three modes), M4, the adapters, the second verifier pass and its fix lanes are all in. Next: a third verifier pass, then M6 + Phase 6, Phase 7. Done since: M2, M3's first branch, the M5
 corpus, Lane F (Phase 5), one adversarial verifier pass and its two fix lanes — see
 "Addendum 10" in harness-status. Next: M4 (typed repair + delegation; spec to write from the
 review's M4 and M3's mechanics), M3's second branch, Phase 6 + M6, Phase 7; a second verifier
