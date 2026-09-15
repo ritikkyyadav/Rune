@@ -10,9 +10,10 @@
  */
 
 import { describe, test, expect } from "bun:test";
-import { getPreset } from "../../../packages/shared/src/providers";
+import { getPreset, PROVIDER_PRESETS } from "../../../packages/shared/src/providers";
 import {
   modelForProvider,
+  nearestProviderIds,
   resolveStartupSelection,
   type StartupSelectionInput,
 } from "../../../packages/orchestrator/src/startup-selection";
@@ -48,7 +49,15 @@ describe("resolveStartupSelection", () => {
     });
   });
 
-  test("the custom endpoint's key may live in the credential store, not the sidecar", () => {
+  test("a keyless custom endpoint is NOT usable, whatever the credential store says", () => {
+    // This case used to claim the opposite, and it was vacuous in three ways
+    // (V6 finding 15): `loadSecrets` drops a keyless `custom` outright, so this
+    // state cannot come out of a real profile; nothing writes a
+    // `provider:custom` credential; and where the state was forced by hand the
+    // boot got WORSE, because `buildGateway` needs `key && baseUrl` from the
+    // sidecar and refused to register the provider the selection had named —
+    // so the CLI substituted `registeredProviders[0]` and landed on gemini.
+    // What the selection promises must be what the gateway can serve.
     const selection = resolveStartupSelection(
       base({
         ...WIZARD,
@@ -59,8 +68,14 @@ describe("resolveStartupSelection", () => {
         hasStoredCredential: (id) => id === "custom",
       }),
     );
-    expect(selection.provider).toBe("custom");
-    expect(selection.model).toBe("mock-small");
+    expect(selection.provider).not.toBe("custom");
+    expect(selection.source).toBe("auto");
+  });
+
+  test("a sidecar key IS what makes the custom endpoint usable", () => {
+    // The other half of the same branch: with the key present it is honoured,
+    // so the case above pins a credential rule and not merely a refusal.
+    expect(resolveStartupSelection(base(WIZARD)).provider).toBe("custom");
   });
 
   test("a saved preset with a stored credential is honoured, not just the six built-ins", () => {
@@ -201,5 +216,194 @@ describe("resolveStartupSelection", () => {
         getPreset,
       }),
     ).toBe("mock-small");
+  });
+});
+
+/**
+ * The branches no case reached.
+ *
+ * V6's attack 9 broke one branch of the module at a time and re-ran the fifteen
+ * cases above: seven mutations left 15/15 green. The behaviour was right; it
+ * was simply not pinned, which means the next edit is free to break it. One
+ * case per surviving mutation, named after the mutation it kills.
+ */
+describe("the rungs the mutation matrix found untested", () => {
+  test("sticky: a built-in provider keyed only by an ENV VAR is still sticky", () => {
+    // Kills: stickyUsable -> (LOCAL_PROVIDERS.has(p) || hasStoredCredential(p))
+    expect(
+      resolveStartupSelection(
+        base({
+          lastUsed: { provider: "anthropic", model: "claude-sonnet-4-6" },
+          env: { ANTHROPIC_API_KEY: "sk-env" },
+        }),
+      ),
+    ).toEqual({ provider: "anthropic", model: "claude-sonnet-4-6", source: "sticky" });
+  });
+
+  test("sticky: a local runtime needs no credential of any kind", () => {
+    // Kills: stickyUsable -> (hasStoredCredential(p) || (isCliProvider(p) && hasCreds(p)))
+    expect(
+      resolveStartupSelection(base({ lastUsed: { provider: "ollama", model: "llama3.1" } })),
+    ).toEqual({ provider: "ollama", model: "llama3.1", source: "sticky" });
+    // `ollama` is also one of the six the CLI knows by hand, so the case above
+    // alone does not prove the LOCAL half is doing anything — hasCreds answers
+    // it too. A local preset OUTSIDE the six is the branch's only real reader,
+    // and "local" is a registry fact, not a roster of one id.
+    expect(
+      resolveStartupSelection(
+        base({
+          lastUsed: { provider: "a-local-runtime", model: "qwen3" },
+          getPreset: (id) =>
+            id === "a-local-runtime" ? { local: true, defaultModel: "qwen3" } : getPreset(id),
+        }),
+      ),
+    ).toEqual({ provider: "a-local-runtime", model: "qwen3", source: "sticky" });
+  });
+
+  test("flag: surrounding whitespace is trimmed before the registry lookup", () => {
+    // Kills: input.cliProvider?.trim() -> input.cliProvider (with the trim
+    // inside resolveProviderId removed too — there is one trim per place a
+    // value can arrive, and this pins the behaviour rather than either line).
+    expect(resolveStartupSelection(base({ cliProvider: "  anthropic  " }))).toMatchObject({
+      provider: "anthropic",
+      source: "flag",
+    });
+  });
+
+  test("flag: an id in the wrong case is the id, not a miss", () => {
+    expect(resolveStartupSelection(base({ cliProvider: "Anthropic" }))).toMatchObject({
+      provider: "anthropic",
+      source: "flag",
+    });
+  });
+
+  test("flag: an id the registry does not know does not answer the flag rung", () => {
+    // The CLI turns this into a refusal; the module's job is to report that the
+    // flag did NOT decide, so a typo can never be silently dropped downstream.
+    const selection = resolveStartupSelection(
+      base({ cliProvider: "nope-xyz", config: { llm: { defaultProvider: "google" } } }),
+    );
+    expect(selection.source).not.toBe("flag");
+    expect(selection.provider).not.toBe("nope-xyz");
+  });
+
+  test("sticky: an explicit --model alone still kills the sticky pick", () => {
+    // Kills: lastUsed = cliProvider ? null : (input.lastUsed ?? null)
+    const selection = resolveStartupSelection(
+      base({
+        cliModel: "gpt-4o",
+        lastUsed: { provider: "anthropic", model: "claude-sonnet-4-6" },
+        hasStoredCredential: (id) => id === "anthropic",
+      }),
+    );
+    expect(selection.source).not.toBe("sticky");
+    expect(selection.model).toBe("gpt-4o");
+  });
+
+  test("auto: a /keys secret for ollama-turbo is a credential, not only the env var", () => {
+    // Kills: if (env.OLLAMA_API_KEY) return "ollama-turbo"
+    expect(
+      resolveStartupSelection(base({ secrets: { keys: { "ollama-turbo": "sk-keys" } } })),
+    ).toEqual({ provider: "ollama-turbo", model: "gpt-oss:120b", source: "auto" });
+  });
+
+  test("config: `[llm.<id>] apiKey` is one of the four credential sources", () => {
+    // Kills: hasCreds -> drop `sectionFor(config, p)?.apiKey`. Auto-detect
+    // reads the same key, so `source` is what tells the two rungs apart.
+    expect(
+      resolveStartupSelection(
+        base({
+          config: { llm: { defaultProvider: "anthropic", anthropic: { apiKey: "sk-config" } } },
+        }),
+      ),
+    ).toEqual({ provider: "anthropic", model: "claude-sonnet-4-6", source: "config" });
+  });
+
+  test("config: a /keys secret is one of the four credential sources", () => {
+    // Kills: hasCreds -> drop `secrets.keys?.[p]`
+    expect(
+      resolveStartupSelection(
+        base({
+          config: { llm: { defaultProvider: "mistral" } },
+          secrets: { keys: { mistral: "sk-keys" } },
+        }),
+      ),
+    ).toMatchObject({ provider: "mistral", source: "config" });
+  });
+});
+
+/**
+ * A provider switched OFF in `/keys` holds its key and is still unusable.
+ *
+ * Holding a credential and being usable are different questions, and this
+ * module asked only the first: a disabled provider was selected, `buildGateway`
+ * then refused to register it, and the boot printed "<id> has no API key" — a
+ * false statement about the user's own key — before substituting
+ * `registeredProviders[0]` (V6 finding 14).
+ */
+describe("secrets.disabled", () => {
+  test("a disabled saved provider loses the config rung", () => {
+    const selection = resolveStartupSelection(
+      base({
+        config: { llm: { defaultProvider: "mistral" } },
+        secrets: { keys: { mistral: "sk-mistral", google: "AIza" }, disabled: ["mistral"] },
+      }),
+    );
+    expect(selection.provider).not.toBe("mistral");
+    expect(selection.source).toBe("auto");
+  });
+
+  test("a disabled sticky provider loses the sticky rung", () => {
+    const selection = resolveStartupSelection(
+      base({
+        lastUsed: { provider: "anthropic", model: "claude-sonnet-4-6" },
+        env: { ANTHROPIC_API_KEY: "sk-env" },
+        secrets: { keys: {}, disabled: ["anthropic"] },
+      }),
+    );
+    expect(selection.source).not.toBe("sticky");
+  });
+
+  test("a disabled custom endpoint loses too, key and base URL notwithstanding", () => {
+    const selection = resolveStartupSelection(
+      base({
+        ...WIZARD,
+        secrets: {
+          keys: {},
+          custom: { baseUrl: "http://127.0.0.1:64614/v1", model: "mock-small", key: "local" },
+          disabled: ["custom"],
+        },
+      }),
+    );
+    expect(selection.provider).not.toBe("custom");
+  });
+
+  test("an empty or absent disabled list changes nothing", () => {
+    expect(
+      resolveStartupSelection(
+        base({
+          config: { llm: { defaultProvider: "mistral" } },
+          secrets: { keys: { mistral: "sk-mistral" }, disabled: [] },
+        }),
+      ),
+    ).toMatchObject({ provider: "mistral", source: "config" });
+  });
+});
+
+describe("nearestProviderIds — a refusal that is usable", () => {
+  const ids = PROVIDER_PRESETS.map((preset) => preset.id);
+
+  test("a typo comes back with the id it was a typo of", () => {
+    expect(nearestProviderIds("anthrpic", ids)).toContain("anthropic");
+    expect(nearestProviderIds("opnai", ids)).toContain("openai");
+    expect(nearestProviderIds("open", ids)[0]).toMatch(/^open/);
+  });
+
+  test("nonsense comes back empty rather than with an arbitrary neighbour", () => {
+    expect(nearestProviderIds("qqqqqqqqqqqqqqqq", ids)).toEqual([]);
+  });
+
+  test("the list is bounded, so the refusal stays readable", () => {
+    expect(nearestProviderIds("o", ids).length).toBeLessThanOrEqual(5);
   });
 });

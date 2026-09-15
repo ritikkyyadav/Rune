@@ -1060,7 +1060,44 @@ export function loadConfig(workspaceRoot?: string): RuneConfig {
   // Env overrides
   applyEnvOverrides(merged);
 
+  for (const warning of narrowHandEditedShapes(merged)) console.warn(`rune: ${warning}`);
+
   return merged as unknown as RuneConfig;
+}
+
+/**
+ * Narrow the shapes a hand-edited `config.toml` can produce but the type cannot.
+ *
+ * `RuneConfig` is a compile-time claim about a file a person edits with a text
+ * editor. The TOML reader happily yields numbers, booleans and tables for keys
+ * typed as strings, and the code downstream trusts the type: `[controller]
+ * authority = 4` reached `.flatMap` inside `Engine.chat` and killed the run
+ * before its first model call (V6 finding 13) — on a line whose entire promise
+ * is that a typo is a no-op. A wrong shape is IGNORED here, with a warning that
+ * names the key, so the run continues with the key's default.
+ *
+ * Returns the warnings rather than printing them, so the rule is testable
+ * without capturing stderr.
+ */
+export function narrowHandEditedShapes(config: Record<string, unknown>): string[] {
+  const warnings: string[] = [];
+  const controller = config.controller as Record<string, unknown> | undefined;
+  if (controller && "authority" in controller) {
+    const value = controller.authority;
+    const ok =
+      value === undefined ||
+      value === null ||
+      typeof value === "string" ||
+      (Array.isArray(value) && value.every((item) => typeof item === "string"));
+    if (!ok) {
+      warnings.push(
+        `[controller] authority must be a string ("E4") or an array of strings (["E4"]); ` +
+          `ignoring the ${Array.isArray(value) ? "array of non-strings" : typeof value} found there.`,
+      );
+      delete controller.authority;
+    }
+  }
+  return warnings;
 }
 
 // ─── Config Writer ───

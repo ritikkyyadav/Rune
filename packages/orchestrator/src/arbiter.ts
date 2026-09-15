@@ -227,13 +227,17 @@ export type AuthorityKey = (typeof AUTHORITY_KEYS)[number];
  * case-insensitive on the token, never on the meaning.
  */
 export function parseAuthority(
-  value: string | readonly string[] | undefined | null,
+  /** `string | readonly string[]` in the type; ANY JSON/TOML scalar at runtime. */
+  value: unknown,
 ): ReadonlySet<AuthorityKey> {
   const out = new Set<AuthorityKey>();
   if (value === undefined || value === null) return out;
-  const tokens = (typeof value === "string" ? value.split(",") : value).flatMap((t) =>
-    typeof t === "string" ? [t.trim()] : [],
-  );
+  // The SHAPE is narrowed here, not only the tokens. `config.toml` is a file a
+  // person edits by hand, and `authority = 4` arrives from the TOML reader as
+  // the number 4: reaching `.flatMap` on it killed the run before its first
+  // model call, on a line whose whole promise is that a typo is a no-op.
+  const list = typeof value === "string" ? value.split(",") : Array.isArray(value) ? value : [];
+  const tokens = list.flatMap((t) => (typeof t === "string" ? [t.trim()] : []));
   for (const token of tokens) {
     if (token.length === 0) continue;
     const match = AUTHORITY_KEYS.find((k) => k.toLowerCase() === token.toLowerCase());

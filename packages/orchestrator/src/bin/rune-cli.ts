@@ -49,7 +49,11 @@ import {
 } from "@rune/shared";
 import type { ProviderName, ResolvedCredential } from "@rune/llm-gateway";
 import { configModeToPermissionMode, resolveStartupPermissionFlags } from "../permissions";
-import { modelForProvider, resolveStartupSelection } from "../startup-selection";
+import {
+  modelForProvider,
+  nearestProviderIds,
+  resolveStartupSelection,
+} from "../startup-selection";
 import { runTeamCommand } from "../team/command";
 import { resolveProviderCredentials } from "../provider-registry";
 import { buildSavedKeys, readAuthOverrides } from "./byop-cli-shared";
@@ -328,7 +332,10 @@ if (values.help) {
         `    --fullscreen                 Names the default: the fixed frame, header pinned top + footer pinned bottom\n` +
         `    --inline                     Opt out: terminal owns scroll/reflow/copy, header + composer trail the output\n` +
         `    --pristine                   Run without the learned tactics notebook (evolution control group)\n` +
-        `    --acceptance <file>          Acceptance the model never sees: JSON criteria the runtime runs itself at the finish gate\n` +
+        `    --acceptance <file>          Acceptance the model never sees: JSON criteria the runtime runs itself at the finish gate.\n` +
+        `                                 Scripts named inside the workspace are copied OUT of it at intake and run from there with\n` +
+        `                                 cwd = the workspace, so address the tree by relative path (not import.meta.url/__dirname),\n` +
+        "                                 and list anything the entry script loads in the criterion's `files` array.\n" +
         `    --sandbox / --no-sandbox     Force the OS command sandbox on/off for this run (overrides /sandbox + config; see /sandbox for modes, overrides and exclusions)\n` +
         `    --browser / --no-browser     Force the agent browser (Playwright MCP) on/off for this run (overrides /browser + config)\n` +
         `    -h, --help                   Show this help\n\n`,
@@ -827,6 +834,27 @@ async function main() {
     hasStoredCredential,
     getPreset,
   });
+  // A `--provider` the registry does not know is a REFUSAL, not a filter.
+  // It used to fall through to the next rung: `--provider nope-xyz` and
+  // `--provider Anthropic` both booted an auto-detected provider with no
+  // message at all — a flag read and discarded, the same shape as the `rune -p`
+  // incident. Case is folded in the resolver, so only a genuinely unknown id
+  // reaches here.
+  if (cliProvider && selection.source !== "flag") {
+    const near = nearestProviderIds(
+      cliProvider,
+      PROVIDER_PRESETS.map((preset) => preset.id),
+    );
+    process.stderr.write(
+      `\n  ${vermillion("✗")} ${bold(`Unknown --provider "${cliProvider}".`)}\n` +
+        (near.length
+          ? `  ${dim("Did you mean:")} ${near.join(", ")}\n`
+          : `  ${dim("Run `rune login` to see the providers this build knows.")}\n`) +
+        `  ${dim("`rune --provider <id>` takes a registry id;")} ${dim("`rune -p` is the same flag.")}\n\n`,
+    );
+    process.exit(1);
+  }
+
   const provider = selection.provider as ProviderName;
   const model = selection.model;
 

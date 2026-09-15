@@ -65,6 +65,61 @@ const PROVIDER_ENV_VAR: Partial<Record<CliProvider, string>> = {
   "ollama-turbo": "OLLAMA_API_KEY",
 };
 
+/**
+ * The registry id a `--provider` value names, or undefined when it names none.
+ *
+ * Case-insensitive: every id in the registry is lower-case, and a miscased
+ * `--provider Anthropic` was silently dropped to the next rung — the run then
+ * opened on an auto-detected provider with no message, which is the same shape
+ * as the `rune -p` incident (a flag that is read and discarded).
+ */
+export function resolveProviderId(
+  value: string,
+  getPreset: (id: string) => PresetView | undefined,
+): string | undefined {
+  const id = value.trim().toLowerCase();
+  if (!id) return undefined;
+  if (isCliProvider(id) || id === CUSTOM_PROVIDER_ID || getPreset(id)) return id;
+  return undefined;
+}
+
+/**
+ * The ids closest to what the user typed, for a refusal that is usable.
+ *
+ * A refusal that only says "unknown" makes the user go and read a catalogue of
+ * thirty-odd hosts. Prefix and substring matches first, then a small edit
+ * distance, so `anthropic`/`openai` come back for `anthrpic`/`opnai`.
+ */
+export function nearestProviderIds(value: string, ids: readonly string[], limit = 5): string[] {
+  const needle = value.trim().toLowerCase();
+  const distance = (a: string, b: string): number => {
+    const row = Array.from({ length: b.length + 1 }, (_unused, i) => i);
+    for (let i = 1; i <= a.length; i++) {
+      let previous = row[0]!;
+      row[0] = i;
+      for (let j = 1; j <= b.length; j++) {
+        const next = Math.min(
+          row[j]! + 1,
+          row[j - 1]! + 1,
+          previous + (a[i - 1] === b[j - 1] ? 0 : 1),
+        );
+        previous = row[j]!;
+        row[j] = next;
+      }
+    }
+    return row[b.length]!;
+  };
+  return [...ids]
+    .map((id) => ({
+      id,
+      rank: id.startsWith(needle) ? -2 : id.includes(needle) ? -1 : distance(needle, id),
+    }))
+    .filter((row) => row.rank <= Math.max(3, Math.floor(needle.length / 2)))
+    .sort((a, b) => a.rank - b.rank || a.id.localeCompare(b.id))
+    .slice(0, limit)
+    .map((row) => row.id);
+}
+
 /** The fields this module reads from a `[llm.<id>]` section. */
 export interface LlmSectionView {
   model?: string;
@@ -87,6 +142,16 @@ export interface StartupConfigView {
 export interface StartupSecretsView {
   keys?: Record<string, string>;
   custom?: { baseUrl?: string; model?: string; key?: string };
+  /**
+   * The providers the `/keys` panel switched OFF.
+   *
+   * Holding a key and being usable are different questions, and this module
+   * only asked the first one: a provider the user disabled was still selected,
+   * the gateway then refused to register it, and the boot printed "<id> has no
+   * API key" — a false statement about the user's own key — before
+   * substituting `registeredProviders[0]` (V6 finding 14).
+   */
+  disabled?: string[];
 }
 
 export interface StartupSelectionInput {
@@ -155,28 +220,49 @@ export function resolveStartupSelection(input: StartupSelectionInput): StartupSe
   };
 
   /** A working key from any of the legacy, non-keychain sources. */
+  /**
+   * A runtime that answers on this machine and asks for no key.
+   *
+   * Read from the REGISTRY as well as the built-in set, so the rule is "the
+   * catalogue says this one is local", not "the catalogue says ollama".
+   */
+  const isLocal = (p: string): boolean => LOCAL_PROVIDERS.has(p) || getPreset(p)?.local === true;
+
   const hasCreds = (p: string): boolean => {
     // Local runtimes are keyless — always "available"; reachability of the
     // localhost server is surfaced at call time, not gated here.
-    if (LOCAL_PROVIDERS.has(p) || getPreset(p)?.local) return true;
+    if (isLocal(p)) return true;
     const envVar = PROVIDER_ENV_VAR[p as CliProvider] ?? getPreset(p)?.envVar;
     return !!(envVar && env[envVar]) || !!sectionFor(config, p)?.apiKey || !!secrets.keys?.[p];
   };
 
   // `custom` has no preset by design — it IS the escape hatch for a provider
   // the catalogue does not know — so the preset gate would reject it forever.
-  const customUsable = !!(
-    secrets.custom?.baseUrl &&
-    (secrets.custom?.key || hasStoredCredential(CUSTOM_PROVIDER_ID))
-  );
+  //
+  // The key must be in the SIDECAR. A `|| hasStoredCredential(CUSTOM_PROVIDER_ID)`
+  // half used to stand here and was dead in three ways (V6 finding 15):
+  // `loadSecrets` drops a keyless `custom` outright, so `secrets.custom?.baseUrl`
+  // could never be true beside it; nothing writes a `provider:custom`
+  // credential; and where the state was forced by hand it made things worse —
+  // the selection said `custom` while `buildGateway` (which needs
+  // `key && baseUrl` from the sidecar and reads no credential store for
+  // `custom`) refused to register it, so the boot substituted
+  // `registeredProviders[0]` and landed on gemini. Widening this is a change to
+  // `loadSecrets` and `buildGateway` first, and to this line last.
+  const customUsable = !!(secrets.custom?.baseUrl && secrets.custom?.key);
+
+  /** Switched off in `/keys`. A key it cannot use is not a reason to select it. */
+  const disabled = (p: string): boolean => secrets.disabled?.includes(p) === true;
 
   // Unchanged sticky semantics (see the note in rune-cli's git history): the
   // model you last used IS the model you get, as long as it can still be paid for.
   const stickyUsable = (p: string): boolean =>
-    p === CUSTOM_PROVIDER_ID
-      ? customUsable
-      : getPreset(p) !== undefined &&
-        (LOCAL_PROVIDERS.has(p) || hasStoredCredential(p) || (isCliProvider(p) && hasCreds(p)));
+    disabled(p)
+      ? false
+      : p === CUSTOM_PROVIDER_ID
+        ? customUsable
+        : getPreset(p) !== undefined &&
+          (isLocal(p) || hasStoredCredential(p) || (isCliProvider(p) && hasCreds(p)));
 
   /**
    * A SAVED provider is usable when it is reachable at all: the custom
@@ -184,9 +270,11 @@ export function resolveStartupSelection(input: StartupSelectionInput): StartupSe
    * Deliberately wider than `stickyUsable` — this is the rot the config path had.
    */
   const configUsable = (p: string): boolean =>
-    p === CUSTOM_PROVIDER_ID
-      ? customUsable
-      : getPreset(p) !== undefined && (hasStoredCredential(p) || hasCreds(p));
+    disabled(p)
+      ? false
+      : p === CUSTOM_PROVIDER_ID
+        ? customUsable
+        : getPreset(p) !== undefined && (hasStoredCredential(p) || hasCreds(p));
 
   /** Last resort: the best-funded key on this machine. */
   const detectBestProvider = (): CliProvider => {
@@ -202,14 +290,14 @@ export function resolveStartupSelection(input: StartupSelectionInput): StartupSe
   };
 
   const cliProvider = input.cliProvider?.trim() || undefined;
-  // `--provider` names ANY preset, not only the six the CLI knew by hand.
-  if (
-    cliProvider &&
-    (isCliProvider(cliProvider) || getPreset(cliProvider) || cliProvider === CUSTOM_PROVIDER_ID)
-  ) {
+  // `--provider` names ANY preset, not only the six the CLI knew by hand, and
+  // it is matched case-insensitively: every registry id is lower-case, and
+  // `--provider Anthropic` used to be dropped in silence (V6 finding 16).
+  const namedProvider = cliProvider ? resolveProviderId(cliProvider, getPreset) : undefined;
+  if (namedProvider) {
     return {
-      provider: cliProvider,
-      model: modelForProvider(cliProvider, modelCtx),
+      provider: namedProvider,
+      model: modelForProvider(namedProvider, modelCtx),
       source: "flag",
     };
   }

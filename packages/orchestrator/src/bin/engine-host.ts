@@ -26,6 +26,7 @@ import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { Engine } from "../engine";
+import { resolveProviderId, resolveStartupSelection } from "../startup-selection";
 import type { AgentTurnEvent, HostCommandName, RpcError } from "@rune/protocol";
 import {
   HOST_COMMANDS,
@@ -68,7 +69,6 @@ import type { ProviderName } from "@rune/llm-gateway";
 import {
   hasStoredCredential,
   getPreset,
-  CUSTOM_PROVIDER_ID,
   adoptLegacyEnv,
   ensureRuneHome,
   migrateLegacyHome,
@@ -83,7 +83,6 @@ import {
   clearProviderKey as persistClearKey,
   searchKeyStatus,
   PROVIDER_PRESETS,
-  AUTO_PROVIDER_PRIORITY,
   normalizeFallbackOrder,
   normalizeQuotaPolicy,
   normalizeSubagentEffort,
@@ -211,28 +210,17 @@ function emitStream(stream: string, payload: unknown): void {
 // Same provider/model resolution, same key sources, so the desktop behaves
 // identically to the terminal.
 
-type CliProvider = "anthropic" | "openai" | "openrouter" | "google" | "ollama-turbo";
-const DEFAULT_MODELS: Record<CliProvider, string> = {
-  anthropic: "claude-sonnet-4-6",
-  openai: "gpt-4o",
-  // qwen/qwen3-coder:free and qwen3-coder:480b were retired 2026-07-15, and
-  // deepseek-v4-flash:free was withdrawn from the free tier 2026-08-26;
-  // these mirror the gateway's refreshed, live-verified defaults.
-  openrouter: "minimax/minimax-m3:free",
-  google: "gemini-2.5-flash",
-  "ollama-turbo": "gpt-oss:120b",
-};
-const PROVIDER_ENV: Record<CliProvider, string> = {
-  google: "GOOGLE_API_KEY",
-  anthropic: "ANTHROPIC_API_KEY",
-  openai: "OPENAI_API_KEY",
-  openrouter: "OPENROUTER_API_KEY",
-  "ollama-turbo": "OLLAMA_API_KEY",
-};
-
-function isCliProvider(p: string): p is CliProvider {
-  return p in PROVIDER_ENV;
-}
+/**
+ * The provider/model rung is NOT written here.
+ *
+ * It used to be: a private `DEFAULT_MODELS` keyed by five ids, a private
+ * `isCliProvider`, and a copy of the pre-fix config gate. `a22866b` moved that
+ * rule into `../startup-selection` for the terminal and this file kept its own
+ * copy, so `rune detach` / `rune serve` / `rune acp` still opened the setup
+ * wizard's saved `custom` profile on google/gemini-2.5-flash while `rune`
+ * opened it on custom/mock-small — from the same ~/.rune (V6 finding 5). One
+ * function, both callers.
+ */
 
 function ensureDataDir(): string {
   return ensureRuneHome();
@@ -266,83 +254,33 @@ function buildEngine(): Engine {
   const config = loadConfig(workspaceRoot);
   const secrets = loadSecrets();
 
-  const hasCreds = (p: CliProvider): boolean =>
-    !!process.env[PROVIDER_ENV[p]] ||
-    !!(p !== "ollama-turbo" && (config.llm[p] as { apiKey?: string } | undefined)?.apiKey) ||
-    !!secrets.keys[p];
-
-  // Detect the best provider from available credentials. Paid-capacity direct
-  // providers outrank quota-constrained free/developer endpoints; an explicit
-  // config or sticky model still wins before this fallback is consulted.
-  function detectProvider(): CliProvider {
-    for (const p of AUTO_PROVIDER_PRIORITY) {
-      if (hasCreds(p)) return p;
-    }
-    return "openrouter";
-  }
-
-  // The model you last used IS the model you get. Same fix as rune-cli's: the
-  // gate used to be a five-id hand-written list plus a credential check that
-  // only understood env vars and API keys, so a subscription provider (codex,
-  // failed both halves and the session opened on an auto-detected
-  // provider instead of the one that was chosen.
-  const lastUsed = loadLastModel();
-  // `custom` has no preset by design — it IS the escape hatch for a provider
-  // the catalogue does not know — so the preset gate would reject it forever.
-  // It is usable exactly when the gateway would register it (P4/P8: base URL
-  // plus key in secrets), which is what `/keys custom …` writes.
-  const customUsable = !!(secrets.custom?.baseUrl && secrets.custom?.key);
-  const stickyUsable = (p: string): boolean =>
-    p === CUSTOM_PROVIDER_ID
-      ? customUsable
-      : getPreset(p) !== undefined &&
-        (p === "ollama" || hasStoredCredential(p) || (isCliProvider(p) && hasCreds(p)));
-  const sticky = lastUsed && stickyUsable(lastUsed.provider) ? lastUsed : null;
-
-  // An explicit route for THIS host beats the pin. `rune detach -p X -m Y`
-  // used to print "detached run started" and then run on whatever model.json
-  // named — the flags were parsed and dropped on the floor, and the run died
-  // on a retired free model nobody had asked for. Env is the host's only
-  // boot-time channel, so the launcher hands the flags over as session-scoped
-  // variables (never RUNE_PROVIDER, which is a machine default and rightly
-  // loses to the pin). A named provider with no credential here falls back to
-  // the ordinary choice, and says so, rather than booting a host that cannot
-  // answer.
+  // The startup ladder, asked of the same pure function the terminal asks:
+  // flags → the sticky `/model` pick → `[llm] defaultProvider` → auto-detect.
+  // Env is this host's only boot-time channel for a flag, so `rune detach -p X
+  // -m Y` arrives as RUNE_SESSION_PROVIDER / RUNE_SESSION_MODEL and is handed
+  // over as `cliProvider` / `cliModel` — a machine default (RUNE_PROVIDER)
+  // rightly still loses to the pin, and is not read here.
   const explicitProvider = process.env.RUNE_SESSION_PROVIDER?.trim() || "";
   const explicitModel = process.env.RUNE_SESSION_MODEL?.trim() || "";
-  if (explicitProvider && !stickyUsable(explicitProvider)) {
+  const selection = resolveStartupSelection({
+    ...(explicitProvider ? { cliProvider: explicitProvider } : {}),
+    ...(explicitModel ? { cliModel: explicitModel } : {}),
+    config,
+    secrets,
+    lastUsed: loadLastModel(),
+    env: process.env,
+    hasStoredCredential,
+    getPreset,
+  });
+  // A named provider with no credential here falls back to the ordinary
+  // choice, and says so, rather than booting a host that cannot answer.
+  if (explicitProvider && selection.source !== "flag") {
     process.stderr.write(
-      `engine-host: -p ${explicitProvider} has no usable credential on this machine; using the pinned route\n`,
+      `engine-host: -p ${explicitProvider} is not a provider this build can use on this machine; using the pinned route\n`,
     );
   }
-
-  let provider: ProviderName;
-  let model: string;
-  if (explicitProvider && stickyUsable(explicitProvider)) {
-    provider = explicitProvider as ProviderName;
-    model =
-      explicitModel ||
-      (isCliProvider(provider) ? DEFAULT_MODELS[provider] : undefined) ||
-      getPreset(provider)?.defaultModel ||
-      "";
-  } else if (sticky) {
-    provider = sticky.provider as ProviderName;
-    model = explicitModel || sticky.model;
-  } else {
-    const configProvider = config.llm.defaultProvider;
-    if (configProvider && isCliProvider(configProvider) && hasCreds(configProvider))
-      provider = configProvider;
-    else provider = detectProvider();
-    const cfgModel = (
-      config.llm[provider as keyof typeof config.llm] as { model?: string } | undefined
-    )?.model;
-    // The provider may be any preset now, not only the six the host knew by hand.
-    model =
-      cfgModel ??
-      (isCliProvider(provider) ? DEFAULT_MODELS[provider] : undefined) ??
-      getPreset(provider)?.defaultModel ??
-      "";
-  }
+  const provider = selection.provider as ProviderName;
+  const model = selection.model;
 
   // Which search engine answers first: an explicit env var, then config.toml's
   // `[search] provider`, then the engine `/login` connected most recently.
@@ -722,7 +660,7 @@ async function dispatch(cmd: HostCommandName, args: Record<string, unknown>): Pr
       const model = args.model as string;
       const provider = args.provider as ProviderName | undefined;
       engine.switchModel(model, provider);
-      if (provider && isCliProvider(provider)) {
+      if (provider && resolveProviderId(provider, getPreset)) {
         try {
           saveLastModel({ provider, model });
         } catch {
@@ -1098,7 +1036,7 @@ async function dispatch(cmd: HostCommandName, args: Record<string, unknown>): Pr
       const model = args.model as string | undefined;
       if (model) {
         engine.switchModel(model, provider);
-        if (provider && isCliProvider(provider)) {
+        if (provider && resolveProviderId(provider, getPreset)) {
           try {
             saveLastModel({ provider, model });
           } catch {
