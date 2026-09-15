@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   browserPreflightNote,
+  browserUsable,
   NO_BROWSER_PREFLIGHT,
   probeBrowserRuntime,
   VisualVerification,
@@ -226,4 +227,106 @@ test("the browser runtime probe reports what it found, and never throws", () => 
   expect(
     probeBrowserRuntime({ RUNE_TEST_PLAYWRIGHT: "/no/such/module.mjs" }, "").playwrightModule,
   ).not.toBe("/no/such/module.mjs");
+});
+
+// ─── A mounted browser that cannot launch (v7, lane F) ───
+//
+// The pre-flight had two states where the world has three. `@playwright/mcp`
+// registers its tool list on handshake and only fails at LAUNCH time, so a
+// machine with no downloaded Chromium mounts the tools and then fails every
+// call. That run was told nothing, kept `method: "browser"`, and was asked at
+// the finish gate for four receipts nothing in it could produce — the exact
+// expensive discovery F2 was written to abolish, on the branch where the
+// browser is nominally on.
+
+const failed = (result: string): ToolCallOutput => ({
+  callId: "c",
+  toolName: "browser",
+  success: false,
+  result,
+  durationMs: 1,
+});
+
+const LAUNCH_FAILED =
+  "Error: browserType.launch: Executable doesn't exist at ~/Library/Caches/ms-playwright/chromium-1243/chrome-mac/Chromium";
+
+test("a browser that mounted with nothing to launch is not a browser this run has", () => {
+  const noChromium = { mcpModule: "x", playwrightModule: null, browsersDir: null, chromium: [] };
+  expect(browserUsable(true, noChromium)).toMatchObject({ mounted: true, usable: false });
+  expect(browserUsable(true, noChromium).reason).toContain("no Chromium");
+
+  // Mounted with a Chromium, or with a Playwright this machine named itself
+  // (the repo's own fixtures, and the frontend eval): taken at its word.
+  expect(browserUsable(true, { ...noChromium, chromium: ["chromium-1243"] })).toMatchObject({
+    usable: true,
+  });
+  expect(browserUsable(true, { ...noChromium, playwrightModule: "/p" })).toMatchObject({
+    usable: true,
+  });
+  // Not mounted at all is still the plain case, with no reason to append.
+  expect(browserUsable(false, noChromium)).toEqual({ mounted: false, usable: false });
+});
+
+test("the pre-flight says WHICH of the two it is, and stays silent when the browser works", () => {
+  const broken = browserUsable(true, {
+    mcpModule: "x",
+    playwrightModule: null,
+    browsersDir: null,
+    chromium: [],
+  });
+  const note = browserPreflightNote(true, broken.usable, broken.reason);
+  expect(note).toContain(NO_BROWSER_PREFLIGHT);
+  expect(note).toContain("no Chromium");
+  // The same sentence a run with no browser at all gets, unchanged.
+  expect(browserPreflightNote(true, false)).toBe(NO_BROWSER_PREFLIGHT);
+  // …and a backend run pays nothing for either.
+  expect(browserPreflightNote(false, broken.usable, broken.reason)).toBeNull();
+  expect(browserPreflightNote(true, true, undefined)).toBeNull();
+});
+
+test("a launch failure demotes the bar to the fetch this environment can do", () => {
+  const visual = new VisualVerification("/tmp/ws", undefined, { browser: true });
+  visual.changed();
+  visual.observe(
+    "mcp_browser_navigate",
+    { url: "http://localhost:3000/" },
+    failed(LAUNCH_FAILED),
+    true,
+  );
+  const snapshot = visual.snapshot();
+
+  expect(snapshot.method).toBe("fetch");
+  expect(snapshot.missing.some((line) => /fetch the served page/.test(line))).toBe(true);
+  expect(snapshot.missing.some((line) => /inspect a narrow viewport/.test(line))).toBe(false);
+  expect(snapshot.missing.some((line) => /cannot launch/.test(line))).toBe(true);
+  expect(snapshot.browserBroken).toContain("no Chromium to launch");
+});
+
+test("a failure about the PAGE is not a failure of the browser", () => {
+  const visual = new VisualVerification("/tmp/ws", undefined, { browser: true });
+  visual.changed();
+  // A dev server that is not up yet, and a selector that matched nothing.
+  visual.observe("mcp_browser_navigate", {}, failed("Error: net::ERR_CONNECTION_REFUSED"), true);
+  visual.observe("mcp_browser_click", {}, failed('No element matches selector "#save"'), true);
+  const snapshot = visual.snapshot();
+
+  expect(snapshot.browserBroken).toBeUndefined();
+  expect(snapshot.method).toBe("browser");
+  expect(snapshot.missing.some((line) => /inspect a narrow viewport/.test(line))).toBe(true);
+});
+
+test("a real capture still outranks a later launch failure", () => {
+  // Pixels are pixels: a run that already photographed the page is not demoted
+  // because a later call could not start a second browser.
+  const visual = new VisualVerification("/workspace", undefined, { browser: true });
+  visual.changed();
+  visual.observe("bash", { command: "npm run dev" }, output("http://localhost:5173/"), true);
+  visual.observe(
+    "mcp_browser_browser_take_screenshot",
+    {},
+    output("Page URL: http://localhost:5173/", true),
+    true,
+  );
+  visual.observe("mcp_browser_navigate", {}, failed(LAUNCH_FAILED), true);
+  expect(visual.snapshot().method).toBe("browser");
 });

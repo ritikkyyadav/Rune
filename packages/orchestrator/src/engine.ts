@@ -293,7 +293,7 @@ import {
   snapshotEnvironment,
 } from "./prompts";
 import { buildRepoMap } from "./repo-map";
-import { browserPreflightNote } from "./visual-verification";
+import { browserPreflightNote, browserUsable } from "./visual-verification";
 import { CommandVerifier, detectVerifyCommands, fastCheckCommands } from "./verifier";
 import type { EcosystemSetting } from "./verifier";
 import type { Verifier } from "./verifier";
@@ -1835,9 +1835,14 @@ export class Engine {
         // between read-backs, and the brief must record the run's real
         // capability rather than the one the session started with.
         () => {
+          // Usability, not mountedness: a browser that mounted and cannot
+          // launch is a capability this run does not have, and `leave` is
+          // where that belongs — before the expensive part.
+          const browser = browserUsable(this.browserMounted());
           const note = browserPreflightNote(
             doctrineForRequest(this.currentGoal()).includes("frontend"),
-            this.browserMounted(),
+            browser.usable,
+            browser.reason,
           );
           return note ? [note] : [];
         },

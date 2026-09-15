@@ -1,5 +1,6 @@
 import {
   browserPreflightNote,
+  browserUsable,
   VisualVerification,
   visualChangedPaths,
 } from "./visual-verification";
@@ -2174,10 +2175,16 @@ export class AgentLoop {
         return true;
       }
     })();
+    // Mounted is not usable. A `@playwright/mcp` server registers its tools on
+    // handshake and only fails at launch, so a machine with no downloaded
+    // Chromium mounts the browser and then fails every call — and the finish
+    // gate would ask that run for four receipts nothing in it can produce.
+    // The bar is set from what this machine can actually do.
+    const browser = browserUsable(browserMounted);
     const visualReview = new VisualVerification(
       workspaceRoot,
       this.config.taskState?.snapshot().visualReview,
-      { browser: browserMounted },
+      { browser: browser.usable },
     );
     let productSightNudges = 0;
     // ── Batching nudge ──
@@ -2224,7 +2231,8 @@ export class AgentLoop {
     // the person gets it as a notice.
     const preflight = browserPreflightNote(
       doctrineForRequest(userMessage).includes("frontend"),
-      browserMounted,
+      browser.usable,
+      browser.reason,
     );
     if (preflight) {
       this.injectHarnessNote(
