@@ -444,5 +444,19 @@
       }
     },
     "notHosted": ["ci.yml (runs on pull_request only for this branch)", "Windows"]
+  },
+  "afterUiMediums": {
+    "date": "2026-09-15 night",
+    "commit": "a28ccf7 (+ docs 13ebcd1)",
+    "gateLogs": ".codex/audit-20260910/handoff/m0/gates/a28ccf7-20260915T181402Z/",
+    "gates": "all thirteen green",
+    "installed": {
+      "version": "Rune v0.4.1-dev+13ebcd1",
+      "cliSha256": "ca8370a13c570381d2c27ab0eff57f0b30656238026f47fa30345045b5e5721b",
+      "nativeSha256": "f53cbddf32431706edf64c030db729c9d7352e50b6d1fe3d81317fe388579bc0",
+      "auditBracket": "7,168 \u2192 7,168 through the install (0530c52 smoke fix proven)"
+    },
+    "pushed": "414ac89..13ebcd1",
+    "fourthVerifierPass": "launched on 13ebcd1; report verify-batch-4-report.md"
   }
 }

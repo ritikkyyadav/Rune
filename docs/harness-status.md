@@ -1849,3 +1849,16 @@ Each claim mutation-tested; the three verification files promoted into `ui-worki
 `ui-footer-picker` and removed; `tests/verification/` is empty. Lane's gates: typecheck
 clean, UI suites 812 / 0 unsandboxed, full unit 5,815 / 0 / 1 skip, Prettier clean. The
 founder's own `928bee0` was read first and left untouched.
+
+### Addendum 32 — gated with the UI mediums, installed, pushed; the installer's smoke now leaves the founder's log alone
+
+The full gate list on `a28ccf7` (logs in `gates/a28ccf7-20260915T181402Z/`): all thirteen
+green — unit, integration, lifecycle, typecheck, lint, format, cargo fmt, cargo test, clippy,
+eval, auto-safety offline, `git diff --check`, Prettier — with `tests/verification/` empty for
+the first time since the third pass. Installed without an override: **Rune v0.4.1-dev+13ebcd1**,
+CLI `ca8370a13c570381d2c27ab0eff57f0b30656238026f47fa30345045b5e5721b`, native `f53cbddf…`;
+**the founder's audit log held at 7,168 lines through the install**, which proves `0530c52`'s
+scratch-home smoke (it had written one line per install before). Pushed: `414ac89..13ebcd1`.
+This binary carries every fix from the third pass and the UI mediums; the fourth adversarial
+pass was launched on it, and its recommendation — whether memory in `auto` is safe for the
+founder's first real session, and which authority keys may be switched on — is the next entry.
