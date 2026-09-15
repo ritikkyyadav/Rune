@@ -1555,3 +1555,33 @@ its suites: **193 / 0**, `tsc -p tests/eval` clean, `cargo test -p rune-sandbox`
 gates: unit 5,588 / 0 / 1 skip, integration 384 / 0 / 7 skip, cargo 110 / 0, clippy and fmt
 clean. Twelve of the twenty v7 files promoted and removed; three assertions rewritten rather
 than promoted verbatim, each named with its reason.
+
+### Addendum 20 — Fix lane C: memory is read through its guard, the oracle is pinned across runs, a missing module is a failed check
+
+`3e1cea3`, `a3a9a32`, `7d3d1ca`. Every read of the memory store now runs guard, length clamp,
+content-id re-derivation and provenance check, so a file written into the entries directory by
+a shell is not an entry; the memory directory and the narrative profile are control paths in
+every gear; the narrative is guarded line by line on load, clamped, and prefixed as background
+the request outranks. An `AcceptanceVault` beside the database pins each acceptance script's
+bytes and digest at first intake, so a rewritten workspace copy is never re-staged (measured:
+session two now `partial`, was `met`), with pins and notes on the contract row. Every
+missing-runner shape is anchored to the line the runtime prints, so `TS2307` and its four
+siblings are `check_failed`; check lessons are composed from a template over the program name,
+never the command, and only on `met`; the durable repair counter clears on `session_ended`;
+authorship is asked of git as well as the live ledger, so a check the run wrote last session
+still settles nothing; a test that asserted nothing (bun prints `1 pass` for it) derives
+`needs_review` by the runner's own expect count; harness-owned `.rune/` is excluded from the
+dirty computation; the acceptance re-prompt names a criterion id and an output tail, never the
+text (the M4 spec's wording corrected below); the guard refuses all eight paraphrases while
+its ten survivors survive, and one pre-existing false positive was found and fixed. One thing
+tried and reverted, with the reason: treating a runner's file argument as self-authorship
+would have stopped any test-driven run from reaching `met`. Supervisor rerun: **329 / 0**
+across fifteen suites including lifecycle. Lane's gates: unit 5,607 / 0, integration 385 / 0,
+eval 63 / 63 at 0.27, prettier clean; its six v7 files promoted and removed.
+
+**Named, not fixed by the lane (a closing-fixes lane took them):** `inheritedEmptyCompletions`
+carries the same session-start clearing defect; `TASTE_RE` misses "I'd rather"; and the product
+defect the lane's fingerprints exposed: **the founder's own daily dream replaced the evergreen
+profile (3,976 bytes) with a 326-byte completion at 12:26 UTC, with no backup and no floor.**
+The dream is the pre-existing cadence feature, not this program's learned store, and it ran in
+the founder's live session; the fix (backup, shrink refusal, restore) is in the closing lane.
