@@ -1752,3 +1752,32 @@ proved with the MAC doing no work. Supervisor rerun: memory suites **285 / 0**; 
 still absent, the founder's audit log and profile byte-identical by the lane's fingerprints.
 One attribution note the lane made itself: its `setMemoryMode` engine hunk was swept into E2's
 commit `ee5c0bc` (parallel lanes share the tree); the code is right, the commit line is not.
+
+### Addendum 27 — Fix lane E2: the vault is a control surface, the witnesses can see a test runner, and the home is the run's
+
+`42ea3de`, `09a2566`, `ee5c0bc`, `48a2d3f`, `a781318`, `a44fb26`. The acceptance vault, the
+staging and evidence directories and every `.env`/`*.key`/`*.pem` under the home are control
+paths in every gear — and a second hole was found on the way: a control directory named as the
+leaf matched nothing, so `rm -rf ~/.rune/memory` had passed too. A pin with no bytes behind it
+stages nothing and its criterion derives `needs_review` ("acceptance pin missing"); a wholesale
+removal is caught by the pins the contract row hands back. Runner subcommands, globs,
+`--dir`/`--filter` values and `bash -lc` wrappers resolve to paths for the authorship witness,
+and a bare `bun test` is answered by the write ledger; the contract carries a `baseCommit`, so a
+check the run wrote and then committed is still the run's. Pins are keyed by the acceptance's
+own statement — keying on the intent reopened the second pass's critical three, and the lane
+said so. `realInside()` resolves symlinks before containment. **The launcher's precedence is
+now `--pristine`/`RUNE_NO_ENV_FILE` → nothing, else `$RUNE_HOME/.env`, else `$HOME/.rune/.env`,
+proved in a real bash for all four branches** — a scratch-home rig no longer sees the founder's
+keys. **`cargo test --locked --workspace` no longer appends to the founder's audit log:
+111 passed, 7,160 → 7,160**; the supervisor's own bracket after the lane: 7,167 → 7,167. Exit
+127 no longer outranks the output; the re-prompt's tail is redacted where it equals a criterion;
+`assertedNothing` covers the runners' vocabularies; the preload is discoverable from package
+subdirectories; `bench`/`bench:mock` preload; `bun run eval:auto-safety` is offline by default
+and says so. Nine mutations each red. **A movement the lane reported against itself:** one
+mutation ran `cargo test` without `RUNE_HOME` and wrote seven lines into the founder's
+`audit.jsonl` (7,160 → 7,167) while proving the leak fixed; the rows are left, because the log
+is a hash chain and the founder's record. Supervisor rerun: **422 / 0** across ten suites
+including lifecycle, `cargo test -p rune-sandbox` 36 / 0 with the audit log still. Lane's gates:
+unit 5,796 / 0, integration 388 / 0, cargo 111 / 0, eval 63 / 63 at 0.27. Not fixed, named: a
+wholesale vault removal in a brand-new session; an arbitrary-subject model commit read in a
+brand-new session; the tautological-assertion half of finding 19; finding 18 as a guarantee.
