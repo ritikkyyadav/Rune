@@ -98,6 +98,9 @@ export const INCIDENT_CLASSES = [
   "loop.art_direction_nudge",
   "loop.fix_verified_gate",
   "loop.product_sight_gate",
+  // M4: a stated acceptance criterion failed at the finish, and the controller
+  // bought exactly one repair turn for it.
+  "loop.acceptance_repair",
   "loop.browser_preflight",
   "loop.batch_nudge",
   "loop.wrapup_reserve",

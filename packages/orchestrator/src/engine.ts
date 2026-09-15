@@ -228,6 +228,7 @@ import {
   computeVerdict,
   contractDigest,
   createContract,
+  criterionStatus,
   inheritContract,
   priorContract,
   uncoveredCriteria,
@@ -331,6 +332,7 @@ import {
   filesChangedFrom,
   inheritedBudget,
   inheritedEmptyCompletions,
+  inheritedRepairTurns,
   lifecycleDigest,
   previousRunWasInterrupted,
   runSeqFromEvents,
@@ -5371,6 +5373,12 @@ export class Engine {
       // comes from the killed run's own `decision` rows, which were written
       // before their acts and therefore survived the kill.
       inheritedEmptyCompletions: priorRunInterrupted ? inheritedEmptyCompletions(priorEvents) : 0,
+      // The same rule for the six repair classes (M4): limits are shared and
+      // DURABLE. A run killed after its one acceptance re-prompt does not get
+      // a second one on resume, and one killed at two transport failures
+      // resumes at two. From the killed run's own `decision` rows, for the
+      // same reason — they are written before their acts.
+      inheritedRepairTurns: priorRunInterrupted ? inheritedRepairTurns(priorEvents) : {},
       // Written BEFORE the act. A row of its own type, for the same reason the
       // shadow rows are: `RUN_TRACE_EVENTS` is an allow-list over
       // `AgentTurnEvent`, and an applied decision is not an event any surface
@@ -5745,6 +5753,28 @@ export class Engine {
         // The independent oracle, at the finish gate. Absent in effect for
         // every run with no `--acceptance`: the gate returns immediately.
         acceptanceGate: (signal) => this.runAcceptanceGate(sessionId, signal),
+        // The evaluator criteria that FAILED, for the one bounded re-prompt
+        // (M4's `acceptance_mismatch`). Derived, never stored: `criterionStatus`
+        // reads the runtime's own records at the revision the verdict is taken
+        // at, so a criterion whose evidence went stale under a later edit is
+        // not reported as failed. `needs_review` is deliberately NOT here — a
+        // missing runner is not the model's to fix, and a class that never
+        // re-prompts must not be able to reach a re-prompt.
+        //
+        // `outputTail` is the evidence's own `detail` — what the command
+        // printed, as the check log recorded it. There is no field for the
+        // command, and the loop has no way to ask for one.
+        failedAcceptance: () => {
+          const criteria = this.ledger?.criteria ?? [];
+          if (criteria.length === 0) return [];
+          const now = this.runRevision(this.brief?.touch, { fresh: true });
+          const checks = this.checkLog.all;
+          return criteria.flatMap((criterion) =>
+            criterion.source === "evaluator" && criterionStatus(criterion, checks, now) === "failed"
+              ? [{ text: criterion.text, outputTail: criterion.evidence?.detail ?? "" }]
+              : [],
+          );
+        },
         jitDoctrine: (section) => this.takeJitDoctrine(sessionId, section),
         memoryBlock: () => this.takeMemoryBlock(sessionId),
         // The arbiter, watching. It decides nothing here unless

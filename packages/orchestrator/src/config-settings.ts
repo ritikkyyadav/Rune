@@ -103,10 +103,13 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     tomlPath: "controller.authority",
     kind: "text",
     description:
-      "Which continuation decisions the controller OWNS rather than shadows (M3). Empty is the " +
+      "Which continuation decisions the controller OWNS rather than shadows (M3/M4). Empty is the " +
       "default and means it decides nothing. E4 hands it the empty-completion branch: it decides, " +
-      "records the decision, and the loop acts on it. Applies to the next run.",
-    placeholder: "none, E4, or E4,acceptance",
+      "records the decision, and the loop acts on it. The six repair classes — transport, " +
+      "check_failed, acceptance, missing_dependency, denied, no_progress — each hand it the " +
+      "response to one KIND of failure, bounded and recorded, instead of a guard's own counter. " +
+      "Applies to the next run.",
+    placeholder: "none, E4, or check_failed,transport",
     nameAliases: ["controller authority", "authority", "controller owns"],
     validate: (value: string) => {
       const tokens = value

@@ -911,9 +911,35 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
             [...counts.entries()].map(([g, n]) => `${g} ${n}`).join(" · "),
         )}`,
       );
+      // ── A failure has a type, and the ledger says which (M4) ──
+      //
+      // The line a reader actually needs after a run that went sideways: not
+      // "the controller decided nine times" but "it saw four transport
+      // failures, one red check and one missing runner, and it spent one
+      // repair turn". Counted from the rows' own `inputs.repairClass`, which
+      // is an enum word the sanitiser allows — no output, no command, no prose.
+      const byClass = new Map<string, number>();
+      for (const r of appliedRows) {
+        const d = payloadOf(r) as unknown as AppliedDecisionRow;
+        const cls = (d.inputs as { repairClass?: unknown } | undefined)?.repairClass;
+        if (typeof cls === "string") byClass.set(cls, (byClass.get(cls) ?? 0) + 1);
+      }
+      if (byClass.size > 0) {
+        say(
+          `    ${dim(
+            `failures by type · ` +
+              [...byClass.entries()]
+                .sort((a, b) => b[1] - a[1])
+                .map(([c, n]) => `${c} ${n}`)
+                .join(" · "),
+          )}`,
+        );
+      }
       for (const r of appliedRows.slice(-8)) {
         const d = payloadOf(r) as unknown as AppliedDecisionRow;
-        say(`    ${dim(`${d.guard} (class ${d.class})`)} ${info(d.transition)} ${faint(d.reason)}`);
+        const cls = (d.inputs as { repairClass?: unknown } | undefined)?.repairClass;
+        const tag = typeof cls === "string" ? `${d.guard}/${cls}` : d.guard;
+        say(`    ${dim(`${tag} (class ${d.class})`)} ${info(d.transition)} ${faint(d.reason)}`);
       }
     }
 

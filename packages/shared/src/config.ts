@@ -355,6 +355,13 @@ export interface RuneConfig {
      * not a boolean: one decision migrates at a time, and each one rolls back
      * on its own.
      *
+     * M4 adds six more, one per failure class
+     * (`docs/program/m4-repair-and-delegation.md`): `transport`,
+     * `check_failed`, `acceptance`, `missing_dependency`, `denied`,
+     * `no_progress`. Each one moves the response to ONE kind of failure from a
+     * scattered guard's own counter to a bounded, recorded decision, and each
+     * one is absent by default and rolls back on its own.
+     *
      * Accepts a TOML array (`authority = ["E4"]`) or the comma-separated
      * string the settings writer persists (`authority = "E4"`).
      */

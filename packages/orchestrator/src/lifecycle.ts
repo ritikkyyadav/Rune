@@ -551,6 +551,79 @@ export function inheritedEmptyCompletions(
 }
 
 /**
+ * Repair turns the interrupted predecessor already spent, by class (M4).
+ *
+ * The same rule as `inheritedEmptyCompletions`, generalised to the six repair
+ * classes: **limits are shared and durable**. A run killed after its one
+ * acceptance re-prompt does not get a second one when it resumes, and a run
+ * killed at two transport failures resumes at two. Derived from the run's own
+ * `decision` rows for the same reason — a `decision` row is written BEFORE the
+ * act, so it survives exactly the kill this rule exists for.
+ *
+ * Which transition counts as SPENT differs by class, and that is the whole
+ * subtlety:
+ *
+ *   * `transport` — `working` is a retry, and the retry is the thing bounded.
+ *   * `check_failed` / `acceptance` — `repairing` is a repair turn spent;
+ *     `verifying` / `complete(partial)` is the bound already being enforced.
+ *   * `no_progress` — `working` is the nudge.
+ *   * `missing_dependency` / `denied` — no counter: neither buys anything, so
+ *     there is nothing to carry. They are absent from the result by design.
+ *
+ * The count is the ROW'S OWN number, floored at one more than the last, for
+ * the reason V6 finding 12 names: counting rows alone drops the allowance the
+ * killed run had itself inherited, and the loss compounds one per crash.
+ */
+export function inheritedRepairTurns(
+  events: Array<{ event: { type: string; payload: Record<string, unknown> } }>,
+): Record<string, number> {
+  /**
+   * guard → the authority key, the transition that means "spent", the input
+   * that counts it, and whether that input was read BEFORE the site's own
+   * increment.
+   *
+   * The last field is the whole subtlety. `transport` reads `attempts` after
+   * `consecutiveErrors++`, so the row's 2 means two spent. The other three
+   * read their counter before incrementing it, so a row saying 0 is a row
+   * saying "this is the first" — and taking it at face value would hand the
+   * resumed run the turn the killed one had already spent.
+   */
+  const SPENT: Record<string, [string, string, string, boolean]> = {
+    REPAIR_TRANSPORT: ["transport", "working", "attempts", false],
+    REPAIR_CHECK: ["check_failed", "repairing", "repairTurns", true],
+    REPAIR_ACCEPTANCE: ["acceptance", "repairing", "repromptsUsed", true],
+    REPAIR_PROGRESS: ["no_progress", "working", "nudges", true],
+  };
+  const out: Record<string, number> = {};
+  for (const { event } of events) {
+    if (event.type === "checkpoint" && event.payload?.summary === "session_started") {
+      for (const key of Object.keys(out)) delete out[key];
+      continue;
+    }
+    if (event.type !== "decision") continue;
+    const p = event.payload as {
+      guard?: unknown;
+      applied?: unknown;
+      transition?: unknown;
+      inputs?: Record<string, unknown>;
+    };
+    if (p.applied !== true || typeof p.guard !== "string") continue;
+    const rule = SPENT[p.guard];
+    if (!rule) continue;
+    const [key, spent, field, preIncrement] = rule;
+    if (p.transition !== spent) continue;
+    // The row's own number, normalised to "spent after this decision", with a
+    // `+ 1` floor so a row missing the field (an older log) still advances the
+    // count by one rather than silently handing an allowance back.
+    const raw = Number(p.inputs?.[field]);
+    const stated = Number.isFinite(raw) ? Math.floor(raw) + (preIncrement ? 1 : 0) : 0;
+    const prior = out[key] ?? 0;
+    out[key] = Math.max(prior + 1, stated);
+  }
+  return out;
+}
+
+/**
  * The per-session run counter, derived from the log rather than stored.
  *
  * Every run appends a `checkpoint:"session_started"` marker before its first

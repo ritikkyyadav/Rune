@@ -135,7 +135,7 @@ export interface Verifier {
    * fix code it had never touched. Omitted or unmatched, the whole workspace
    * is graded exactly as before.
    */
-  verify(signal?: AbortSignal, touched?: string[]): Promise<VerifyResult>;
+  verify(signal?: AbortSignal, touched?: string[], only?: string[]): Promise<VerifyResult>;
   /**
    * The cheap tier only — compile-class checks (typecheck, cargo check, go
    * build), never the test suite. Run at a STEP boundary rather than at the
@@ -998,8 +998,23 @@ export class CommandVerifier implements Verifier {
     );
   }
 
-  async verify(signal?: AbortSignal, touched?: string[]): Promise<VerifyResult> {
-    return this.run(this.checks(touched), this.config.timeoutMs ?? 120_000, signal);
+  async verify(signal?: AbortSignal, touched?: string[], only?: string[]): Promise<VerifyResult> {
+    let checks = this.checks(touched);
+    // ── The impacted set, not the suite (M4 exit R1) ──
+    //
+    // `only` names the commands a repair turn was about. Re-running the whole
+    // check set after a one-command fix is how a run's remaining budget went
+    // to suites it never touched: the bounded response to `check_failed` is
+    // "one repair turn, then re-verify what failed", and this is the second
+    // half of that sentence. An `only` that matches nothing is ignored rather
+    // than obeyed — verifying nothing and calling it green is the one outcome
+    // worse than verifying too much.
+    if (only && only.length > 0) {
+      const wanted = new Set(only);
+      const narrowed = checks.filter((c) => wanted.has(c.command));
+      if (narrowed.length > 0) checks = narrowed;
+    }
+    return this.run(checks, this.config.timeoutMs ?? 120_000, signal);
   }
 
   /**

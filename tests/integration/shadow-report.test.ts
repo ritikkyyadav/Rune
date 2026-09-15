@@ -491,6 +491,22 @@ describe("no row carries message text, tool arguments, results or credentials", 
       "end_turn",
       "open_steps",
       "budget",
+      // M4: the failure's class and its bounded response, at every site that
+      // can fail. Enum words like every other string a row may carry — the
+      // classifier reads the provider's message and the check's output, and
+      // neither has a path to a row. Added deliberately: the list is an
+      // ALLOWLIST, so a new word has to be argued for here before it ships.
+      "transport",
+      "check_failed",
+      "acceptance_mismatch",
+      "missing_dependency",
+      "denied",
+      "no_progress",
+      "retry",
+      "repair_turn",
+      "report_only",
+      "stop",
+      "nudge",
     ]);
     for (const o of all) {
       for (const row of o.decisions) {

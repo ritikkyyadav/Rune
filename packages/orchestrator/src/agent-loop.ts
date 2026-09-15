@@ -64,6 +64,7 @@ import {
   type Transition,
 } from "./arbiter";
 import { sanitizeInputs, type ShadowObserver } from "./shadow-arbiter";
+import { classify as classifyRepair, type RepairClassification, type RepairFact } from "./repair";
 import { makeRunState, type RunPhase, type RunState } from "./run-state";
 import { checkRelatedness, normalizeCommand, ranZeroTests } from "./verification-command";
 import { filesChangedFrom, isFileChangingTool } from "./lifecycle";
@@ -199,6 +200,20 @@ export interface AgentLoopConfig {
    * is every caller by default.
    */
   acceptanceGate?: (signal?: AbortSignal) => Promise<void>;
+  /**
+   * The evaluator criteria that FAILED at this finish, each with the tail of
+   * its own output (M4, the `acceptance_mismatch` class).
+   *
+   * `text` is the criterion as the PERSON wrote it; `outputTail` is the last
+   * few lines the command printed. The command itself is deliberately absent
+   * and there is no field for it: quoting the oracle teaches a model to
+   * satisfy the command instead of the criterion, which is the one way an
+   * acceptance gate can be made worse than no gate at all.
+   *
+   * Absent for every caller with no acceptance configured, and for every
+   * sub-agent loop.
+   */
+  failedAcceptance?: () => ReadonlyArray<{ text: string; outputTail: string }>;
   /**
    * Just-in-time doctrine, wired by the engine in "jit" delivery mode: returns
    * a section's verbatim text exactly ONCE per session at its first moment of
@@ -384,6 +399,16 @@ export interface LoopControllerConfig {
    * counters start where they always started.
    */
   inheritedEmptyCompletions?: number;
+  /**
+   * Repair turns an interrupted predecessor already spent, by authority key (M4).
+   *
+   * The limits are SHARED and DURABLE: attempts and repair turns are counted
+   * on the run's own `decision` rows, so a restart continues the count rather
+   * than buying a fresh allowance. Read ONLY for a key the controller owns —
+   * with authority off the loop's counters start where they always started,
+   * which is what keeps the rollback byte-identical for a resumed run too.
+   */
+  inheritedRepairTurns?: Readonly<Record<string, number>>;
   /** Persist an applied decision. Called BEFORE the act, synchronously. */
   record?: (row: AppliedDecisionRow) => void;
   /** Whether this run already has a terminal row, for the idempotent re-act on
@@ -419,6 +444,50 @@ const EMPTY_COMPLETION_TRANSITIONS: readonly Transition[] = [
   "verifying",
   abandoned("environment"),
 ];
+
+// ─── The six repair decisions (M4) ───
+//
+// One bounded vocabulary per class, for exactly the reason `EMPTY_COMPLETION_
+// TRANSITIONS` exists: a controller that answers `unknown` — a missing input,
+// an already-terminal phase, a rule this build does not have — must never
+// leave a site undecided. Anything outside the list and the guard's own
+// `legacy()` answer stands, and the row says so.
+
+const TRANSPORT_TRANSITIONS: readonly Transition[] = ["working", abandoned("environment")];
+
+const CHECK_REPAIR_TRANSITIONS: readonly Transition[] = ["working", "repairing", "verifying"];
+
+const ACCEPTANCE_TRANSITIONS: readonly Transition[] = [
+  "working",
+  "repairing",
+  completedTransition("partial"),
+];
+
+const DEPENDENCY_TRANSITIONS: readonly Transition[] = ["working", "verifying", "repairing"];
+
+const DENIED_TRANSITIONS: readonly Transition[] = ["working", "blocked(ask)", "blocked(halt)"];
+
+const NO_PROGRESS_TRANSITIONS: readonly Transition[] = ["working", abandoned("no_progress")];
+
+/**
+ * How many repair turns a red project check buys, once the controller owns it.
+ *
+ * ONE (`m4-repair-and-delegation.md`, the class table). The enclosing
+ * `verifyAttempts < maxVerifyAttempts` ladder is still there and still bounds
+ * the legacy path at three; this is the tighter bound the class names, and it
+ * applies only when `check_failed` is in `[controller] authority`.
+ */
+const MAX_CHECK_REPAIR_TURNS = 1;
+
+/** One acceptance re-prompt per run, then `partial` whatever happens (M3's second branch). */
+const MAX_ACCEPTANCE_REPROMPTS = 1;
+
+/** How much of a failing check's output a bounded repair turn carries. The
+ *  TAIL: the end is where the failure is, the start is the banner. */
+const CHECK_REPORT_TAIL_CHARS = 4_000;
+
+/** The same, for one acceptance criterion's own output. */
+const ACCEPTANCE_TAIL_CHARS = 1_200;
 
 /** The nudge the retry branch appends, once. A constant because the resume
  *  path compares against it to avoid asking the model twice. */
@@ -1617,6 +1686,125 @@ export class AgentLoop {
   }
 
   /**
+   * What an interrupted predecessor already spent on this repair class (M4).
+   *
+   * Zero unless the controller owns the key — a limit the controller does not
+   * enforce is not a limit it may inherit, and that gate is what keeps a
+   * resumed run byte-identical to the pre-M4 tree with authority off.
+   */
+  private inheritedRepair(key: string): number {
+    if (!this.ownsDecision(key)) return 0;
+    const raw = this.config.controller?.inheritedRepairTurns?.[key];
+    return typeof raw === "number" && Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0;
+  }
+
+  /**
+   * The failure's TYPE, as one seam.
+   *
+   * A method rather than a bare call to `classify` so the mutation the spec
+   * names — force the class to `transport` for every failure — has exactly one
+   * place to be performed, on a real instance, the way M3's mutations were
+   * (`m3-report.md`, "the mutations"). Pure, and never given model prose.
+   */
+  private classifyFailure(fact: RepairFact): RepairClassification | null {
+    return classifyRepair(fact);
+  }
+
+  /** The class and its response as ROW inputs — enum words, or nulls. */
+  private repairInputs(c: RepairClassification | null): GuardInputs {
+    return { repairClass: c?.cls ?? null, repairResponse: c?.response ?? null };
+  }
+
+  /**
+   * The one acceptance re-prompt: the criterion's TEXT, and the tail.
+   *
+   * There is no field for the command and no way to put one here — the
+   * accessor does not carry it. Quoting the oracle teaches a model to satisfy
+   * the command instead of the criterion, which is the one way an acceptance
+   * gate can be made worse than no gate at all
+   * (`m3-first-migration.md`, the second branch).
+   */
+  private acceptanceRepromptBody(
+    failed: ReadonlyArray<{ text: string; outputTail: string }>,
+  ): string {
+    const lines = [
+      "Stop — the acceptance stated for this task does not pass on your changes.",
+      "This is the person's own statement of what done means; it was not inferred, and it is",
+      "not negotiable. Fix the work so it holds, then finish. You get one attempt: the next",
+      "finish is recorded as partial whatever happens, with the gap below named in it.",
+      "",
+    ];
+    for (const { text, outputTail } of failed.slice(0, 4)) {
+      lines.push(`· ${text}`);
+      const tail = outputTail.trim();
+      if (tail) {
+        lines.push("  what it printed (last lines):");
+        for (const line of tail.slice(-ACCEPTANCE_TAIL_CHARS).split("\n").slice(-12)) {
+          lines.push(`    ${line}`);
+        }
+      }
+      lines.push("");
+    }
+    if (failed.length > 4) lines.push(`(and ${failed.length - 4} more)`);
+    return lines.join("\n");
+  }
+
+  /**
+   * The body of a repair turn for a red check: the check, and the TAIL.
+   *
+   * With `check_failed` in `[controller] authority` the repair turn names the
+   * failing commands and the last of what they printed, because the last of
+   * what a check printed is where the failure is and the first of it is the
+   * banner. Without the key the whole report goes in, exactly as before — this
+   * method is inert on the rollback path by construction.
+   */
+  private checkRepairBody(report: string, impacted: readonly string[]): string {
+    if (!this.ownsDecision("check_failed")) return report;
+    const tail =
+      report.length > CHECK_REPORT_TAIL_CHARS
+        ? `…\n${report.slice(-CHECK_REPORT_TAIL_CHARS)}`
+        : report;
+    const named =
+      impacted.length > 0
+        ? `Failing check${impacted.length === 1 ? "" : "s"}: ${impacted.join(", ")}\n\n`
+        : "";
+    return `${named}${tail}`;
+  }
+
+  /**
+   * Who decides a transport failure — `working` (retry) or the environment.
+   *
+   * One method for the two sites that reach it (a stream that returned an
+   * error, and one that threw), because they are the same decision read from
+   * two places, and M4 deletes duplicate authority rather than adding a second
+   * copy of it. With `transport` absent from `[controller] authority` the
+   * `legacy()` closure is the predicate that stood before this lane,
+   * character for character.
+   */
+  private decideTransport(
+    attempts: number,
+    retryable: boolean | undefined,
+    state: () => RunState,
+  ): Transition {
+    const max = this.config.maxConsecutiveErrors;
+    const cls = this.classifyFailure({
+      kind: "provider_error",
+      // The message is read by the classifier and never leaves it: a row
+      // carries the CLASS, and there is no path from a provider string to one.
+      message: "",
+      ...(retryable === undefined ? {} : { retryable }),
+    });
+    return this.decideWithAuthority(
+      "transport",
+      "REPAIR_TRANSPORT",
+      { attempts, maxAttempts: max, ...this.repairInputs(cls) },
+      TRANSPORT_TRANSITIONS,
+      () => (attempts < max ? "working" : abandoned("environment")),
+      state,
+    );
+  }
+
+  /**
    * Who decides this branch — and, when it is the controller, the record of it.
    *
    * With the key absent from `[controller] authority` this returns `legacy()`:
@@ -1900,16 +2088,26 @@ export class AgentLoop {
     });
 
     let turn = 0;
-    let consecutiveErrors = 0;
+    // Seeded from the killed predecessor's own `decision` rows when the
+    // controller owns the class (M4: the limits are shared and durable). A
+    // clean stream still resets it to zero below, so a resumed run that works
+    // is not put on probation — the rule is "failures IN A ROW".
+    let consecutiveErrors = this.inheritedRepair("transport");
     let verifyAttempts = 0;
     let editsSinceVerify = false;
-    let stuckNudges = 0;
+    let stuckNudges = this.inheritedRepair("no_progress");
     let truncationRetries = 0;
     // Task-spine discipline: one plan nudge when multi-step work proceeds with
     // no recorded plan; one replan round when verification keeps failing; one
     // clarify nudge when a brand-new project starts with zero questions asked.
     let planNudges = 0;
     let replanNudges = 0;
+    /** Repair turns spent on a red project check (M4, `check_failed`). */
+    let checkRepairTurns = this.inheritedRepair("check_failed");
+    /** The commands that went red last time — the impacted set to re-verify (R1). */
+    let impactedChecks: string[] = [];
+    /** Acceptance re-prompts spent (M4, `acceptance`). One per run, then partial. */
+    let acceptanceReprompts = this.inheritedRepair("acceptance");
     /** Phase 5 F4: one replan per run for a step failing on an upstream interface. */
     let interfaceReplans = 0;
     let greenfieldNudges = 0;
@@ -2822,7 +3020,18 @@ export class AgentLoop {
             consecutiveErrors++;
             this.report("provider.stream_error", "warn", "inferStream", result.error);
             yield { type: "error", error: result.error, recoverable: true };
-            if (consecutiveErrors >= this.config.maxConsecutiveErrors) {
+            // ── transport (M4) ──
+            //
+            // The provider failed to answer. That is a failure of the
+            // transport, never of the work, and the bounded response is to
+            // back off and send the same request again until the attempt
+            // budget is spent — then `abandoned(environment)`, with the run's
+            // files and evidence intact. It never reaches for a different
+            // provider: that is `[fallback]`'s decision, made elsewhere, from
+            // a configuration a person wrote.
+            if (
+              this.decideTransport(consecutiveErrors, result.retryable, shadowState) !== "working"
+            ) {
               this.report(
                 "loop.consecutive_errors",
                 "error",
@@ -2865,7 +3074,7 @@ export class AgentLoop {
         const msg = err instanceof Error ? err.message : String(err);
         this.report("provider.stream_error", "warn", "inferStream.catch", msg);
         yield { type: "error", error: msg, recoverable: true };
-        if (consecutiveErrors >= this.config.maxConsecutiveErrors) {
+        if (this.decideTransport(consecutiveErrors, undefined, shadowState) !== "working") {
           this.report(
             "loop.consecutive_errors",
             "error",
@@ -3212,6 +3421,17 @@ export class AgentLoop {
             const result = await this.config.verifier.verify(
               signal,
               this.config.taskState?.writtenFiles,
+              // ── R2: the re-verify is the impacted set, not the suite ──
+              //
+              // After a repair turn the controller took for a red check, the
+              // only thing that has to be shown green is the check that was
+              // red. Re-running everything is how a run's last turns went to
+              // suites it never touched. Only under the class's own authority
+              // — with the key absent this argument is `undefined` and the
+              // full set runs, exactly as before.
+              impactedChecks.length > 0 && this.ownsDecision("check_failed")
+                ? impactedChecks
+                : undefined,
             );
             yield {
               type: "verification_completed",
@@ -3241,32 +3461,114 @@ export class AgentLoop {
               // cannot waive a failure recorded after it settled.
               settledPlanAtWriteCount = null;
               settledPlanExcusedWrites = 0;
-              latchEffort("verification failed");
-              this.report(
-                "loop.verification_failed",
-                "warn",
-                "verify",
-                `project checks failed after edits (attempt ${verifyAttempts}): ${result.report.slice(0, 300)}`,
-              );
-              this.appendMessage(
-                {
-                  role: "user",
-                  content: [
-                    {
-                      type: "text",
-                      text:
-                        "Automated verification failed after your changes. Fix the " +
-                        `problems below, then finish.\n\n${result.report}`,
-                    },
-                  ],
-                },
-                "gate:verification-failed",
-              );
-              yield {
-                type: "notice",
-                message: "Verification failed — asking the agent to fix it.",
-              };
-              continue;
+              // ── What KIND of red is this? (M4) ──
+              //
+              // Two answers, and they are not the same failure. A check that
+              // RAN and went red is `check_failed`: the work is wrong, and one
+              // repair turn naming the check and the tail of its output is the
+              // bounded response. A check whose RUNNER is not here is
+              // `missing_dependency`: nothing was measured, the criterion it
+              // was bound to derives `needs_review` on its own, and asking a
+              // model to fix `bun: command not found` is how a run whose work
+              // was finished spent its last turns and died anyway.
+              //
+              // The classifier reads the exit code and the runner's own words.
+              // It never reads the model, and neither the command nor the
+              // output reaches a row: `repairInputs` carries two enum words.
+              const failedRuns = (result.runs ?? []).filter((r) => !r.passed);
+              const worst = failedRuns[0];
+              const failure = this.classifyFailure({
+                kind: "check_run",
+                command: worst?.command ?? "",
+                exitCode: worst?.exitCode ?? 1,
+                output: result.report,
+              });
+              // What a repair turn would have to make green again (R1/R2).
+              impactedChecks = failedRuns.flatMap((r) => (r.command ? [r.command] : []));
+              // The two decisions, in the ordering rule's own order: a runner
+              // that is not here is asked about first, because a check that
+              // never ran did not fail. Both `legacy()` closures answer
+              // `repairing` — what this site did before the lane, character
+              // for character — so with both keys absent nothing moves.
+              const repair =
+                failure?.cls === "missing_dependency"
+                  ? this.decideWithAuthority(
+                      "missing_dependency",
+                      "REPAIR_DEPENDENCY",
+                      { missingRunner: true, ...this.repairInputs(failure) },
+                      DEPENDENCY_TRANSITIONS,
+                      () => "repairing",
+                      () => shadowState("repairing"),
+                    )
+                  : this.decideWithAuthority(
+                      "check_failed",
+                      "REPAIR_CHECK",
+                      {
+                        checkFailed: true,
+                        repairTurns: checkRepairTurns,
+                        maxRepairTurns: MAX_CHECK_REPAIR_TURNS,
+                        ...this.repairInputs(failure),
+                      },
+                      CHECK_REPAIR_TRANSITIONS,
+                      () => "repairing",
+                      () => shadowState("repairing"),
+                    );
+              if (repair !== "repairing") {
+                // No repair turn is bought. The run falls THROUGH into the
+                // finish path below — deliberately not `continue`, which would
+                // buy the model another turn and is the whole thing these two
+                // classes refuse. The verdict there names the gap (R7), and a
+                // replan must not pick the fight up again, so the flag the
+                // replan branch reads is cleared.
+                verifyStillFailing = false;
+                const missingRunner = failure?.cls === "missing_dependency";
+                this.report(
+                  "loop.verification_failed",
+                  "warn",
+                  missingRunner ? "verify.missingRunner" : "verify.bounded",
+                  missingRunner
+                    ? "a project check could not run here (its runner is not installed) — " +
+                        "nothing was measured and nothing was retried"
+                    : `project checks still failing after ${checkRepairTurns} repair turn` +
+                        `${checkRepairTurns === 1 ? "" : "s"} — finishing with the gap named`,
+                );
+                yield {
+                  type: "notice",
+                  message: missingRunner
+                    ? "A project check could not run here — its runner is missing. " +
+                      "Nothing was measured; the run is finishing with that said."
+                    : "Checks are still failing and the repair budget is spent — " +
+                      "finishing with the failure on the record.",
+                };
+              } else {
+                checkRepairTurns++;
+                latchEffort("verification failed");
+                this.report(
+                  "loop.verification_failed",
+                  "warn",
+                  "verify",
+                  `project checks failed after edits (attempt ${verifyAttempts}): ${result.report.slice(0, 300)}`,
+                );
+                this.appendMessage(
+                  {
+                    role: "user",
+                    content: [
+                      {
+                        type: "text",
+                        text:
+                          "Automated verification failed after your changes. Fix the " +
+                          `problems below, then finish.\n\n${this.checkRepairBody(result.report, impactedChecks)}`,
+                      },
+                    ],
+                  },
+                  "gate:verification-failed",
+                );
+                yield {
+                  type: "notice",
+                  message: "Verification failed — asking the agent to fix it.",
+                };
+                continue;
+              }
             }
           } else if (verifyStillFailing && replanNudges < (this.config.maxReplanNudges ?? 1)) {
             // Fix attempts are exhausted (or the model gave up editing) and
@@ -3722,6 +4024,64 @@ export class AgentLoop {
         } catch {
           // The oracle is a reading of the run; it must never break it.
         }
+        // ── acceptance_mismatch (M4 / M3's second branch) ──
+        //
+        // An evaluator criterion the PERSON stated is `failed`, on the tree
+        // the run is about to finish on. M1 left this advisory: the gap was
+        // named in the verdict and the turn ended exactly as it would have.
+        // With `acceptance` in `[controller] authority` it buys exactly one
+        // re-prompt — the criterion's TEXT and the tail of its output, never
+        // its command — and the next finish ends `partial` whatever happens.
+        //
+        // `needs_review` never re-prompts and never reaches here: the
+        // accessor returns only `failed` criteria, because a missing runner is
+        // not the model's to fix.
+        const failedAcceptance = this.config.failedAcceptance?.() ?? [];
+        if (failedAcceptance.length > 0 && !signal?.aborted) {
+          const turnsLeft = Math.max(0, this.config.maxTurns - turn);
+          const mismatch = this.classifyFailure({ kind: "criterion", status: "failed" });
+          const acceptance = this.decideWithAuthority(
+            "acceptance",
+            "REPAIR_ACCEPTANCE",
+            {
+              failed: true,
+              repromptsUsed: acceptanceReprompts,
+              maxReprompts: MAX_ACCEPTANCE_REPROMPTS,
+              turnsLeft,
+              ...this.repairInputs(mismatch),
+            },
+            ACCEPTANCE_TRANSITIONS,
+            // Advisory, as M1 left it: the finish proceeds and the verdict
+            // carries the gap. That closure is the rollback switch.
+            () => "working",
+            () => shadowState("repairing"),
+          );
+          if (acceptance === "repairing") {
+            acceptanceReprompts++;
+            latchEffort("an acceptance criterion failed");
+            this.report(
+              "loop.acceptance_repair",
+              "warn",
+              "acceptance",
+              `${failedAcceptance.length} stated acceptance criteri` +
+                `${failedAcceptance.length === 1 ? "on" : "a"} failed — one repair turn`,
+            );
+            this.appendMessage(
+              {
+                role: "user",
+                content: [{ type: "text", text: this.acceptanceRepromptBody(failedAcceptance) }],
+              },
+              "gate:acceptance-mismatch",
+            );
+            yield {
+              type: "notice",
+              message:
+                "A stated acceptance criterion failed — asking once for a fix before finishing.",
+            };
+            this.state = "observing";
+            continue;
+          }
+        }
         const verdict = this.verdictFor(stopReason);
         // Class 4, last: the contract's own answer, beside what the run is
         // about to record. With no contract in scope there is no verdict to
@@ -3810,7 +4170,33 @@ export class AgentLoop {
         priorSame.every((s) => s.resultSig !== undefined && s.resultSig === priorSame[0].resultSig);
       const duplicateCount = answersUnchanged ? priorSame.length + 1 : 1;
       if (duplicateCount >= 3) {
-        if (stuckNudges < (this.config.maxStuckNudges ?? 1)) {
+        // ── no_progress (M4) ──
+        //
+        // The same batch, the same answers, and nothing written between. One
+        // nudge, then `abandoned(no_progress)` — a re-read is not progress,
+        // and class 5 may stop a run but never declare it finished. The
+        // `legacy()` closure is the predicate that stood before this lane.
+        const rut = this.classifyFailure({
+          kind: "progress",
+          repeats: duplicateCount,
+          writeCountChanged: false,
+          newEvidence: false,
+        });
+        const maxStuck = this.config.maxStuckNudges ?? 1;
+        const progress = this.decideWithAuthority(
+          "no_progress",
+          "REPAIR_PROGRESS",
+          {
+            evidenceChanged: false,
+            nudges: stuckNudges,
+            maxNudges: maxStuck,
+            ...this.repairInputs(rut),
+          },
+          NO_PROGRESS_TRANSITIONS,
+          () => (stuckNudges < maxStuck ? "working" : abandoned("no_progress")),
+          () => shadowState(),
+        );
+        if (progress === "working") {
           stuckNudges++;
           latchEffort("repeating tool calls");
           this.report(
@@ -4072,6 +4458,31 @@ export class AgentLoop {
               error: decision.reason ?? "Permission denied",
               durationMs: 0,
             };
+            // ── denied (M4) ──
+            //
+            // A boundary, not an obstacle. The bounded response is to stop
+            // THAT action and report it; there is no alternative route, and
+            // the decision is recorded so a reader can see there was none.
+            // Nothing below changes: the call is answered with the refusal it
+            // always was, and the model is not offered a way around it. The
+            // decision row is the record that the run did not try one.
+            const boundary = this.classifyFailure({
+              kind: "boundary",
+              outcome: decision.halt ? "halt" : refusedByPerson ? "ask_refused" : "denied",
+            });
+            this.decideWithAuthority(
+              "denied",
+              "REPAIR_DENIED",
+              {
+                halted: Boolean(decision.halt),
+                denied: true,
+                refusedByPerson,
+                ...this.repairInputs(boundary),
+              },
+              DENIED_TRANSITIONS,
+              () => (decision.halt ? "blocked(halt)" : "blocked(ask)"),
+              () => shadowState("blocked"),
+            );
           }
           // First halt wins; later calls in the same batch report the same one.
           if (decision.halt && !haltNotice) haltNotice = decision.halt.reason;
