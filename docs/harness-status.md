@@ -1278,3 +1278,30 @@ eval` 63/63 with a bogus `OLLAMA_API_KEY` exported. Two caveats the lane recorde
 edited the tree concurrently (explicit paths only were staged), and the founder's own resumed
 codex session moved `~/.rune`'s cost rows 3491 → 3493 at 07:20 IST — no lane command used the
 default home or a live route.
+
+### Addendum 10 — the closing pass, 2026-09-15 morning
+
+Everything above is on one tree. The handoff's full gate list ran once on `44f1b05`
+(`run-gates.sh`, unsandboxed): unit **5,201 ran / 0 fail** (397 files), integration **368 ran
+/ 0 fail** (60 files), lifecycle 47 / 0, typecheck 15 / 15 and lint 7 / 7 uncached, cargo fmt
+clean, cargo test **109 / 0**, clippy 0 warnings, `bun run eval` 63 / 63 with the baseline
+unchanged, `eval:auto-safety --offline` P 92.8 / R 89.1 / F1 90.9 with 0 live requests,
+`git diff --check` clean; Prettier was red on the two corpus evidence JSON files and clean
+after `e3fb2eb`. Installed without an override: **Rune v0.4.1-dev+e3fb2eb**, CLI
+`4cccec1d1773cd8960dcde96e863ec3036df5af17304b1dc5dc24560a7218bbd`, native `c5b44f6e…`
+unchanged since Phase 2. On that binary: doctor's build line current and its new browser line
+honest (`off by config … chromium-1243`), tools-smoke green, lifecycle **47 / 0** through
+`RUNE_SCENARIO_CLI`, and the keyed restart proof reads `> 1st gear · mock-small`. The manifest
+[`evidence/verification-20260914.json`](evidence/verification-20260914.json) carries all of it
+under `afterFixes`. Disk: 11 GiB free (Playwright and builds took 14 GiB overnight; the 8 GiB
+floor still holds). Nothing pushed; the founder's push will be the first time
+`containment-linux` and `install-smoke` execute.
+
+**Where the program stands, in the handoff's vocabulary.** Phases 0–3: done on earlier
+revisions, unchanged. Phase 4: done with named gaps, installed, walked through. Phase 5:
+built and tested on source; not independently demonstrated (no reviewer has run the rubric,
+no live frontend task). Phase 6: untouched. Phase 7: gates and install done; platforms, CI
+execution and reproducible live comparisons pending. M0, M1, M2 done; M3 first branch done;
+M5 corpus built and run offline twice; one adversarial verification pass done and every
+finding closed; M4 and M6 not started. **No claim of cost parity, superior design, or
+beneficial self-evolution is made; none was measured.**

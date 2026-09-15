@@ -234,5 +234,59 @@
       "unshadowed": 2,
       "overhead": "0\u20134 rows/run; p50 8\u2013364 \u00b5s; p95 \u2264 948 \u00b5s; \u2264 1.4 ms/run; scripted rig"
     }
+  },
+  "afterFixes": {
+    "date": "2026-09-15",
+    "commits": "9fa5d5c..e3fb2eb (M3 first branch, Lane C corpus, verifier pass, Fix lanes A and B, Lane F, docs, formatting)",
+    "gatesAt": "44f1b05 (all thirteen gates; formatting of two evidence JSON files fixed in e3fb2eb)",
+    "gates": {
+      "unit": "5,201 ran / 0 fail (397 files, 59.2 s)",
+      "integration": "368 ran / 0 fail (60 files, 126.9 s)",
+      "lifecycleDurabilityAlone": "47 / 0",
+      "typecheck": "15/15 uncached",
+      "lint": "7/7 uncached",
+      "cargoFmt": "clean",
+      "cargoTest": "109 / 0",
+      "clippy": "0 warnings",
+      "eval": "63/63, baseline unchanged",
+      "autoSafetyOffline": "P 92.8 / R 89.1 / F1 90.9, 0 live requests",
+      "gitDiffCheck": "clean",
+      "prettier": "red on two corpus JSON files at 44f1b05; clean at e3fb2eb"
+    },
+    "installed": {
+      "version": "Rune v0.4.1-dev+e3fb2eb",
+      "cliSha256": "4cccec1d1773cd8960dcde96e863ec3036df5af17304b1dc5dc24560a7218bbd",
+      "nativeSha256": "c5b44f6e3620aae0cf82941a9e155fb95097815b1cd673eb9c98aa1347a28416",
+      "doctorBuildLine": "current \u2014 gear/phase-0-stabilize@e3fb2ebd+dirty (the untracked capture script)",
+      "doctorBrowserLine": "off by config (@playwright/mcp fetched by bunx on first use; no playwright module resolved here; chromium chromium-1243)",
+      "toolsSmoke": "write \u00b7 read \u00b7 edit \u00b7 bash round-trip",
+      "lifecycleThroughBinary": "47 / 0",
+      "restartProofKeyed": "strip reads `> 1st gear \u00b7 mock-small`; keychain left as found"
+    },
+    "verifierPass": {
+      "report": ".codex/audit-20260910/handoff/m0/verify-batch-report.md",
+      "redTests": 18,
+      "critical": 4,
+      "high": 7,
+      "medium": 11,
+      "low": 8,
+      "closedBy": ["Fix lane A f85b263..d9c524e", "Fix lane B 0424906..edd96ef"],
+      "verificationDirEmpty": true
+    },
+    "corpusOffline": {
+      "file": "docs/evidence/corpus-offline-20260915.json",
+      "rows": 64,
+      "falseCompletions": "0 / 52",
+      "falseNegatives": "2 / 12 (research family: an explanation cannot reach `met` through its own citation; evaluators all satisfied)",
+      "modelCalls": 0
+    },
+    "notProvenStill": [
+      "Windows",
+      "Linux (no Docker daemon; CI jobs never executed \u2014 branch unpushed)",
+      "any live model call",
+      "the visual rubric run by a real independent reviewer",
+      "live frontend or corpus runs (no budget)",
+      "M3's second branch, M4, M6, Phase 6, Phase 7"
+    ]
   }
 }
