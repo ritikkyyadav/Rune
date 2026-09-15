@@ -468,33 +468,158 @@ function architectureFields(item: TodoItem | undefined): Partial<TodoItem> {
  * Positions are 1-based within the submitted list, which the model rewrites
  * whole on every call.
  */
-export function openDependencies(items: readonly TodoItem[]): Array<{
+export function openDependencies(
+  items: readonly TodoItem[],
+  /**
+   * The plan as the store last held it. Edges it declared and this submission
+   * did not repeat are still in force — that is the whole point of remembering
+   * them — and they are resolved by step identity, so renumbering the list
+   * moves nothing.
+   */
+  stored: readonly TodoItem[] = [],
+): Array<{
   index: number;
   content: string;
-  /** The open steps it named, as 1-based positions with their text. */
-  open: Array<{ at: number; content: string }>;
+  /**
+   * The open steps it rests on. `at` is the 1-based position in `items`, or
+   * null for a step this submission removed from the plan without closing it.
+   */
+  open: Array<{ at: number | null; content: string }>;
 }> {
   const out: Array<{
     index: number;
     content: string;
-    open: Array<{ at: number; content: string }>;
+    open: Array<{ at: number | null; content: string }>;
   }> = [];
+  const byKey = new Map(items.map((item, index) => [todoKey(item.content), { item, index }]));
+  const edges = mergedEdges(items, stored);
   for (let index = 0; index < items.length; index++) {
     const item = items[index]!;
-    if (item.status !== "completed" || !item.dependsOn?.length) continue;
-    const open: Array<{ at: number; content: string }> = [];
-    for (const at of item.dependsOn) {
-      // A self-reference is a typo, not a dependency, and refusing it would
-      // make a step unclosable forever. A FORWARD reference is a real
-      // violation: "step 2 is done and rests on step 3, which is not" is the
-      // same contradiction written backwards.
-      if (at < 1 || at > items.length || at === index + 1) continue;
-      const dep = items[at - 1]!;
-      if (dep.status !== "completed") open.push({ at, content: dep.content });
+    if (item.status !== "completed") continue;
+    const key = todoKey(item.content);
+    const open: Array<{ at: number | null; content: string }> = [];
+    for (const edge of edges) {
+      if (edge.from !== key) continue;
+      const here = byKey.get(edge.on);
+      // Still in the plan and still open — the contradiction as first written.
+      if (here && here.item.status !== "completed")
+        open.push({ at: here.index + 1, content: here.item.content });
+      // Gone from the plan, and it was not closed before it went. Deleting the
+      // step you are built on does not finish it.
+      else if (!here && !edge.onCompleted) open.push({ at: null, content: edge.onContent });
     }
     if (open.length > 0) out.push({ index, content: item.content, open });
   }
   return out;
+}
+
+// ─── Dependency edges survive the plan being rewritten ───
+//
+// `dependsOn` is positional — 1-based indices into the list the model just
+// submitted — which is unambiguous WITHIN one call and meaningless ACROSS two.
+// The v7 pass found both ways through that:
+//
+//   (a) omit `dependsOn` and the step closes, because the check ran over the
+//       submission while the merge put the edge back from the previous item;
+//   (b) renumber the plan so the index points somewhere harmless, and there is
+//       no refusal at all — so no message and no quoted step either.
+//
+// Both are the same mistake: an edge is a fact about two STEPS, and it was
+// being stored as a fact about two positions. Resolved to step identity — the
+// same content key the evidence carry-over already uses — and remembered, an
+// edge outlives a reorder and a submission that stops mentioning it. It is
+// forgotten only when the step it points at is completed, which is the one
+// event that settles it.
+
+/** A step's dependencies, as the identities of the steps it rests on. */
+interface DependencyEdge {
+  /** Content key of the step that declared the dependency. */
+  from: string;
+  /** Content key of the step depended on. */
+  on: string;
+  /** Its text when the edge was last seen, for a refusal that can be read. */
+  onContent: string;
+  /** Whether it was already completed the last time the store saw it. */
+  onCompleted: boolean;
+}
+
+/**
+ * The edges a submitted list declares, resolved within that list.
+ *
+ * A self-reference is a typo, not a dependency, and refusing it would make a
+ * step unclosable forever; an index outside the list is dropped for the same
+ * reason the tool's normaliser drops one.
+ */
+function declaredEdges(items: readonly TodoItem[]): DependencyEdge[] {
+  const out: DependencyEdge[] = [];
+  for (let index = 0; index < items.length; index++) {
+    const item = items[index]!;
+    for (const at of item.dependsOn ?? []) {
+      if (at < 1 || at > items.length || at === index + 1) continue;
+      const on = items[at - 1]!;
+      out.push({
+        from: todoKey(item.content),
+        on: todoKey(on.content),
+        onContent: on.content,
+        onCompleted: on.status === "completed",
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Every edge that binds this submission: the ones it declares, plus the ones
+ * the stored plan declared and this submission did not repeat.
+ *
+ * Nothing is dropped here. Whether an edge is SATISFIED is a question about
+ * the step it points at, asked where that step can be looked up; the stored
+ * status travels along on `onCompleted` only for the one case that cannot be
+ * looked up — the step is no longer in the plan at all.
+ */
+function mergedEdges(
+  submitted: readonly TodoItem[],
+  stored: readonly TodoItem[],
+): DependencyEdge[] {
+  const out = new Map<string, DependencyEdge>();
+  const id = (edge: DependencyEdge) => `${edge.from}::${edge.on}`;
+  for (const edge of declaredEdges(stored)) out.set(id(edge), edge);
+  for (const edge of declaredEdges(submitted)) out.set(id(edge), edge);
+  return [...out.values()];
+}
+
+/**
+ * A cycle in the dependency graph, as the steps that form it, or null.
+ *
+ * `TaskStateStore` stored a 2-cycle, a 3-cycle and a self-dependency verbatim
+ * and accepted all of them. Nothing hung, because nothing walked the graph —
+ * which is also why nobody could tell the model its plan cannot be executed in
+ * any order.
+ */
+function dependencyCycle(edges: readonly DependencyEdge[]): string[] | null {
+  const next = new Map<string, string[]>();
+  for (const edge of edges) next.set(edge.from, [...(next.get(edge.from) ?? []), edge.on]);
+  const state = new Map<string, "open" | "done">();
+  const stack: string[] = [];
+  const walk = (node: string): string[] | null => {
+    const seen = state.get(node);
+    if (seen === "done") return null;
+    if (seen === "open") return [...stack.slice(stack.indexOf(node)), node];
+    state.set(node, "open");
+    stack.push(node);
+    for (const to of next.get(node) ?? []) {
+      const found = walk(to);
+      if (found) return found;
+    }
+    stack.pop();
+    state.set(node, "done");
+    return null;
+  };
+  for (const node of next.keys()) {
+    const found = walk(node);
+    if (found) return found;
+  }
+  return null;
 }
 
 export function stepReceipt(item: TodoItem): string {
@@ -556,7 +681,7 @@ export type SetTodosVerdict =
          * the things that did not happen, so a `/check/` test over the prose
          * reads a no-evidence refusal as a failed check.
          */
-        kind: "no_evidence" | "check_failed" | "open_dependency";
+        kind: "no_evidence" | "check_failed" | "open_dependency" | "dependency_cycle";
       }>;
       notes: string[];
     };
@@ -944,7 +1069,33 @@ export class TaskStateStore {
     // always the model's to fix — reopen the close, or close the dependency
     // first — so it is refused every time rather than once.
     if (enforce) {
-      const violations = openDependencies(cleaned);
+      // A plan that cannot be executed in any order is refused before anything
+      // else is judged: no ordering of the steps satisfies it, so there is no
+      // sense in asking which one closes first.
+      const cycle = dependencyCycle(mergedEdges(cleaned, this.state.todos));
+      if (cycle) {
+        const byKey = new Map(cleaned.map((t, index) => [todoKey(t.content), { t, index }]));
+        const named = cycle.map((key) => byKey.get(key)?.t.content ?? key);
+        const head = byKey.get(cycle[0]!);
+        this.touch();
+        return {
+          accepted: false,
+          refused: [
+            {
+              index: head?.index ?? 0,
+              content: head?.t.content ?? named[0]!,
+              kind: "dependency_cycle" as const,
+              reason: `the plan's dependencies form a loop: ${named
+                .map((content) => `"${content.slice(0, 60)}"`)
+                .join(" → ")}. No order of these steps can satisfy it.`,
+            },
+          ],
+          notes: [
+            "Dependencies must point backwards to work that can finish first. Break the loop by deciding which step really comes first and rewriting the plan.",
+          ],
+        };
+      }
+      const violations = openDependencies(cleaned, this.state.todos);
       if (violations.length > 0) {
         this.touch();
         return {
@@ -954,11 +1105,16 @@ export class TaskStateStore {
             content: v.content,
             kind: "open_dependency" as const,
             reason: `it depends on ${v.open
-              .map((o) => `step ${o.at} ("${o.content.slice(0, 60)}")`)
+              .map((o) =>
+                o.at === null
+                  ? `"${o.content.slice(0, 60)}", which this plan drops without closing`
+                  : `step ${o.at} ("${o.content.slice(0, 60)}")`,
+              )
               .join(" and ")}, which ${v.open.length === 1 ? "is" : "are"} still open.`,
           })),
           notes: [
             "A step cannot be completed before the steps it is built on. Close the dependency first, or say why the dependency was wrong and rewrite the plan.",
+            "A dependency the plan declared once stays declared: dropping the line, or renumbering the list, does not retract it.",
           ],
         };
       }
@@ -967,6 +1123,28 @@ export class TaskStateStore {
     const oldByKey = new Map(this.state.todos.map((t) => [todoKey(t.content), t] as const));
     const newKeys = new Set(cleaned.map((t) => todoKey(t.content)));
     const oldOpen = this.state.todos.filter((t) => t.status !== "completed");
+
+    // `dependsOn` is stored as positions in THIS list, re-resolved from the
+    // edges by step identity. Carrying the previous array across verbatim —
+    // which is what `architectureFields(prev)` did — stored indices into a list
+    // that no longer exists, so a reordered plan came back pointing at whatever
+    // now sits in that slot.
+    const positionsFor = (() => {
+      const at = new Map(cleaned.map((t, index) => [todoKey(t.content), index + 1] as const));
+      const out = new Map<string, number[]>();
+      for (const edge of mergedEdges(cleaned, this.state.todos)) {
+        const target = at.get(edge.on);
+        const from = at.get(edge.from);
+        // A step that is not in this plan has no position to point at, and a
+        // step may not depend on itself.
+        if (target === undefined || from === undefined || target === from) continue;
+        const list = out.get(edge.from) ?? [];
+        if (!list.includes(target)) list.push(target);
+        out.set(edge.from, list);
+      }
+      for (const list of out.values()) list.sort((a, b) => a - b);
+      return out;
+    })();
 
     // Carry evidence across, decide each completion.
     const refused: Array<{
@@ -989,6 +1167,9 @@ export class TaskStateStore {
         ...architectureFields(prev),
         ...architectureFields(t),
       };
+      const edges = positionsFor.get(key);
+      if (edges?.length) item.dependsOn = [...edges];
+      else delete item.dependsOn;
       if (prev?.evidence) item.evidence = structuredClone(prev.evidence);
       if (prev?.unproven && t.status === "completed" && prev.status === "completed") {
         // Re-judged on what landed since: evidence clears the mark, so a fix

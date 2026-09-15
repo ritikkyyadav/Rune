@@ -6,6 +6,22 @@ import type { ToolCallOutput } from "@rune/tool-registry";
 export interface VisualReviewState {
   revision: number;
   origins: string[];
+  /**
+   * Origins a delegated child SAID it was serving (Phase 5 F2 / v7 finding 24).
+   *
+   * A sub-agent is a separate `AgentLoop` with its own `VisualVerification`,
+   * so an origin it established dies with it: the lead delegates "build and
+   * serve the page", drives the browser itself, and its own real screenshot of
+   * the real page is discarded because its allowlist is empty.
+   *
+   * The child's word is NOT enough to fix that. A claim is a lead that never
+   * saw the server, and "some process on this machine answers on :4173" is
+   * exactly what the ownership rule exists to refuse. A claim is a POINTER: it
+   * tells the lead which origin is worth re-probing, and the lead's own fetch —
+   * from inside the workspace, returning an HTML document — is what promotes it
+   * into `origins`. First-hand evidence, one step later.
+   */
+  claimedOrigins?: string[];
   url?: string;
   width?: number;
   captures: Array<{
@@ -71,6 +87,25 @@ export class VisualVerification {
     sameBatchWrite = false,
   ): boolean {
     if (!output.success) return false;
+    // A delegated child's report of where it is serving. Recorded as a claim
+    // and nothing more — see `claimedOrigins`. It establishes no ownership, so
+    // this returns false and no capture is made from it.
+    if (["task", "worker", "team"].includes(tool)) {
+      for (const value of output.result.match(/https?:\/\/[^\s<>"'\\)]+/g) ?? []) {
+        try {
+          const url = new URL(value);
+          if (!LOCAL.has(url.hostname)) continue;
+          if (this.state.origins.includes(url.origin)) continue;
+          const claims = (this.state.claimedOrigins ??= []);
+          if (!claims.includes(url.origin)) claims.push(url.origin);
+        } catch {
+          /* incomplete output */
+        }
+      }
+      if (this.state.claimedOrigins)
+        this.state.claimedOrigins = this.state.claimedOrigins.slice(-16);
+      return false;
+    }
     if (["bash", "bash_output", "interactive_dashboard"].includes(tool)) {
       // Only a URL emitted by this workspace's runtime establishes a preview.
       // Visiting an arbitrary localhost site does not establish ownership.
@@ -91,6 +126,17 @@ export class VisualVerification {
       // is serving and got a real HTML document back. Weaker than pixels — it
       // cannot see layout — but it is the served response, not the source.
       const command = typeof args.command === "string" ? args.command : "";
+      // The lead's own re-probe of a child's claim: it asked that origin, from
+      // inside the workspace, and got a page. That is first-hand evidence, and
+      // it is the only thing that turns a claim into an origin.
+      const claimed = (this.state.claimedOrigins ?? []).find((origin) => command.includes(origin));
+      if (tool === "bash" && claimed && HTML_DOCUMENT.test(output.result)) {
+        if (!this.state.origins.includes(claimed)) this.state.origins.push(claimed);
+        this.state.origins = this.state.origins.slice(-16);
+        this.state.claimedOrigins = (this.state.claimedOrigins ?? []).filter(
+          (origin) => origin !== claimed,
+        );
+      }
       const served = this.state.origins.find((origin) => command.includes(origin));
       if (tool === "bash" && served && !sameBatchWrite && HTML_DOCUMENT.test(output.result)) {
         this.state.captures.push({

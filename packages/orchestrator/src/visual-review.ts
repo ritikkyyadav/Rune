@@ -72,22 +72,62 @@ export function rubricRef(rubric: VisualRubric = VISUAL_RUBRIC): string {
 /**
  * The coarse family of a model, for the "not the same blind spots" test.
  *
- * Deliberately coarse and deliberately fail-closed: an id this does not
- * recognise gets its own family derived from the provider, so an unknown model
- * is never silently treated as independent of a known one it might be.
+ * Independence is by model LINEAGE, read out of the id — not by provider id.
+ * A Claude model served through openrouter is still Anthropic's model with
+ * Anthropic's blind spots, and an openrouter account that can reach both a
+ * Claude and a GPT model can still produce an independent review.
+ *
+ * Deliberately coarse and deliberately fail-closed in both directions: a
+ * pattern matches ANYWHERE in the id rather than on a word boundary, because
+ * the cost of collapsing two unrelated models into one family is a review that
+ * does not run, and the cost of splitting one vendor's models into two is a
+ * model reviewing itself. `openai/chatgpt-4o-latest` used to read as
+ * `provider:openai` — the `gpt` probe required a non-letter before "gpt", and
+ * "chatgpt" has an "a" — which made OpenAI's own 4o checkpoint an "independent"
+ * reviewer of `openai/gpt-4o`.
+ *
+ * An id this does not recognise gets its own family derived from the provider;
+ * `independentOf` then adds the rule that makes that honest.
  */
 export function modelFamily(provider: string, model: string): string {
   const m = `${model}`.toLowerCase();
-  if (/claude|anthropic/.test(m)) return "claude";
-  if (/(^|[^a-z])(gpt|o[134]|codex|davinci)([^a-z]|$)/.test(m)) return "gpt";
-  if (/gemini|palm|bison/.test(m)) return "gemini";
+  if (/claude|anthropic|sonnet|haiku|opus/.test(m)) return "claude";
+  if (/gpt|(^|[^a-z])o[134]([^a-z]|$)|codex|davinci/.test(m)) return "gpt";
+  if (/gemini|palm|bison|gemma/.test(m)) return "gemini";
   if (/llama/.test(m)) return "llama";
-  if (/mistral|mixtral|codestral/.test(m)) return "mistral";
+  if (/mistral|mixtral|codestral|magistral|devstral/.test(m)) return "mistral";
   if (/qwen/.test(m)) return "qwen";
   if (/deepseek/.test(m)) return "deepseek";
   if (/grok/.test(m)) return "grok";
+  if (/command-?[ar]|cohere/.test(m)) return "cohere";
   if (/glm|kimi|minimax|yi-/.test(m)) return m.split(/[-/:]/)[0] ?? m;
   return `provider:${provider.toLowerCase()}`;
+}
+
+/** An id no pattern recognised — the family is a guess from the provider. */
+const unrecognised = (family: string): boolean => family.startsWith("provider:");
+
+/**
+ * Can `candidate` review `generator`'s work?
+ *
+ * Two rules. Different lineages, which is the property the rubric wants. And,
+ * where either id is UNRECOGNISED, not the same provider: an id the table does
+ * not know tells us nothing about its lineage, and the one thing that is known
+ * about it is who serves it. Without the second rule `provider:openai` and
+ * `gpt` read as different strings and a provider's own new checkpoint reviews
+ * its own older one — fail-closed for unknown-vs-unknown, wide open for
+ * unknown-vs-known, which is the shape the v7 pass found.
+ */
+export function independentOf(generator: ReviewerIdentity, candidate: ReviewerIdentity): boolean {
+  const own = modelFamily(generator.provider, generator.model);
+  const theirs = modelFamily(candidate.provider, candidate.model);
+  if (own === theirs) return false;
+  if (
+    (unrecognised(own) || unrecognised(theirs)) &&
+    generator.provider.toLowerCase() === candidate.provider.toLowerCase()
+  )
+    return false;
+  return true;
 }
 
 export interface ReviewerIdentity {
@@ -110,16 +150,8 @@ export function pickVisualReviewer(inputs: {
   /** Connected, funded-or-subscription candidates, in preference order. */
   candidates: readonly ReviewerIdentity[];
 }): ReviewerIdentity | null {
-  const own = modelFamily(inputs.generator.provider, inputs.generator.model);
-  for (const candidate of inputs.candidates) {
-    if (modelFamily(candidate.provider, candidate.model) === own) continue;
-    if (
-      candidate.provider === inputs.generator.provider &&
-      candidate.model === inputs.generator.model
-    )
-      continue;
-    return candidate;
-  }
+  for (const candidate of inputs.candidates)
+    if (independentOf(inputs.generator, candidate)) return candidate;
   return null;
 }
 
