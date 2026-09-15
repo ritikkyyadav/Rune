@@ -110,6 +110,7 @@ import {
   type SessionRowView,
 } from "./composer";
 import { RUNE_MARK, renderBanner } from "./banner";
+import { workingRow } from "./working";
 import { notifyWarp } from "./warp";
 import { setTitle, clearTitle } from "./title";
 import { renderReadBack, renderClose } from "./read-back";
@@ -1176,13 +1177,22 @@ export class Tui {
    *  has to show for itself -- a row per sub-agent in flight, or the tail of
    *  the answer as it streams) -- or the interrupting state while an abort
    *  drains. */
+  /** Wall-clock of the last turn that finished, so the strip can say `Done -
+   *  1m 58s` at rest instead of nothing. Null until a turn has run. */
+  lastTurnMs: number | null = null;
+
   turnStateLines(): string[] {
     if (this.aborting) return this.pinLiveHeight([`  ${this.workingText()}`]);
     const lines = [...(this.turnPreview ?? [])];
     if (lines.length === 0) {
-      const secs = Math.max(0, Math.floor((Date.now() - this.turnStart) / 1000));
+      // Before the first event lands there is genuinely nothing to report but
+      // the state and the clock -- so this is the working indicator with an
+      // empty turn behind it, not a second dialect of it. It used to be the
+      // brand mark and a bold `Thinking...`, which is the one place in the
+      // product where the accent colour and a bold weight were spent on the
+      // fact that nothing had happened yet.
       return this.pinLiveHeight([
-        `  ${brand(RUNE_MARK)} ${bold(brand("Thinking"))}${faint("...")} ${faint(`(${secs}s)`)}`,
+        `  ${workingRow({ kind: "thinking", elapsedMs: Math.max(0, Date.now() - this.turnStart) })}`,
       ]);
     }
     // This was a flat two rows, which is why a fan-out of sub-agents could only
@@ -2890,6 +2900,7 @@ export class Tui {
         turn.onError(err);
       }
     } finally {
+      this.lastTurnMs = Math.max(0, Date.now() - this.turnStart);
       turn.finish({ aborted: this.aborting });
       this.lastPlanKey = turn.planKey() ?? this.lastPlanKey;
       this.printClose();
@@ -3360,6 +3371,7 @@ export class Tui {
     } catch (err) {
       if (!this.aborting) turn.onError(err);
     } finally {
+      this.lastTurnMs = Math.max(0, Date.now() - this.turnStart);
       turn.finish({ aborted: this.aborting });
       this.lastPlanKey = turn.planKey() ?? this.lastPlanKey;
       this.printClose();

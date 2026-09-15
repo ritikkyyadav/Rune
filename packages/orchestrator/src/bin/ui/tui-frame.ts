@@ -36,6 +36,7 @@ import {
   type Zones,
 } from "./viewport";
 import { uiLayout } from "./layout";
+import { workingRow } from "./working";
 import { arrowRun } from "./keys";
 import { renderBanner } from "./banner";
 import * as F from "./flow";
@@ -665,14 +666,20 @@ export const FRAME_METHODS = {
       return clampVisible(`  ${this.atWidth(w, () => renderAgentsStrip(view, inner))}`, w);
     }
     const live = this.mode === "turn" ? this.turnStateLines() : [];
+    // At rest, after a turn: `✻ Done · 1m 58s`. The indicator's last frame is
+    // the one worth keeping on screen -- how long the thing you just watched
+    // actually took -- and it is the only row here that survives the turn it
+    // describes. Before the first turn there is nothing to report and the
+    // strip says what it has always said.
+    const settled =
+      this.lastTurnMs != null
+        ? workingRow({ kind: "done", elapsedMs: this.lastTurnMs })
+        : `${accent(glyph("phase"))} ${faint("no agents this session")}`;
     const left =
       live.length > 0
-        ? clampVisible(live[0]!.trimStart(), Math.max(8, w - 18))
-        : faint("no agents this session");
-    return clampVisible(
-      `  ${F.row(`${accent(glyph("phase"))} ${left}`, faint("ctrl+f open"), inner)}`,
-      w,
-    );
+        ? `${accent(glyph("phase"))} ${clampVisible(live[0]!.trimStart(), Math.max(8, w - 18))}`
+        : settled;
+    return clampVisible(`  ${F.row(left, faint("ctrl+f open"), inner)}`, w);
   },
 
   /**

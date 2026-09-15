@@ -117,8 +117,13 @@ describe("the fleet panel — a row per sub-agent, not a count", () => {
     expect(row("survey the test suite")).not.toContain("grep backend");
     // The summary line -- the rung's ONE row -- counts them and no longer
     // speaks for them; the members' rows follow it.
-    expect(rung).toContain("3 sub-agents running");
-    expect(rung.split("\n")[0]).toContain("3 sub-agents running");
+    // `Delegating 3 sub-agents - running`, not `3 sub-agents running`: the
+    // working indicator now leads with a whole phrase naming the STATE, and
+    // the count is its subject (founder, 2026-09-15; ui/working.ts). Same two
+    // facts, in the order a sentence puts them.
+    expect(rung).toContain("Delegating 3 sub-agents");
+    expect(rung).toContain("running");
+    expect(rung.split("\n")[0]).toContain("Delegating 3 sub-agents");
     expect(rung.split("\n")[0]).not.toContain("grep backend");
     setTermWidthOverride(undefined as unknown as number);
   });
@@ -217,7 +222,7 @@ describe("the fleet panel — a row per sub-agent, not a count", () => {
     expect(rung).toContain("scout number 5");
     expect(rung).not.toContain("scout number 6");
     expect(rung).toContain("+3 more");
-    expect(rung).toContain("9 sub-agents running");
+    expect(rung).toContain("Delegating 9 sub-agents");
     setTermWidthOverride(undefined as unknown as number);
   });
 

@@ -10,12 +10,9 @@
 import { describe, test, expect } from "bun:test";
 import {
   Pulse,
-  PULSE_RAMP,
-  PULSE_RAMP_ASCII,
   PULSE_LEVELS,
   PULSE_WEIGHT,
   QUIET_AFTER_MS,
-  pulseGlyph,
   quietLabel,
 } from "../../../packages/orchestrator/src/bin/ui/pulse";
 
@@ -85,22 +82,24 @@ describe("pulse", () => {
     expect(fast.sample(t0 + 1000).step).toBeGreaterThan(slow.sample(t0 + 1000).step);
   });
 
-  test("the ramp is one cell wide in both rungs, and the same length", () => {
-    expect(PULSE_RAMP).toHaveLength(PULSE_LEVELS);
-    expect(PULSE_RAMP_ASCII).toHaveLength(PULSE_LEVELS);
-    for (const glyph of [...PULSE_RAMP, ...PULSE_RAMP_ASCII]) {
-      expect([...glyph]).toHaveLength(1);
-      expect(glyph.codePointAt(0)).toBeGreaterThan(0);
-    }
-    // Every step maps to a glyph in both modes — no undefined at the ends.
+  // DELETED, deliberately (2026-09-15): "the ramp is one cell wide in both
+  // rungs, and the same length". It asserted that `PULSE_RAMP`,
+  // `PULSE_RAMP_ASCII` and `pulseGlyph` mapped a sample onto one of eight
+  // block cells. Nothing draws a ramp any more -- the working mark is fixed
+  // and breathes by colour (ui/working.ts) -- so those three exports are gone
+  // and the test went with them rather than being kept alive around a
+  // renderer with no caller. What the ramp was FOR is still asserted, above
+  // and below: the level rises with real output, falls to the floor when it
+  // stops, and the `quiet` word says so. `PULSE_GLYPHS` itself survives as
+  // the context meter's fill and is covered by ui-glyphs.test.ts.
+  test("the level still spans the full range it quantises onto", () => {
     const t0 = 1_000_000;
     const p = new Pulse(t0);
     p.feed(50_000, t0);
-    const hot = p.sample(t0);
-    expect(hot.step).toBe(PULSE_LEVELS - 1);
-    expect(pulseGlyph(hot)).toBe("█");
-    expect(pulseGlyph(hot, true)).toBe("#");
-    expect(pulseGlyph(p.sample(t0 + 60_000))).toBe("▁");
+    expect(p.sample(t0).step).toBe(PULSE_LEVELS - 1);
+    // …and decays all the way back to the floor, which is the half of this
+    // that a timer-driven indicator could never reproduce.
+    expect(p.sample(t0 + 60_000).step).toBe(0);
   });
 
   test("reset clears the level and restarts the quiet clock", () => {

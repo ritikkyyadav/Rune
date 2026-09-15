@@ -74,7 +74,10 @@ describe("TurnRenderer — customizer activity stream", () => {
     }
     // Nothing with news in it has landed, so nothing has been set down yet.
     expect(h.commits).toHaveLength(0);
-    expect(h.preview()).toContain("thinking"); // the rung: label + receipt, no ledger
+    // The rung: the working mark, the phrase, the receipt -- no ledger. The
+    // phrase is capitalised now because it is a sentence rather than a label
+    // (`Thinking`, not `thinking`); see ui/working.ts.
+    expect(h.preview()).toContain("Thinking");
     expect((h.previews.at(-1) ?? []).length).toBeLessThanOrEqual(2);
 
     h.turn.onEvent({ type: "text_delta", text: "The implementation is mapped." });
@@ -216,7 +219,8 @@ describe("TurnRenderer — customizer activity stream", () => {
 
     h.turn.onEvent({ type: "verification_started", attempt: 1 });
     await sleep(DWELL + 60);
-    expect(h.rung()).toContain("checking");
+    // `checking` was a label; `Running checks` is what is happening.
+    expect(h.rung()).toContain("Running checks");
   });
 
   it("holds a live frame long enough to be read, however fast the work is", async () => {
@@ -267,9 +271,12 @@ describe("TurnRenderer — customizer activity stream", () => {
       await sleep(25);
       h.turn.onEvent(toolEnd("read_file", { path }, JSON.stringify({ path })));
       await sleep(25);
-      expect(h.rung()).not.toContain("thinking");
+      expect(h.rung()).not.toContain("Thinking");
     }
-    expect(h.rung()).toContain("working");
+    // `working` was the old catch-all label, equally true of a grep, a
+    // 90-second test run and four sub-agents. The rung names the actual state
+    // now, and in a burst of reads that state is reading.
+    expect(h.rung()).toContain("Reading");
   });
 
   it("names a target only once the arguments have finished saying it", async () => {

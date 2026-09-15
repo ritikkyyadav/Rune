@@ -22,15 +22,7 @@
 // A pulse that moves on a timer is the bug. That is a test, not a remark:
 // feed nothing and the level must fall to zero and stay there.
 
-import {
-  PULSE_GLYPHS,
-  PULSE_RAMP,
-  PULSE_RAMP_ASCII,
-  TERMINAL_GLYPH_MODE,
-  pulseGlyphAt,
-} from "./glyphs";
-
-export { PULSE_RAMP, PULSE_RAMP_ASCII } from "./glyphs";
+import { PULSE_GLYPHS } from "./glyphs";
 
 /** Half-life of the accumulator. Short enough that a stall is visible inside a
  *  breath, long enough that the ragged gaps between token bursts don't flicker. */
@@ -55,7 +47,10 @@ const FULL_SCALE = 1500;
 /** How long without a single unit before the row must say so in words. */
 export const QUIET_AFTER_MS = 4000;
 
-/** Levels in the ramp. One cell, eight steps -- see PULSE_RAMP. */
+/** Levels the accumulator quantises onto. Eight, because that was the ramp's
+ *  resolution and the band it spends it on (200 B/s…3 kB/s) is still the
+ *  ambiguous one. Nothing DRAWS a ramp any more -- the level's remaining job is
+ *  to say, with `quiet`, whether a child is still producing output. */
 export const PULSE_LEVELS = PULSE_GLYPHS.length;
 
 /**
@@ -132,12 +127,6 @@ export class Pulse {
     this.acc *= Math.pow(0.5, dt / HALF_LIFE_MS);
     if (this.acc < 1e-3) this.acc = 0;
   }
-}
-
-/** The one-cell mark for a sample, on whichever rung the surface is running. */
-export function pulseGlyph(sample: PulseSample, ascii?: boolean): string {
-  const mode = ascii === true ? "ascii" : ascii === false ? "utf8" : TERMINAL_GLYPH_MODE;
-  return pulseGlyphAt(sample.step, mode);
 }
 
 /** The words that carry the stall when the glyph cannot -- `quiet 31s`. */

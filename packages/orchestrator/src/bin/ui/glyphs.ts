@@ -64,6 +64,15 @@ export const GLYPH_DEFINITIONS = {
   reproduced: { utf8: "=", ascii: "=", role: "dim" },
   elision: { utf8: "…", ascii: ".", role: "dim" },
   retry: { utf8: "↻", ascii: "r", role: "warn" },
+  // The working mark: a six-petalled florette, and the ONE addition this
+  // alphabet takes for the breathing indicator (founder, 2026-09-15: "make it
+  // soothing and calm ... the whole text and a pulse"). It is a mark and not a
+  // ramp on purpose -- the breath is carried by COLOUR at a fixed cadence, so
+  // the shape never changes and nothing on screen strobes. Its ascii twin is
+  // `*`, shared with `phase`: the twins are a legibility fallback, not a
+  // second alphabet, and on a seven-bit terminal the PHRASE beside the mark is
+  // what tells the two apart.
+  working: { utf8: "\u273b", ascii: "*", role: "accent" },
 } as const satisfies Record<string, GlyphDefinition>;
 
 export type GlyphName = keyof typeof GLYPH_DEFINITIONS;
@@ -89,6 +98,18 @@ export const RUNE_LOGO: readonly string[] = [
   "    ▝▀▀  ▀▀▘",
 ];
 
+/**
+ * The block ramp.
+ *
+ * It is no longer an INDICATOR: nothing on screen reports the agent's state
+ * with one of these cells any more (founder, 2026-09-15 -- the working mark
+ * breathes by colour instead; see working.ts). What survives is the one thing
+ * a block ramp is actually good at, which is a meter: `contextBar` fills a
+ * twenty-cell bar with the top of this ramp and folds to `#` on a seven-bit
+ * terminal through the same rung as everything else. A meter is a proportion
+ * of a known whole; a state is not, which is why one of these cells could
+ * never say what the agent was doing.
+ */
 export const PULSE_GLYPHS = [
   { utf8: "▁", ascii: "_", role: "accent" },
   { utf8: "▂", ascii: ".", role: "accent" },
@@ -99,9 +120,6 @@ export const PULSE_GLYPHS = [
   { utf8: "▇", ascii: "*", role: "accent" },
   { utf8: "█", ascii: "#", role: "accent" },
 ] as const satisfies readonly GlyphDefinition[];
-
-export const PULSE_RAMP = PULSE_GLYPHS.map((glyph) => glyph.utf8) as readonly string[];
-export const PULSE_RAMP_ASCII = PULSE_GLYPHS.map((glyph) => glyph.ascii) as readonly string[];
 
 function enabled(value: string | undefined): boolean {
   return value != null && value !== "" && value !== "0" && value.toLowerCase() !== "false";
@@ -124,12 +142,6 @@ export function glyph(name: GlyphName, mode: GlyphMode = TERMINAL_GLYPH_MODE): s
   const definition = GLYPH_DEFINITIONS[name];
   if (!definition) throw new Error(`${GLYPH_BUDGET_MARKER}: unknown glyph ${String(name)}`);
   return mode === "ascii" ? definition.ascii : definition.utf8;
-}
-
-export function pulseGlyphAt(step: number, mode: GlyphMode = TERMINAL_GLYPH_MODE): string {
-  const index = Math.max(0, Math.min(PULSE_GLYPHS.length - 1, Math.floor(step)));
-  const definition = PULSE_GLYPHS[index]!;
-  return mode === "utf8" ? definition.utf8 : definition.ascii;
 }
 
 const NAMED_ASCII: ReadonlyArray<readonly [RegExp, string]> = [

@@ -35,7 +35,16 @@ import type {
 } from "@rune/protocol";
 import { assertNeverSoft } from "@rune/protocol";
 import { formatError, formatEvent, fmtTokens } from "./events";
-import { Pulse, PULSE_WEIGHT, pulseGlyph, quietLabel } from "./pulse";
+import { Pulse, PULSE_WEIGHT, quietLabel } from "./pulse";
+import {
+  elapsedWord,
+  workingKindForTool,
+  workingMark,
+  workingPhrase,
+  breathStep,
+  type WorkingKind,
+  type WorkingState,
+} from "./working";
 import { deriveChildName } from "../../subagent-events";
 import { fleetLedger, type AgentCard, type CardReceipt } from "./agents-panel";
 import { renderMarkdown } from "./markdown";
@@ -366,6 +375,21 @@ const GAP_MS = 300;
  *  beside every step is noise pretending to be data. */
 const ELAPSED_AFTER_MS = 2000;
 
+/**
+ * What the rung is holding still: the working STATE, not a pair of strings.
+ *
+ * `kind` + `target` become the phrase (`Reading turn.ts`), `detail` is
+ * everything measured that does not fit in a phrase -- a long call's own
+ * heartbeat, `3 so far`, `2/5 steps`, `2 back`. Splitting them is what lets
+ * the phrase stay a sentence while the detail stays a fact.
+ */
+interface SteadyFrame {
+  kind: WorkingKind;
+  /** The whole phrase, already composed. */
+  phrase: string;
+  detail: string;
+}
+
 // How long a run of chamber-eligible work has to get before it collapses is
 // CHAMBER_AT, owned by ./activity so the live stream and the replay agree.
 
@@ -567,10 +591,6 @@ export function responseBlock(markdown: string): string {
   return ["", ...renderMarkdown(source.join("\n"), { width, indent: F.BODY })].join("\n");
 }
 
-function duration(startedAt: number): string {
-  return span(startedAt, Date.now());
-}
-
 function plural(count: number, singular: string, many = singular + "s"): string {
   return `${count} ${count === 1 ? singular : many}`;
 }
@@ -701,6 +721,16 @@ export class TurnRenderer {
   private latestPlan: string | null = null;
   private narratedPlan = false;
   private verificationRunning = false;
+  /**
+   * True between the harness announcing a compaction and the compaction
+   * landing.
+   *
+   * Set from the SAME notice the transcript prints, never from a timer: a run
+   * that has gone quiet because it is rewriting its own context looks exactly
+   * like a run that has gone quiet because it is wedged, and the only thing
+   * that can tell them apart is the harness saying so.
+   */
+  private compacting = false;
   private readonly startedAt = Date.now();
   /** Liveness driven by real output rather than by the clock -- see pulse.ts.
    *  Fed by every scrap of genuine progress: streamed prose, reasoning deltas,
@@ -711,10 +741,10 @@ export class TurnRenderer {
    *  rides the rung for as long as it lasts. */
   private retrying: { attempt: number; of: number } | null = null;
   /** The live rung's current frame and when it went up -- see steadyFrame. */
-  private frame: { label: string; detail: string } = { label: "thinking", detail: "" };
+  private frame: SteadyFrame = { kind: "thinking", phrase: "Thinking", detail: "" };
   private frameAt = 0;
   /** The state the rung is *trying* to move to, and when it first appeared. */
-  private want: { label: string; detail: string } = { label: "thinking", detail: "" };
+  private want: SteadyFrame = { kind: "thinking", phrase: "Thinking", detail: "" };
   private wantSince = 0;
   /** When the last tool call ended -- the near side of a possible burst gap. */
   private lastToolEndAt = 0;
@@ -781,20 +811,46 @@ export class TurnRenderer {
     return { quietMs: this.pulse.sample().quietMs };
   }
 
+  /** The working state as the rung is currently holding it -- exported shape
+   *  so a surface that paints its own mark (the strip, the panel) can render
+   *  the same sentence without re-deriving it from the events. */
+  workingState(): WorkingState {
+    const frame = this.steadyFrame();
+    return { kind: frame.kind, phrase: frame.phrase, elapsedMs: Date.now() - this.startedAt };
+  }
+
   liveLines(): string[] {
-    const { label, detail } = this.steadyFrame();
-    const beat = this.pulse.sample();
-    const mark = accent(pulseGlyph(beat));
-    // One row: the pulse, the label, what is measurably in flight, and the
-    // receipt. The detail used to be a second row, the streaming prose a
-    // third to sixth, and the block was pinned to the tallest it had been so
-    // the transcript would stop jumping -- three timing constants to stop it
-    // strobing, which was the code admitting the block moved too much. Prose
-    // streams into the transcript now (see settleProse), so the rung has one
-    // sentence to say and says it once.
-    const head = detail
-      ? `${muted(label)} ${faint(glyph("observed"))} ${faint(truncate(detail, Math.max(20, F.proseWidth() - label.length - 4)))}`
-      : muted(label);
+    const frame = this.steadyFrame();
+    const state = this.workingState();
+    // The mark breathes by COLOUR at a fixed cadence and never changes shape.
+    // What it replaced was one cell off the eight-level block ramp, driven by
+    // the byte rate -- a flicker, in the accent colour, that the founder read
+    // as agitation rather than as life. Liveness has not been given up: the
+    // `quiet 31s` word in the receipt is still fed by real output and still
+    // stops when the bytes stop (see ./pulse.ts). The mark says the run is
+    // working; the word says whether it still is.
+    const mark = workingMark(state, breathStep(state.elapsedMs ?? 0));
+    const phrase = workingPhrase(state);
+    // The clock rides inline, after the phrase, because that is the pairing
+    // the founder asked for: `Running checks - 1m 05s` is one sentence, and a
+    // duration flung to the right margin is a second column to read.
+    const clock =
+      state.kind === "waiting" || (state.elapsedMs ?? 0) < ELAPSED_AFTER_MS
+        ? ""
+        : elapsedWord(state.elapsedMs ?? 0);
+    const dot = ` ${glyph("observed")} `;
+    // One row: the mark, the phrase, the clock, whatever is measurably in
+    // flight, and the receipt. The detail used to be a second row, the
+    // streaming prose a third to sixth, and the block was pinned to the
+    // tallest it had been so the transcript would stop jumping -- three timing
+    // constants to stop it strobing, which was the code admitting the block
+    // moved too much. Prose streams into the transcript now (see settleProse),
+    // so the rung has one sentence to say and says it once.
+    const said = clock ? `${muted(phrase)}${faint(dot)}${faint(clock)}` : muted(phrase);
+    const spent = phrase.length + clock.length + 4;
+    const head = frame.detail
+      ? `${said}${faint(dot)}${faint(truncate(frame.detail, Math.max(20, F.proseWidth() - spent)))}`
+      : said;
     const lines = [F.flowRow(`${F.MARK}${mark} ${head}`, faint(F.receiptOf(this.receipt())))];
     lines.push(...this.fleetLines());
     // A sink that cannot amend still shows the voice live, in the block.
@@ -1372,11 +1428,66 @@ export class TurnRenderer {
     );
   }
 
-  /** What the rung would say if it could change this instant. */
-  private liveLabel(): string {
-    if (this.currentTool || this.fleet.size > 0) return "working";
-    if (this.verificationRunning) return "checking";
-    return this.prose.trim() ? "answering" : "thinking";
+  /**
+   * What the rung would say if it could change this instant -- the KIND and
+   * the subject, which together become the phrase.
+   *
+   * Every branch is an event the transcript already reads: a compaction
+   * notice, a streamed tool call, the verification notice, the fleet, the
+   * plan, the prose. There is no branch for "busy": `working` used to be one,
+   * and it was equally true of a grep, a 90-second test run and four
+   * sub-agents, which is why the founder could not read it.
+   */
+  private liveKind(): { kind: WorkingKind; phrase: string } {
+    const said = (kind: WorkingKind, target = ""): { kind: WorkingKind; phrase: string } => ({
+      kind,
+      phrase: workingPhrase({ kind, target }),
+    });
+    // A compaction is the one state that is about the HARNESS rather than the
+    // work, and it is the one a reader most needs named: a run that has gone
+    // quiet because it is rewriting its own context looks identical to a run
+    // that has gone quiet because it is stuck.
+    if (this.compacting) return said("compacting");
+    // The FLEET outranks whichever call streamed last, and the threshold is
+    // the one `liveDetail` has always used: two members, or one that is no
+    // longer the call in flight. A fan-out reported as "Scouting the relevant
+    // subsystem" is one member's label speaking for all of them, which is the
+    // exact defect the per-member rows exist to close.
+    const fanOut = this.fleet.size >= 2 || (this.fleet.size === 1 && !this.currentTool);
+    if (fanOut) return said("delegating", this.fleetSubject());
+    if (this.currentTool) {
+      const name = this.currentTool.name;
+      // `ask_user` is not the agent working. It is the agent waiting for a
+      // person, and that is the whole of what the row should say.
+      if (name === "ask_user") return said("waiting");
+      // The phrase is the LIVE TOOL LABEL, verbatim: it already says
+      // `Reading turn.ts` and `Checking with npx vitest run`, and it already
+      // says `Running the necessary command` rather than typing a half-arrived
+      // command out letter by letter. The kind decides only how the mark
+      // behaves -- see ./working.ts on why the phrase is not re-derived here.
+      return {
+        kind: workingKindForTool(name),
+        phrase: liveToolLabel(name, this.currentTool.args),
+      };
+    }
+    if (this.verificationRunning) return said("running", "checks");
+    if (this.prose.trim()) return said("answering");
+    return said("thinking");
+  }
+
+  /** `4 sub-agents`, or a workflow's own level -- the subject of `Delegating`. */
+  private fleetSubject(): string {
+    const fleet = [...this.fleet.values()];
+    if (fleet.length === 0) return "";
+    const graph = fleet.find((a) => a.node)?.node;
+    if (graph) {
+      return F.receiptOf([
+        graph.workflow,
+        `wave ${Math.max(...fleet.map((a) => (a.node?.wave ?? 0) + 1))} of ${graph.waves}`,
+      ]);
+    }
+    const noun = fleet.every((a) => a.card.kind === "worker") ? "worker" : "sub-agent";
+    return fleet.length === 1 ? noun : `${fleet.length} ${noun}s`;
   }
 
   /**
@@ -1400,64 +1511,66 @@ export class TurnRenderer {
    * it lands; the rung is only the current sentence of that account, and a
    * sentence that changes four times a second is not one.
    */
-  private steadyFrame(): { label: string; detail: string } {
+  private steadyFrame(): SteadyFrame {
     const now = Date.now();
-    const want = { label: this.liveLabel(), detail: this.liveDetail() };
+    const { kind, phrase } = this.liveKind();
+    const want: SteadyFrame = { kind, phrase, detail: this.liveDetail() };
+    const same = (a: SteadyFrame, b: SteadyFrame): boolean =>
+      a.kind === b.kind && a.phrase === b.phrase && a.detail === b.detail;
     // Mid-burst, between two calls, with nothing to say for itself: no new
     // information, so do not evaluate a transition at all -- hold what is up.
     // The emptiness is the test. A gap that *has* something to report (a check
     // came back, a plan step advanced) is not this, and is not held.
-    if (!want.detail && this.inToolGap(now)) return this.frame;
-    if (want.label !== this.want.label || want.detail !== this.want.detail) {
+    if (want.kind === "thinking" && !want.detail && this.inToolGap(now)) return this.frame;
+    if (!same(want, this.want)) {
       this.want = want;
       this.wantSince = now;
     }
-    if (want.label === this.frame.label && want.detail === this.frame.detail) return this.frame;
+    if (same(want, this.frame)) return this.frame;
     if (now - this.frameAt < DWELL_MS) return this.frame;
-    if (!want.detail && this.frame.detail && now - this.wantSince < SETTLE_MS) return this.frame;
+    // A candidate that says LESS than what is up -- bare `Thinking`, no detail
+    // -- has to still be true a moment later before it takes the screen; a
+    // candidate that names real work goes up as soon as the dwell allows.
+    const saysLess = want.kind === "thinking" && !want.detail;
+    const saidMore = this.frame.kind !== "thinking" || Boolean(this.frame.detail);
+    if (saysLess && saidMore && now - this.wantSince < SETTLE_MS) return this.frame;
     this.frame = want;
     this.frameAt = now;
     return this.frame;
   }
 
-  /** What the rung is waiting on: the in-flight tool, else the active plan step,
-   * else the phase intent the renderer inferred from the stream. */
+  /**
+   * What is measurably in flight that the PHRASE could not carry.
+   *
+   * The phrase names the state and its subject (`Reading turn.ts`); this is
+   * everything else that was measured and is worth a reader's eye -- a long
+   * call's own heartbeat, the running tally mid-burst, how much of a fan-out
+   * is already back, which plan step is open. It deliberately no longer
+   * REPEATS the subject: `working | read_file turn.ts` used to say the same
+   * thing twice, once as a label that meant nothing and once as a tool name
+   * nobody types.
+   */
   private liveDetail(): string {
-    // A FLEET of parallel sub-agents reads as one calm sentence -- the count,
-    // and how much of it is already back -- instead of whichever call streamed
-    // last (or, worse, "thinking" after the first of five workers finished).
-    // What each member is DOING is a row of its own now (fleetLines), so this
-    // line no longer borrows one member's heartbeat to speak for all of them.
+    // A FLEET of parallel sub-agents reads as one calm sentence -- how much of
+    // it is already back -- instead of whichever call streamed last. What each
+    // member is DOING is a row of its own (fleetLines), so this line no longer
+    // borrows one member's heartbeat to speak for all of them.
     const fleet = [...this.fleet.values()];
     if (fleet.length >= 2 || (fleet.length === 1 && !this.currentTool)) {
-      // A workflow says which LEVEL it is on, because that is the sentence a
-      // graph has and a fan-out does not: "review · wave 2 of 3" answers how
-      // much is left, which "4 sub-agents running" cannot.
-      const graph = fleet.find((a) => a.node)?.node;
-      const noun = fleet.every((a) => a.card.kind === "worker") ? "worker" : "sub-agent";
       const settled = fleet.filter(
         (a) => a.card.state === "done" || a.card.state === "failed" || a.card.state === "skipped",
       ).length;
       const queued = fleet.filter((a) => a.card.state === "queued").length;
-      const head = graph
-        ? F.receiptOf([
-            graph.workflow,
-            `wave ${Math.max(...fleet.map((a) => (a.node?.wave ?? 0) + 1))} of ${graph.waves}`,
-          ])
-        : fleet.length === 1
-          ? noun
-          : `${fleet.length} ${noun}s`;
-      if (settled > 0 && settled === fleet.length) return F.receiptOf([head, "all back"]);
-      if (settled > 0) return F.receiptOf([head, `${settled} back`]);
-      if (queued === fleet.length) return `${head} dispatched`;
-      return `${head} running`;
+      if (settled > 0 && settled === fleet.length) return "all back";
+      if (settled > 0) return `${settled} back`;
+      if (queued === fleet.length) return "dispatched";
+      return "running";
     }
     if (this.currentTool) {
-      const base = liveToolLabel(this.currentTool.name, this.currentTool.args);
-      // A long call's own heartbeat (worker: "edit_file src/x.ts") rides
-      // beside its label. The callId guard self-cleans on the next call.
+      // A long call's own heartbeat (worker: "edit_file src/x.ts").
+      // The callId guard self-cleans on the next call.
       if (this.toolProgressNote?.callId === this.currentTool.callId) {
-        return `${base} | ${this.toolProgressNote.note}`;
+        return this.toolProgressNote.note;
       }
       // Mid-burst, the running tally. Scrollback keeps one row for the whole
       // run -- retroactively, under a live sink; held, otherwise -- so this
@@ -1466,18 +1579,16 @@ export class TurnRenderer {
       const name = this.currentTool.name;
       const gathering =
         isRoutineTool(name) || name === "bash" || name === "web_search" || name === "web_fetch";
-      if (held >= CHAMBER_AT - 1 && gathering) {
-        return `${base} | ${held + 1} so far`;
-      }
-      return base;
+      if (held >= CHAMBER_AT - 1 && gathering) return `${held + 1} so far`;
+      return "";
     }
     const active = this.todos.find((item) => item.status === "in_progress");
     if (active) {
       const done = this.todos.filter((item) => item.status === "completed").length;
-      return `${active.content} | ${done}/${this.todos.length} steps`;
+      return `${active.content} ${glyph("observed")} ${done}/${this.todos.length} steps`;
     }
-    // Nothing measured is in flight, so the rung says nothing. The pulse
-    // alone says it is working.
+    // Nothing measured is in flight, so the rung says nothing more than its
+    // phrase. The clock beside it is the only thing still moving.
     return "";
   }
 
@@ -1510,7 +1621,10 @@ export class TurnRenderer {
 
   private receipt(): string[] {
     const parts: string[] = [];
-    if (Date.now() - this.startedAt >= ELAPSED_AFTER_MS) parts.push(duration(this.startedAt));
+    // The elapsed clock is NOT here any more: it rides inline beside the
+    // phrase (`Running checks - 1m 05s`, the founder's own shape). What is
+    // left is the news -- the stall, in words, and a retry -- which is what
+    // the right margin was always for.
     // The pulse can go flat; only this says so. Carried by the word, never by
     // the glyph or the colour, so it survives NO_COLOR and a mono rung.
     const quiet = quietLabel(this.pulse.sample());
@@ -2114,6 +2228,7 @@ export class TurnRenderer {
           const ref = this.pushBlock(TurnRenderer.provisionalRow(name, ""));
           this.pending.set(this.currentTool.callId, { ref, name, arg: "" });
         }
+        this.compacting = false;
         this.activity = runningLabel(this.currentTool.name);
         this.setPhase(phaseForTool(this.currentTool.name, {}));
         return;
@@ -2470,6 +2585,9 @@ export class TurnRenderer {
       }
 
       case "compaction": {
+        // The compaction LANDED (or failed and said so). Either way the rung
+        // stops saying `Compacting` -- the state it named is over.
+        this.compacting = false;
         const block = formatEvent(event);
         if (block) {
           this.flushRoutine();
@@ -2488,6 +2606,11 @@ export class TurnRenderer {
           this.setPhase("verify");
           return;
         }
+        // The harness announcing that it is about to rewrite its own context
+        // ("force-compacting", "compacting the working set"). The `compaction`
+        // event that lands afterwards clears it; so does the next tool call,
+        // because a call starting is proof the compaction is behind us.
+        if (/compact(?:ing|ion)/i.test(message)) this.compacting = true;
         if (/verification failed|no execution evidence/i.test(message)) {
           this.settleProse();
           this.setPhase("act");
