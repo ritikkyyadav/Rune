@@ -23,6 +23,7 @@ import {
   independentOf,
   modelFamily,
   pickVisualReviewer,
+  stripScore,
 } from "../../../packages/orchestrator/src/visual-review";
 import { VisualVerification } from "../../../packages/orchestrator/src/visual-verification";
 
@@ -186,5 +187,52 @@ describe("a delegated child's origin is a claim the lead re-probes", () => {
       true,
     );
     expect(solo.observe("mcp_browser_take_screenshot", {}, SCREENSHOT, true)).toBe(true);
+  });
+});
+
+// ─── Never a score ───
+
+describe("a reviewer's number is stripped, and its measurements are not", () => {
+  test("a ratio goes whole, with no bare denominator left behind", () => {
+    // The strip used to run the keyword rule first, which ate "score: 8" and
+    // left the ratio rule nothing to match — so the number was removed and the
+    // score was still legible as "/10".
+    expect(stripScore("headings are flat. score: 8/10")).toBe("headings are flat.");
+    expect(stripScore("headings are flat. Overall: 8/10")).toBe("headings are flat.");
+    expect(stripScore("rated 4 out of 5 overall")).not.toContain("4 out of 5");
+  });
+
+  test("the shapes that carry no keyword at all", () => {
+    expect(stripScore("headings are flat. 85%")).toBe("headings are flat.");
+    expect(stripScore("headings are flat. I'd give this a B+")).toBe(
+      "headings are flat. I'd give this a",
+    );
+    expect(stripScore("headings are flat. (7 of 10)")).toBe("headings are flat.");
+    expect(stripScore("headings are flat. ⅘")).toBe("headings are flat.");
+    expect(stripScore("headings are flat. 4 stars")).toBe("headings are flat.");
+  });
+
+  test("a grade at the head of the line takes its punctuation with it", () => {
+    expect(stripScore("rating: B+, the secondary text sits at 3:1 against the card")).toBe(
+      "the secondary text sits at 3:1 against the card",
+    );
+  });
+
+  test("measurements about the screen survive — the rule may not eat findings", () => {
+    expect(stripScore("the 390px capture overflows by 12px")).toBe(
+      "the 390px capture overflows by 12px",
+    );
+    expect(stripScore("the secondary text sits at 3:1 against the card")).toBe(
+      "the secondary text sits at 3:1 against the card",
+    );
+    // A count in a sentence is a finding, not a score.
+    expect(stripScore("1 of 10 buttons has no focus ring")).toBe(
+      "1 of 10 buttons has no focus ring",
+    );
+    // A percentage OF something named is a measurement; only a trailing one is
+    // a verdict.
+    expect(stripScore("the hero is 85% of the viewport and the gutter collapses")).toBe(
+      "the hero is 85% of the viewport and the gutter collapses",
+    );
   });
 });

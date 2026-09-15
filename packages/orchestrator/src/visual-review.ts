@@ -239,13 +239,42 @@ export function buildVisualReviewPrompt(
  * `7 out of 10`, `rating 4/5`, `B+` are struck out where they appear.
  */
 export function stripScore(line: string): string {
-  return line
-    .replace(/\b(?:score|rating|grade|overall)\b\s*[:=]?\s*[-+]?\d+(?:\.\d+)?%?/gi, "")
-    .replace(/\b\d+(?:\.\d+)?\s*(?:\/|out\s+of)\s*\d+\b/gi, "")
-    .replace(/\b(?:score|rating|grade)\b\s*[:=]?\s*[A-F][+-]?\b/gi, "")
-    .replace(/\s{2,}/g, " ")
-    .replace(/\s+([.,;])/g, "$1")
-    .trim();
+  return (
+    line
+      // The ratio FIRST. It used to run after the keyword rule, which ate
+      // "score: 8" and left the `\d+/\d+` rule nothing to match, so
+      // "score: 8/10" came out as a bare "/10" — the number stripped and the
+      // score still legible.
+      .replace(/\b\d+(?:\.\d+)?\s*(?:\/|out\s+of)\s*\d+\b/gi, "")
+      // A parenthesised count is a score and nothing else. A bare "1 of 10" is
+      // left alone on purpose: "1 of 10 buttons has no focus ring" is a
+      // finding, and stripping it would destroy the sentence.
+      .replace(/\(\s*\d+(?:\.\d+)?\s+of\s+\d+\s*\)/gi, "")
+      // Keyword-led, number or letter. The keyword alone is not enough:
+      // "rated 4 out of 5 overall" has to keep its "overall".
+      .replace(
+        /\b(?:score|rating|grade|overall|mark)\b\s*[:=]?\s*(?:[-+]?\d+(?:\.\d+)?%?|[A-F][+-]?(?![A-Za-z0-9]))/gi,
+        "",
+      )
+      // …and the keyword left dangling by the rule above it.
+      .replace(/\b(?:score|rating|grade|overall|mark)\b\s*[:=]\s*(?=[\s.,;!]*$)/gi, "")
+      // Stars and vulgar fractions: ⅘, 4 stars.
+      .replace(/\b\d+(?:\.\d+)?\s*stars?\b/gi, "")
+      .replace(/[¼-¾⅐-⅞]/g, "")
+      // A bare percentage or letter grade at the END of the line is a verdict.
+      // Anywhere else it may be a measurement of something named ("the hero is
+      // 85% of the viewport"), and the rule is not allowed to eat findings.
+      .replace(/[\s:=—–-]*\b\d+(?:\.\d+)?%(?=[\s.,;!]*$)/g, "")
+      .replace(/[\s:=—–-]*\b[A-F][+-]?(?=[\s.,;!]*$)/g, "")
+      // Whatever the strips emptied out.
+      .replace(/\(\s*\)/g, "")
+      .replace(/\s{2,}/g, " ")
+      .replace(/\s+([.,;])/g, "$1")
+      .replace(/[\s:=—–-]+$/g, "")
+      // A strip at the head of the line leaves its punctuation behind.
+      .replace(/^[\s,;:—–-]+/, "")
+      .trim()
+  );
 }
 
 /** Parse the reviewer's reply into one finding per rubric criterion. */
