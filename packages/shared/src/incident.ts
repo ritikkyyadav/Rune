@@ -98,6 +98,7 @@ export const INCIDENT_CLASSES = [
   "loop.art_direction_nudge",
   "loop.fix_verified_gate",
   "loop.product_sight_gate",
+  "loop.browser_preflight",
   "loop.batch_nudge",
   "loop.wrapup_reserve",
   "loop.effort_routed",

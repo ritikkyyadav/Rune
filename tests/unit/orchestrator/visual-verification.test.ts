@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
 import {
+  browserPreflightNote,
+  NO_BROWSER_PREFLIGHT,
+  probeBrowserRuntime,
   VisualVerification,
   visualChangedPaths,
 } from "../../../packages/orchestrator/src/visual-verification";
@@ -149,4 +152,78 @@ test("with a browser mounted, a fetch never stands in for the screenshot receipt
   expect(state.status).toBe("pending");
   expect(state.method).toBe("browser");
   expect(state.missing.join(" ")).toMatch(/screenshot/);
+});
+
+// ─── Phase 5 F2: the pre-flight, and the origin refusal ───
+
+test("a capture naming an origin the run never served is refused", () => {
+  const review = new VisualVerification("/workspace");
+  review.changed();
+  // The run serves its own preview on 5173 and nothing else.
+  review.observe("bash", {}, output("Local: http://localhost:5173/"), true);
+
+  // A screenshot of a REMOTE page: not this workspace's.
+  expect(
+    review.observe(
+      "mcp_browser_browser_navigate",
+      { url: "https://example.com/dashboard" },
+      output("Page URL: https://example.com/dashboard", true),
+      true,
+    ),
+  ).toBe(false);
+  // A screenshot of a DIFFERENT local port nobody in this run started: a
+  // localhost URL is not a licence, only a URL this workspace printed is.
+  expect(
+    review.observe(
+      "mcp_browser_browser_navigate",
+      { url: "http://localhost:9999/" },
+      output("Page URL: http://localhost:9999/", true),
+      true,
+    ),
+  ).toBe(false);
+  // A file: URL outside the workspace.
+  expect(
+    review.observe(
+      "mcp_browser_browser_take_screenshot",
+      {},
+      output("Page URL: file:///etc/motd", true),
+      true,
+    ),
+  ).toBe(false);
+  expect(review.snapshot().captures).toHaveLength(0);
+  expect(review.snapshot().status).toBe("pending");
+
+  // The origin the run DID serve is accepted, so the refusals above are the
+  // ownership rule and not a broken observer.
+  expect(
+    review.observe(
+      "mcp_browser_browser_take_screenshot",
+      {},
+      output("Page URL: http://localhost:5173/", true),
+      true,
+    ),
+  ).toBe(true);
+});
+
+test("the pre-flight note fires only for a frontend run with no browser", () => {
+  expect(browserPreflightNote(true, false)).toBe(NO_BROWSER_PREFLIGHT);
+  expect(browserPreflightNote(true, true)).toBeNull();
+  expect(browserPreflightNote(false, false)).toBeNull();
+  expect(browserPreflightNote(false, true)).toBeNull();
+  expect(NO_BROWSER_PREFLIGHT).toContain("visual review will be a fetch, not a capture");
+});
+
+test("the browser runtime probe reports what it found, and never throws", () => {
+  const probe = probeBrowserRuntime({}, "/nonexistent-home");
+  expect(probe.browsersDir).toBeNull();
+  expect(probe.chromium).toEqual([]);
+  // An env-named module (how this repo's own browser tests find one) counts.
+  const named = probeBrowserRuntime(
+    { RUNE_TEST_PLAYWRIGHT: import.meta.path },
+    "/nonexistent-home",
+  );
+  expect(named.playwrightModule).toBe(import.meta.path);
+  expect(
+    probeBrowserRuntime({ RUNE_TEST_PLAYWRIGHT: "/no/such/module.mjs" }, "").playwrightModule,
+  ).not.toBe("/no/such/module.mjs");
 });

@@ -288,14 +288,36 @@ export class BriefLedger {
   }
 }
 
-/** Build a Brief from the tool's raw arguments. Criteria arrive unmet, always. */
-export function briefFromArgs(args: Record<string, unknown>, request: string, now: string): Brief {
+/**
+ * Build a Brief from the tool's raw arguments. Criteria arrive unmet, always.
+ *
+ * `opts.preflight` are limits the RUNTIME knows and the model may not have
+ * written down — today exactly one: this run has no browser, so the visual
+ * step will be a fetch and not a capture (Phase 5 F2). They are appended to
+ * `leave` because that is the field that records the boundary of the work, and
+ * a limit the person reads before the run starts is worth more than the same
+ * sentence in the final report. Appended, never substituted: a note the model
+ * already wrote in its own words is not duplicated.
+ */
+export function briefFromArgs(
+  args: Record<string, unknown>,
+  request: string,
+  now: string,
+  opts: { preflight?: readonly string[] } = {},
+): Brief {
   const strings = (v: unknown): string[] =>
     Array.isArray(v) ? v.map((x) => String(x ?? "").trim()).filter(Boolean) : [];
+  const leave = strings(args.leave);
+  for (const note of opts.preflight ?? []) {
+    const trimmed = note.trim();
+    if (!trimmed) continue;
+    if (leave.some((entry) => entry.toLowerCase().includes(trimmed.toLowerCase()))) continue;
+    leave.push(trimmed);
+  }
   return {
     reading: String(args.reading ?? "").trim(),
     touch: strings(args.touch),
-    leave: strings(args.leave),
+    leave,
     criteria: strings(args.done_when).map((text) => ({ text, rung: null })),
     request,
     createdAt: now,
@@ -376,6 +398,14 @@ export function createReadBackTool(
    * is a contract with the person. The store enforces "once".
    */
   onKind?: (kind: TaskKind) => void,
+  /**
+   * Runtime pre-flight limits to append to `leave` (Phase 5 F2). A getter, not
+   * a value: browser mode can be flipped with `/browser` between read-backs,
+   * and the brief must record the run's real capability, not the one the
+   * session started with. Absent = nothing appended, which is what every
+   * existing caller gets.
+   */
+  getPreflight?: () => readonly string[],
 ): ToolHandler {
   return {
     schema: READ_BACK_SCHEMA,
@@ -407,7 +437,9 @@ export function createReadBackTool(
       });
 
       const args = (input.args ?? {}) as Record<string, unknown>;
-      const brief = briefFromArgs(args, getRequest(), new Date().toISOString());
+      const brief = briefFromArgs(args, getRequest(), new Date().toISOString(), {
+        preflight: getPreflight?.(),
+      });
       const kind = typeof args.kind === "string" ? args.kind.trim().toLowerCase() : "";
       if (onKind && (TASK_KINDS as readonly string[]).includes(kind)) {
         onKind(kind as TaskKind);

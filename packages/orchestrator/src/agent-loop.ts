@@ -1,4 +1,8 @@
-import { VisualVerification, visualChangedPaths } from "./visual-verification";
+import {
+  browserPreflightNote,
+  VisualVerification,
+  visualChangedPaths,
+} from "./visual-verification";
 import type {
   ReasoningEffort,
   ContentBlock,
@@ -1975,6 +1979,25 @@ export class AgentLoop {
     // Design and delegation advice must arrive before the first decision.
     // The tool-result path remains a fallback for work discovered mid-run.
     this.routeJitDoctrine(userMessage);
+    // ── Pre-flight: the browser this run does not have (Phase 5 F2) ──
+    // Said BEFORE the first completion, not at the finish gate. A frontend
+    // run planned around screenshots it can never take is the expensive
+    // version of this discovery; one sentence here is the cheap version. The
+    // model gets it as a note (so its read-back's `leave` can carry it) and
+    // the person gets it as a notice.
+    const preflight = browserPreflightNote(
+      doctrineForRequest(userMessage).includes("frontend"),
+      browserMounted,
+    );
+    if (preflight) {
+      this.injectHarnessNote(
+        `Pre-flight — ${preflight}. Say so in your read-back's \`leave\` list, in those words, ` +
+          "plan the visual step as a fetch of the served page, and state the limit in your final " +
+          "report. Do not plan around screenshots this run cannot take.",
+      );
+      this.report("loop.browser_preflight", "warn", "visualReview", preflight);
+      yield { type: "notice", message: `Pre-flight: ${preflight}.` };
+    }
     // ── Effort routing ──
     // Latched to the ceiling for the rest of the run on the first sign of
     // difficulty; every transition is reported so the routing is auditable.

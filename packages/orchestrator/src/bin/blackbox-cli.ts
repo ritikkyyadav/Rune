@@ -6,7 +6,13 @@
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Database } from "bun:sqlite";
-import { getRuneHome, pruneCheckpoints, reportCheckpoints } from "@rune/shared";
+import {
+  getRuneHome,
+  loadSavedBrowserState,
+  pruneCheckpoints,
+  reportCheckpoints,
+  resolveInitialBrowser,
+} from "@rune/shared";
 import type { IncidentRecord } from "@rune/shared";
 import { BlackboxStore } from "@rune/telemetry";
 import { mergedServers, preflightServer } from "@rune/tool-registry";
@@ -14,6 +20,7 @@ import { accent, danger, dim, faint, info, ok, text, warn } from "./ui/theme";
 import { formatAutoSafetyMetrics, readAutoSafetyMetrics } from "../auto-metrics";
 import { providerRouteLines, readProviderRouteReport } from "../provider-health-report";
 import { glyph } from "./ui/glyphs";
+import { probeBrowserRuntime } from "../visual-verification";
 
 const HOME = () => getRuneHome();
 const DB = () => join(HOME(), "blackbox.db");
@@ -157,6 +164,7 @@ export function runDoctor(): void {
   doctorProviderRoutes();
 
   doctorToolchain();
+  doctorBrowser();
   doctorMcp();
 
   // The recorder's own failures land here — this file should not exist.
@@ -474,6 +482,58 @@ function doctorToolchain(): void {
     }
   } catch {
     console.log(`  ${dim("·")} build freshness: could not evaluate ${faint(metaPath)}`);
+  }
+}
+
+/**
+ * The agent browser: on or off, and whether this machine could actually run it.
+ *
+ * `buildBrowserServerSpec` runs `bunx @playwright/mcp@latest --browser
+ * chromium`, which needs two things Rune never installs: the MCP package (a
+ * network fetch the first time) and a managed Chromium (`playwright install
+ * chromium`). Until now neither absence was visible anywhere: a run with
+ * `--browser` set and no Chromium on disk failed at its first navigate call,
+ * mid-run, after the expensive part. The handoff asks for browser runtime
+ * dependencies to be validated BEFORE an expensive model run — this is the
+ * free, offline half of that, and `AgentLoop`'s pre-flight notice is the other.
+ */
+function doctorBrowser(): void {
+  const enabled = resolveInitialBrowser({
+    env: process.env.RUNE_BROWSER_ENABLED ?? null,
+    saved: loadSavedBrowserState(HOME()),
+    configured: null,
+  });
+  const probe = probeBrowserRuntime();
+  const parts: string[] = [];
+  parts.push(
+    probe.mcpModule ? "@playwright/mcp installed" : "@playwright/mcp fetched by bunx on first use",
+  );
+  parts.push(
+    probe.playwrightModule
+      ? `playwright module ${probe.playwrightModule}`
+      : "no playwright module resolved here",
+  );
+  parts.push(
+    probe.chromium.length > 0
+      ? `chromium ${probe.chromium[0]}`
+      : probe.browsersDir
+        ? "no chromium in the playwright cache"
+        : "no playwright browser cache",
+  );
+  const runnable = probe.chromium.length > 0;
+  if (!enabled) {
+    console.log(
+      `  ${dim("\u00b7")} browser: off by config ${faint(`(${parts.join("; ")})`)} ${dim("\u2014")} ${info("/browser on")} ${dim("or")} ${info("rune --browser")}`,
+    );
+    return;
+  }
+  if (runnable) {
+    console.log(`  ${ok("\u2713")} browser: on \u2014 ${faint(parts.join("; "))}`);
+  } else {
+    console.log(
+      `  ${warn("!")} browser: on, but no Chromium is installed \u2014 ${faint(parts.join("; "))}`,
+    );
+    console.log(`    ${dim("install:")} ${info("bunx playwright install chromium")}`);
   }
 }
 

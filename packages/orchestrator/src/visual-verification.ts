@@ -1,3 +1,4 @@
+import { existsSync, readdirSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ToolCallOutput } from "@rune/tool-registry";
@@ -197,4 +198,98 @@ export function visualChangedPaths(
         paths.push(match[1]!);
   }
   return paths;
+}
+
+// ─── Pre-flight: what this run can and cannot see (Phase 5 F2) ───
+//
+// The expensive discovery used to arrive at the finish gate: a frontend build
+// ran to completion, G6 asked for screenshots, and only then did it emerge
+// that no browser was mounted and none could be. The whole run had been
+// planned around a capability it never had.
+//
+// So the limit is stated on the FIRST turn instead, in the two places a limit
+// has to appear to be real: on screen as a notice, and in the read-back's
+// `leave` list, where the model's own contract with the person records what it
+// is not going to be able to do.
+
+/** The one sentence. Same words on screen, in the brief, and in the prompt. */
+export const NO_BROWSER_PREFLIGHT =
+  "no browser in this run: visual review will be a fetch, not a capture";
+
+/**
+ * What a run without a browser should be told before it spends anything.
+ * Null when a browser IS mounted, or the request is not frontend-shaped —
+ * a backend fix must not pay one byte for this.
+ */
+export function browserPreflightNote(
+  frontendShaped: boolean,
+  browserMounted: boolean,
+): string | null {
+  if (!frontendShaped || browserMounted) return null;
+  return NO_BROWSER_PREFLIGHT;
+}
+
+/** Where a Playwright module or a downloaded Chromium was found, if anywhere. */
+export interface BrowserRuntimeProbe {
+  /** A resolvable `@playwright/mcp` — what `buildBrowserServerSpec` runs. */
+  mcpModule: string | null;
+  /** A resolvable `playwright` / `playwright-core`, or one named by the env. */
+  playwrightModule: string | null;
+  /** Playwright's browsers root, when it exists on this machine. */
+  browsersDir: string | null;
+  /** Chromium builds found under it, newest-looking first. */
+  chromium: string[];
+}
+
+/**
+ * Probe this machine for the browser runtime, the way the browser server
+ * itself reaches it.
+ *
+ * `buildBrowserServerSpec` runs `bunx @playwright/mcp@latest`, which is a
+ * NETWORK fetch on a machine that has never run it, and `--browser chromium`
+ * needs a managed Chromium that `playwright install chromium` downloads into
+ * Playwright's own cache. Neither is installed by Rune, and neither failure is
+ * visible until the first navigate call fails inside a run. Reported here
+ * instead, free and offline, alongside the config state.
+ *
+ * `RUNE_TEST_PLAYWRIGHT` / `RUNE_BENCH_PLAYWRIGHT` are honoured because they
+ * are how this repository's own browser tests and the frontend eval fixture
+ * find a module; a machine that has one has a Playwright, whatever npm thinks.
+ */
+export function probeBrowserRuntime(
+  env: Record<string, string | undefined> = process.env,
+  home = process.env.HOME ?? "",
+): BrowserRuntimeProbe {
+  const resolve_ = (spec: string): string | null => {
+    try {
+      const bun = (globalThis as { Bun?: { resolveSync?: (s: string, from: string) => string } })
+        .Bun;
+      if (bun?.resolveSync) return bun.resolveSync(spec, process.cwd());
+    } catch {
+      /* not installed here */
+    }
+    return null;
+  };
+  const named = env.RUNE_TEST_PLAYWRIGHT || env.RUNE_BENCH_PLAYWRIGHT || "";
+  const playwrightModule =
+    (named && existsSync(named) ? named : null) ??
+    resolve_("playwright") ??
+    resolve_("playwright-core");
+  const roots = [
+    env.PLAYWRIGHT_BROWSERS_PATH,
+    home ? `${home}/Library/Caches/ms-playwright` : "",
+    home ? `${home}/.cache/ms-playwright` : "",
+  ].filter((p): p is string => !!p && existsSync(p));
+  const browsersDir = roots[0] ?? null;
+  // A full `chromium-<rev>` outranks a `chromium_headless_shell-<rev>`: the
+  // shell can render but cannot do everything `--browser chromium` asks of it,
+  // so the line must not report a full browser when only the shell is there.
+  const chromium = browsersDir
+    ? readdirSync(browsersDir)
+        .filter((entry) => /^chromium[-_]/.test(entry))
+        .sort()
+        .reverse()
+        .sort((a, b) => Number(a.startsWith("chromium_")) - Number(b.startsWith("chromium_")))
+    : [];
+  return { mcpModule: resolve_("@playwright/mcp"), playwrightModule, browsersDir, chromium };
 }
