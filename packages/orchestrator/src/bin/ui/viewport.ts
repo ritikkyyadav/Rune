@@ -25,6 +25,8 @@
 // `zones`) and a tiny writing part (`Viewport`). The pure part is where every
 // off-by-one that can garble a screen lives, so it is the part with tests.
 
+import { DEFAULT_UI_LAYOUT, type UiLayout } from "./layout";
+
 type Writer = (s: string) => void;
 
 const ALT_ENTER = "\x1b[?1049h";
@@ -118,7 +120,8 @@ export interface Regions {
   /** Columns the frame may draw into: `columns - 1`. The last cell stays empty,
    *  because a line that touches it wraps and desyncs every row below. */
   usable: number;
-  /** True below PANEL_MIN_COLS: no right column, a strip instead. */
+  /** True in the `single` layout at every width, and in `split` below
+   *  PANEL_MIN_COLS: no right column, a strip instead. */
   collapsed: boolean;
   /** 1-based column carrying the `|` divider; 0 when collapsed. */
   dividerCol: number;
@@ -154,6 +157,18 @@ export interface RegionInput {
   composerRows?: number;
   /** Whether a collapsed layout should spend a row on the agents strip. */
   strip?: boolean;
+  /**
+   * Which frame this is. `single` -- the default, and the founder's default
+   * since 2026-09-15 -- reports the collapsed shape at EVERY width: one
+   * column, the strip, the composer at the bottom, and the panel behind
+   * `ctrl+f`. `split` keeps the four-region behaviour, where the right column
+   * appears at `PANEL_MIN_COLS` and above.
+   *
+   * It defaults to `single` here, not in the caller, deliberately: a caller
+   * that forgets the field gets the product's default rather than the layout
+   * that is now opt-in. See ./layout.ts.
+   */
+  layout?: UiLayout;
 }
 
 /**
@@ -170,7 +185,10 @@ export function regions(input: RegionInput): Regions {
   const rows = Math.max(1, Math.floor(input.rows));
   const usable = Math.max(1, columns - 1);
   const refused = columns < MIN_COLS || rows < MIN_ROWS;
-  const collapsed = columns < PANEL_MIN_COLS;
+  // `single` IS the collapsed shape -- see ./layout.ts. Not a fifth branch:
+  // every renderer below `PANEL_MIN_COLS` already draws one column, a strip
+  // and a footer wizard, and this makes that the answer at 160 columns too.
+  const collapsed = (input.layout ?? DEFAULT_UI_LAYOUT) === "single" || columns < PANEL_MIN_COLS;
 
   const headerRows = Math.min(Math.max(0, input.headerRows), Math.max(0, rows - 2));
   const statusRows = rows > headerRows ? 1 : 0;

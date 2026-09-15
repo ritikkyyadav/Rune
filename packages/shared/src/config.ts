@@ -551,6 +551,26 @@ export interface RuneConfig {
      * overridden by the RUNE_THEME env var or a runtime `/theme` choice (~/.rune/theme.json).
      */
     theme?: string;
+    /**
+     * The shape of the terminal frame.
+     *
+     * `single` (default) is one column: the header band, the transcript at the
+     * full width of the window, the agents strip, and the composer at the
+     * bottom. The agents panel is the `ctrl+f` overlay, `/setup` and `/keys`
+     * take the footer. It is the frame Rune had before Phase 4 and the one the
+     * founder asked for back on 2026-09-15.
+     *
+     * `split` is the four-region workspace frame: a fixed 40-cell right column
+     * carrying the agents panel over the composer, with the transcript in the
+     * left column. It still exists, in full, and is reached only by asking for
+     * it -- because a right column that is stale most of the time costs the
+     * transcript forty cells at every width.
+     *
+     * Takes effect at launch (the measure every transcript row is WRITTEN at
+     * depends on it, so flipping it mid-session would re-wrap the session's
+     * history under the reader's hands). `RUNE_LAYOUT` overrides it.
+     */
+    layout?: "single" | "split";
   };
   /**
    * Model tiers — route work by weight instead of hardcoding one model.

@@ -600,6 +600,7 @@ import {
   TERMINAL_THEME_RESET,
 } from "./colors";
 import { loadSavedTheme, resolveInitialTheme, saveTheme } from "./ui/theme-store";
+import { resolveUiLayout, setUiLayout } from "./ui/layout";
 import { detectTerminalColors } from "./ui/terminal-colors";
 import {
   buildInteractiveDirective,
@@ -814,6 +815,10 @@ async function main() {
       configured: config.ui?.theme,
     }),
   );
+  // And the SHAPE of the frame, read once for the same reason the theme is:
+  // `contentCols()` is the measure every transcript row is rendered at, and
+  // rows are stored rendered. Default `single` -- one column (see ui/layout.ts).
+  setUiLayout(resolveUiLayout({ env: process.env.RUNE_LAYOUT, configured: config.ui?.layout }));
   // The TUI paints its own background edge-to-edge in the alternate screen, so OSC terminal
   // recolouring is applied only on the classic readline path (set up after the TUI branch).
 

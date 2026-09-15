@@ -21,10 +21,11 @@
  * footer layout it had. Each test says both sizes.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { FRAME_METHODS } from "../../../packages/orchestrator/src/bin/ui/tui-frame";
 import { INPUT_METHODS } from "../../../packages/orchestrator/src/bin/ui/tui-input";
 import * as V from "../../../packages/orchestrator/src/bin/ui/viewport";
+import { DEFAULT_UI_LAYOUT, setUiLayout } from "../../../packages/orchestrator/src/bin/ui/layout";
 import {
   fleetLedger,
   renderSessionPanel,
@@ -114,6 +115,11 @@ const KEY_ROWS: KeyRow[] = [
 function frame(columns: number, rows: number, over: Record<string, unknown> = {}) {
   Object.defineProperty(process.stdout, "columns", { value: columns, configurable: true });
   Object.defineProperty(process.stdout, "rows", { value: rows, configurable: true });
+  // The split is what this whole block is about, and it is no longer the
+  // default (founder, 2026-09-15 -- ui/layout.ts). `contentCols` reads the
+  // process layout, so saying it in `regionsNow` alone would leave the
+  // measure at the window's width while the regions reported a right column.
+  setUiLayout("split");
   const tui: any = {
     inline: false,
     mode: "input",
@@ -146,6 +152,7 @@ function frame(columns: number, rows: number, over: Record<string, unknown> = {}
         headerRows: 3,
         composerRows,
         strip: true,
+        layout: "split",
       });
     },
     contentCols: FRAME_METHODS.contentCols,
@@ -168,6 +175,10 @@ function frame(columns: number, rows: number, over: Record<string, unknown> = {}
   };
   return tui;
 }
+
+// The split is a setting now, and it is process-wide. Put it back so a file
+// that runs after this one sees the product default.
+afterAll(() => setUiLayout(DEFAULT_UI_LAYOUT));
 
 /** A picker exactly as `Tui.pick` sets it up. */
 const pickerState = (title: string, items: unknown[], footnote: string) => ({

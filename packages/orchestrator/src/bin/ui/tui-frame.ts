@@ -35,6 +35,7 @@ import {
   type Regions,
   type Zones,
 } from "./viewport";
+import { uiLayout } from "./layout";
 import { arrowRun } from "./keys";
 import { renderBanner } from "./banner";
 import * as F from "./flow";
@@ -175,6 +176,7 @@ export const FRAME_METHODS = {
       headerRows: this.bannerLines().length,
       composerRows,
       strip: true,
+      layout: uiLayout(),
     });
   },
 
@@ -1011,7 +1013,11 @@ export const FRAME_METHODS = {
     //
     // It deliberately does NOT consult the mode. A measure that changed when a
     // picker opened would re-wrap the whole session under the user's hands.
-    if (width >= PANEL_MIN_COLS) return Math.max(8, usable - PANEL_COLS - 2);
+    // Nor the LAYOUT, past this one read: in `single` there is no right column
+    // at any width, so the transcript is written at the window's own measure.
+    if (uiLayout() === "split" && width >= PANEL_MIN_COLS) {
+      return Math.max(8, usable - PANEL_COLS - 2);
+    }
     return usable;
   },
 

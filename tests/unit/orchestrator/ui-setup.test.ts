@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, describe, expect, it } from "bun:test";
 import { INPUT_METHODS } from "../../../packages/orchestrator/src/bin/ui/tui-input";
 import { FRAME_METHODS } from "../../../packages/orchestrator/src/bin/ui/tui-frame";
 import { setupStatusLine } from "../../../packages/orchestrator/src/bin/ui/composer";
@@ -7,6 +7,11 @@ import { setTermWidthOverride, visLen } from "../../../packages/orchestrator/src
 import { ledgerRows, type StepState } from "../../../packages/orchestrator/src/first-run";
 import * as F from "../../../packages/orchestrator/src/bin/ui/flow";
 import * as V from "../../../packages/orchestrator/src/bin/ui/viewport";
+import { DEFAULT_UI_LAYOUT, setUiLayout } from "../../../packages/orchestrator/src/bin/ui/layout";
+
+// The split is a setting now, and it is process-wide. Put it back so a file
+// that runs after this one sees the product default.
+afterAll(() => setUiLayout(DEFAULT_UI_LAYOUT));
 
 const steps: StepState[] = [
   { id: "provider", label: "provider", status: "done", value: "anthropic" },
@@ -275,6 +280,11 @@ describe("setup across the four regions", () => {
   function frame(columns: number, rows: number, over: Record<string, unknown> = {}) {
     Object.defineProperty(process.stdout, "columns", { value: columns, configurable: true });
     Object.defineProperty(process.stdout, "rows", { value: rows, configurable: true });
+    // The split is what this whole block is about, and it is no longer the
+    // default (founder, 2026-09-15 -- ui/layout.ts). `contentCols` reads the
+    // process layout, so saying it in `regionsNow` alone would leave the
+    // measure at the window's width while the regions reported a right column.
+    setUiLayout("split");
     const tui: any = {
       inline: false,
       mode: "setup",
@@ -297,6 +307,7 @@ describe("setup across the four regions", () => {
           headerRows: 3,
           composerRows,
           strip: true,
+          layout: "split",
         });
       },
       contentCols: FRAME_METHODS.contentCols,

@@ -504,6 +504,27 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     nameAliases: ["autocommit", "auto commit", "git auto commit", "commit on save"],
     live: true,
   },
+  {
+    key: "layout",
+    tomlPath: "ui.layout",
+    kind: "enum",
+    values: ["single", "split"],
+    valueAliases: {
+      simple: "single",
+      column: "single",
+      classic: "single",
+      workspace: "split",
+      wide: "split",
+      panel: "split",
+    },
+    description:
+      "The shape of the terminal frame: single (default) is one column -- header, the " +
+      "transcript at the full width, the composer at the bottom, the agents panel behind " +
+      "ctrl+f; split keeps the fixed 40-cell right column beside the transcript. " +
+      "Takes effect at the next launch.",
+    nameAliases: ["ui layout", "frame", "panel layout"],
+    live: false,
+  },
 ] as const;
 
 /** The canonical true/false aliases every boolean setting accepts. */

@@ -887,7 +887,14 @@ describe("ui/composer — the field grows, then scrolls", () => {
     // count must not move -- the transcript is stored rendered, so a workspace
     // that resized under a keystroke would re-wrap the whole session.
     const at = (composerRows: number) =>
-      regions({ columns: 120, rows: 40, headerRows: 3, composerRows, strip: true });
+      regions({
+        columns: 120,
+        rows: 40,
+        headerRows: 3,
+        composerRows,
+        strip: true,
+        layout: "split",
+      });
     const rest = at(4);
     expect(rest.workspaceRows).toBe(36);
     expect(rest.panelRows).toBe(32);

@@ -298,8 +298,15 @@ const SIZES: Array<[number, number]> = [
   [80, 24],
 ];
 
+// EXPLICITLY `split`. Every assertion below this line is about the four-region
+// workspace frame -- the divider, the fixed right column, the composer growing
+// into the panel -- and that frame is no longer what `regions()` gives a caller
+// who does not ask (founder, 2026-09-15: the single column is the default
+// again; ui/layout.ts). Naming it here keeps these tests testing the split
+// rather than silently re-testing the collapsed shape under new names. The
+// single column's own assertions are the `single is the default` block below.
 const regionsAt = (columns: number, rows: number, composerRows?: number) =>
-  V.regions({ columns, rows, headerRows: 3, composerRows, strip: true });
+  V.regions({ columns, rows, headerRows: 3, composerRows, strip: true, layout: "split" });
 
 describe("the band", () => {
   it("puts the divider one column left of the fixed right column", () => {
@@ -707,6 +714,7 @@ describe("the focus ring", () => {
           headerRows: 3,
           composerRows,
           strip: true,
+          layout: "split", // the ring has a panel to reach only in the split
         });
       },
       cycleFocus: FRAME.FRAME_METHODS.cycleFocus,
@@ -824,6 +832,7 @@ describe("the split's refusal survives a stale child pane", () => {
           headerRows: 3,
           composerRows,
           strip: true,
+          layout: "split",
         });
       },
       openChildPane: FRAME.FRAME_METHODS.openChildPane,
