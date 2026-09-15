@@ -287,13 +287,18 @@ META
 if [ "${RUNE_SKIP_SERVE_CHECK:-0}" != "1" ]; then
   echo ""
   echo "  $(dim '...') Proving the staged binary hosts a session (rune serve --check)"
-  if RUNE_TOOLS_BIN="$TOOLS_DST" "$CLI_OUT" serve --check; then
+  # Under a scratch home: the smoke is a proof about the binary, not an event
+  # in the founder's record, and without this it appended one line to the
+  # founder's audit.jsonl on every install (found by the third verifier pass).
+  SMOKE_HOME="$(mktemp -d "${TMPDIR:-/tmp}/rune-install-smoke.XXXXXX")"
+  if RUNE_HOME="$SMOKE_HOME" RUNE_NO_ENV_FILE=1 RUNE_TOOLS_BIN="$TOOLS_DST" "$CLI_OUT" serve --check; then
     echo "  $(green '✓') The staged binary hosts a session"
   else
     echo "  $(red '✗') The staged binary cannot host a session — refusing to install it."
     echo "    Re-run with $(bold 'RUNE_SKIP_SERVE_CHECK=1 ./scripts/install.sh') to install anyway."
     exit 1
   fi
+  rm -rf "$SMOKE_HOME"
 fi
 
 # ─── 5. Write a thin `rune` launcher that sets RUNE_TOOLS_BIN ───

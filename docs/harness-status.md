@@ -1781,3 +1781,22 @@ including lifecycle, `cargo test -p rune-sandbox` 36 / 0 with the audit log stil
 unit 5,796 / 0, integration 388 / 0, cargo 111 / 0, eval 63 / 63 at 0.27. Not fixed, named: a
 wholesale vault removal in a brand-new session; an arbitrary-subject model commit read in a
 brand-new session; the tautological-assertion half of finding 19; finding 18 as a guarantee.
+
+### Addendum 28 — gated with E1 and E2, installed, and the installer's own smoke caught by the bracket
+
+The full gate list on `0cdb104` (logs in `gates/0cdb104-20260915T174819Z/`): unit **5,797 ran /
+0 fail** (423 files), integration **395 ran / 0 fail** (65 files), lifecycle 47 / 0, typecheck
+15 / 15, lint 7 / 7, cargo fmt clean, cargo test 111 / 0, clippy clean, eval 63 / 63 at 0.27
+with the baseline unchanged, auto-safety offline P 92.8 / R 89.1 / F1 90.9 with 0 live requests,
+`git diff --check` clean; Prettier red only on the verifier's two untracked files (theirs, being
+promoted by the UI lane). **The founder's audit log held at 7,167 lines through the entire gate
+run, cargo included** — the first gate run in this programme that touched nothing of the
+founder's. Installed without an override: **Rune v0.4.1-dev+8cb23b0**, CLI
+`7f121f32ee228a85d275e223fa6519f02aa1da851e8577f5e25f51a21d138858`, native `f53cbddf…`;
+doctor's build line current at install (stale by this commit); tools-smoke green; lifecycle
+**47 / 0** through the binary with the audit log still. The bracket also answered the third
+pass's open question: **the installer's own `rune serve --check` smoke wrote one line to the
+founder's audit log** (7,167 → 7,168) — fixed in the next commit by giving that smoke a scratch
+home. This binary carries E1's signed memory store and E2's fail-closed vault, launcher
+precedence and authorship witnesses; the fourth verifier pass has not yet run on it, so memory
+in `auto` is still provisional and every authority key stays off.

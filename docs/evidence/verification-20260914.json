@@ -400,5 +400,31 @@
         "E2 vault control path, authorship via runners, git witness, symlinks, launcher .env, cargo test home, scripts"
       ]
     }
+  },
+  "afterThirdPassFixes": {
+    "date": "2026-09-15 night",
+    "commits": "E1 784a7cb..5fd7ef0; E2 42ea3de..a44fb26; docs",
+    "gatesAt": "0cdb104",
+    "gateLogs": ".codex/audit-20260910/handoff/m0/gates/0cdb104-20260915T174819Z/",
+    "gates": {
+      "unit": "5,797 ran / 0 fail",
+      "integration": "395 ran / 0 fail",
+      "lifecycle": "47 / 0",
+      "typecheck": "15/15",
+      "lint": "7/7",
+      "cargoTest": "111 / 0",
+      "clippy": "clean",
+      "eval": "63/63 at 0.27",
+      "autoSafetyOffline": "P 92.8 / R 89.1 / F1 90.9, 0 live",
+      "prettier": "red only on two untracked verifier files"
+    },
+    "audit": "7,167 \u2192 7,167 through the gate run; 7,167 \u2192 7,168 by the installer's serve --check smoke (fixed next)",
+    "installed": {
+      "version": "Rune v0.4.1-dev+8cb23b0",
+      "cliSha256": "7f121f32ee228a85d275e223fa6519f02aa1da851e8577f5e25f51a21d138858",
+      "nativeSha256": "f53cbddf32431706edf64c030db729c9d7352e50b6d1fe3d81317fe388579bc0",
+      "lifecycleThroughBinary": "47 / 0"
+    },
+    "fourthVerifierPass": "pending"
   }
 }
