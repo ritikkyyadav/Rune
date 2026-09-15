@@ -1244,3 +1244,37 @@ report:** `rune audit` naming the screenshots and the `leave` pre-flight reachin
 brief field (both now in a follow-up), and nothing calls the visual reviewer in a live run —
 no reviewer budget is authorised, and **no claim about design quality is made: the rubric has
 never been run by a real reviewer.**
+
+### Addendum 9 — Fix lane B: every door that can spend refuses, one startup ladder for every process, and the corpus attacked back
+
+`0424906`, `e514f42`, `3baaa57`, `edd96ef` (+ the `--help` and `process.cwd()` hunks from
+lane A). The unit gate is green again: the budget guard asked "is there a budget?" before
+asking "can this run spend?"; a pure `pilotSpendRoute` now answers the second first, so a
+scripted zero-dollar caller is never refused and `--real`, `swebench.ts --real` and
+`RUNE_EVAL_REAL=1` all refuse at the door without `RUNE_EVAL_BUDGET_USD`, proved without a
+model call. The stated cause of the non-hermetic mock eval was wrong and the lane said so: a
+stray `OLLAMA_API_KEY` leaves it at 63/63; a **blank `RUNE_TOOLS_BINARY`** (which the brief's
+own zsh export produces) is what gave 24/63 — blank is now unset and an unreachable binary is
+refused, and the credential env is scrubbed before the first Engine. `engine-host.ts`
+(detach/serve/acp) lost its private five-id ladder and calls `resolveStartupSelection` +
+`modelForProvider`, verified by a real stdio boot; a provider disabled in `/keys` is not
+selected as keyed; an unknown `--provider` is refused by name with the nearest ids; a
+hand-edited `[controller] authority = 4` is warned about and ignored, never fatal; the dead
+`custom`-in-keychain branch was deleted rather than made real (making it real is a
+`secrets.ts`/`buildGateway` change first — the one place the lane chose against the verifier's
+prescription, with its reasoning in the report). `startup-selection.test.ts` went from 15 to
+32 cases and **0 of 12 mutations survive**. The corpus's acceptance was hardened on the three
+attacked tasks plus one the lane broke itself, the four attacks became `wrong-v6` arms, and
+`cache-plan` names its omission: **64 rows, 0 skipped, false completions 0 / 52, false
+negatives 2 / 12** ([`evidence/corpus-offline-20260915.json`](evidence/corpus-offline-20260915.json)),
+the two remaining being the research family's own-citation limit recorded in the backlog.
+The capture rig scrubs by a stated predicate (eight suffixes, chain variables, and the
+registry's forty-three provider env names parsed from source) shared with its own leak guard.
+
+Supervisor rerun: startup-selection, engine-host, `tests/unit/eval`, config shapes, corpus
+sanity and the evolve comparison suite — **100 / 0 / 2 skip**; `tests/verification/` is
+empty. Lane's gates: unit **5,197 / 0 / 1 skip**, integration **358 / 0 / 7 skip**, `bun run
+eval` 63/63 with a bogus `OLLAMA_API_KEY` exported. Two caveats the lane recorded: another lane
+edited the tree concurrently (explicit paths only were staged), and the founder's own resumed
+codex session moved `~/.rune`'s cost rows 3491 → 3493 at 07:20 IST — no lane command used the
+default home or a live route.
