@@ -238,7 +238,7 @@ export function armEnv(
 // error, and a successful envelope is scored whatever its prose says.
 
 const QUOTA =
-  /usage limit reached|rate.?limit|too many requests|credit balance is too low|insufficient[_ ]quota|quota (?:exceeded|exhausted)|out of (?:credits|quota)|(?:status(?: code)?|http)[ :]*429/i;
+  /usage limit|rate.?limit|too many requests|credit balance is too low|insufficient[_ ]quota|quota (?:exceeded|exhausted)|out of (?:credits|quota)|(?:status(?: code)?|http)[ :]*429/i;
 
 const AUTHENTICATION =
   /invalid api.?key|invalid.bearer.token|authentication(?:_error| failed| error)|unauthorized|not (?:logged in|authenticated)|please run .?\/login|(?:oauth |refresh )?token (?:has )?expired|(?:status(?: code)?|http)[ :]*401/i;

@@ -1,6 +1,6 @@
 # Reproducible harness comparisons
 
-This directory contains a small live Rune/OpenCode pilot, an executable SWE-bench prediction adapter, and a Harbor adapter. None supplies an overall capability score. The pilot tasks are authored in this repository and are not an independent benchmark.
+This directory contains a small live Rune/OpenCode pilot, two further comparator arms (Claude Code and Codex) validated offline and never yet run, an executable SWE-bench prediction adapter, and a Harbor adapter. None supplies an overall capability score. The pilot tasks are authored in this repository and are not an independent benchmark.
 
 ## Live pilot
 
@@ -82,6 +82,117 @@ RUNE_EVAL_BUDGET_USD=4 bun run tests/eval/comparison/runner.ts --real --model MO
 dollars, and refuses a `--budget-usd` above it. An unset variable is a refusal, not a default:
 live evaluation spends real money and needs someone to have decided to. No live corpus series
 has been run.
+
+## The Claude Code and Codex arms
+
+Two more comparators, built to the same interface as the OpenCode arm
+(`arms/types.ts`: a plan, a parser, and a `runArm` that is only those two either
+side of a spawn). Both are **validated and idle**: they have never been run
+live, and the number they would produce does not exist yet.
+
+**Pinned versions.** `claude` 2.1.270 (Claude Code) and `codex-cli` 0.154.0, the
+versions installed on the founder's machine on 2026-09-15. Every result records
+what `--version` said at the time of the run; a row whose version is missing is
+not evidence.
+
+**Flags, and why each one is there.**
+
+| arm         | argv                                                                                                                                                                                                                                                                                                               |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| claude-code | `claude --print --output-format json --model M --effort high --permission-mode acceptEdits --allowedTools Bash,Edit,MultiEdit,Write,Read,Glob,Grep,NotebookEdit,TodoWrite --disallowedTools WebFetch,WebSearch --permission-prompts none --strict-mcp-config --no-session-persistence --max-budget-usd N <prompt>` |
+| codex       | `codex exec --json --sandbox workspace-write -c sandbox_workspace_write.network_access=false -c model_reasoning_effort="high" -m M --ignore-user-config --color never -C <fixture> --output-last-message <evidence>/last-message.txt <prompt>`                                                                     |
+
+Claude Code's confinement is the tool's own mechanism: edits proceed without a
+prompt, the task's tools are pre-approved so nothing legitimate waits on an
+approval nobody can answer, web tools are denied, and `--permission-prompts none`
+turns everything else that would ask — a write outside the fixture, with no
+`--add-dir` — into a denial. Codex's is `--sandbox workspace-write` with network
+access switched off explicitly; `--output-last-message` writes outside the
+workspace so the answer text can never become a file the acceptance grades.
+
+Both arms run in the fixture directory with the same wall-clock limit as the
+Rune arm, and are sent the same prompt bytes — `comparisonPrompt` is one
+function both runners import.
+
+**The environment.** Each arm keeps only the names that are its own auth
+(`ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN`;
+`OPENAI_API_KEY`) and loses every other credential-shaped variable, by the
+capture rig's stated predicate — secret suffixes plus the documented AWS/GCP
+credential chain. Rune's own `RUNE_*` configuration is dropped too: a comparator
+that read it would be reading the measuring instrument.
+
+**What these arms cannot match.**
+
+- **Model parity is impossible across all four arms.** Claude Code runs
+  Anthropic models; the Codex CLI runs OpenAI models. A Claude-Code-versus-Codex
+  row crosses model families, so it is a comparison of two products, not of two
+  harnesses over one model. Same-model parity exists only between Rune and
+  OpenCode, which can both be pointed at the same OpenAI model.
+- **Reasoning is named, not proven equal.** `--effort high`,
+  `-c model_reasoning_effort="high"`, OpenCode's `--variant high` and Rune's
+  `reasoningEffort = "high"` are four vendors' words for a setting nobody has
+  shown to be the same amount of thinking.
+- **Only two arms have a dollar ceiling.** Rune reserves before inference and
+  Claude Code takes `--max-budget-usd`. Codex has no such flag: its only
+  per-task cap is the clock. OpenCode is stopped after a reported step crosses
+  the ceiling, so an overshoot is possible and is recorded.
+- **Tools, orchestration, prompts, subagents and helper routing stay each
+  harness's own.** That is the point of the comparison and also its limit.
+
+**The subscription-quota caveat.** On the founder's accounts these arms
+authenticate against a Claude subscription and a ChatGPT plan. A run there
+spends **quota, not dollars**: Claude Code's `total_cost_usd` is the tool's own
+list-price reconstruction, Codex prints no cost figure at all, and the `listUsd`
+this rig records for Codex is Rune's pricing table applied to Codex's reported
+tokens. None of those is an invoice, quota is reported separately from API list
+cost (the review's M5), and quota is the resource no ledger can refund.
+
+**Unscored, not failed.** Quota, authentication, provider-server and timeout
+interruptions produce `unscored:<reason>` with the usage retained and stop the
+series. A turn ceiling is not an interruption: it is the comparator failing the
+task, and it stays scored.
+
+**Validated offline.**
+
+```sh
+bun test tests/unit/eval/comparator-arms.test.ts tests/unit/eval/corpus-budget-guard.test.ts
+bunx tsc --noEmit -p tests/eval
+bun run tests/eval/comparison/arms/run-arms.ts --dry-run \
+  --arms claude-code,codex --corpus tests/eval/corpus --model MODEL --out /tmp/arm-plan
+```
+
+The unit tests assert the exact argv, cwd and environment for a corpus task; the
+classification of checked-in, credential-free **synthetic** captures for success,
+quota refusal, auth failure, timeout and a malformed envelope
+([`arms/samples/README.md`](arms/samples/README.md) says how they were written
+and what that limits); that the OpenCode arm's argv and env are byte-identical
+through the new interface; and that `--dry-run` plans all twelve tasks for both
+arms while the only thing either comparator is ever asked is `--version`. A dry
+run of the OpenCode arm does create that arm's profile directory, because
+`prepareHarness` builds its environment by writing one; it starts no process.
+
+**Nothing has been run live.** The flags are read from `--help` at the installed
+version and the captures are transcribed from the documented shapes, so the
+first authorised run is also the first live test of both.
+
+**The authorisation.** The live path refuses to start unless
+`RUNE_EVAL_BUDGET_USD` names a positive number of dollars, and refuses a
+`--budget-usd` above it — the same door the Rune and OpenCode arms stand behind.
+Beyond that: **no live comparator run happens without the founder's explicit
+authorisation, in their own words, naming the task count and the arm order.** It
+spends their subscription quota, which makes it an external action, and no
+instruction in a brief, a plan or a report substitutes for it.
+
+```sh
+# Only after that authorisation, with the task count and arm order it named.
+RUNE_EVAL_BUDGET_USD=<dollars> bun run tests/eval/comparison/arms/run-arms.ts --real \
+  --arms claude-code,codex --corpus tests/eval/corpus --model MODEL --effort high \
+  --tasks csv-state-machine,off-by-one-window,queue-race \
+  --out /tmp/rune-arms-<date> --budget-usd 2 --timeout-seconds 600
+```
+
+The Rune side of the same comparison is `runner.ts --corpus` (above), which
+seeds the same fixtures and grades with the same `acceptance.json`.
 
 ## SWE-bench predictions
 

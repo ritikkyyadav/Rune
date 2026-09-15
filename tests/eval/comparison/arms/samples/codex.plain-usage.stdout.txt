@@ -1,0 +1,4 @@
+Reading prompt from argv.
+codex
+Rewrote csv.ts as a state machine and added csv.test.ts.
+tokens used: 50,600

@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"01JSYNTHETIC0000000000QUOTA0"}
+{"type":"turn.started"}
+{"type":"turn.completed","usage":{"input_tokens":8100,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":420,"reasoning_output_tokens":300,"total_tokens":8820}}
+{"type":"turn.started"}
+{"type":"turn.failed","error":{"message":"You've hit your usage limit. Try again later."}}

@@ -134,3 +134,92 @@ describe("--corpus reads the frozen corpus as live tasks", () => {
     ]);
   });
 });
+
+// ─── The same door, in front of the new arms ───
+//
+// The Claude Code and Codex arms are a second live route into the same corpus,
+// and a second route is exactly how a guard ends up covering one door. They
+// spend differently from the Rune arm — a subscription arm burns quota rather
+// than dollars, and Codex has no dollar ceiling of its own at all — which makes
+// the authorisation MORE necessary here, not less: quota is the founder's
+// scarcest resource and no ledger can refund it.
+
+describe("the comparator arms are refused without the same authorisation", () => {
+  const corpus = join(import.meta.dir, "../../eval/corpus");
+  /** Executables that do not exist, so a leak would be a spawn error, not a turn. */
+  const command = {
+    "claude-code": ["/nonexistent/claude"],
+    codex: ["/nonexistent/codex"],
+  } as const;
+
+  test("a live arm series refuses to start with RUNE_EVAL_BUDGET_USD unset", async () => {
+    const previous = process.env.RUNE_EVAL_BUDGET_USD;
+    delete process.env.RUNE_EVAL_BUDGET_USD;
+    try {
+      const { runArmSeries } = await import("../../eval/comparison/arms/run-arms");
+      await expect(
+        runArmSeries({
+          arms: ["claude-code", "codex"],
+          out: join(import.meta.dir, "never-created"),
+          corpus,
+          tasks: ["csv-state-machine"],
+          model: "nothing",
+          budgetUsd: 2,
+          timeoutMs: 1000,
+          command: { ...command },
+        }),
+      ).rejects.toThrow(/not authorised/i);
+    } finally {
+      if (previous === undefined) delete process.env.RUNE_EVAL_BUDGET_USD;
+      else process.env.RUNE_EVAL_BUDGET_USD = previous;
+    }
+  });
+
+  test("a per-task ceiling above the authorised total is refused", async () => {
+    const previous = process.env.RUNE_EVAL_BUDGET_USD;
+    process.env.RUNE_EVAL_BUDGET_USD = "1";
+    try {
+      const { runArmSeries } = await import("../../eval/comparison/arms/run-arms");
+      await expect(
+        runArmSeries({
+          arms: ["codex"],
+          out: join(import.meta.dir, "never-created"),
+          corpus,
+          tasks: ["csv-state-machine"],
+          budgetUsd: 5,
+          timeoutMs: 1000,
+          command: { ...command },
+        }),
+      ).rejects.toThrow(/above the authorised/i);
+    } finally {
+      if (previous === undefined) delete process.env.RUNE_EVAL_BUDGET_USD;
+      else process.env.RUNE_EVAL_BUDGET_USD = previous;
+    }
+  });
+
+  test("a dry run is asked for no budget, because a dry run cannot spend", async () => {
+    const previous = process.env.RUNE_EVAL_BUDGET_USD;
+    delete process.env.RUNE_EVAL_BUDGET_USD;
+    try {
+      const { runArmSeries } = await import("../../eval/comparison/arms/run-arms");
+      const report = await runArmSeries({
+        arms: ["claude-code", "codex"],
+        out: join(import.meta.dir, "never-created"),
+        corpus,
+        tasks: ["csv-state-machine"],
+        model: "nothing",
+        budgetUsd: 2,
+        timeoutMs: 1000,
+        dryRun: true,
+        command: { ...command },
+      });
+      // A guard that refuses runs which cannot spend is not a safety property;
+      // it is the reason guards get deleted (V6 finding 6).
+      expect(report.kind).toBe("comparator-arm-dry-run");
+      expect(report.results).toEqual([]);
+    } finally {
+      if (previous === undefined) delete process.env.RUNE_EVAL_BUDGET_USD;
+      else process.env.RUNE_EVAL_BUDGET_USD = previous;
+    }
+  });
+});

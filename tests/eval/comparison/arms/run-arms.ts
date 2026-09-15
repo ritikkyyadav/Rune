@@ -155,16 +155,19 @@ const write = (path: string, value: string) => {
  * halfway makes every later row a different experiment.
  */
 export async function runArmSeries(options: ArmSeriesOptions) {
+  // The authorisation is the FIRST thing, ahead of the plan: `planSeries`
+  // probes each tool's `--version`, and a run that is going to be refused
+  // should not have started a child process to find out.
+  const authorised = options.dryRun ? null : authorisedBudgetUsd();
+  if (authorised !== null && options.budgetUsd > authorised)
+    throw new Error(
+      `--budget-usd ${options.budgetUsd} is above the authorised RUNE_EVAL_BUDGET_USD ${authorised}.`,
+    );
   const plan = planSeries(options);
   if (options.dryRun) {
     for (const line of plan.lines) console.log(line);
     return { schema: 1, kind: "comparator-arm-dry-run", plan: plan.lines, results: [] };
   }
-  const authorised = authorisedBudgetUsd();
-  if (options.budgetUsd > authorised)
-    throw new Error(
-      `--budget-usd ${options.budgetUsd} is above the authorised RUNE_EVAL_BUDGET_USD ${authorised}.`,
-    );
   if (existsSync(join(options.out, "report.json")))
     throw new Error(
       "Report already exists. Use a fresh output directory so evidence is never overwritten.",
