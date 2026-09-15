@@ -142,15 +142,28 @@ export function createUpdateConfigTool(deps: UpdateConfigDeps): ToolHandler {
         const shown = displaySettingValue(setting, canonical);
         const already = deps.readSetting(setting.key);
 
-        // Apply live FIRST. If the machine won't honor it (e.g. org policy forbids
-        // the 4th gear), report the refusal and DON'T persist a dead setting.
-        const applied = deps.applyLive(setting.key, canonical);
-        if (!applied.ok) {
-          return fail(
-            input,
-            `Couldn't change ${setting.key} to "${shown}"${applied.reason ? ` — ${applied.reason}` : ""}.`,
-            start,
-          );
+        // Apply live FIRST, for a setting that CAN be applied live. If the
+        // machine won't honor it (e.g. org policy forbids the 4th gear),
+        // report the refusal and DON'T persist a dead setting.
+        //
+        // `live: false` is a real entry in the catalog and it meant nothing
+        // here until now: the tool asked the live switch about every key and
+        // returned before the write when the switch said no. `layout` is the
+        // one setting declared that way — it cannot change mid-session because
+        // the transcript is stored already rendered at the old measure — so
+        // `/config layout split`, the picker and the model's own tool all
+        // answered "no live handler for layout" and wrote nothing at all. A
+        // shipped, catalogued, picker-listed setting the product's own writer
+        // could not write, reachable only by hand-editing config.toml.
+        if (setting.live) {
+          const applied = deps.applyLive(setting.key, canonical);
+          if (!applied.ok) {
+            return fail(
+              input,
+              `Couldn't change ${setting.key} to "${shown}"${applied.reason ? ` — ${applied.reason}` : ""}.`,
+              start,
+            );
+          }
         }
 
         // Persist so it sticks. A persist failure is non-fatal (the live change
@@ -184,16 +197,23 @@ export function createUpdateConfigTool(deps: UpdateConfigDeps): ToolHandler {
               "; explicit launch flags and environment overrides still take precedence on restart";
           }
         } catch (err) {
-          persistNote = `applied for this session only — couldn't save it (${
-            err instanceof Error ? err.message : String(err)
-          }), so it resets on restart`;
+          persistNote = setting.live
+            ? `applied for this session only — couldn't save it (${
+                err instanceof Error ? err.message : String(err)
+              }), so it resets on restart`
+            : `couldn't be saved (${
+                err instanceof Error ? err.message : String(err)
+              }), so nothing changed`;
         }
 
         const noChange = already === canonical ? " (was already set — reaffirmed)" : "";
         const caution = sensitivityNote(setting.key, canonical);
+        // A setting that is not live has not been applied now, and saying it
+        // was would be the same lie in the other direction.
+        const when = setting.live ? "applied now and " : "takes effect at the next launch; ";
         return ok(
           input,
-          `${setting.key} is now "${shown}"${noChange} — applied now and ${persistNote}.${caution}`,
+          `${setting.key} is now "${shown}"${noChange} — ${when}${persistNote}.${caution}`,
           start,
         );
       } catch (err) {

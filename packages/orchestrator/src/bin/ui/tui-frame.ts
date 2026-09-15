@@ -1137,14 +1137,64 @@ export const FRAME_METHODS = {
     let lines = comp.lines.map((l) => withThemeBg(this.bound(l)));
     let caretRow = comp.caretRow;
     if (lines.length > max) {
-      const drop = lines.length - max;
-      const marker = withThemeBg(
-        this.bound(
-          `  ${faint(`... ${drop} more line${drop === 1 ? "" : "s"} above (ctrl+r to expand)`)}`,
-        ),
+      // The window follows the SELECTION, not the tail.
+      //
+      // This used to keep the last `max` rows unconditionally, behind a "N more
+      // lines above" marker — cropping the head, which is exactly where a
+      // picker puts the row you are standing on. Since `single` became the
+      // default at every width, every picker takes this path, and `/keys` at
+      // 120×40 opened with no `›` anywhere on screen and none after the first
+      // four presses of down: the selection was above the window and the window
+      // never moved. The comment beside it was right about the hazard and
+      // guarded the wrong end.
+      //
+      // The anchor is the selection marker where a picker drew one, and the
+      // caret row otherwise, which is what a composer overflowing its own field
+      // wants. Either way the anchor stays on screen, and whichever side is cut
+      // says how much it cut.
+      const mark = glyph("selection", TERMINAL_GLYPH_MODE);
+      const selected = lines.findIndex((line) => line.includes(mark));
+      const anchor = selected >= 0 ? selected : caretRow;
+      const label = (n: number, where: "above" | "below") =>
+        withThemeBg(
+          this.bound(
+            `  ${faint(
+              `... ${n} more line${n === 1 ? "" : "s"} ${where}${
+                where === "above" ? " (ctrl+r to expand)" : ""
+              }`,
+            )}`,
+          ),
+        );
+      // The markers cost a row each, and how many there are depends on where
+      // the window lands, which depends on how many rows are left for content.
+      // Two passes settle it; the third is a guard, not a hope.
+      let start = 0;
+      let rows = max;
+      for (let pass = 0; pass < 3; pass++) {
+        start = Math.min(
+          Math.max(0, anchor - Math.floor((rows - 1) / 2)),
+          Math.max(0, lines.length - rows),
+        );
+        const next = max - (start > 0 ? 1 : 0) - (start + rows < lines.length ? 1 : 0);
+        if (next === rows) break;
+        rows = Math.max(1, next);
+      }
+      // Whatever the arithmetic decided, the anchor is on screen.
+      if (anchor < start) start = anchor;
+      if (anchor >= start + rows)
+        start = Math.min(anchor - rows + 1, Math.max(0, lines.length - rows));
+      const end = Math.min(lines.length, start + rows);
+      const above = start;
+      const below = lines.length - end;
+      lines = [
+        ...(above > 0 ? [label(above, "above")] : []),
+        ...lines.slice(start, end),
+        ...(below > 0 ? [label(below, "below")] : []),
+      ].slice(0, max);
+      caretRow = Math.min(
+        Math.max(0, caretRow - start + (above > 0 ? 1 : 0)),
+        Math.max(0, lines.length - 1),
       );
-      lines = [marker, ...lines.slice(drop + 1)];
-      caretRow = Math.max(0, caretRow - drop);
     }
     return { lines, caretRow, caretCol: comp.caretCol };
   },
