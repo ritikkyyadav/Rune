@@ -13,7 +13,16 @@
 // (`/memory update`) or, in `auto` mode, by the agent itself when it judges a
 // refresh worthwhile. There is no clock: see MemoryMode below.
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync } from "fs";
+import { createHmac, randomBytes, timingSafeEqual } from "crypto";
+import {
+  chmodSync,
+  existsSync,
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  readdirSync,
+  unlinkSync,
+} from "fs";
 import { basename, dirname, join } from "path";
 import { getRuneHome } from "./paths.js";
 
@@ -121,6 +130,29 @@ export interface SystemMemoryMeta {
   foldedSeqBySession?: Record<string, number>;
   /** The most recent refresh the shrink floor refused (see saveRefreshedSystemMemory). */
   lastRefusal?: SystemMemoryRefusal;
+  /**
+   * The size the shrink floor is measured against — the profile's high-water
+   * mark, not merely the file a refresh replaces. A deliberate write by the
+   * PERSON resets it; a machine refresh may raise it and never lower it. See
+   * profileShrinkReason: without this the floor is per-step, and seven refreshes
+   * that are each individually legal take a 2.5 KB profile to 23 bytes.
+   */
+  profileFloorBytes?: number;
+  /**
+   * HMACs over the fields a hand-written sidecar must not be able to assert.
+   * Computed with the per-home key (getMemoryKeyPath) on every save; a field
+   * whose MAC does not verify is dropped on load, exactly as a forged entry
+   * file is. Never trusted from the file itself — the key is not in it.
+   */
+  integrity?: SystemMemoryIntegrity;
+}
+
+/** The authenticated fields of the meta sidecar, one MAC each. */
+export interface SystemMemoryIntegrity {
+  v: number;
+  mode?: string;
+  modeMigration?: string;
+  profileFloor?: string;
 }
 
 export interface SystemMemory {
@@ -171,6 +203,102 @@ export function getMemoryEntriesDir(): string {
   return join(getMemoryStoreDir(), "entries");
 }
 
+// ─── The per-home memory secret ───
+//
+// V8 critical 1. The read path re-derived the entry id and called that proof
+// that a file "was not written by the store" — but an id is an UNKEYED hash of
+// content a forger chooses, so the forger computes it too. The id proves the
+// text and nothing about where the text came from: one `cat >` with an ordinary
+// sentence bought `user-corrected`, `pinned` and `promoted` in every future
+// session, with an empty refusal log.
+//
+// What the store actually needs is a secret only the store has. It is one file,
+// 32 random bytes, mode 0600, created on the first WRITE and never on a read —
+// and deliberately NOT in config.toml: a config file is copied between machines,
+// pasted into issues and read by every tool in the repo, and a key that travels
+// with the data it authenticates is not a key.
+//
+// Nothing here ever throws: a home whose key cannot be written is a home where
+// memory does not verify, which means memory is empty. Memory is an amenity.
+
+/**
+ * The per-home HMAC key. Never in config, never in a backup, never logged.
+ * `storeDir` lets a caller that already knows its own store directory (the
+ * MemoryStore can be constructed with an explicit one) key against that rather
+ * than against the ambient home.
+ */
+export function getMemoryKeyPath(storeDir?: string): string {
+  return join(storeDir ?? getMemoryStoreDir(), ".key");
+}
+
+const KEY_RE = /^[0-9a-f]{64}$/;
+
+/**
+ * The secret, as hex. `create` mints one (0600) when there is none — passed
+ * only by write paths, so a READ of a store that has never been written to
+ * verifies nothing rather than quietly minting a key that would make the next
+ * forgery verifiable.
+ */
+export function loadMemorySecret(create = false, storeDir?: string): string | null {
+  const p = getMemoryKeyPath(storeDir);
+  try {
+    if (existsSync(p)) {
+      const hex = readFileSync(p, "utf-8").trim();
+      if (KEY_RE.test(hex)) return hex;
+      // A key file that is not a key is not overwritten: it is someone else's
+      // file, or a half-written one, and clobbering it would throw away every
+      // entry it authenticated.
+      return null;
+    }
+    if (!create) return null;
+    const hex = randomBytes(32).toString("hex");
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, hex + "\n", { mode: 0o600 });
+    // Explicit, because `mode` is masked by umask on some systems.
+    chmodSync(p, 0o600);
+    return hex;
+  } catch {
+    return null;
+  }
+}
+
+/** HMAC-SHA256 over a canonical payload, or undefined when there is no key. */
+export function memoryMac(payload: string, create = false, storeDir?: string): string | undefined {
+  const secret = loadMemorySecret(create, storeDir);
+  if (!secret) return undefined;
+  return createHmac("sha256", Buffer.from(secret, "hex")).update(payload).digest("hex");
+}
+
+/** Constant-time check. False for a missing key, a missing MAC, or a wrong one. */
+export function verifyMemoryMac(payload: string, mac: unknown, storeDir?: string): boolean {
+  if (typeof mac !== "string" || !KEY_RE.test(mac)) return false;
+  const want = memoryMac(payload, false, storeDir);
+  if (!want) return false;
+  const a = Buffer.from(want, "hex");
+  const b = Buffer.from(mac, "hex");
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/** The canonical bytes each authenticated meta field is signed over. */
+function modePayload(mode: MemoryMode): string {
+  return JSON.stringify(["system-memory.mode", mode]);
+}
+
+function migrationPayload(m: MemoryModeMigration): string {
+  return JSON.stringify([
+    "system-memory.modeMigration",
+    m.at,
+    m.from,
+    m.mode,
+    m.note,
+    m.notified === true,
+  ]);
+}
+
+function floorPayload(bytes: number): string {
+  return JSON.stringify(["system-memory.profileFloorBytes", bytes]);
+}
+
 // ─── Load / Save ───
 
 /** Read the memory content + meta. Missing/malformed → empty (never throws). */
@@ -206,9 +334,14 @@ function sanitizeMeta(raw: Record<string, unknown>): SystemMemoryMeta {
   if (typeof raw.lastReflectedAt === "string") m.lastReflectedAt = raw.lastReflectedAt;
   if (typeof raw.schedule === "string") m.schedule = raw.schedule;
   if (typeof raw.tokens === "number") m.tokens = raw.tokens;
+  // The three authenticated fields. `mode` is a CONTROL — it decides whether
+  // Rune reads, writes and injects memory at all — so a hand-written sidecar
+  // may not assert it. A field whose MAC does not verify is simply not there,
+  // and the resolution falls through to the env, the config and the default.
+  const integrity = (raw.integrity ?? {}) as Record<string, unknown>;
   {
     const mode = parseMemoryMode(raw.mode);
-    if (mode) m.mode = mode;
+    if (mode && verifyMemoryMac(modePayload(mode), integrity.mode)) m.mode = mode;
   }
   if (raw.modeMigration && typeof raw.modeMigration === "object") {
     const g = raw.modeMigration as Record<string, unknown>;
@@ -219,14 +352,25 @@ function sanitizeMeta(raw: Record<string, unknown>): SystemMemoryMeta {
       typeof g.note === "string" &&
       mode
     ) {
-      m.modeMigration = {
+      const migration: MemoryModeMigration = {
         at: g.at,
         from: g.from,
         mode,
         note: g.note,
         ...(g.notified === true ? { notified: true } : {}),
       };
+      if (verifyMemoryMac(migrationPayload(migration), integrity.modeMigration)) {
+        m.modeMigration = migration;
+      }
     }
+  }
+  if (
+    typeof raw.profileFloorBytes === "number" &&
+    Number.isFinite(raw.profileFloorBytes) &&
+    raw.profileFloorBytes >= 0 &&
+    verifyMemoryMac(floorPayload(raw.profileFloorBytes), integrity.profileFloor)
+  ) {
+    m.profileFloorBytes = raw.profileFloorBytes;
   }
   if (raw.lastRefresh && typeof raw.lastRefresh === "object") {
     const g = raw.lastRefresh as Record<string, unknown>;
@@ -376,22 +520,47 @@ export function backupSystemMemory(now: Date = new Date()): string | undefined {
  * `next` the refreshed one. Bytes, not tokens: the failure this guards was
  * measured in bytes and a byte is a thing the user can check.
  */
-export function profileShrinkReason(previous: string, next: string): string | undefined {
+export function profileShrinkReason(
+  previous: string,
+  next: string,
+  /**
+   * The profile's HIGH-WATER mark in bytes, when the caller knows it. V8
+   * finding 10: a floor that compares each refresh only to the file it replaces
+   * is a floor per STEP, and seven refreshes at 51% — each one individually
+   * legal — took 2,539 bytes to 23 and rotated the real profile out of a
+   * five-deep backup ring on the way. Measured against the high-water mark the
+   * second of those seven is refused and the first backup is still the original.
+   */
+  previousHigh?: number,
+): string | undefined {
   const prevBytes = Buffer.byteLength(previous.trim());
   const nextBytes = Buffer.byteLength(next.trim());
-  if (prevBytes === 0) return undefined;
+  const high = Math.max(prevBytes, previousHigh ?? 0);
+  if (high === 0) return undefined;
   if (nextBytes === 0) return `the refresh was empty and the profile on disk is ${prevBytes} bytes`;
+  const against = high > prevBytes ? `${high} bytes at its largest` : `${prevBytes} bytes`;
   // The absolute floor is asked first because it is the more specific thing to
   // say about the shape that actually happened — a stub where a real profile
   // stood. (For any previous over 800 bytes the half-rule below would also
   // refuse it; this one names the reason a reader recognises.)
-  if (prevBytes > PROFILE_SUBSTANTIAL_BYTES && nextBytes < PROFILE_MIN_BYTES) {
-    return `the refresh is ${nextBytes} bytes, under the ${PROFILE_MIN_BYTES}-byte floor for a profile that was ${prevBytes} bytes`;
+  if (high > PROFILE_SUBSTANTIAL_BYTES && nextBytes < PROFILE_MIN_BYTES) {
+    return `the refresh is ${nextBytes} bytes, under the ${PROFILE_MIN_BYTES}-byte floor for a profile that was ${against}`;
   }
-  if (nextBytes < prevBytes * PROFILE_SHRINK_FLOOR_RATIO) {
-    return `the refresh is ${nextBytes} bytes against ${prevBytes} on disk — less than half the profile it replaces`;
+  if (nextBytes < high * PROFILE_SHRINK_FLOOR_RATIO) {
+    return `the refresh is ${nextBytes} bytes against ${against} — less than half the profile it replaces`;
   }
   return undefined;
+}
+
+/**
+ * The size the floor is measured against. The recorded high-water wins once
+ * anything has written it; a home that predates the record falls back to the
+ * largest copy still in the backup ring, which is the only other place the
+ * profile's real size survives.
+ */
+export function profileFloorBaseline(meta: SystemMemoryMeta): number {
+  if (typeof meta.profileFloorBytes === "number") return meta.profileFloorBytes;
+  return Math.max(0, ...listSystemMemoryBackups().map((b) => b.bytes));
 }
 
 /**
@@ -413,7 +582,14 @@ export function saveSystemMemory(
   } catch {
     // ignore — persistence failed but the caller's in-memory state still applied
   }
-  return saveSystemMemoryMeta(metaPatch ?? {});
+  // A write through THIS door is a person writing their own profile, so it
+  // RESETS the high-water mark: someone who shortens their profile by hand
+  // meant it, and a floor that remembered the long version forever would refuse
+  // every honest refresh afterwards. The refresh path passes its own value.
+  return saveSystemMemoryMeta({
+    profileFloorBytes: Buffer.byteLength(text),
+    ...(metaPatch ?? {}),
+  });
 }
 
 /**
@@ -430,8 +606,9 @@ export function saveRefreshedSystemMemory(
   metaPatch: Partial<SystemMemoryMeta>,
   refusedMeta?: Partial<SystemMemoryMeta>,
 ): { saved: boolean; refusal?: SystemMemoryRefusal; meta: SystemMemoryMeta } {
-  const { content: previous } = loadSystemMemory();
-  const reason = profileShrinkReason(previous, content);
+  const { content: previous, meta: before } = loadSystemMemory();
+  const high = profileFloorBaseline(before);
+  const reason = profileShrinkReason(previous, content, high);
   if (reason) {
     const refusal: SystemMemoryRefusal = {
       at: new Date().toISOString(),
@@ -439,10 +616,19 @@ export function saveRefreshedSystemMemory(
       discardedBytes: Buffer.byteLength(content.trim()),
       previousBytes: Buffer.byteLength(previous.trim()),
     };
+    // Nothing on disk moves but the meta: no write, so no backup is taken and
+    // no kept copy is rotated out of the ring by a refresh that was refused.
     const meta = saveSystemMemoryMeta({ ...(refusedMeta ?? {}), lastRefusal: refusal });
     return { saved: false, refusal, meta };
   }
-  return { saved: true, meta: saveSystemMemory(content, metaPatch) };
+  // A machine refresh may RAISE the high-water mark and never lower it.
+  return {
+    saved: true,
+    meta: saveSystemMemory(content, {
+      ...metaPatch,
+      profileFloorBytes: Math.max(high, Buffer.byteLength(content.trim())),
+    }),
+  };
 }
 
 /**
@@ -493,19 +679,37 @@ export function restoreSystemMemory(from?: string): {
   delete merged.lastRefusal;
   merged.updatedAt = new Date().toISOString();
   merged.tokens = estimateMemoryTokens(body);
-  try {
-    const mp = getSystemMemoryMetaPath();
-    ensureDir(mp);
-    writeFileSync(mp, JSON.stringify(merged, null, 2) + "\n");
-  } catch {
-    // ignore — the profile itself is back, which is what was asked for
-  }
+  // A restore is the person choosing this profile: it is the high-water mark now.
+  merged.profileFloorBytes = Buffer.byteLength(body);
+  // Explicitly undefined rather than absent: the save MERGES over what is on
+  // disk, so a key that is merely missing from the patch is a key that stays.
+  saveSystemMemoryMeta({ ...merged, lastRefusal: undefined });
   return { restored: true, from: chosen.path, bytes: Buffer.byteLength(body) };
 }
 
-/** Merge a patch into the meta sidecar (leaves the md untouched). Never throws. */
+/**
+ * Merge a patch into the meta sidecar (leaves the md untouched). Never throws.
+ *
+ * Every save re-signs the authenticated fields, which is also what mints the
+ * per-home key: memory that has never been written has no key, and a store with
+ * no key verifies nothing rather than verifying anything.
+ */
 export function saveSystemMemoryMeta(patch: Partial<SystemMemoryMeta>): SystemMemoryMeta {
   const merged: SystemMemoryMeta = { ...loadSystemMemoryMeta(), ...patch };
+  // `undefined` in a patch means "clear this" — JSON.stringify drops it, and
+  // the MAC below must not be written for a field that is no longer there.
+  for (const k of Object.keys(merged) as Array<keyof SystemMemoryMeta>) {
+    if (merged[k] === undefined) delete merged[k];
+  }
+  const integrity: SystemMemoryIntegrity = { v: 1 };
+  if (merged.mode) integrity.mode = memoryMac(modePayload(merged.mode), true);
+  if (merged.modeMigration) {
+    integrity.modeMigration = memoryMac(migrationPayload(merged.modeMigration), true);
+  }
+  if (merged.profileFloorBytes !== undefined) {
+    integrity.profileFloor = memoryMac(floorPayload(merged.profileFloorBytes), true);
+  }
+  merged.integrity = integrity;
   try {
     const mp = getSystemMemoryMetaPath();
     ensureDir(mp);
@@ -536,10 +740,14 @@ export function clearSystemMemory(): void {
   try {
     const mp = getSystemMemoryMetaPath();
     ensureDir(mp);
-    const kept: SystemMemoryMeta = {};
+    // Empty first, then re-sign what is kept: a hand-written mode is not a mode
+    // (see sanitizeMeta), so the mode has to be written back through the door
+    // that signs it rather than copied across as bytes.
+    writeFileSync(mp, "{}\n");
+    const kept: SystemMemoryMeta = { profileFloorBytes: 0 };
     if (mode) kept.mode = mode;
     if (schedule) kept.schedule = schedule;
-    writeFileSync(mp, JSON.stringify(kept, null, 2) + "\n");
+    saveSystemMemoryMeta(kept);
   } catch {
     // ignore
   }
@@ -579,8 +787,24 @@ export interface ResolvedMemoryMode {
 }
 
 /**
- * The one resolution every surface uses: live sidecar mode → explicit config
- * mode → migration from the withdrawn controls → the default.
+ * The one resolution every surface uses. The precedence, and V8 finding 8:
+ *
+ *   RUNE_MEMORY_MODE  →  [memory] mode / enabled  →  the live sidecar  →
+ *   the migration off the withdrawn controls  →  the default
+ *
+ * The sidecar used to sit at the TOP of that list, which meant that once
+ * `~/.rune/system-memory.json` carried a mode — as the founder's did —
+ * `RUNE_MEMORY_MODE=off`, `[memory] mode = "off"` and `[memory] enabled =
+ * false` were all inert, and the only way to turn memory off was to be inside a
+ * running session and type `/memory off`. A control surface with no switch
+ * outside the thing it controls is not a switch. The env var is read here
+ * rather than left to the config loader so that it works for every embedder,
+ * including one that assembles its own config object.
+ *
+ * `/memory <mode>` still takes effect immediately and still persists, because
+ * Engine.setMemoryMode now writes BOTH the live sidecar and `[memory] mode` —
+ * so the two agree unless somebody edits the config by hand, and a hand edit is
+ * the deliberate act that ought to win.
  *
  * The migration, in full:
  *   enabled = false            → off
@@ -588,18 +812,16 @@ export interface ResolvedMemoryMode {
  *   schedule = manual|off      → manual
  *   nothing at all             → the caller's default (auto for the CLI)
  *
- * `enabled = false` is asked FIRST because a user who switched memory off and
- * left a cadence behind meant the off.
+ * `enabled = false` is asked before the sidecar because a user who switched
+ * memory off in their config meant the off.
  */
 export function resolveMemoryMode(
   cfg: { mode?: string; enabled?: boolean; schedule?: string } | undefined,
   meta: SystemMemoryMeta | undefined,
   fallback: MemoryMode = "auto",
 ): ResolvedMemoryMode {
-  // A mode chosen live wins over anything in the file — same precedence the
-  // withdrawn cadence had, so `/memory manual` keeps meaning what it meant.
-  const live = meta?.mode;
-  if (live) return { mode: live };
+  const env = parseMemoryMode(process.env.RUNE_MEMORY_MODE);
+  if (env) return { mode: env };
   const explicit = parseMemoryMode(cfg?.mode);
   if (explicit) return { mode: explicit };
   if (cfg?.enabled === false) {
@@ -610,6 +832,25 @@ export function resolveMemoryMode(
         note: "[memory] enabled is withdrawn; memory is now off (/memory auto turns it on)",
       },
     };
+  }
+  // A mode chosen live via `/memory`, below the two settings a person can reach
+  // without a session and above everything legacy.
+  const live = meta?.mode;
+  if (live) {
+    // V8 finding 31: a sidecar carrying BOTH a live mode and a withdrawn
+    // cadence used to short-circuit here and never mention the cadence. They
+    // chose `daily`; they are entitled to be told it no longer exists.
+    const leftover = (meta?.schedule ?? "").trim();
+    if (leftover) {
+      return {
+        mode: live,
+        migration: {
+          from: leftover,
+          note: `cadence withdrawn; memory is now ${live} (it was ${describeSchedule(leftover)})`,
+        },
+      };
+    }
+    return { mode: live };
   }
   // The live cadence in the sidecar is as much a user choice as the config one.
   const schedule = (meta?.schedule ?? cfg?.schedule ?? "").trim();

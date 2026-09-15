@@ -281,6 +281,56 @@ describe("shared/system-memory — the shrink floor", () => {
     expect(readFileSync(listSystemMemoryBackups()[0].path, "utf-8")).toContain("number 59");
   });
 
+  // ─── V8 finding 10: the floor was per STEP ───
+  //
+  // The named attack — grow by one byte, then shrink 60% — was correctly
+  // refused and the good copy survived. But the floor compared each refresh
+  // only to the one it replaced, and PROFILE_MIN_BYTES was gated behind
+  // `prevBytes > 800`, so under 800 bytes there was no absolute floor at all.
+  // Seven refreshes at 51% — each one individually legal — took 2,539 bytes to
+  // 23, and MAX_SYSTEM_MEMORY_BACKUPS (5) rotated the real profile out of the
+  // ring at step five: the largest copy `/memory restore` could still reach was
+  // 662 bytes. In `auto` that is seven sessions.
+  it("seven refreshes that are each legal cannot erode the profile", () => {
+    const good =
+      "# About the founder\n" +
+      "The founder ships solo on no budget and wants unsugared facts. ".repeat(40);
+    saveSystemMemory(good);
+    const originalBytes = Buffer.byteLength(loadSystemMemory().content.trim());
+    expect(originalBytes).toBeGreaterThan(2000);
+
+    let cur = loadSystemMemory().content;
+    for (let i = 0; i < 7; i++) {
+      saveRefreshedSystemMemory(cur.slice(0, Math.ceil(cur.length * 0.51)), {});
+      cur = loadSystemMemory().content;
+    }
+
+    const now = Buffer.byteLength(cur.trim());
+    const recoverable = Math.max(0, ...listSystemMemoryBackups().map((b) => b.bytes));
+    // The profile is measured against its high-water mark, not against the file
+    // each refresh happens to replace…
+    expect(now).toBeGreaterThan(originalBytes / 2);
+    // …and whatever happened, `/memory restore` still reaches the real one.
+    expect(recoverable).toBeGreaterThanOrEqual(originalBytes);
+  });
+
+  it("a refusal writes nothing, so it can never rotate a kept copy out", () => {
+    saveSystemMemory(LONG_PROFILE, {});
+    saveSystemMemory(LONG_PROFILE + "\n- one more", {});
+    const before = listSystemMemoryBackups().map((b) => `${b.stamp}:${b.bytes}`);
+    for (let i = 0; i < 8; i++) expect(saveRefreshedSystemMemory("tiny", {}).saved).toBe(false);
+    expect(listSystemMemoryBackups().map((b) => `${b.stamp}:${b.bytes}`)).toEqual(before);
+  });
+
+  it("a person shortening their profile by hand resets the high-water mark", () => {
+    // The floor may not outlive the profile it was measured from: someone who
+    // rewrites their own profile short meant it, and every honest refresh
+    // afterwards has to be allowed.
+    saveSystemMemory("x".repeat(3000), {});
+    saveSystemMemory("y".repeat(600), {});
+    expect(saveRefreshedSystemMemory("z".repeat(420), {}).saved).toBe(true);
+  });
+
   it("records what the refusal was for without folding the activity away", () => {
     saveSystemMemory(LONG_PROFILE, { foldedSeqBySession: { s1: 4 } });
     saveRefreshedSystemMemory(
@@ -423,5 +473,54 @@ describe("shared/system-memory — the three modes", () => {
     expect(MEMORY_MODES).toEqual(["off", "auto", "manual"]);
     for (const m of MEMORY_MODES) expect(describeMemoryMode(m).length).toBeGreaterThan(0);
     expect(parseMemoryMode("weekly")).toBeUndefined();
+  });
+});
+
+// ─── The sidecar's mode is a control, so it is signed ───
+//
+// V8 critical 1's other half. `system-memory.json` sits in an ordinary
+// directory outside the workspace, and `mode` decides whether Rune reads,
+// writes and injects memory at all — so a `cat >` that set `"mode": "auto"`
+// turned memory back on for every future session. The three authenticated
+// fields carry an HMAC made with `~/.rune/memory/.key`, which is written 0600
+// on the first save and named in no config file.
+
+describe("shared/system-memory — the meta sidecar is authenticated", () => {
+  it("a hand-written mode is not a mode", () => {
+    writeFileSync(getSystemMemoryMetaPath(), JSON.stringify({ mode: "auto" }) + "\n");
+    expect(loadSystemMemoryMeta().mode).toBeUndefined();
+    // …so the resolution falls through to the config and the default, which is
+    // exactly what makes `[memory] mode` and RUNE_MEMORY_MODE reachable.
+    expect(resolveMemoryMode({ mode: "off" }, loadSystemMemoryMeta()).mode).toBe("off");
+  });
+
+  it("a mode written through the door survives the round trip", () => {
+    saveSystemMemoryMeta({ mode: "manual" });
+    expect(loadSystemMemoryMeta().mode).toBe("manual");
+    // And it does not travel: the same bytes under another home do not verify.
+    const bytes = readFileSync(getSystemMemoryMetaPath(), "utf-8");
+    const other = mkdtempSync(join(tmpdir(), "rune-sysmem-other-"));
+    const prev = process.env.RUNE_SYSTEM_MEMORY_PATH;
+    try {
+      process.env.RUNE_SYSTEM_MEMORY_PATH = join(other, "system-memory.md");
+      writeFileSync(getSystemMemoryMetaPath(), bytes);
+      expect(loadSystemMemoryMeta().mode).toBeUndefined();
+    } finally {
+      if (prev === undefined) delete process.env.RUNE_SYSTEM_MEMORY_PATH;
+      else process.env.RUNE_SYSTEM_MEMORY_PATH = prev;
+      rmSync(other, { recursive: true, force: true });
+    }
+  });
+
+  it("a forged shrink floor cannot lower the floor", () => {
+    saveSystemMemory("x".repeat(3000), {});
+    const meta = JSON.parse(readFileSync(getSystemMemoryMetaPath(), "utf-8")) as Record<
+      string,
+      unknown
+    >;
+    meta.profileFloorBytes = 10;
+    writeFileSync(getSystemMemoryMetaPath(), JSON.stringify(meta));
+    expect(loadSystemMemoryMeta().profileFloorBytes).toBeUndefined();
+    expect(saveRefreshedSystemMemory("y".repeat(200), {}).saved).toBe(false);
   });
 });

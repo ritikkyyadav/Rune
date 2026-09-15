@@ -24,6 +24,7 @@ import { mkdtempSync } from "fs";
 import { join } from "path";
 import { Engine } from "../../../packages/orchestrator/src/engine";
 import { MemoryStore } from "../../../packages/orchestrator/src/memory";
+import { loadConfig } from "../../../packages/shared/src/config";
 import {
   loadSystemMemory,
   loadSystemMemoryMeta,
@@ -38,6 +39,7 @@ import { rmTemp } from "../../helpers/tmp";
 
 let dir: string;
 let prevMd: string | undefined;
+let prevCfg: string | undefined;
 
 /** One registered provider and a canned completion. Nothing leaves the process. */
 function fakeGateway(text: string, opts: { providers?: string[]; calls?: unknown[] } = {}) {
@@ -121,11 +123,17 @@ beforeEach(() => {
   // Relocates the profile, the meta sidecar AND the structured store — the
   // founder's own ~/.rune must never be touched by a test run.
   process.env.RUNE_SYSTEM_MEMORY_PATH = join(dir, "system-memory.md");
+  // …and the config, because `setMemoryMode` now persists `[memory] mode`
+  // there. Per-test, so one row of the table cannot set the mode for the next.
+  prevCfg = process.env.RUNE_CONFIG_PATH;
+  process.env.RUNE_CONFIG_PATH = join(dir, "config.toml");
 });
 
 afterEach(() => {
   if (prevMd === undefined) delete process.env.RUNE_SYSTEM_MEMORY_PATH;
   else process.env.RUNE_SYSTEM_MEMORY_PATH = prevMd;
+  if (prevCfg === undefined) delete process.env.RUNE_CONFIG_PATH;
+  else process.env.RUNE_CONFIG_PATH = prevCfg;
   rmTemp(dir);
 });
 
@@ -427,14 +435,62 @@ describe("memory modes — switching", () => {
     engine.close();
   });
 
-  it("a live choice outranks the config file and survives a new Engine", () => {
+  it("a live choice is written to the config as well, and survives a new Engine", () => {
     const first = makeEngine({ mode: "auto" });
     first.setMemoryMode("off");
     first.close();
-    // Same scratch home, a config that still says auto.
-    const second = makeEngine({ mode: "auto" });
+    // V8 finding 8. The sidecar used to be the only record of the choice AND
+    // the top of the precedence order, which is what left the founder with no
+    // way to turn memory off from outside a running session. Both halves moved:
+    // `/memory off` writes `[memory] mode` too, and the resolution now reads
+    // env → config → sidecar. So the choice still survives a restart — it
+    // survives it in the file a person can edit, `RUNE_MEMORY_MODE` can
+    // override, and `rune memory off` can write.
+    expect(loadSystemMemoryMeta().mode).toBe("off");
+    expect(loadConfig(dir).memory?.mode).toBe("off");
+    const second = makeEngine(loadConfig(dir).memory as Record<string, unknown>);
     expect(second.memoryMode()).toBe("off");
     second.close();
+  });
+
+  it("the kill switch works from outside a session: env > config > sidecar", () => {
+    // The founder's real state at the time of the audit: a sidecar that says
+    // `auto`, and no `[memory]` section anywhere.
+    saveSystemMemoryMeta({ mode: "auto" });
+    expect(resolveMemoryMode(undefined, loadSystemMemoryMeta()).mode).toBe("auto");
+    // `[memory] mode = "off"` in config.toml now outranks it…
+    expect(resolveMemoryMode({ mode: "off" }, loadSystemMemoryMeta()).mode).toBe("off");
+    // …so does `[memory] enabled = false`…
+    expect(resolveMemoryMode({ enabled: false }, loadSystemMemoryMeta()).mode).toBe("off");
+    // …and RUNE_MEMORY_MODE outranks every file, for every embedder, whatever
+    // config object they assembled.
+    const prev = process.env.RUNE_MEMORY_MODE;
+    process.env.RUNE_MEMORY_MODE = "off";
+    try {
+      expect(resolveMemoryMode({ mode: "auto" }, loadSystemMemoryMeta()).mode).toBe("off");
+      expect(makeEngine({ mode: "auto" }).memoryMode()).toBe("off");
+    } finally {
+      if (prev === undefined) delete process.env.RUNE_MEMORY_MODE;
+      else process.env.RUNE_MEMORY_MODE = prev;
+    }
+  });
+
+  it("a sidecar carrying a live mode AND a withdrawn cadence still reports the migration", () => {
+    // V8 finding 31, and it is the founder's own sidecar: `mode: "auto"` beside
+    // `schedule: "daily"`. They chose daily; the cadence is gone; the explicit
+    // mode used to short-circuit before the migration branch and they were
+    // never told.
+    saveSystemMemoryMeta({ mode: "auto", schedule: "daily" });
+    const r = resolveMemoryMode(undefined, loadSystemMemoryMeta());
+    expect(r.mode).toBe("auto");
+    expect(r.migration?.from).toBe("daily");
+    expect(r.migration?.note).toContain("cadence withdrawn");
+    // And choosing a mode by hand spends the leftover cadence with the note.
+    const engine = makeEngine();
+    engine.setMemoryMode("manual");
+    expect(loadSystemMemoryMeta().schedule).toBeUndefined();
+    expect(resolveMemoryMode(undefined, loadSystemMemoryMeta()).migration).toBeUndefined();
+    engine.close();
   });
 
   it("cycles off → auto → manual → off", () => {

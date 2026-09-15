@@ -8,6 +8,7 @@ import {
   hasStoredCredential,
   loadConfig,
   loadSecrets,
+  setConfigValue,
   providerKeyEntries,
   setProviderKey as persistKey,
   addProviderKey as persistAddKey,
@@ -456,8 +457,21 @@ if (command === "memory") {
   {
     const asked = parseMemoryMode(sub === "mode" ? arg : sub);
     if (asked) {
-      saveSystemMemoryMeta({ mode: asked, modeMigration: undefined });
+      // The sidecar is the LIVE choice; the config is the one that survives a
+      // session that is not running. V8 finding 8: with the mode only in the
+      // sidecar, and the sidecar outranking everything, there was no way to
+      // turn memory off from outside a session at all — which is the state a
+      // person is in when memory has gone wrong and they want it stopped.
+      // Writing both is what makes `rune memory off` mean it.
+      saveSystemMemoryMeta({ mode: asked, modeMigration: undefined, schedule: undefined });
+      let wrote = "";
+      try {
+        wrote = setConfigValue("memory.mode", asked, { workspaceRoot: workspace }).path;
+      } catch {
+        // A config we cannot write is a mode that lasts this session. Say so.
+      }
       out(`  memory: ${asked} — ${describeMemoryMode(asked)}`);
+      out(wrote ? `  written to ${wrote}` : "  (config not writable — this session only)");
       process.exit(0);
     }
     if (sub === "mode") {
