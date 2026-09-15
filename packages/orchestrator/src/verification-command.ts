@@ -841,6 +841,35 @@ export function ranZeroTests(command: string, output: string | undefined): boole
   return hasTestSelector(command);
 }
 
+/** A runner that reports its assertion count, and the count itself. */
+const RAN_TESTS = /(?:^|\n)Ran \d+ tests? across \d+ files?\./;
+const ASSERTION_COUNT = /(?:^|\n)\s*(\d+) expect\(\) calls/;
+
+/**
+ * Whether a runner collected tests, ran them green, and ASSERTED NOTHING.
+ *
+ * The second half of "the runner measured nothing" (V7 finding 9), and the
+ * half `ranZeroTests` cannot see: `test("it works", () => {})` collects,
+ * passes, and exits 0. The model wrote exactly that file, ran it, cited it for
+ * a criterion naming no file, and the criterion derived `satisfied` at rung
+ * `observed` with the product byte-identical to HEAD.
+ *
+ * Read off the runner's OWN assertion count rather than off the test's source,
+ * because the source is not what ran. Bun prints ` N expect() calls` when N is
+ * positive and omits the line entirely when it is zero, so a run that says it
+ * ran tests and does not say it asserted anything asserted nothing. Scoped to
+ * that vocabulary on purpose: a runner that never reports assertions (pytest,
+ * cargo) prints no `Ran N tests across` line either and is not judged here —
+ * this refuses to guess, exactly as `ranZeroTests` refuses to guess about a
+ * `bun test` whose output it cannot read.
+ */
+export function assertedNothing(output: string | undefined): boolean {
+  const text = checkOutputText(output);
+  if (!RAN_TESTS.test(text)) return false;
+  const stated = ASSERTION_COUNT.exec(text);
+  return stated === null || Number(stated[1]) === 0;
+}
+
 type PathParts = {
   norm: string;
   segs: string[];

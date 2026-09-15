@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { demoteStaleCriteria } from "../../../packages/orchestrator/src/lifecycle";
+import { changesTheWork, demoteStaleCriteria } from "../../../packages/orchestrator/src/lifecycle";
 import type { Criterion } from "../../../packages/protocol/src/index";
 
 function criterion(rung: Criterion["rung"], head: string | null, dirty: boolean): Criterion {
@@ -72,5 +72,34 @@ describe("demoteStaleCriteria", () => {
     const c = [criterion("verified", null, false)];
     expect(demoteStaleCriteria(c, { head: "bbb", dirty: true })).toEqual([]);
     expect(c[0]!.rung).toBe("verified");
+  });
+});
+
+describe("the harness's own footprint is not the tree moving (V7 finding 10)", () => {
+  // Rune writes `<workspace>/.rune/tool-children.jsonl` DURING a run. In any
+  // project whose `.gitignore` has not been told about `.rune/` that made the
+  // tree dirty between the check and the verdict, so `treeMovedUnder` fired on
+  // Rune's own evidence and a genuinely passing acceptance read `stale`.
+  // Measured end to end in `acceptance-across-sessions.test.ts`; this is the
+  // porcelain reading underneath it.
+  const dirtyFrom = (porcelain: string): boolean =>
+    porcelain.split("\n").some((line) => changesTheWork(line));
+
+  test("Rune's own directory is not dirt, in any of its spellings", () => {
+    expect(dirtyFrom("?? .rune/")).toBe(false);
+    expect(dirtyFrom("?? .rune/tool-children.jsonl")).toBe(false);
+    expect(dirtyFrom(" M .gear/mission.md")).toBe(false);
+    expect(dirtyFrom("")).toBe(false);
+  });
+
+  test("everything else still is, including what the model left untracked", () => {
+    expect(dirtyFrom("?? mine.test.ts")).toBe(true);
+    expect(dirtyFrom(" M api.ts")).toBe(true);
+    expect(dirtyFrom('?? "spaced name.ts"')).toBe(true);
+    // A rename reads its DESTINATION, which is where the content now is.
+    expect(dirtyFrom("R  old.ts -> new.ts")).toBe(true);
+    expect(dirtyFrom("R  api.ts -> .rune/api.ts")).toBe(false);
+    // One harness line beside one real change is still a changed tree.
+    expect(dirtyFrom("?? .rune/\n M api.ts")).toBe(true);
   });
 });

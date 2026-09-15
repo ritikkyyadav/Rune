@@ -67,9 +67,10 @@ import type {
   ToolCallOutput,
 } from "@rune/tool-registry";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { createHash } from "node:crypto";
 
-import { samePathToken } from "./verification-command";
+import { assertedNothing, ranZeroTests, samePathToken } from "./verification-command";
 import {
   setConfigValue,
   SessionManager,
@@ -335,6 +336,7 @@ import {
   inheritedEmptyCompletions,
   inheritedRepairTurns,
   lifecycleDigest,
+  notFromParentCommit,
   previousRunWasInterrupted,
   runSeqFromEvents,
   statusFromStopReason,
@@ -1424,7 +1426,7 @@ export class Engine {
   /** Every check this session ran, with the verdict the RUNTIME read.
    *  The only thing a criterion's rung is ever derived from. */
   private readonly checkLog = new CheckLog({
-    authoredThisRun: (paths) => this.authoredThisRun(paths),
+    authoredThisTask: (paths) => this.authoredThisTask(paths),
     // Un-memoised, on purpose: evidence is dated by when the CHECK ran, and a
     // memo dates it by when the last measurement was taken.
     revisionNow: () => this.runRevision(this.brief?.touch, { fresh: true }),
@@ -5705,6 +5707,12 @@ export class Engine {
             at: Date.now(),
             summary: verdict.summary,
             ...(verdict.exitCode != null ? { exitCode: verdict.exitCode } : {}),
+            // Asked of THIS run, from the output the runtime read, at the one
+            // moment the output is in hand (V7 finding 9).
+            ...(verdict.passed &&
+            (ranZeroTests(command, output.result) || assertedNothing(output.result))
+              ? { measuredNothing: true }
+              : {}),
             durationMs: output.durationMs,
           });
         },
@@ -6987,9 +6995,31 @@ export class Engine {
     // Out of the workspace before anything else happens. The criteria the
     // contract carries name the STAGED copies, so the command that runs at
     // the finish gate is one no tool in this run could have edited.
+    // The vault sits beside the database, keyed by workspace, and OUTLIVES the
+    // run — which is the whole of V7 finding 3. Without it the in-workspace
+    // copy of the oracle is the seed of every future stage, so a session that
+    // rewrote `check.mjs` and built nothing was measured by its own rewrite at
+    // the next `rune` invocation: `S1: partial → S2: met`, tree byte-identical
+    // to HEAD. With it, a workspace copy that no longer hashes to its pin is
+    // not staged at all; the pinned bytes are, and the run records that it
+    // happened.
     this.stagedAcceptance ??= stageAcceptance(specs, {
       workspaceRoot: this.config.workspaceRoot,
-      ...(this.config.dbPath ? { stagingBase: dirname(this.config.dbPath) } : {}),
+      ...(this.config.dbPath
+        ? {
+            stagingBase: dirname(this.config.dbPath),
+            vault: {
+              dir: join(
+                dirname(this.config.dbPath),
+                "acceptance-pins",
+                createHash("sha256")
+                  .update(resolve(this.config.workspaceRoot))
+                  .digest("hex")
+                  .slice(0, 16),
+              ),
+            },
+          }
+        : {}),
     });
     const stated = acceptanceCriteria(this.stagedAcceptance.specs);
     // A resumed run already has them on its restored brief: match by id so a
@@ -7022,6 +7052,19 @@ export class Engine {
     // `runtime` origin: the harness stated these, and only a `user` amendment
     // can ever remove one.
     this.contract = carryForward(this.contract, brief, "runtime");
+    // The pin, on the row, so the record answers "which oracle measured this"
+    // without anyone having to go and look at the vault.
+    this.contract.acceptance = {
+      pins: this.stagedAcceptance.pins,
+      notes: this.stagedAcceptance.notes,
+    };
+    for (const note of this.stagedAcceptance.notes) {
+      this.recorder?.record({
+        kind: "acceptance_pin",
+        severity: "warn",
+        summary: note,
+      } as never);
+    }
   }
 
   /**
@@ -7130,22 +7173,30 @@ export class Engine {
   }
 
   /**
-   * Did this run write the program this check runs? The write ledger answers.
+   * Did this TASK write the program this check runs? Two witnesses.
    *
-   * `taskState.writtenFiles` is every file the task has written, cumulative —
-   * the same list the verdict's `wrote` flag reads — so a script the model
-   * created OR modified this run is on it. Matching is exact (`samePathToken`,
-   * the same path however it was spelled): a wrong yes here refuses an honest
-   * citation, so none of `pathsCorrespond`'s module fuzz is used.
+   * The write ledger first: `taskState.writtenFiles` is every file the task has
+   * written, cumulative — the same list the verdict's `wrote` flag reads — so a
+   * script the model created OR modified this run is on it. Matching is exact
+   * (`samePathToken`, the same path however it was spelled): a wrong yes here
+   * refuses an honest citation, so none of `pathsCorrespond`'s module fuzz is
+   * used.
+   *
+   * Then git, because the ledger is a fact about a PROCESS and the question is
+   * about the WORK. V7 finding 8: `liveSpine` is this Engine's, so a check the
+   * run wrote in session 1 settled a criterion in session 2 — the ledger was
+   * empty and the script was still on disk. A program that is untracked, or
+   * tracked and modified, is not the commit's program however many sessions
+   * ago it was written, and that answer survives the crash and the restart the
+   * ledger does not.
    */
-  private authoredThisRun(paths: readonly string[]): string | undefined {
+  private authoredThisTask(paths: readonly string[]): string | undefined {
     if (paths.length === 0) return undefined;
     const written = this.liveSpine?.writtenFiles ?? [];
-    if (written.length === 0) return undefined;
     for (const path of paths) {
       if (written.some((file) => samePathToken(path, file))) return path;
     }
-    return undefined;
+    return notFromParentCommit(this.config.workspaceRoot, paths);
   }
 
   /**

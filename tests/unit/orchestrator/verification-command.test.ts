@@ -6,6 +6,8 @@ import {
   commandProgramPaths,
   samePathToken,
   projectLevelCheck,
+  ranZeroTests,
+  assertedNothing,
 } from "../../../packages/orchestrator/src/verification-command";
 
 describe("verification commands name a check that actually executes", () => {
@@ -309,5 +311,40 @@ describe("the entry script, and the argv after it (V6 finding 2)", () => {
     // citation.
     expect(samePathToken("api.test.ts", "api.ts")).toBe(false);
     expect(samePathToken("src/csv.ts", "tests/csv.test.ts")).toBe(false);
+  });
+});
+
+describe("a runner that measured nothing (V7 finding 9)", () => {
+  // The model wrote `test("it works", () => {})`, ran it, cited it for a
+  // criterion naming no file, and the criterion derived `satisfied` with the
+  // product byte-identical. The runner collected a test and asserted nothing —
+  // which `ranZeroTests` cannot see, because something DID run. Bun prints its
+  // assertion count only when it is positive, so the absence of the line is
+  // the count. Held to the runner's real output, both ways.
+  const EMPTY = " 1 pass\n 0 fail\nRan 1 test across 1 file. [10.00ms]";
+  const REAL = " 1 pass\n 0 fail\n 1 expect() calls\nRan 1 test across 1 file. [12.00ms]";
+
+  test("a green run with no assertions measured nothing", () => {
+    expect(assertedNothing(EMPTY)).toBe(true);
+    expect(ranZeroTests("bun test mine.test.ts", EMPTY)).toBe(false);
+  });
+
+  test("a green run that asserted is a measurement", () => {
+    expect(assertedNothing(REAL)).toBe(false);
+  });
+
+  test("a runner that reports no assertion count at all is not judged here", () => {
+    // pytest and cargo never print one, and they never print `Ran N tests
+    // across` either. Refusing to guess is the same rule `ranZeroTests` keeps
+    // for a `bun test` whose output it cannot read.
+    expect(assertedNothing("collected 3 items\n3 passed in 0.04s")).toBe(false);
+    expect(assertedNothing("test result: ok. 12 passed; 0 failed")).toBe(false);
+    expect(assertedNothing(undefined)).toBe(false);
+    expect(assertedNothing("")).toBe(false);
+  });
+
+  test("the shell's JSON envelope is read the same way", () => {
+    expect(assertedNothing(JSON.stringify({ stdout: EMPTY, stderr: "" }))).toBe(true);
+    expect(assertedNothing(JSON.stringify({ stdout: REAL, stderr: "" }))).toBe(false);
   });
 });

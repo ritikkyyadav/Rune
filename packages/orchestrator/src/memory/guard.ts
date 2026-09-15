@@ -55,8 +55,14 @@ const WEAKENING_PATTERNS: ReadonlyArray<{ rule: string; re: RegExp }> = [
     re: /\b(?:skip|no\s+need\s+for|don'?t\s+(?:bother\s+)?(?:run|running|writ\w+)|never\s+run)\b[^.]{0,40}\b(?:tests?|typecheck|lint|verif\w+|check\w*|gates?)\b|--no-verify|\bassume\s+(?:it\s+)?(?:works|passes|passed)\b|\b(?:tests?|checks?)\s+(?:are\s+)?(?:optional|a\s+waste|unnecessary)\b|\btrust\s+(?:the\s+|your\s+)?(?:tests?|checks?|results?)\b[^.]{0,40}\b(?:yourself|your\s+own|you\s+write|own)\b|\b(?:one|a\s+single)\s+(?:green\s+)?(?:run|pass|test\s+run)\b[^.]{0,50}\b(?:enough|sufficient|suffices)\b|\b(?:don'?t|do\s+not|never|no\s+need\s+to)\b(?:\s+\w+){0,4}\s+re-?(?:run|check|verify|test)\b/i,
   },
   {
+    // `no` is not a verb here. It was in the first alternative beside `ignore`
+    // and `remove`, which made "ships alone on no budget" — a true fact about
+    // the founder, and one of the things memory exists to remember — read as an
+    // instruction to lift the cost cap. A bare `no` only weakens a boundary
+    // when it names the boundary's own noun (`no cost cap`, `no turn limit`),
+    // so that is what it has to name.
     rule: "budget",
-    re: /\b(?:ignore|raise|remove|lift|disable|no)\b[^.]{0,30}\b(?:budget|cost\s+cap|spend\s+limit|token\s+limit|turn\s+limit|max\s*turns)\b|\b(?:spend|cost)\b[^.]{0,20}\b(?:doesn'?t\s+matter|no\s+object|unlimited)\b/i,
+    re: /\b(?:ignore|raise|remove|lift|disable)\b[^.]{0,30}\b(?:budget|cost\s+cap|spend\s+limit|token\s+limit|turn\s+limit|max\s*turns)\b|\bno\b[^.]{0,20}\b(?:cost\s+cap|spend\s+limit|token\s+limit|turn\s+limit|max\s*turns|budget\s+(?:cap|limit))\b|\b(?:spend|cost)\b[^.]{0,20}\b(?:doesn'?t\s+matter|no\s+object|unlimited)\b/i,
   },
   {
     rule: "acceptance",

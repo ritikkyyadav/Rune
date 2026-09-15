@@ -145,7 +145,100 @@ export function workspaceRevision(root: string): { head: string | null; dirty: b
   // Untracked files count: a run that created files and never committed them
   // has changed the tree, and a criterion verified before that is not safe.
   const status = run(["status", "--porcelain", "--untracked-files=normal"]);
-  return { head, dirty: status !== null && status.length > 0 };
+  if (status === null) return { head, dirty: false };
+  return { head, dirty: status.split("\n").some((line) => changesTheWork(line)) };
+}
+
+/**
+ * Rune's own footprint inside the workspace — not work, and not dirt.
+ *
+ * V7 finding 10. The harness writes `<workspace>/.rune/tool-children.jsonl`
+ * (and the run's mission note beside it) DURING the run, so in any project
+ * whose `.gitignore` has not been told about `.rune/` the tree was `<sha>`
+ * when a check ran and `<sha>+dirty` by the time the verdict was taken:
+ * `treeMovedUnder` fired on Rune's own evidence and reported a genuinely
+ * passing acceptance as `stale`. Measured with two identical workspaces,
+ * identical finished work and an identical honest check, differing in one line
+ * of `.gitignore`: `met/satisfied` with it, `partial/stale` without.
+ *
+ * A verdict may depend on the work and on nothing else. The harness's own
+ * directory is therefore excluded from the dirty computation — the freshness
+ * question is "did the tree move under this claim", and Rune moving its own
+ * ledger is not the tree moving. Everything else, including every untracked
+ * file the model wrote, still counts.
+ */
+const HARNESS_OWNED = /^\.(?:rune|gear|alan)\//;
+
+/**
+ * One `git status --porcelain` line: is it a change to the WORK?
+ *
+ * Exported because the vocabulary IS the distinction, and it is held to
+ * examples rather than to the regexp's shape — the same way the runner
+ * vocabularies are.
+ */
+export function changesTheWork(line: string): boolean {
+  if (!line.trim()) return false;
+  // `XY <path>`, or `XY <old> -> <new>` for a rename. Quoted when the path has
+  // characters git will not print raw; the quotes do not change the prefix.
+  const rest = line.slice(3);
+  const arrow = rest.indexOf(" -> ");
+  const path = (arrow === -1 ? rest : rest.slice(arrow + 4)).replace(/^"|"$/g, "");
+  return !HARNESS_OWNED.test(path);
+}
+
+/**
+ * The first of `paths` that git says is not the parent commit's file: it is
+ * untracked, or it is tracked and modified. Undefined when every one of them
+ * is exactly what the tree was opened with, or when there is no git to ask.
+ *
+ * V7 finding 8. "Did THIS RUN write the program this check runs?" was asked of
+ * the live write ledger, which is one Engine's. The next `rune` invocation —
+ * or simply a new session on the same workspace, which is how anyone works —
+ * has an empty ledger and the script is still on disk, so a check the run
+ * itself wrote settled a criterion one session later. The ledger cannot answer
+ * a question about the TASK, only about the process; git can, it survives
+ * every crash and every restart, and it is the same question: a check program
+ * that is not in the commit the work started from is a program the work
+ * produced.
+ *
+ * Deliberately conservative in the other direction from the ledger: a script
+ * the PERSON wrote and never committed also reads as not-from-the-parent, and
+ * a criterion cited on it derives `needs_review` rather than `satisfied`.
+ * That costs a person one commit; the reverse costs the verdict.
+ */
+export function notFromParentCommit(root: string, paths: readonly string[]): string | undefined {
+  const named = paths.filter((p) => typeof p === "string" && p.trim().length > 0);
+  if (named.length === 0) return undefined;
+  let status: string;
+  try {
+    status = execFileSync(
+      "git",
+      ["status", "--porcelain", "--untracked-files=normal", "--", ...named],
+      {
+        cwd: root,
+        encoding: "utf8",
+        timeout: 5_000,
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    );
+  } catch {
+    // No git, or a path git will not take. Nothing is KNOWN to be self-authored,
+    // which is the reading that keeps an honest citation.
+    return undefined;
+  }
+  const moved = new Set<string>();
+  for (const line of status.split("\n")) {
+    if (!line.trim()) continue;
+    const rest = line.slice(3);
+    const arrow = rest.indexOf(" -> ");
+    moved.add((arrow === -1 ? rest : rest.slice(arrow + 4)).replace(/^"|"$/g, ""));
+  }
+  if (moved.size === 0) return undefined;
+  for (const path of named) {
+    const norm = path.replace(/^\.\//, "");
+    if (moved.has(norm) || moved.has(path)) return path;
+  }
+  return undefined;
 }
 
 /** What a claim or a verdict is a claim ABOUT: a revision, and the content of

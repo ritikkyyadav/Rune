@@ -40,6 +40,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -336,6 +337,21 @@ export interface TaskContract {
    * "0 of 2 verified" count hides.
    */
   uncovered: string[];
+  /**
+   * Each staged acceptance script's sha256 as of the FIRST intake against this
+   * workspace, and what the stage did about it (V7 finding 3).
+   *
+   * The record half of the pin: the vault beside the database holds the bytes
+   * and survives the run, this says what they hashed to and is in the session
+   * log, so `rune audit` can answer "was the oracle this run measured with the
+   * one the person stated" from the record rather than from the filesystem.
+   * Absent when no acceptance is configured, which is every run today.
+   */
+  acceptance?: {
+    pins: Array<{ path: string; digest: string }>;
+    /** Empty on an honest run; one line per script staged from its pin. */
+    notes: string[];
+  };
 }
 
 export interface CreateContractInput {
@@ -727,6 +743,78 @@ export interface StagedAcceptance {
   digests: Record<string, string>;
   /** Workspace-relative → staged absolute, for the record and for a reader. */
   staged: Array<{ from: string; to: string }>;
+  /**
+   * Workspace-relative → the sha256 pinned at the FIRST intake for this
+   * workspace, for the contract row and for a reader (V7 finding 3).
+   */
+  pins: Array<{ path: string; digest: string }>;
+  /**
+   * What the stage did that the caller must see: a script whose workspace copy
+   * no longer matches its pin, staged from the pinned copy instead. Empty on
+   * every honest run.
+   */
+  notes: string[];
+}
+
+/**
+ * The durable copy of every acceptance script, and its digest, kept OUTSIDE
+ * the workspace across runs.
+ *
+ * V7 finding 3 — V6's first critical, reopening one session later.
+ * `installAcceptance` runs `stagedAcceptance ??= stageAcceptance(specs, …)` at
+ * the intake of EVERY Engine, seeded from the workspace AS IT STANDS THEN. The
+ * staging directory is discarded at the end of the run, so the in-workspace
+ * copy of the oracle was still the seed of every future stage: session 1 built
+ * nothing and rewrote `.rune-acceptance/check.mjs` to `console.log('1 pass, 0
+ * fail')` — honest `partial`, the shipped guarantee holding — and session 2, a
+ * new `rune` invocation on the same workspace with the same `--acceptance`,
+ * staged the tampered file and reported `met` with the tree byte-identical to
+ * HEAD.
+ *
+ * "The command that runs at the finish gate is one no tool IN THIS RUN could
+ * have edited" was the guarantee as written, and it is narrower than the
+ * property anyone reading it assumes. So the pin is the property: the first
+ * intake records each script's digest AND keeps its bytes here; every later
+ * intake stages from the workspace only while the workspace copy still hashes
+ * to the pin, and otherwise stages the pinned copy and says so. Editing the
+ * oracle in the workspace then changes nothing, in this run or in any after
+ * it — which is what a person who states an acceptance means by stating one.
+ *
+ * A person who legitimately revises their acceptance file deletes this
+ * directory, or points `--acceptance` at the revised file: the pin is per
+ * workspace and per relative path, and `rm -rf` on a directory beside the
+ * database is a thing a person can do and a run cannot reach.
+ */
+export interface AcceptanceVault {
+  /** Where the pinned copies and the manifest live. Never inside the workspace. */
+  dir: string;
+}
+
+/** The manifest file inside the vault: workspace-relative path → sha256. */
+const VAULT_MANIFEST = "pinned.json";
+
+function readVault(dir: string): Record<string, string> {
+  try {
+    const raw = JSON.parse(readFileSync(join(dir, VAULT_MANIFEST), "utf8")) as unknown;
+    if (!raw || typeof raw !== "object") return {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof v === "string" && /^[0-9a-f]{64}$/.test(v)) out[k] = v;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function writeVault(dir: string, pins: Record<string, string>): void {
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, VAULT_MANIFEST), JSON.stringify(pins, null, 2) + "\n");
+  } catch {
+    // A vault that cannot be written leaves the run with the old behaviour and
+    // no false claim: `notes` stays empty and nothing pretends to be pinned.
+  }
 }
 
 /** Whether a resolved path is inside the root (the workspaceDigest rule). */
@@ -739,15 +827,20 @@ function shellQuote(path: string): string {
   return /^[A-Za-z0-9_@%+=:,./-]+$/.test(path) ? path : `'${path.replace(/'/g, `'\\''`)}'`;
 }
 
+/** Everything a staging pass accumulates, so `copyInto` stays one call. */
+interface StageSink {
+  digests: Record<string, string>;
+  staged: Array<{ from: string; to: string }>;
+  /** The vault's manifest, read at the start and written back if it grew. */
+  pins: Record<string, string>;
+  vaultDir: string | undefined;
+  notes: string[];
+  pinned: boolean;
+}
+
 /** Copy one workspace file or directory into the stage; returns what it wrote. */
-function copyInto(
-  workspaceRoot: string,
-  stageRoot: string,
-  rel: string,
-  digests: Record<string, string>,
-  staged: Array<{ from: string; to: string }>,
-): void {
-  if (staged.length >= STAGE_MAX_FILES) return;
+function copyInto(workspaceRoot: string, stageRoot: string, rel: string, sink: StageSink): void {
+  if (sink.staged.length >= STAGE_MAX_FILES) return;
   const from = resolve(workspaceRoot, rel);
   if (!inside(workspaceRoot, from)) return;
   let stats;
@@ -756,7 +849,8 @@ function copyInto(
   } catch {
     return;
   }
-  const to = join(stageRoot, relative(workspaceRoot, from));
+  const relPath = relative(workspaceRoot, from);
+  const to = join(stageRoot, relPath);
   if (stats.isDirectory()) {
     let entries: string[];
     try {
@@ -764,16 +858,51 @@ function copyInto(
     } catch {
       return;
     }
-    for (const entry of entries)
-      copyInto(workspaceRoot, stageRoot, join(rel, entry), digests, staged);
+    for (const entry of entries) copyInto(workspaceRoot, stageRoot, join(rel, entry), sink);
     return;
   }
   if (!stats.isFile() || stats.size > STAGE_MAX_BYTES) return;
-  if (staged.some((row) => row.to === to)) return;
+  if (sink.staged.some((row) => row.to === to)) return;
+
+  // ── The pin (V7 finding 3) ──
+  //
+  // The workspace copy is the seed only while it still hashes to what the
+  // FIRST intake recorded. Once it does not, the workspace copy is not this
+  // acceptance any more: the pinned bytes are staged instead and the run says
+  // so, rather than measuring the work with an oracle the work rewrote.
+  let source = from;
+  const key = relPath.split(sep).join("/");
+  const vaultCopy = sink.vaultDir ? join(sink.vaultDir, "files", relPath) : undefined;
+  if (sink.vaultDir) {
+    let here: string | null = null;
+    try {
+      here = createHash("sha256").update(readFileSync(from)).digest("hex");
+    } catch {
+      here = null;
+    }
+    const pinned = sink.pins[key];
+    if (pinned === undefined) {
+      // First intake for this path: keep the bytes and record the digest.
+      if (here !== null && vaultCopy) {
+        try {
+          mkdirSync(dirname(vaultCopy), { recursive: true });
+          copyFileSync(from, vaultCopy);
+          sink.pins[key] = here;
+          sink.pinned = true;
+        } catch {
+          // No vault, no pin, and no claim of one.
+        }
+      }
+    } else if (here !== pinned && vaultCopy && existsSync(vaultCopy)) {
+      source = vaultCopy;
+      sink.notes.push(`acceptance script changed in workspace — pinned copy used (${key})`);
+    }
+  }
+
   mkdirSync(dirname(to), { recursive: true });
-  copyFileSync(from, to);
-  digests[to] = createHash("sha256").update(readFileSync(to)).digest("hex");
-  staged.push({ from: relative(workspaceRoot, from), to });
+  copyFileSync(source, to);
+  sink.digests[to] = createHash("sha256").update(readFileSync(to)).digest("hex");
+  sink.staged.push({ from: relPath, to });
 }
 
 /**
@@ -783,10 +912,14 @@ function copyInto(
  * Pure of the Engine on purpose: it takes the two roots and the specs, so the
  * property it exists for — "a later edit inside the workspace changes
  * nothing" — is testable without driving a run.
+ *
+ * `vault` makes that property hold ACROSS runs as well as within one; see
+ * `AcceptanceVault`. Without it the behaviour is exactly what it was, which is
+ * what every unit call site wants.
  */
 export function stageAcceptance(
   specs: readonly AcceptanceSpec[],
-  opts: { workspaceRoot: string; stagingBase?: string },
+  opts: { workspaceRoot: string; stagingBase?: string; vault?: AcceptanceVault },
 ): StagedAcceptance {
   const workspaceRoot = resolve(opts.workspaceRoot);
   // A base inside the workspace would defeat the whole point, quietly.
@@ -795,15 +928,26 @@ export function stageAcceptance(
     inside(workspaceRoot, requested) || requested === workspaceRoot ? tmpdir() : requested;
   mkdirSync(base, { recursive: true });
   const root = mkdtempSync(join(base, "rune-acceptance-"));
-  const digests: Record<string, string> = {};
-  const staged: Array<{ from: string; to: string }> = [];
+  // A vault inside the workspace would be reachable by the thing it pins.
+  const vaultDir =
+    opts.vault && !inside(workspaceRoot, resolve(opts.vault.dir))
+      ? resolve(opts.vault.dir)
+      : undefined;
+  const sink: StageSink = {
+    digests: {},
+    staged: [],
+    pins: vaultDir ? readVault(vaultDir) : {},
+    vaultDir,
+    notes: [],
+    pinned: false,
+  };
 
   const rewritten = specs.map((spec) => {
     const named = [
       ...(spec.files ?? []),
       ...(spec.command ? commandPaths(spec.command).filter((t) => STAGEABLE.test(t)) : []),
     ];
-    for (const rel of named) copyInto(workspaceRoot, root, rel, digests, staged);
+    for (const rel of named) copyInto(workspaceRoot, root, rel, sink);
     if (!spec.command) return { ...spec };
     // Only the tokens that actually became a staged file are rewritten; a
     // path that named nothing, or named something outside the workspace, is
@@ -813,7 +957,7 @@ export function stageAcceptance(
       const full = resolve(workspaceRoot, token);
       if (!inside(workspaceRoot, full)) continue;
       const to = join(root, relative(workspaceRoot, full));
-      if (digests[to]) map.set(token, to);
+      if (sink.digests[to]) map.set(token, to);
     }
     if (map.size === 0) return { ...spec };
     const pattern = [...map.keys()]
@@ -826,7 +970,18 @@ export function stageAcceptance(
     return { ...spec, command };
   });
 
-  return { root, specs: rewritten, digests, staged };
+  if (vaultDir && sink.pinned) writeVault(vaultDir, sink.pins);
+
+  return {
+    root,
+    specs: rewritten,
+    digests: sink.digests,
+    staged: sink.staged,
+    pins: Object.entries(sink.pins)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([path, digest]) => ({ path, digest })),
+    notes: sink.notes,
+  };
 }
 
 /**
@@ -1168,6 +1323,18 @@ export function criterionStatus(
   // receipt is worth. Both halves again: the log is authoritative live, the
   // verifier name survives on a saved row with no check log behind it.
   if (bound?.latest.authoredBy || evidence.verifier === "self-authored-check@1") {
+    return "needs_review";
+  }
+  // ── The runner collected nothing ──
+  //
+  // V7 finding 9, and the same shape as the clause above: `bun test
+  // nothing.test.ts` exits 0 having executed no test, and an exit code from a
+  // runner that measured nothing says nothing about the work. The acceptance
+  // gate has refused this since M1 (`acceptanceDidNotRun`) and the parent
+  // probe since F-5B (`couldNotRunOnParent`); the model's own citation was
+  // where nobody asked. Both halves again — the log live, the verifier name on
+  // a saved row.
+  if (bound?.latest.measuredNothing || evidence.verifier === "no-measurement@1") {
     return "needs_review";
   }
   // A verifier that ran and recorded no result could not SAY. The acceptance

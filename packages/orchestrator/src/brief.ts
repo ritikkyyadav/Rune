@@ -564,6 +564,19 @@ export interface CheckRun {
    */
   authoredBy?: string;
   /**
+   * The runner ran and COLLECTED NOTHING (V7 finding 9).
+   *
+   * `ranZeroTests`'s vocabulary — `0 pass`, `no tests found`, `collected 0
+   * items`, `Tests: 0 total` — asked of THIS run rather than only of the
+   * parent tree. `acceptanceDidNotRun` has asked it at the acceptance gate
+   * since M1 and `couldNotRunOnParent` asks it of the parent commit; the model
+   * citing its own green `bun test nothing.test.ts` was the one place nobody
+   * asked, and an exit code from a runner that executed no test is not a
+   * measurement of anything. Set at record time, from the output the runtime
+   * read; never from a caller.
+   */
+  measuredNothing?: boolean;
+  /**
    * The workspace revision AT THE MOMENT THIS RAN (V6 finding 4).
    *
    * `BriefLedger.record` used to stamp the evidence at CITATION time, so every
@@ -622,14 +635,17 @@ export class CheckLog {
   private seq = 0;
 
   /**
-   * `authoredThisRun` answers, from the runtime's write ledger, whether this
-   * run wrote one of the program paths handed to it — and which. Absent (an
+   * `authoredThisTask` answers whether this TASK wrote one of the program
+   * paths handed to it — and which. The runtime asks its own write ledger and
+   * then git, because a ledger is a fact about one process and the question is
+   * about the work: a check program the run wrote in a PREVIOUS session is
+   * still the measured thing grading itself (V7 finding 8). Absent (an
    * embedder, a unit call site) means nothing is known to be self-authored,
    * which is the reading that keeps an honest citation.
    */
   constructor(
     private readonly runtime?: {
-      authoredThisRun?: (paths: readonly string[]) => string | undefined;
+      authoredThisTask?: (paths: readonly string[]) => string | undefined;
       /** The workspace revision RIGHT NOW, un-memoised, scoped to the brief. */
       revisionNow?: () => StampedRevision;
     },
@@ -649,7 +665,7 @@ export class CheckLog {
     // receipt can never reach `satisfied` anyway.
     const authoredBy =
       (run.kind ?? "check") === "check"
-        ? this.runtime?.authoredThisRun?.(commandProgramPaths(run.command))
+        ? this.runtime?.authoredThisTask?.(commandProgramPaths(run.command))
         : undefined;
     const revision =
       (run.kind ?? "check") === "check"
@@ -787,6 +803,20 @@ export function rungForCommand(log: CheckLog, command: string): RungVerdict {
           last.summary,
           `this run wrote \`${last.authoredBy}\` — a check the run authored cannot settle a ` +
             `criterion; cite a check that existed before this run, or a project-wide one`,
+        ),
+      },
+    };
+  }
+  if (last.measuredNothing) {
+    return {
+      ok: true,
+      rung: "observed",
+      evidence: {
+        ...base,
+        verifier: "no-measurement@1",
+        detail: joinDetail(
+          last.summary,
+          "the runner exited 0 having collected no tests — an execution receipt, not a verdict",
         ),
       },
     };

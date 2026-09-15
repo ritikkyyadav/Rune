@@ -1027,6 +1027,73 @@ describe("staging the acceptance out of the workspace (V6 finding 1)", () => {
     return dir;
   }
 
+  test("the pin survives the run: a later stage does not re-seed from a rewritten workspace", () => {
+    // V7 finding 3. The stage itself is discarded at the end of a run, so the
+    // in-workspace copy of the oracle was the seed of every future stage:
+    // session 1 rewrote `check.mjs`, session 2 staged the rewrite, and the run
+    // that built nothing read `met`. The vault keeps the bytes and the digest
+    // outside the workspace, and a workspace copy that no longer hashes to the
+    // pin is not staged at all.
+    const dir = workspace();
+    const vaultDir = mkdtempSync(join(tmpdir(), "stage-vault-"));
+    const spec = [
+      {
+        text: "it holds",
+        command: "node .rune-acceptance/check.mjs",
+        source: "evaluator" as const,
+      },
+    ];
+    const first = stageAcceptance(spec, { workspaceRoot: dir, vault: { dir: vaultDir } });
+    try {
+      expect(first.notes).toEqual([]);
+      expect(first.pins.map((p) => p.path)).toEqual([".rune-acceptance/check.mjs"]);
+
+      // The model rewrites the workspace copy between runs.
+      writeFileSync(join(dir, ".rune-acceptance", "check.mjs"), "console.log('forged');\n");
+      const second = stageAcceptance(spec, { workspaceRoot: dir, vault: { dir: vaultDir } });
+      try {
+        expect(readFileSync(second.staged[0]!.to, "utf8")).toBe("console.log('1 pass, 0 fail');\n");
+        expect(second.notes.join("\n")).toContain(
+          "acceptance script changed in workspace — pinned copy used",
+        );
+        // The digest pinned at the FIRST intake is unchanged, and is the one
+        // the contract row carries.
+        expect(second.pins).toEqual(first.pins);
+      } finally {
+        discardStagedAcceptance(second);
+      }
+    } finally {
+      discardStagedAcceptance(first);
+      rmSync(vaultDir, { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("an unchanged workspace copy is staged from the workspace, silently", () => {
+    // The control: the pin is not a second oracle, it is the same one. A run
+    // that touched nothing stages exactly what it always did and says nothing.
+    const dir = workspace();
+    const vaultDir = mkdtempSync(join(tmpdir(), "stage-vault-"));
+    const spec = [
+      {
+        text: "it holds",
+        command: "node .rune-acceptance/check.mjs",
+        source: "evaluator" as const,
+      },
+    ];
+    const first = stageAcceptance(spec, { workspaceRoot: dir, vault: { dir: vaultDir } });
+    const second = stageAcceptance(spec, { workspaceRoot: dir, vault: { dir: vaultDir } });
+    try {
+      expect(second.notes).toEqual([]);
+      expect(readFileSync(second.staged[0]!.to, "utf8")).toBe("console.log('1 pass, 0 fail');\n");
+    } finally {
+      discardStagedAcceptance(first);
+      discardStagedAcceptance(second);
+      rmSync(vaultDir, { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("an in-workspace script is copied out and the command names the copy", () => {
     const dir = workspace();
     const staged = stageAcceptance(
