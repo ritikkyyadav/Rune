@@ -1530,3 +1530,28 @@ the criticals and the highs above close. Two fix lanes are running on disjoint f
 memory, acceptance, the classifier, the durable bound; D: the Rust audit path, adapters,
 visual reviewer, dependency refusal, the layout setting, the footer picker). This is the
 second time the loop has caught what green suites and a careful supervisor did not.
+
+### Addendum 19 — Fix lane D: the audit log lives where RUNE_HOME says, and six more of the second pass's findings closed
+
+`44a4e43`, `78d12d6`, `d5e42bb`, `326ecdc`, `a20d500` (+ a shared commit sequence with lane C).
+The Rust sandbox's `rune_home()` now reads `RUNE_HOME` / `GEAR_HOME` before `~/.rune`, so a rig
+under a scratch home writes its own `audit.jsonl`; proven by cargo test and a TypeScript test
+through the rebuilt binary, mutation-proved both ways. **Residual, stated by the lane:** the
+crate is fixed but the suites do not yet set a scratch home, so the lane's own two unsandboxed
+full-suite gates still appended 295 lines to the founder's real log; the exact `bunfig.toml`
+preload that closes this is in the lane's report and is applied by the supervisor after lane C
+lands (a global preload touches every lane's tree). The adapters' env is an allow-list asserted
+as a whole-key-set equality; `RUNE_EVAL_BUDGET_USD` is the series ceiling (refuses a plan whose
+runs × cap exceed it, stops before a run that would, counts unknown cost as the full cap; the
+dry run prints the series total); the envelope, unknown task ids and malformed budgets handled.
+Reviewer independence is by model lineage, not provider id (`chatgpt-4o-latest` is `gpt`; a
+Claude model behind openrouter is Anthropic). Dependency edges are keyed by step identity and
+re-resolved on every write, both bypasses closed, cycles refused. A child's served origin is a
+claim the lead re-probes itself, never trusted. `[ui] layout` now actually persists — the UI
+lane's "persists correctly" was false and the lane says so; nothing had ever reached
+`config.toml`. The footer picker windows around the selection (frames before and after in
+`fix-d-frames/`). The score-stripper keeps measurements and strikes grades. Supervisor rerun of
+its suites: **193 / 0**, `tsc -p tests/eval` clean, `cargo test -p rune-sandbox` 36 / 0. Lane's
+gates: unit 5,588 / 0 / 1 skip, integration 384 / 0 / 7 skip, cargo 110 / 0, clippy and fmt
+clean. Twelve of the twenty v7 files promoted and removed; three assertions rewritten rather
+than promoted verbatim, each named with its reason.
