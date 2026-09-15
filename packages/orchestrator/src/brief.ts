@@ -42,7 +42,12 @@ import { TASK_KINDS } from "@rune/protocol";
  * where it was born — no engine module may import a surface module, and a gate
  * on Phase 2 counts the violations.
  */
-import { checkRelatedness, normalizeCommand } from "./verification-command";
+import {
+  checkRelatedness,
+  commandProgramPaths,
+  normalizeCommand,
+  samePathToken,
+} from "./verification-command";
 export { isVerificationCommand, normalizeCommand } from "./verification-command";
 
 export const CLAIM_RUNGS: readonly ClaimRung[] = [
@@ -506,6 +511,21 @@ export interface CheckRun {
    * value to an execution id.
    */
   executionId?: string;
+  /**
+   * The program this check runs, when the RUN itself wrote it (V6 finding 3).
+   *
+   * `kind` comes from `isVerificationCommand`, which classifies by NAME: any
+   * script whose basename matches /(test|spec|check|verify|…)/ is a "check".
+   * So a model that writes `verify-header.sh` containing `echo '1 pass, 0
+   * fail'; exit 0`, runs it and cites it got `kind: "check"`, evidence
+   * `check-log@1`, `satisfied`, and the run reported `met` with nothing
+   * changed. A check whose program the run authored could not have FAILED for
+   * any criterion, which is the one thing a criterion is settled by.
+   *
+   * Set only by `CheckLog.record`, from the runtime's own write ledger, and it
+   * names the file so the receipt can say which one.
+   */
+  authoredBy?: string;
 }
 
 /**
@@ -547,6 +567,18 @@ export class CheckLog {
   private seq = 0;
 
   /**
+   * `authoredThisRun` answers, from the runtime's write ledger, whether this
+   * run wrote one of the program paths handed to it — and which. Absent (an
+   * embedder, a unit call site) means nothing is known to be self-authored,
+   * which is the reading that keeps an honest citation.
+   */
+  constructor(
+    private readonly runtime?: {
+      authoredThisRun?: (paths: readonly string[]) => string | undefined;
+    },
+  ) {}
+
+  /**
    * Record one execution, and give it an id.
    *
    * The id is assigned HERE and overwrites anything the caller supplied: the
@@ -555,7 +587,18 @@ export class CheckLog {
    * measurement's name.
    */
   record(run: CheckRun): CheckRun {
-    const recorded: CheckRun = { ...run, executionId: `chk-${++this.seq}` };
+    // Asked HERE, at execution time, because that is when the write ledger
+    // says what this run has written so far. Only for checks: an execution
+    // receipt can never reach `satisfied` anyway.
+    const authoredBy =
+      (run.kind ?? "check") === "check"
+        ? this.runtime?.authoredThisRun?.(commandProgramPaths(run.command))
+        : undefined;
+    const recorded: CheckRun = {
+      ...run,
+      executionId: `chk-${++this.seq}`,
+      ...(authoredBy ? { authoredBy } : {}),
+    };
     this.runs.push(recorded);
     return recorded;
   }
@@ -643,6 +686,29 @@ export function rungForCommand(log: CheckLog, command: string): RungVerdict {
     result: "passed",
     env: envFingerprint(),
   };
+  // ── A check this run wrote is not a check ──
+  //
+  // V6 finding 3. `verify-header.sh` printing `1 pass, 0 fail` classifies as a
+  // check by its NAME, and the execution-receipt clause never fired for it. A
+  // program the run authored could not have failed for the criterion it is
+  // cited against — the run decided what it printed — so it is priced exactly
+  // as an execution receipt is: `observed`, never replayed on the parent, and
+  // `criterionStatus` reads the verifier name and answers `needs_review`.
+  if (last.authoredBy) {
+    return {
+      ok: true,
+      rung: "observed",
+      evidence: {
+        ...base,
+        verifier: "self-authored-check@1",
+        detail: joinDetail(
+          last.summary,
+          `this run wrote \`${last.authoredBy}\` — a check the run authored cannot settle a ` +
+            `criterion; cite a check that existed before this run, or a project-wide one`,
+        ),
+      },
+    };
+  }
   if (last.kind === "execution") {
     return {
       ok: true,
@@ -1019,8 +1085,11 @@ export function createRecordEvidenceTool(
       }
 
       const named = criterion ? criterionScope(criterion.text, ledger.snapshot) : [];
+      // A self-authored check is not set aside: it is RECORDED, with a receipt
+      // that says the run wrote it, so the criterion reads `needs_review`
+      // ("we have no measurement") rather than `unassessed` ("nobody tried").
       const relation =
-        criterion && lastRun?.kind !== "execution"
+        criterion && lastRun?.kind !== "execution" && !lastRun?.authoredBy
           ? checkRelatedness(command, { content: criterion.text, touched: named })
           : null;
       if (relation && !relation.related) {
@@ -1051,7 +1120,13 @@ export function createRecordEvidenceTool(
       // nothing (rungForCommand refuses it either way), and probing twice
       // would spend it again for an answer already on record. An unrelated
       // citation never reaches here, so it never spends one either.
-      if (probeParent && lastRun?.passed && lastRun.kind !== "execution" && !log.parent(command)) {
+      if (
+        probeParent &&
+        lastRun?.passed &&
+        lastRun.kind !== "execution" &&
+        !lastRun.authoredBy &&
+        !log.parent(command)
+      ) {
         const parent = probeParent(command);
         if (parent) log.recordParent(parent);
       }

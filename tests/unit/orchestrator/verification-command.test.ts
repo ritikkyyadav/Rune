@@ -3,6 +3,8 @@ import { isVerificationCommand } from "../../../packages/orchestrator/src/brief"
 import {
   checkRelatedness,
   commandPaths,
+  commandProgramPaths,
+  samePathToken,
   projectLevelCheck,
 } from "../../../packages/orchestrator/src/verification-command";
 
@@ -271,5 +273,41 @@ describe("a check speaks to the step it would close", () => {
     expect(commandPaths("bun test tests/unit/csv.test.ts")).toContain("tests/unit/csv.test.ts");
     // The leading program is not a path it named.
     expect(commandPaths(`python3.11 -c "assert True"`)).toEqual([]);
+  });
+});
+
+describe("the entry script, and the argv after it (V6 finding 2)", () => {
+  const about = (command: string, file: string) => checkRelatedness(command, { touched: [file] });
+
+  test("a filename the script never opens buys nothing", () => {
+    expect(about("node check.mjs header.csv", "header.csv").related).toBe(false);
+    expect(about("node check.mjs header.csv", "check.mjs").related).toBe(true);
+  });
+
+  test("a program that READS its arguments keeps every one of them", () => {
+    // Not a script host: `grep` opens what it is handed.
+    expect(about("grep -q total header.csv", "header.csv").related).toBe(true);
+    // A runner subcommand is not an entry script, so both targets stay.
+    expect(about("bun test a.test.ts b.test.ts", "b.test.ts").related).toBe(true);
+    expect(about("python3 -m pytest tests/a.py tests/b.py", "tests/b.py").related).toBe(true);
+  });
+
+  test("the entry script is read conservatively", () => {
+    expect(commandProgramPaths("node check.mjs header.csv")).toEqual(["check.mjs"]);
+    expect(commandProgramPaths("sh verify-header.sh header.csv")).toEqual(["verify-header.sh"]);
+    expect(commandProgramPaths("./verify.sh header.csv")).toEqual(["./verify.sh"]);
+    // A subcommand, an inline script and a module runner name no entry script.
+    expect(commandProgramPaths("bun test mine.test.ts")).toEqual([]);
+    expect(commandProgramPaths("node -e \"require('./src/csv')\"")).toEqual([]);
+    expect(commandProgramPaths("python3 -m pytest tests/a.py")).toEqual([]);
+  });
+
+  test("`samePathToken` is exact — the same file however it was spelled, and nothing else", () => {
+    expect(samePathToken("./verify.sh", "verify.sh")).toBe(true);
+    expect(samePathToken("verify.sh", "scripts/verify.sh")).toBe(true);
+    // None of `pathsCorrespond`'s module fuzz: a wrong yes refuses an honest
+    // citation.
+    expect(samePathToken("api.test.ts", "api.ts")).toBe(false);
+    expect(samePathToken("src/csv.ts", "tests/csv.test.ts")).toBe(false);
   });
 });

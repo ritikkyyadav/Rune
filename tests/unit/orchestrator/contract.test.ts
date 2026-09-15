@@ -1118,3 +1118,47 @@ describe("staging the acceptance out of the workspace (V6 finding 1)", () => {
     }
   });
 });
+
+describe("a check the run authored (V6 finding 3)", () => {
+  const cited = (over: Record<string, unknown> = {}): Criterion => ({
+    text: "the exporter writes every row",
+    rung: "observed",
+    evidence: {
+      source: "sh verify-header.sh",
+      executionId: "chk-1",
+      verifier: "check-log@1",
+      result: "passed",
+      head: "abc123",
+      dirty: true,
+      digest: "d0",
+      ...over,
+    },
+  });
+  const run = (over: Record<string, unknown> = {}) => [
+    {
+      command: "sh verify-header.sh",
+      passed: true,
+      at: 1,
+      kind: "check" as const,
+      executionId: "chk-1",
+      ...over,
+    },
+  ];
+  const now = { head: "abc123", dirty: true, digest: "d0" };
+
+  test("a check nobody authored still settles its criterion", () => {
+    expect(criterionStatus(cited(), run(), now)).toBe("satisfied");
+  });
+
+  test("a check whose program this run wrote cannot settle one", () => {
+    expect(criterionStatus(cited(), run({ authoredBy: "verify-header.sh" }), now)).toBe(
+      "needs_review",
+    );
+  });
+
+  test("the verifier name carries the same refusal onto a saved row with no log behind it", () => {
+    expect(criterionStatus(cited({ verifier: "self-authored-check@1" }), [], now)).toBe(
+      "needs_review",
+    );
+  });
+});

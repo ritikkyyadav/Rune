@@ -1154,6 +1154,17 @@ export function criterionStatus(
   if (bound?.latest.kind === "execution" || evidence.verifier === "execution-receipt@1") {
     return "needs_review";
   }
+  // ── The run wrote the check ──
+  //
+  // V6 finding 3: `kind` is decided by `isVerificationCommand`, which reads
+  // the command's NAME, so `verify-header.sh` containing `echo '1 pass, 0
+  // fail'` was a check. A program this run authored cannot have failed for the
+  // criterion it is cited against, so it is worth exactly what an execution
+  // receipt is worth. Both halves again: the log is authoritative live, the
+  // verifier name survives on a saved row with no check log behind it.
+  if (bound?.latest.authoredBy || evidence.verifier === "self-authored-check@1") {
+    return "needs_review";
+  }
   // A verifier that ran and recorded no result could not SAY. The acceptance
   // runner writes this shape for a command that exited without measuring
   // anything — a runner that collected no tests, a runner that is not

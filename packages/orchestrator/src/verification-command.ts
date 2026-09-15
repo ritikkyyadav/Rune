@@ -615,6 +615,81 @@ export function commandScopePaths(command: string): string[] {
   return pathTokens(chain.map(scopeWords).join(" "));
 }
 
+/**
+ * Programs that RUN a script named on their command line, rather than reading
+ * every file they are handed. What comes after the script is the script's own
+ * argv, and the script decides whether to open any of it — usually it does not.
+ */
+const SCRIPT_HOSTS = new Set([
+  "node",
+  "bun",
+  "deno",
+  "tsx",
+  "ts-node",
+  "ruby",
+  "perl",
+  "php",
+  "lua",
+  "sh",
+  "bash",
+  "zsh",
+  "dash",
+  "ksh",
+  "osascript",
+]);
+
+const isScriptHost = (program: string) =>
+  SCRIPT_HOSTS.has(program) || /^python[23]?(?:\.\d+)?$/.test(program);
+
+/** A word that could name a file: it has a directory part or a source extension. */
+const pathShaped = (word: string) =>
+  !word.startsWith("-") &&
+  !word.includes(OPAQUE) &&
+  (word.includes("/") || SOURCE_FILE_RE.test(base(word)));
+
+/**
+ * The ENTRY SCRIPT a command runs, per command in the chain — the one file a
+ * script host is certain to open.
+ *
+ * V6 finding 2: relatedness credited any argv token, so `node check.mjs
+ * header.csv` settled a criterion about `header.csv` that `check.mjs` never
+ * opens, and the run reported `met` with the file byte-identical. Appending a
+ * filename is one word of ordinary model output; it reopened V-5B's F1.
+ *
+ * Entry position is read conservatively: only when the FIRST non-flag word is
+ * path-shaped, so `bun test a.test.ts b.test.ts`, `python3 -m pytest x.py y.py`
+ * and `node --test dir` keep every target they name — those programs read
+ * their arguments. A command whose executable is itself a path (`./verify.sh`)
+ * names its entry there.
+ */
+export function commandProgramPaths(command: string): string[] {
+  const chain = lastCommandChain(command);
+  if (chain === null) return [];
+  const out: string[] = [];
+  for (const words of chain) {
+    const entry = entryScriptOf(words);
+    if (entry && !out.includes(entry)) out.push(entry);
+  }
+  return out;
+}
+
+function entryScriptOf(input: string[], depth = 0): string | null {
+  if (depth > 4) return null;
+  const words = [...input];
+  while (ASSIGNMENT.test(words[0] ?? "")) words.shift();
+  const executable = words.shift() ?? "";
+  const program = base(executable);
+  if (!program || executable.includes(OPAQUE)) return null;
+  if (program === "env" || program === "command") return entryScriptOf(words, depth + 1);
+  // `./verify.sh` — the program IS the script.
+  if (!isScriptHost(program) && pathShaped(executable)) return executable;
+  if (!isScriptHost(program)) return null;
+  const inlineFlags = /^python/.test(program) ? INLINE_FLAGS.python : INLINE_FLAGS[program];
+  const first = words.find((w) => !w.startsWith("-"));
+  if (first === undefined || inlineFlags?.includes(words[0] ?? "")) return null;
+  return pathShaped(first) ? first : null;
+}
+
 /** One command's words as SCOPE text: arguments verbatim, inline scripts stripped. */
 function scopeWords(input: string[], depth = 0): string {
   if (depth > 4) return "";
@@ -626,6 +701,7 @@ function scopeWords(input: string[], depth = 0): string {
   // `commandPaths` applies by skipping the first word.
   if (program === "env" || program === "command") return scopeWords(words, depth + 1);
   const inlineFlags = /^python/.test(program) ? INLINE_FLAGS.python : INLINE_FLAGS[program];
+  const entry = entryScriptOf(input, depth);
   const out: string[] = [];
   for (let i = 0; i < words.length; i++) {
     const word = words[i]!;
@@ -635,8 +711,26 @@ function scopeWords(input: string[], depth = 0): string {
       continue;
     }
     out.push(word);
+    // Everything after the entry script is the SCRIPT'S argv, and the script
+    // decides whether to open any of it. A path it ignores is not a path the
+    // command measured, so it stops here.
+    if (entry !== null && word === entry) break;
   }
   return out.join(" ");
+}
+
+/**
+ * Whether two path spellings name the same file. Deliberately exact — the
+ * same path however it was written — with none of `pathsCorrespond`'s module
+ * fuzz, because this answers "did the run WRITE this program", and a wrong
+ * yes there refuses an honest citation.
+ */
+export function samePathToken(a: string, b: string): boolean {
+  const norm = (raw: string) => raw.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
+  const x = norm(a),
+    y = norm(b);
+  if (!x || !y) return false;
+  return x === y || x.endsWith(`/${y}`) || y.endsWith(`/${x}`);
 }
 
 // ─── A check that ran nothing ───

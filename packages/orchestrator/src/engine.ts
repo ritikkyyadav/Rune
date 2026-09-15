@@ -68,6 +68,8 @@ import type {
 } from "@rune/tool-registry";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+
+import { samePathToken } from "./verification-command";
 import {
   setConfigValue,
   SessionManager,
@@ -1404,7 +1406,9 @@ export class Engine {
   private lastBudgetEmitMs = 0;
   /** Every check this session ran, with the verdict the RUNTIME read.
    *  The only thing a criterion's rung is ever derived from. */
-  private readonly checkLog = new CheckLog();
+  private readonly checkLog = new CheckLog({
+    authoredThisRun: (paths) => this.authoredThisRun(paths),
+  });
   private contextEngine: ContextEngine;
   /** Providers whose model catalog has already supplied real context windows. */
   private contextCatalogWarmed = new Set<ProviderName>();
@@ -6849,6 +6853,25 @@ export class Engine {
     }
     this.persistBrief();
     if (this.contract) this.persistContract();
+  }
+
+  /**
+   * Did this run write the program this check runs? The write ledger answers.
+   *
+   * `taskState.writtenFiles` is every file the task has written, cumulative —
+   * the same list the verdict's `wrote` flag reads — so a script the model
+   * created OR modified this run is on it. Matching is exact (`samePathToken`,
+   * the same path however it was spelled): a wrong yes here refuses an honest
+   * citation, so none of `pathsCorrespond`'s module fuzz is used.
+   */
+  private authoredThisRun(paths: readonly string[]): string | undefined {
+    if (paths.length === 0) return undefined;
+    const written = this.liveSpine?.writtenFiles ?? [];
+    if (written.length === 0) return undefined;
+    for (const path of paths) {
+      if (written.some((file) => samePathToken(path, file))) return path;
+    }
+    return undefined;
   }
 
   private runRevision(files?: readonly string[]): StampedRevision {
