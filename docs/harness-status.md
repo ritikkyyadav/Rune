@@ -1932,3 +1932,28 @@ fixed; a tautological test looped over the constant it was checking. Mutations r
 group. Gates: cargo 113 / 0 with the founder's audit log byte-identical, unit 5,910 / 0,
 integration 388 / 0 / 7 skip, lifecycle 47 / 0, fmt, clippy, prettier and shellcheck clean.
 Stated limit: the `*.key`/`*.pem`-under-home pattern is enforced on macOS only.
+
+### Addendum 35 — Fix lane F2: the key leaves the filesystem, the guard reads clauses, the witness reads the tree
+
+`fc4fcad`, `1146b0c`, `3b2e965`, `b664aae`, `2461f7c`. The HMAC key that signs memory entries
+lives in the OS credential store — macOS Keychain or Linux Secret Service, service `rune`,
+account `memory-key:<digest of the store path>` — with `<store>/.key` kept only as a migration
+source (imported, verified by read-back, deleted) or the last-resort 0600 fallback that F1's
+deny list covers; a store under the OS temp root never touches the real credential store, so
+no suite can put an item in the founder's keychain (the supervisor checked: none present). A
+lost or rotated key quarantines entries — kept, counted by `rune memory`, the reason naming
+which event — and `rune memory resign` (person-only) forgives the signature and nothing else.
+The guard is clause-level: asides dropped, every rule read against sentence and spine, nouns a
+broad synonym class, a third rule for the nominalised shape — the fourth pass's 22 fresh
+weakenings and 20 more refused, every survivor kept, twelve new survivors added (91 → 153
+guard tests). A tampered sidecar mode fails closed to `off` with a notice; the refreshed
+profile is guarded before it is written. Redaction reads three ways plus a three-line window
+for a wrapped criterion. The durable authorship witness reads the tree, not the commit
+subject: a task epoch beside the database makes a `chore:`-committed check the task's work
+in the next session. The vault's witness moved a directory up so wholesale removal fails
+closed with no contract row; a check's static imports are pinned. Deliberately not done,
+named: a task-scoped vault key (any such key reopens the second pass's critical three). Sixteen
+mutations, every one caught. Supervisor rerun: memory suites **364 / 0**. Lane's gates: unit
+5,941 / 0, integration 395 / 0, lifecycle 47 / 0, eval 63 / 63 at 0.27, `~/.rune` byte-identical
+start to end. Open for the TUI: `/memory` does not yet print the key line, the quarantine
+count or the tamper notice (`rune memory` does; the engine accessors exist).
