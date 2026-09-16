@@ -1909,3 +1909,26 @@ store with quarantine instead of erasure on a lost key, a clause-level guard, fa
 sidecar, the profile guarded on write, a tree-based git witness, substring redaction).
 **Movement against the verifier, reported by it:** two audit lines from the two sandboxed
 calls that proved critical two against the real home.
+
+### Addendum 34 — Fix lane F1: a quoted path is still a path, and Rune's keys cannot be read from inside the sandbox
+
+`785a9f2`, `c5e3b4f`, `e3b997e`. The path matcher accepted a candidate only after whitespace
+and excluded quotes and `$`, so every control-path check was blind to `"…"`, `'…'`, `$HOME`
+and `${HOME}`; the new matcher accepts quote, `=` and bracket boundaries, scans inline
+`python3 -c` / `node -e` / `perl -e` programs with the same rule, expands `~`, `$HOME`,
+`${HOME}` and `$RUNE_HOME`, and knows the resolved Rune homes rather than a literal `.rune`
+segment. Naming a Rune credential path is now the guardrail act by itself, any tool, any verb
+— a verb list is how `wc` walked. In the crate, `credential_deny_paths()` covers `.env`,
+`credentials.index.json`, the memory directory (key and entries) and the acceptance vault for
+every Rune home, plus a Seatbelt pattern for any `*.key` / `*.pem` and every `.env` variant
+under the home with the workspace carved back out; Linux masks the same list in `bwrap`.
+Proved through the rebuilt native binary on a scratch home: eleven credential reads refused,
+the workspace's own files still readable and writable; the supervisor's own probe agrees
+(`cat "$HOME/.rune/memory/.key"` → `Operation not permitted`, a workspace write → `hello`).
+The containment probe now proves its hazard is standing before grading a refusal and gains
+host-side positive controls. Two self-inflicted bugs the lane caught by measuring: a Seatbelt
+regex written against the unresolved home and then double-escaped denied exactly nothing until
+fixed; a tautological test looped over the constant it was checking. Mutations red in every
+group. Gates: cargo 113 / 0 with the founder's audit log byte-identical, unit 5,910 / 0,
+integration 388 / 0 / 7 skip, lifecycle 47 / 0, fmt, clippy, prettier and shellcheck clean.
+Stated limit: the `*.key`/`*.pem`-under-home pattern is enforced on macOS only.
