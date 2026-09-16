@@ -10,7 +10,8 @@
 #
 #  Flags (curl … | bash -s -- <flag>):
 #    --uninstall           remove the binaries, the PATH line, and nothing else
-#    --path                write the PATH line without being asked
+#    --path                write the PATH line without being asked (the default
+#                          when piped from curl; a terminal run asks first)
 #    --no-path             never touch a shell profile
 #
 #  Optional env:
@@ -335,16 +336,22 @@ elif [ -t 0 ]; then
   read -r reply
   case "$reply" in [nN]*) say "$(c 90 '· skipped')" ;; *) write_path ;; esac
 else
-  # Piped from curl: there is no one to ask, so say what to do rather than
-  # editing a profile behind a user's back.
-  echo ""
-  say "Add Rune to your PATH:"
-  say "  $(c 36 "export PATH=\"$INSTALL_DIR:\$PATH\"")   $(c 90 '# add to your shell profile')"
-  say "$(c 90 "  or re-run with --path to have the installer append it for you")"
+  # Piped from curl — the published `curl … | bash` — so there is no one to
+  # ask. This used to print the line and stop, and every visitor then had a
+  # second step to discover. The line is written instead, the way rustup and
+  # bun do it: ONE marked line in ONE profile, printed in full before it is
+  # written, removed by --uninstall, refused by --no-path. An installer that
+  # edits a profile silently cannot be reviewed; one that announces the exact
+  # line it is about to add can.
+  write_path
 fi
 
 echo ""
-say "Then run: $(c 1 rune)"
+if already_on_path; then
+  say "Then run: $(c 1 rune)"
+else
+  say "Open a new terminal, then run: $(c 1 rune)"
+fi
 say "$(c 90 'Free to start: the first screen lists the free routes first — OpenRouter, Google or a local Ollama.')"
 say "$(c 90 'Later: `rune upgrade --check` tells you when a newer release exists.')"
 echo ""
