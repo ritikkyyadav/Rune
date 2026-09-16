@@ -260,8 +260,12 @@ describe("the acceptance script is pinned across runs, not re-seeded from the wo
     // The bytes go; the manifest stays. This is the fail-open shape.
     const vault = join(home, "acceptance-pins");
     expect(existsSync(vault)).toBe(true);
-    for (const entry of readdirSync(vault)) {
-      rmSync(join(vault, entry, "files"), { recursive: true, force: true });
+    // Only the per-workspace vault DIRECTORIES: the pins root also holds each
+    // vault's index file, which is the witness that survives the vault (V9
+    // finding 15) and is not a directory.
+    for (const entry of readdirSync(vault, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      rmSync(join(vault, entry.name, "files"), { recursive: true, force: true });
     }
 
     const second = makeEngine(dir, home, ACCEPTANCE);
