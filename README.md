@@ -2,7 +2,7 @@
 
 > A local-first, sandboxed, multi-provider coding agent that lives in your terminal.
 
-**v0.4.1 — early, and honest about it.** Rune is built and used by one person. Everything below is
+**v0.1.1 — the first public version, and honest about it.** Rune is built and used by one person. Everything below is
 marked **verified live**, **verified by tests or mocks only**, or **unverified**, and the
 [What is verified](#what-is-verified) table is the contract: if a capability is not in the first
 column, nobody has watched it work on a real run.
@@ -47,7 +47,7 @@ Derived from [`docs/program/status.md`](docs/program/status.md),
 | Provider fallback under rate limits — 1,414 of 3,160 recorded incidents were rate limits and runs continued through them                                                                                                                                                                                                           | The offline Auto-mode safety corpus, 227 cases: **P 90.0 · R 89.1 · F1 89.6**, no model call                                                                                                                                                                                                                                                                                                                                                                                                                        | **The team bus** — multi-instance presence and messaging: **0 messages have ever been sent live** _(experimental)_                                                                                                                                                                |
 | The plan ledger and `rune audit` — every run's evidence is read back out of `~/.rune/rune.db`                                                                                                                                                                                                                                      | **4,253 unit tests**, 142 integration tests (the 7 skips are toolchains, servers or credentials the machine lacks), 94 Rust tests                                                                                                                                                                                                                                                                                                                                                                                   | **Self-evolution** — the retro → lesson → playbook loop is closed, but no A/B arm has ever run and none of this repo's commits are Rune's _(experimental)_                                                                                                                        |
 | macOS containment — Seatbelt profiles, with a live test that reads a denied path and fails                                                                                                                                                                                                                                         | Linux `bwrap` containment — the shared profile is exercised in CI, never on the author's machine                                                                                                                                                                                                                                                                                                                                                                                                                    | **The long-run reliability work of 2026-09-05/06** — turn refunds, second wind, the tool pacer, the supervisor queue, worker snapshots, spend reservations: unit-tested, never watched on a long live run                                                                         |
-| Install from source on macOS, and the published v0.4.1 one-liner into a fresh `HOME` on macOS (assets verified against `SHA256SUMS`, then `rune serve --check`); `rune doctor`, `rune tools-smoke`, `rune serve --check`; a detached nine-file task with tests on a free route ([record](docs/evidence/live-run-long-20260908.md)) | Linux and Windows — the v0.4.1 release workflow's fresh-machine install job (install, `--version`, `doctor`, `tools-smoke`, a headless prompt, `serve --check`) was green on both runners on 2026-09-09; the v0.4.0 Windows job had failed at `serve --check`, which 0.4.1 fixes                                                                                                                                                                                                                                    | **External benchmarks** — the SWE-bench Verified 50 and Terminal-Bench 20 subsets are pinned and the commands are printed; **zero runs recorded**                                                                                                                                 |
+| Install from source on macOS, and the published one-liner into a fresh `HOME` on macOS (assets verified against `SHA256SUMS`, then `rune serve --check`); `rune doctor`, `rune tools-smoke`, `rune serve --check`; a detached nine-file task with tests on a free route ([record](docs/evidence/live-run-long-20260908.md)) | Linux and Windows — the release workflow's fresh-machine install job (install, `--version`, `doctor`, `tools-smoke`, a headless prompt, `serve --check`) is green on both runners; Windows is published as a preview, without an OS sandbox                                                                                                                                                                                                                                    | **External benchmarks** — the SWE-bench Verified 50 and Terminal-Bench 20 subsets are pinned and the commands are printed; **zero runs recorded**                                                                                                                                 |
 | Two controlled same-model comparisons against OpenCode: 2026-09-03, 5/5 vs 5/7, code quality a tie; 2026-09-08 through the comparison harness on `gpt-oss:120b`, **6/6 vs 2/6**, Rune at about twice the tokens per task, equal wall time ([record](docs/evidence/comparison-live-20260908.md))                                    | Compaction quality, verifier ecosystems and post-edit diagnostics — measured on the mock suite with a faithful summarizer, not a live model                                                                                                                                                                                                                                                                                                                                                                         | **Live vendor OAuth** for connectors (Notion, Slack, Linear) — proven against a local mock server only, never a real vendor                                                                                                                                                       |
 | Quota caps stopping a turn with a resume handoff, and the model-integrity pin that keeps one model on a task                                                                                                                                                                                                                       | The 37-provider roster and the 12-engine web-search roster — shape and routing tested; the author holds keys for almost none of them                                                                                                                                                                                                                                                                                                                                                                                | **Enterprise routes** (Bedrock, Vertex AI, Azure OpenAI) — SigV4 checked against AWS test vectors and the ADC JWT verified, but no live cloud call has been made                                                                                                                  |
 | **The MCP client against real local servers** — filesystem, memory and everything over stdio, streamable HTTP and SSE on 2026-09-08 ([record](docs/evidence/mcp-live-20260908.md)); the GitHub connector and vendor OAuth stay unverified                                                                                          | **Run economics** — the `[routing] helper` route, the reviewer recall and the per-completion composition are exercised on the mock suite (governance 0.25 completions per task); whether they cut live rate limits is unmeasured <br> **User skills, hooks and plugin install** — `/skills`, `/<name>`, `rune skill add`, the hooks fixture and `rune plugin add` of the two examples run through the real CLI and engine against the scripted mock provider; the TUI panel has not been watched on a real terminal | **Research mode's answer quality**, and **workflows** — both run, neither has been scored _(experimental)_                                                                                                                                                                        |
@@ -56,12 +56,12 @@ Derived from [`docs/program/status.md`](docs/program/status.md),
 (`[team]`), and workflows (`rune workflow`). They are built and tested; they are not evidence of
 anything yet.
 
-**v0.4.1 is the current release; v0.4.0 was the first the one-line installers could fetch.**
-Releases up to v0.3.1 carry `gear-*` assets and the installers look for `rune-*`. The v0.4.1
-one-liner was run into a fresh `HOME` on macOS on 2026-09-09, installed a binary with verified
-checksums, and hosted a session under `rune serve --check`; the release workflow did the same on
-fresh macOS, Linux and Windows runners, with `doctor`, `tools-smoke` and a headless prompt on each.
-The v0.4.0 Windows package could not host a session; 0.4.1 fixes that.
+**v0.1.1 is the current release, and v0.1.0 (2026-09-16) was the first public one.** Everything
+tagged before it — Berne 0.2.0, Gear 0.3.x, Rune 0.4.x — was an internal build, is marked as a
+pre-release on GitHub, and is never what `releases/latest` or the installers resolve to. The
+one-liner installs a binary with verified checksums and hosts a session under `rune serve --check`;
+the release workflow does the same on fresh macOS, Linux and Windows runners, with `doctor`,
+`tools-smoke` and a headless prompt on each. Windows ships as a preview: no OS sandbox, x64 only.
 
 ## Install
 
@@ -78,12 +78,22 @@ rune
 `rune serve --check` against the staged binary **before** promoting it onto your PATH, so a binary
 that cannot host a session never lands.
 
-**Prebuilt** — macOS, Linux and Windows verified for v0.4.1 by the release workflow's fresh-machine
-installs, macOS also by hand:
+**Prebuilt** — macOS and Linux supported, Windows as a preview; each verified by the release
+workflow's fresh-machine installs, macOS also by hand. The product page with per-OS steps is
+[savoir.services/products/rune](https://savoir.services/products/rune).
+
+```bash
+curl -fsSL https://savoir.services/install.sh | bash
+irm https://savoir.services/install.ps1 | iex   # Windows, PowerShell
+```
+
+The two `savoir.services` paths redirect to the scripts in this repository —
+`scripts/web-install.sh` and `scripts/install.ps1` on `main` — which download the release from
+GitHub. The raw URLs work too:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ritikkyyadav/Rune/main/scripts/web-install.sh | bash
-irm https://raw.githubusercontent.com/ritikkyyadav/Rune/main/scripts/install.ps1 | iex   # Windows
+irm https://raw.githubusercontent.com/ritikkyyadav/Rune/main/scripts/install.ps1 | iex
 ```
 
 Both verify every download against the release's `SHA256SUMS` before anything reaches the install
@@ -207,5 +217,4 @@ with `EADDRINUSE`, which is an artifact, not a regression.
 
 ## License
 
-[Apache-2.0](LICENSE) — the program's open-core default, not a settled decision. It landed in its
-own commit so it can be dropped without touching anything else.
+[Apache-2.0](LICENSE).

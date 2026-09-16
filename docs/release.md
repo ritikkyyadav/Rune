@@ -120,11 +120,15 @@ Actions → Release → Run workflow
 
 | Platform            | Command                                                          |
 | ------------------- | ---------------------------------------------------------------- |
-| macOS, Linux        | `curl -fsSL <url>/web-install.sh \| bash`                        |
-| Windows             | `irm <url>/install.ps1 \| iex`                                   |
-| Homebrew            | `brew install savoir/tap/rune` (once the tap exists — see below) |
-| Uninstall (POSIX)   | `curl -fsSL <url>/web-install.sh \| bash -s -- --uninstall`      |
-| Uninstall (Windows) | `.\install.ps1 -Uninstall`                                       |
+| macOS, Linux        | `curl -fsSL https://savoir.services/install.sh \| bash`                        |
+| Windows             | `irm https://savoir.services/install.ps1 \| iex`                              |
+| Homebrew            | `brew install savoir/tap/rune` (once the tap exists — see below)              |
+| Uninstall (POSIX)   | `curl -fsSL https://savoir.services/install.sh \| bash -s -- --uninstall`     |
+| Uninstall (Windows) | `.\install.ps1 -Uninstall`                                                   |
+
+`savoir.services/install.sh` and `/install.ps1` are 307 redirects (declared in the website's
+`next.config.ts`) to `scripts/web-install.sh` and `scripts/install.ps1` on `main`. The binaries
+come from GitHub Releases; the website hosts nothing.
 
 Both installers verify every download against the release's `SHA256SUMS` **before** anything reaches
 the install directory. A mismatch, or a release with no `SHA256SUMS`, exits non-zero with the old
@@ -151,7 +155,10 @@ at startup. Nothing is ever replaced without the command being typed. `[update] 
 
 These need an account, a credential, or a decision. Nothing in the repo can do them.
 
-### D1 — Make the install one-liner work (blocks Phase 1's gate)
+### D1 — Make the install one-liner work — **done 2026-09-16**
+
+The repository is public under Apache-2.0, `releases/latest` resolves to v0.1.1, and the
+commands above are the published ones. The text below is kept as the record of the decision.
 
 The README's `curl | bash` cannot work today: the repo is private, so anonymous `curl` gets a 404.
 Until this is done, the "install: one command, three OSes" scorecard row stays at 0 of 3 and external

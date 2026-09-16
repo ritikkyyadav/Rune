@@ -5,8 +5,8 @@
 #  machine, VERIFIES them against the release's SHA256SUMS, and installs them
 #  to ~/.rune/bin. No Bun, no source, no build step.
 #
-#  Paste this on your site:
-#    curl -fsSL https://YOUR-DOMAIN/install.sh | bash
+#  The published address (a redirect to this file on main):
+#    curl -fsSL https://savoir.services/install.sh | bash
 #
 #  Flags (curl … | bash -s -- <flag>):
 #    --uninstall           remove the binaries, the PATH line, and nothing else
@@ -179,7 +179,7 @@ case "$uname_s" in
   Linux)  os="linux" ;;
   MINGW*|MSYS*|CYGWIN*)
     say "$(c 31 ✗) This is the POSIX installer. On Windows, run PowerShell and:"
-    say "   $(c 36 'irm https://raw.githubusercontent.com/'"$REPO"'/main/scripts/install.ps1 | iex')"
+    say "   $(c 36 'irm https://savoir.services/install.ps1 | iex')"
     exit 1 ;;
   *) say "$(c 31 ✗) Unsupported OS: $uname_s. Install from source: https://github.com/$REPO"; exit 1 ;;
 esac

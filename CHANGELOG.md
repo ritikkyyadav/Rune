@@ -28,6 +28,28 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
   as a missing interpreter. Found by the v0.4.1 release commit's Windows CI run, where a cold
   `python3` start alone outlasted the budget.
 
+## [0.1.1] - 2026-09-16
+
+The provider rosters brought current, the GPT-6 family recognised by the Codex and OpenAI
+transports, GitHub Models removed, the header showing the product version and the session tail.
+Full notes: [`docs/releases/v0.1.1.md`](docs/releases/v0.1.1.md).
+
+## [0.1.0] - 2026-09-16
+
+**The first public version.** Contract and verdict at intake and close, acceptance decided by the
+runtime, recovery of a run killed mid-tool, OS sandboxing on macOS and Linux, budgeted sub-agents,
+signed memory, the one-column interface, and Apache-2.0 as the licence. Full notes, with what is
+verified, experimental, platform-limited and unresolved:
+[`docs/releases/v0.1.0.md`](docs/releases/v0.1.0.md).
+
+---
+
+**Everything below this line was an internal build.** Berne 0.2.0, Gear 0.3.x and Rune 0.4.x
+were cut while the product was being renamed and the harness stabilised; none was announced or
+installed by anyone but the author. The public line restarts at 0.1.0 on purpose. The old tags
+stay on GitHub, marked as pre-releases, so their history remains readable, and `releases/latest`
+never resolves to them.
+
 ## [0.4.1] - 2026-09-09
 
 The Windows release, cut from the first fully green CI run on the public repository: 22 of 22

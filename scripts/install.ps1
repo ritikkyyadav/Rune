@@ -36,11 +36,11 @@
   Remove the binaries and the PATH entry. Leaves ~/.rune data alone.
 
 .EXAMPLE
-  irm https://raw.githubusercontent.com/ritikkyyadav/Rune/main/scripts/install.ps1 | iex
+  irm https://savoir.services/install.ps1 | iex
 
 .EXAMPLE
   # With options, the piped form cannot take parameters, so fetch then run:
-  irm https://raw.githubusercontent.com/ritikkyyadav/Rune/main/scripts/install.ps1 -OutFile install.ps1
+  irm https://savoir.services/install.ps1 -OutFile install.ps1
   .\install.ps1 -Version v0.3.0 -NoPath
 #>
 [CmdletBinding()]
