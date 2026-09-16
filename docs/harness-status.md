@@ -2171,3 +2171,31 @@ file). Proof in a scratch home seeded with an immutable source install: the inst
 `main` fails with the founder's exact error; the fixed one installs, removes the pair, and
 the result prints `Rune v0.1.1`. Audit bracket 7,170. The website's command serves `main`,
 so the fix is live on push; no release is re-cut for a script.
+
+### Addendum 44 — exposure audit of the public repository and the published binaries
+
+The founder asked whether any key or credential had reached GitHub or the binaries. Method:
+every added line of every commit on every ref (the rewrite changed no tree, so the
+pre-rewrite objects still on GitHub carry the same content) scanned for the key shapes of
+Anthropic, OpenAI, OpenRouter, Google, xAI, Groq, GitHub, AWS, Slack, Hugging Face, private
+keys and JWTs; the two installed release binaries scanned by `strings` for the same shapes and
+for env-style assignments; the workflows read for fork-exposed triggers and for anything that
+echoes secrets into public logs; `bun audit` and CI's `cargo-audit` for known dependency
+vulnerabilities. Findings: **no credential in the history** — 44 pattern hits, every one a
+test fixture with a synthetic value (short Anthropic-shaped strings of 35–38 characters where
+a real key exceeds 100, the AWS documentation example key, `ghp_012345…`, `xoxb-12345…`,
+sample private-key blocks) plus vendor skill documentation (a Slack public client id, Zoom
+example JWTs); **no key-shaped string and no env assignment in either binary**; no
+`.env`, private key, database or audit log ever committed; `.env` and `.env.local` ignored
+in both the Rune and the website repositories, and the website's `git add -A` swept only
+source; no `pull_request_target`, no `set -x`, secrets referenced only through Actions'
+masked store, and the one workflow job that receives a live key runs the eval, not the
+smoke; `rune doctor` masks a key to four leading and four trailing characters; `bun audit`
+and `cargo-audit` report no known vulnerabilities. **Two things to act on, neither a leak:**
+(1) a `.env` sits at the repository root holding `GOOGLE_API_KEY`, `OPENROUTER_API_KEY` and
+`BRAVE_API_KEY` — ignored by git, but Bun auto-loads it for every `bun test` and `bun run`
+in the checkout, so suites and evals run with real provider keys in their environment; the
+launcher's `RUNE_NO_ENV_FILE` guard covers `~/.rune/.env`, not this file. It should be
+removed from the checkout (the product reads `~/.rune/.env`), and the keys rotated if they
+predate the fourth pass's advice. (2) Sixty-two tracked files — evidence JSON and the handoff
+— carry the founder's home path, which discloses a macOS username; low, cosmetic.
