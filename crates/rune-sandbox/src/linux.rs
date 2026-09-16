@@ -197,7 +197,23 @@ impl LinuxSandbox {
                 args.extend_from_slice(&["--ro-bind".to_string(), s.clone(), s]);
             }
         }
-        for p in &self.config.deny_read_paths {
+        // The credential stores, masked the same way — and by the same list the
+        // macOS profile denies, so neither platform can be the one that forgot.
+        //
+        // `$HOME` is not bound, so most of these are already unreachable; this
+        // block is what makes that a PROPERTY rather than a coincidence of the
+        // bind list. A `[sandbox.filesystem] extraRead` of a home directory, a
+        // toolchain root that grew a credential store after it was judged, or a
+        // future bind added without this argument in mind, all used to hand the
+        // namespace `~/.rune/.env` and `~/.rune/memory/.key` (V9 criticals 2 and
+        // 4, measured on macOS through the same list). Masking is cheap and does
+        // not depend on remembering.
+        for p in self
+            .config
+            .deny_read_paths
+            .iter()
+            .chain(crate::credential_deny_paths().iter())
+        {
             if p.is_dir() {
                 args.extend_from_slice(&["--tmpfs".to_string(), p.display().to_string()]);
             } else if p.exists() {
@@ -440,6 +456,60 @@ mod tests {
         // not as a bind SOURCE either, which is what a symlinked root would
         // have made it.
         assert!(!touches(&args, &home_s), "$HOME is bound: {home_s}");
+    }
+
+    /// V9 criticals 2 and 4, the Linux half. `$HOME` is not bound, so the
+    /// credential stores were unreachable by CONSEQUENCE of the bind list. This
+    /// asks for the property directly: every store that exists on this machine
+    /// is explicitly masked — an empty tmpfs over a directory, `/dev/null` over
+    /// a file — so an `extraRead` of a home directory, a toolchain root that
+    /// grows a store after it was judged, or a bind added later cannot quietly
+    /// hand a sandboxed command `~/.rune/.env` or `~/.rune/memory/.key`.
+    #[test]
+    fn every_credential_store_that_exists_is_masked() {
+        let args = args_for(false);
+        let mut checked = 0;
+        for secret in credential_deny_paths() {
+            let s = secret.display().to_string();
+            if secret.is_dir() {
+                assert!(
+                    args.windows(2).any(|w| w[0] == "--tmpfs" && w[1] == s),
+                    "the credential directory {s} is not masked"
+                );
+                checked += 1;
+            } else if secret.exists() {
+                assert!(
+                    args.windows(3)
+                        .any(|w| w[0] == "--ro-bind" && w[1] == "/dev/null" && w[2] == s),
+                    "the credential file {s} is not masked"
+                );
+                checked += 1;
+            }
+        }
+        // A loop over an empty list proves nothing; the image this runs in has
+        // `~/.ssh`, and the mask must come after every bind it could carve out
+        // of, or a later bind over the same path re-exposes it.
+        assert!(
+            checked > 0,
+            "no credential store exists to mask — the assertion above ran zero times"
+        );
+        let first_mask = args
+            .iter()
+            .enumerate()
+            .find(|(i, a)| {
+                *a == "--tmpfs"
+                    || (*a == "--ro-bind" && args.get(i + 1).is_some_and(|n| n == "/dev/null"))
+            })
+            .map(|(i, _)| i)
+            .expect("at least one mask, since `checked` is non-zero");
+        let workspace_bind = args
+            .iter()
+            .position(|a| a == "--bind")
+            .expect("the workspace is bound");
+        assert!(
+            first_mask > workspace_bind,
+            "a mask precedes the binds it must override — bubblewrap takes the LAST mount over a path"
+        );
     }
 
     #[test]

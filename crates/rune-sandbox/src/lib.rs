@@ -97,11 +97,27 @@ pub fn rune_home() -> PathBuf {
 /// macOS reads broadly and denies these explicitly. Linux binds nothing from
 /// $HOME except the named toolchain roots — and checks each one against this
 /// list at bind time (`linux::resolve_toolchain_root`), because a root that is
-/// a symlink can resolve into a store the fixed list never named.
+/// a symlink can resolve into a store the fixed list never named — and masks
+/// every entry that some other bind did expose (`linux::bwrap_args`).
+///
+/// V9 criticals 2 and 4: the list named `~/.rune/secrets.json` and stopped.
+/// `~/.rune/.env` is the file the installed launcher sources into every
+/// invocation — it holds the provider keys, as `scripts/install.sh` says in so
+/// many words — and `wc -c < $HOME/.rune/memory/.key` handed a sandboxed `bash`
+/// the HMAC secret that the whole memory-integrity design rests on. Both were
+/// measured readable through the real binary with the sandbox ON. The memory
+/// store, the acceptance vault and the credential index join them for the same
+/// reason: a sandboxed command has no business reading any of them, and the
+/// deny list is the layer that is supposed to make the question moot.
+///
+/// Every Rune home is covered, not just `~/.rune`: `rune_home()` first, so a
+/// scratch `RUNE_HOME` is protected exactly as the real one is, then the three
+/// default homes under `$HOME` so a command that names `~/.rune` directly is
+/// refused even when the process runs under a scratch profile.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) fn credential_deny_paths() -> Vec<PathBuf> {
     let home = dirs::home_dir().unwrap_or_default();
-    vec![
+    let mut out = vec![
         home.join(".ssh"),
         home.join(".aws"),
         home.join(".gnupg"),
@@ -113,10 +129,122 @@ pub(crate) fn credential_deny_paths() -> Vec<PathBuf> {
         home.join(".netrc"),
         home.join(".bash_history"),
         home.join(".zsh_history"),
-        home.join(".rune").join("secrets.json"),
-        home.join(".gear").join("secrets.json"),
-        home.join(".alan").join("secrets.json"),
-    ]
+    ];
+    for root in rune_home_roots() {
+        for leaf in RUNE_HOME_SECRET_LEAVES {
+            let entry = root.join(leaf);
+            if !out.contains(&entry) {
+                out.push(entry);
+            }
+        }
+    }
+    out
+}
+
+/// The entries of a Rune home that a sandboxed command may never read.
+///
+/// `secrets.json` is the BYOK store. `.env` is the launcher's environment file.
+/// `memory` holds both the signing key (`memory/.key`) and the entries it signs,
+/// which are what every future session is briefed with. `acceptance-pins` is the
+/// harness's copy of the oracle a run is graded by. `credentials.index.json` is
+/// the account index written by `/login`.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) const RUNE_HOME_SECRET_LEAVES: &[&str] = &[
+    "secrets.json",
+    ".env",
+    "credentials.index.json",
+    "memory",
+    "acceptance-pins",
+];
+
+/// Every directory that is a Rune home on this machine: the configured one
+/// first, then the three default spellings under `$HOME`.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) fn rune_home_roots() -> Vec<PathBuf> {
+    let home = dirs::home_dir().unwrap_or_default();
+    let mut roots = vec![rune_home()];
+    for name in [".rune", ".gear", ".alan"] {
+        let candidate = home.join(name);
+        if !roots.contains(&candidate) {
+            roots.push(candidate);
+        }
+    }
+    roots
+}
+
+/// Seatbelt regexes for the credential shapes a fixed path list cannot name.
+///
+/// A private key is recognized by its extension wherever it sits, so
+/// `~/Downloads/deploy.pem` and `~/.rune/org.key` are refused without either
+/// being enumerated. The workspace is carved back out by the caller, because a
+/// project that keeps a `fixtures/test.pem` under the home is doing ordinary
+/// work and a deny that breaks it is a deny that gets switched off.
+///
+/// macOS only: Seatbelt matches PATTERNS, bubblewrap matches MOUNTS. On Linux
+/// the same guarantee is structural — `$HOME` is never bound, and
+/// `resolve_toolchain_root` refuses any root that resolves to the home, to an
+/// ancestor of it, or to a parent of anything in `credential_deny_paths()`.
+#[cfg(target_os = "macos")]
+pub(crate) fn credential_deny_regexes() -> Vec<String> {
+    // RESOLVED, like every other rule in the profile: Seatbelt matches the real
+    // path, so `/tmp/...` written unresolved matches nothing on a machine where
+    // `/tmp` is a symlink to `/private/tmp` — which is every macOS machine, and
+    // is exactly how the first cut of this rule silently denied nothing.
+    let home = escape_regex(
+        &real_path(&dirs::home_dir().unwrap_or_default())
+            .display()
+            .to_string(),
+    );
+    let mut out = vec![format!(r"^{home}/.*\.(key|pem)$")];
+    for root in rune_home_roots() {
+        let root = escape_regex(&real_path(&root).display().to_string());
+        // `.env`, `.env.local`, `.env.production` — a subpath entry can only
+        // name the bare file, and the variants are where a key gets parked.
+        out.push(format!(r"^{root}/\.env(\..*)?$"));
+    }
+    out
+}
+
+/// The SBPL block for [`credential_deny_regexes`], with `workspace` carved out.
+/// Empty when there is nothing to deny, so the profile never grows a rule with
+/// an empty `require-any` (which Seatbelt rejects).
+#[cfg(target_os = "macos")]
+pub(crate) fn credential_deny_regex_rule(workspace: &str) -> String {
+    let regexes = credential_deny_regexes();
+    if regexes.is_empty() {
+        return String::new();
+    }
+    // Only the quote is escaped, NOT the backslash: inside an SBPL `#"…"`
+    // regex literal a backslash is the regex's own escape, so running the
+    // pattern through `escape_sbpl` turns `\.` into `\\.` — "a literal
+    // backslash, then any character" — and the rule matches nothing at all.
+    // That is a deny that denies nothing, measured through the real binary
+    // before it was caught here.
+    let body = regexes
+        .iter()
+        .map(|r| format!("      (regex #\"{}\")", r.replace('"', "\\\"")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        ";; ...and the credential SHAPES no fixed path list can name — any\n\
+         ;; *.key / *.pem under the home — with the workspace carved back out so\n\
+         ;; a project's own test fixture stays readable.\n\
+         (deny file-read*\n  (require-all\n    (require-any\n{body}\n    )\n    (require-not (subpath \"{}\"))))\n",
+        escape_sbpl(workspace)
+    )
+}
+
+/// Escape a literal string for use inside a Seatbelt `regex` pattern.
+#[cfg(target_os = "macos")]
+fn escape_regex(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if "\\^$.|?*+()[]{}".contains(c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// Best-effort real path for a policy entry that may not exist yet.

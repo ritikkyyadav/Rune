@@ -112,6 +112,13 @@ impl MacOsSandbox {
             })
             .collect::<Vec<_>>()
             .join("\n");
+        // ...and the shapes a fixed list cannot name: any *.key / *.pem under
+        // the home, and every `.env` variant in a Rune home. V9 critical 4
+        // measured `cat $HOME/.rune/.env` returning the founder's live provider
+        // keys through this very profile.
+        let deny_read_regex_rule = crate::credential_deny_regex_rule(
+            &real_path(&self.config.workspace_root).display().to_string(),
+        );
 
         let mut extra_read = String::new();
         for p in &self.config.extra_read_paths {
@@ -184,6 +191,7 @@ impl MacOsSandbox {
 (deny file-read*
 {deny_reads}
 )
+{deny_read_regex_rule}
 {network_rule}
 "#
         )
@@ -376,6 +384,98 @@ mod tests {
         assert!(p.contains("(deny file-read*"));
         assert!(p.contains(".ssh"));
         assert!(p.contains("secrets.json"));
+    }
+
+    /// V9 criticals 2 and 4. The deny list named `~/.rune/secrets.json` and
+    /// stopped, so `cat $HOME/.rune/.env` handed a sandboxed command the
+    /// founder's live provider keys and `wc -c < $HOME/.rune/memory/.key`
+    /// handed it the HMAC secret the whole memory-integrity design rests on —
+    /// both measured through the real binary with the sandbox ON.
+    ///
+    /// Named by leaf rather than by a whole-profile substring, because a
+    /// substring assertion on `.rune` would pass on the cache path alone.
+    #[test]
+    fn the_rune_home_credential_stores_are_denied_for_reading() {
+        let p = MacOsSandbox::new(cfg(PathBuf::from("/tmp/ws"), false)).seatbelt_profile();
+        let deny_at = p.find("(deny file-read*").expect("read deny");
+        let denied = &p[deny_at..];
+        let rune_home = crate::real_path(&crate::rune_home());
+        // Named here, NOT read from `RUNE_HOME_SECRET_LEAVES`: a test that
+        // iterates the constant it is checking passes whatever the constant
+        // says, including an empty one. (Mutation-checked: dropping `.env`
+        // from the constant left the loop-over-the-constant version green.)
+        for leaf in [
+            "secrets.json",
+            ".env",
+            "credentials.index.json",
+            "memory",
+            "acceptance-pins",
+        ] {
+            let wanted = format!("(subpath \"{}\")", rune_home.join(leaf).display());
+            assert!(
+                denied.contains(&wanted),
+                "{leaf} is not in the credential deny block:\n{denied}"
+            );
+        }
+        // The list itself covers every Rune home spelling, not only the
+        // configured one. Asserted on the LIST rather than on the rendered
+        // profile: `~/.gear` and `~/.alan` are read-through symlinks to
+        // `~/.rune` on a machine that has been through the rename, so the
+        // profile's resolved paths collapse to one and prove nothing.
+        let list = crate::credential_deny_paths();
+        let home = dirs::home_dir().unwrap_or_default();
+        for spelling in [".rune", ".gear", ".alan"] {
+            for leaf in [
+                "secrets.json",
+                ".env",
+                "credentials.index.json",
+                "memory",
+                "acceptance-pins",
+            ] {
+                let wanted = home.join(spelling).join(leaf);
+                assert!(
+                    list.contains(&wanted),
+                    "{} is not on the credential deny list",
+                    wanted.display()
+                );
+            }
+        }
+        // ...and the stores that were there before V9 are still there.
+        for old in [home.join(".ssh"), home.join(".aws"), home.join(".netrc")] {
+            assert!(list.contains(&old), "{} was dropped", old.display());
+        }
+    }
+
+    /// The shapes a fixed path list cannot name: `*.key` / `*.pem` anywhere
+    /// under the home, and the `.env` VARIANTS (`.env.local`, `.env.production`)
+    /// that a `subpath` entry for the bare `.env` never covered. The workspace
+    /// is carved back out so a project's own `fixtures/test.pem` still reads —
+    /// a deny that breaks ordinary work is a deny that gets switched off.
+    #[test]
+    fn credential_shapes_are_denied_by_pattern_with_the_workspace_carved_out() {
+        let p = MacOsSandbox::new(cfg(PathBuf::from("/tmp/ws"), false)).seatbelt_profile();
+        let rule_at = p
+            .find("(deny file-read*\n  (require-all")
+            .expect("the pattern deny is in the profile");
+        assert!(p[rule_at..].contains(r"\.(key|pem)$"));
+        assert!(p[rule_at..].contains(r"\.env(\..*)?$"));
+        // The carve-out names the RESOLVED workspace: Seatbelt matches real
+        // paths, and /tmp is a symlink to /private/tmp on every macOS machine.
+        assert!(
+            p[rule_at..].contains("(require-not (subpath \"/private/tmp/ws\"))"),
+            "the workspace carve-out is missing or unresolved:\n{}",
+            &p[rule_at..]
+        );
+        // The pattern deny must come after every read allow, or the broad
+        // `(allow file-read*)` above it wins.
+        let allow_at = p
+            .find("(allow file-read* file-write*")
+            .expect("the write allow");
+        assert!(rule_at > allow_at);
+        // And it must be written against the RESOLVED home, or it matches
+        // nothing at all — the first cut of this rule denied exactly nothing.
+        let home = crate::real_path(&dirs::home_dir().unwrap_or_default());
+        assert!(p[rule_at..].contains(&format!("^{}/", home.display())));
     }
 
     /// The policy's deny lists land in the profile: a denied read joins the

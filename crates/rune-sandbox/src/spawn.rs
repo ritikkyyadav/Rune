@@ -197,6 +197,10 @@ fn seatbelt_profile(
         })
         .collect::<Vec<_>>()
         .join("\n");
+    // The same credential SHAPES the shell profile denies (V9 critical 4):
+    // any *.key / *.pem under the home, every `.env` variant in a Rune home.
+    // One helper, so a plugin tool cannot be the profile that forgot.
+    let deny_read_regex_rule = crate::credential_deny_regex_rule(&workspace.display().to_string());
 
     // Reads. Broad, minus the credential stores, minus the workspace when the
     // capability does not include reading it — with the plugin's own directory
@@ -290,6 +294,7 @@ fn seatbelt_profile(
 )
 (allow file-write* (subpath "/dev"))
 
+{deny_read_regex_rule}
 {network}"#
     );
     SeatbeltProfile {
