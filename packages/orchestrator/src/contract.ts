@@ -44,7 +44,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
 import type { CheckRun } from "./brief";
 import { statusFromStopReason, treeMovedUnder, type StampedRevision } from "./lifecycle";
@@ -842,6 +842,54 @@ export interface AcceptanceVault {
 const VAULT_MANIFEST = "pinned.json";
 
 /**
+ * The vault's witness, one directory UP (V9 finding 15).
+ *
+ * `knownPins` closed the wholesale removal for a run whose contract row was
+ * restored, and left it open for a brand-new session: with no row, a removed
+ * vault reads as "no pin was ever taken" and the rewritten oracle is staged as
+ * a happy first intake, silently. A manifest cannot report its own removal, so
+ * the second witness has to live outside the thing that can be removed — and
+ * the pins DIRECTORY is exactly that place. It is a sibling file of the vault,
+ * under the same `acceptance-pins` control directory, so:
+ *
+ *   · `rm -rf <vault>` — what a run reaching for its own oracle would do —
+ *     leaves the index standing, and every pin it names is MISSING rather than
+ *     absent: the criteria are unmeasurable and the gate does not run them.
+ *   · `rm -rf <pins root>` — what a PERSON does to re-pin a revised acceptance
+ *     — takes the index with it, which is the documented way back and is a
+ *     guardrail change in 4th gear rather than an ordinary write.
+ */
+function vaultIndexPath(vaultDir: string): string {
+  return join(dirname(vaultDir), `${basename(vaultDir)}.pins.json`);
+}
+
+function readVaultIndex(vaultDir: string): Record<string, string> {
+  try {
+    const raw = JSON.parse(readFileSync(vaultIndexPath(vaultDir), "utf8")) as unknown;
+    if (!raw || typeof raw !== "object") return {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof v === "string" && /^[0-9a-f]{64}$/.test(v)) out[k] = v;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/** The index only ever GROWS: a pin it has seen is a pin that was taken. */
+function writeVaultIndex(vaultDir: string, pins: Record<string, string>): void {
+  try {
+    const merged = { ...readVaultIndex(vaultDir), ...pins };
+    mkdirSync(dirname(vaultDir), { recursive: true });
+    writeFileSync(vaultIndexPath(vaultDir), JSON.stringify(merged, null, 2) + "\n");
+  } catch {
+    // No index is the behaviour that shipped: the contract row is still a
+    // witness, and nothing claims a pin that was not taken.
+  }
+}
+
+/**
  * The manifest key for one script. Task-scoped when the caller named a task,
  * so a second task reusing the path is not measured by the first task's oracle.
  */
@@ -1044,6 +1092,96 @@ function copyInto(workspaceRoot: string, stageRoot: string, rel: string, sink: S
   sink.staged.push({ from: relPath, to });
 }
 
+// ─── What the check LOADS, and never says it loads (V9 finding 16) ───
+//
+// `files:` pins what the author named. A check that imports a sibling helper
+// the author did not list was not staged, not pinned, and rewriting that
+// helper — which is rewriting what the oracle measures — produced no note at
+// all. The same for a fixture the check reads: the script was pinned and the
+// data it grades against was not.
+//
+// So the staged scripts are read for what they import, statically, and each
+// dependency is pinned like any other acceptance file. Static is a real limit
+// and it is stated: a path the check builds at runtime is not here, and the
+// sandbox's own read audit is the only thing that could see one.
+const DEPENDENCY_SPECIFIER =
+  /(?:\bfrom\s*|\bimport\s*|\brequire\s*\(\s*|\bimport\s*\(\s*)["']((?:\.{1,2}\/)[^"']+)["']/g;
+
+/** Extensions a specifier may have dropped, in the order a loader tries them. */
+const DEPENDENCY_EXTENSIONS = ["", ".mjs", ".cjs", ".js", ".ts", ".mts", ".cts", ".json"];
+
+function dependenciesOf(file: string): string[] {
+  let text: string;
+  try {
+    if (statSync(file).size > STAGE_MAX_BYTES) return [];
+    text = readFileSync(file, "utf8");
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const m of text.matchAll(DEPENDENCY_SPECIFIER)) out.push(m[1]!);
+  return out;
+}
+
+/**
+ * A file the workspace names but does not own — a symlink pointing out of the
+ * tree. It cannot be staged (V8 finding 13: staging it would pin bytes the
+ * workspace does not control and leave the target editable), but its CONTENT
+ * is still what the oracle measures, so its digest is pinned as a witness: the
+ * next intake says so when it changes, and nothing is copied or run from it.
+ */
+function witnessPin(workspaceRoot: string, full: string, sink: StageSink): void {
+  if (!sink.vaultDir) return;
+  const relKey = relative(workspaceRoot, full).split(sep).join("/");
+  if (!relKey || relKey.startsWith("..")) return;
+  const key = pinKey(sink.taskKey, relKey);
+  let here: string;
+  try {
+    here = createHash("sha256").update(readFileSync(full)).digest("hex");
+  } catch {
+    return;
+  }
+  const pinned = sink.pins[key];
+  if (pinned === undefined) {
+    sink.pins[key] = here;
+    sink.pinned = true;
+    return;
+  }
+  if (pinned === here) return;
+  sink.notes.push(
+    `acceptance dependency changed outside the workspace — ${relKey} is a link to a file ` +
+      `this workspace does not own and its contents are not what the pin recorded`,
+  );
+}
+
+/**
+ * Pin what the staged scripts import. Bounded by the same file ceiling as the
+ * stage itself, and by a visited set, so a cycle or a fan-out cannot run away.
+ */
+function stageDependencies(workspaceRoot: string, stageRoot: string, sink: StageSink): void {
+  const seen = new Set<string>();
+  for (let guard = 0; guard < STAGE_MAX_FILES; guard++) {
+    const next = sink.staged.find((row) => !seen.has(row.to));
+    if (!next) return;
+    seen.add(next.to);
+    for (const spec of dependenciesOf(next.to)) {
+      // Resolved against the file's own directory IN THE WORKSPACE, which is
+      // where the loader would resolve it from when the check is run.
+      const fromDir = dirname(resolve(workspaceRoot, next.from));
+      for (const ext of DEPENDENCY_EXTENSIONS) {
+        const candidate = resolve(fromDir, spec + ext);
+        if (!existsSync(candidate)) continue;
+        if (realInside(workspaceRoot, candidate)) {
+          copyInto(workspaceRoot, stageRoot, relative(workspaceRoot, candidate), sink);
+        } else if (inside(workspaceRoot, candidate)) {
+          witnessPin(workspaceRoot, candidate, sink);
+        }
+        break;
+      }
+    }
+  }
+}
+
 /**
  * Copy every in-workspace file the acceptance needs out of the workspace, and
  * rewrite the commands to run the copies.
@@ -1080,6 +1218,11 @@ export function stageAcceptance(
   // puts that path on the `pinned !== undefined` branch, where the absent
   // vault copy makes it unmeasurable instead of a fresh first intake.
   if (vaultDir) {
+    // The index first: it answers for a session that has no contract row at
+    // all, which is the half of V8 critical 3 that stayed open.
+    for (const [key, digest] of Object.entries(readVaultIndex(vaultDir))) {
+      if (pins[key] === undefined) pins[key] = digest;
+    }
     for (const known of opts.vault?.knownPins ?? []) {
       if (typeof known?.path !== "string" || !/^[0-9a-f]{64}$/.test(known?.digest ?? "")) continue;
       const key = pinKey(taskKey, known.path);
@@ -1105,6 +1248,8 @@ export function stageAcceptance(
     ];
     const missingBefore = sink.missing.length;
     for (const rel of named) copyInto(workspaceRoot, root, rel, sink);
+    // …and what those files import, which the author did not have to name.
+    stageDependencies(workspaceRoot, root, sink);
     for (const path of sink.missing.slice(missingBefore)) {
       unmeasurable.push({ criterion: spec.id ?? `a${index + 1}`, path });
     }
@@ -1130,7 +1275,10 @@ export function stageAcceptance(
     return { ...spec, command };
   });
 
-  if (vaultDir && sink.pinned) writeVault(vaultDir, sink.pins);
+  if (vaultDir && sink.pinned) {
+    writeVault(vaultDir, sink.pins);
+    writeVaultIndex(vaultDir, sink.pins);
+  }
 
   return {
     root,

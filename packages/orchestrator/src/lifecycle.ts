@@ -14,8 +14,8 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
-import { resolve, sep } from "node:path";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { join, resolve, sep } from "node:path";
 
 import { patchTargetPaths } from "@rune/tool-registry";
 
@@ -209,7 +209,7 @@ export function changesTheWork(line: string): boolean {
 export function notFromParentCommit(
   root: string,
   paths: readonly string[],
-  opts?: { since?: string | null },
+  opts?: { since?: string | null; epoch?: string | null },
 ): string | undefined {
   const named = paths.filter((p) => typeof p === "string" && p.trim().length > 0);
   if (named.length === 0) return undefined;
@@ -222,7 +222,7 @@ export function notFromParentCommit(
   // program. A commit made DURING the task is the task's work by any reading,
   // so it is asked first: everything between the commit the task opened at and
   // HEAD, and everything in a Rune auto-commit, whose subject names it.
-  const committed = committedDuringTask(root, named, opts?.since ?? null);
+  const committed = committedDuringTask(root, named, opts?.since ?? null, opts?.epoch ?? null);
   if (committed) return committed;
   let status: string;
   try {
@@ -275,6 +275,7 @@ function committedDuringTask(
   root: string,
   named: readonly string[],
   since: string | null,
+  epoch: string | null = null,
 ): string | undefined {
   const touched = new Set<string>();
   const collect = (args: string[]): void => {
@@ -296,6 +297,27 @@ function committedDuringTask(
   };
   if (since && /^[0-9a-fA-F]{7,40}$/.test(since)) {
     collect(["diff", "--name-only", `${since}..HEAD`, "--", ...named]);
+  }
+  // ── The TASK EPOCH (V9 finding 8) ──
+  //
+  // `since..HEAD` is exact and it is empty in a brand-new session, where
+  // `baseCommit` is HEAD. The durable witness was therefore the SUBJECT grep
+  // below — and this repo's own commits are `docs:`, `ui:`, `ci:`, never
+  // `rune:`, so a run that wrote its own oracle, committed it as "chore: tidy"
+  // and ended the task normally was unattributed in the next session. A commit
+  // message is the one part of a commit its author chooses; the TREE is not.
+  //
+  // So the second reading is a tree diff from the epoch: the commit the
+  // PREVIOUS task in this workspace opened at, recorded at intake beside the
+  // database where a run cannot quietly rewrite it. Anything touched between
+  // there and HEAD is work done while a task was open, whatever its subject
+  // says. Deliberately conservative in the same direction as the rest of this
+  // function: a script a PERSON committed in that window also reads as
+  // not-from-the-parent, and a criterion cited on it derives `needs_review`
+  // rather than `satisfied`. That costs a person one re-run; the reverse costs
+  // the verdict.
+  if (epoch && /^[0-9a-fA-F]{7,40}$/.test(epoch) && epoch !== since) {
+    collect(["diff", "--name-only", `${epoch}..HEAD`, "--", ...named]);
   }
   collect([
     "log",
@@ -862,4 +884,61 @@ export function checkpointRunId(sessionId: string, runSeq: number): string {
 export function sessionIdFromRunId(runId: string): string {
   const hash = runId.lastIndexOf("#");
   return hash === -1 ? runId : runId.slice(0, hash);
+}
+
+// ─── The task epoch (V9 finding 8) ───
+//
+// One line per workspace, beside the database: the commit the last task in it
+// opened at. It is read at intake — giving the PREVIOUS task's base — and then
+// overwritten with this task's, so a new session can ask "what has been
+// committed here since a task was last open" without a session row, without a
+// commit subject, and without trusting anything the run writes about itself.
+//
+// It lives under `~/.rune` (`acceptance-pins`' own neighbourhood), so a run
+// that wants to erase it is making a guardrail change rather than an ordinary
+// write; losing it costs this witness and no other.
+const TASK_EPOCH_FILE = "task-epochs.json";
+const TASK_EPOCH_MAX = 64;
+
+interface TaskEpochRow {
+  baseCommit: string;
+  at: string;
+}
+
+/**
+ * Read the previous task's base commit for this workspace and record this
+ * one's. Returns the PREVIOUS value, which is the epoch the witness uses;
+ * `null` the first time a workspace is ever seen.
+ */
+export function takeTaskEpoch(
+  stateDir: string,
+  workspaceRoot: string,
+  head: string | null,
+): string | null {
+  const path = join(stateDir, TASK_EPOCH_FILE);
+  const key = resolve(workspaceRoot);
+  let rows: Record<string, TaskEpochRow> = {};
+  try {
+    if (existsSync(path)) {
+      const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
+      if (raw && typeof raw === "object") rows = raw as Record<string, TaskEpochRow>;
+    }
+  } catch {
+    rows = {};
+  }
+  const previous = rows[key]?.baseCommit;
+  if (head && /^[0-9a-fA-F]{7,40}$/.test(head)) {
+    rows[key] = { baseCommit: head, at: new Date().toISOString() };
+    const keys = Object.entries(rows)
+      .sort((a, b) => (b[1]?.at ?? "").localeCompare(a[1]?.at ?? ""))
+      .slice(0, TASK_EPOCH_MAX);
+    rows = Object.fromEntries(keys);
+    try {
+      mkdirSync(stateDir, { recursive: true });
+      writeFileSync(path, JSON.stringify(rows, null, 2) + "\n");
+    } catch {
+      // No record is this witness missing, not a run that cannot start.
+    }
+  }
+  return typeof previous === "string" && /^[0-9a-fA-F]{7,40}$/.test(previous) ? previous : null;
 }

@@ -360,6 +360,7 @@ import {
   inheritedRepairTurns,
   lifecycleDigest,
   notFromParentCommit,
+  takeTaskEpoch,
   previousRunWasInterrupted,
   runSeqFromEvents,
   statusFromStopReason,
@@ -1544,6 +1545,9 @@ export class Engine {
   private memoryReflecting = false;
   // Sessions in which the agent has already spent its one `memory_update`.
   private readonly memoryToolUsed = new Set<string>();
+  // The commit the PREVIOUS task in this workspace opened at (V9 finding 8).
+  // The durable half of the authorship witness, read once at intake.
+  private taskEpoch: string | null = null;
   // Sentences the guard took out of a REFRESHED profile before it was written
   // (V9 finding 7). Bounded; read once by `takeMemoryNarrativeRefusals` so a
   // surface can say what the dream tried to remember about its own boundaries.
@@ -5732,6 +5736,16 @@ export class Engine {
       // HEAD is the task's own work, however it reached the index (V8 crit 5).
       baseCommit: this.runRevision([], { fresh: true }).head,
     });
+    // The epoch, recorded before anything else runs: the base of the task
+    // BEFORE this one, which is the window a new session has to ask about when
+    // it asks whether a check was written by a run rather than by the repo.
+    if (this.config.dbPath) {
+      this.taskEpoch = takeTaskEpoch(
+        dirname(this.config.dbPath),
+        this.config.workspaceRoot,
+        this.contract.baseCommit ?? null,
+      );
+    }
     // A run continuing one that died with work open inherits its criteria:
     // they are still in force, and an empty contract would report "no criteria
     // stated" while the restored ledger held verified ones. A message after a
@@ -7657,7 +7671,10 @@ export class Engine {
     }
     const since = this.contract?.baseCommit ?? null;
     if (paths.length > 0) {
-      return notFromParentCommit(this.config.workspaceRoot, paths, { since });
+      return notFromParentCommit(this.config.workspaceRoot, paths, {
+        since,
+        epoch: this.taskEpoch,
+      });
     }
     if (!command || !runsWholeSuite(command)) return undefined;
     // A runner over the whole suite names no file, so the suite IS its program:
@@ -7666,7 +7683,10 @@ export class Engine {
       /(?:^|[./_-])(?:test|tests|spec|specs|__tests__)(?:[./_-]|$)/i.test(file),
     );
     if (suiteFiles.length > 0) return suiteFiles[0];
-    return notFromParentCommit(this.config.workspaceRoot, suiteFiles, { since });
+    return notFromParentCommit(this.config.workspaceRoot, suiteFiles, {
+      since,
+      epoch: this.taskEpoch,
+    });
   }
 
   /**

@@ -1255,17 +1255,49 @@ describe("the vault fails closed (V8 critical 3, findings 12 and 13)", () => {
       } finally {
         discardStagedAcceptance(second);
       }
-      // Without the row there is nothing to know it by, and the honest answer
-      // is a fresh first intake — which is why the row is passed.
+      // V9 finding 15. This assertion used to read `blind.staged.length === 1`:
+      // with no contract row there was nothing to know the removal by, so a
+      // brand-new session staged the rewrite as a happy first intake with no
+      // note at all — reachable from inside a run by removing the vault. The
+      // index beside the vault is the witness the manifest cannot be, so the
+      // answer no longer depends on which session is asking.
       const blind = stageAcceptance(spec(), { workspaceRoot: dir, vault: { dir: vaultDir } });
       try {
-        expect(blind.staged.length).toBe(1);
+        expect(blind.staged).toEqual([]);
+        expect(blind.notes.join("\n")).toContain("acceptance pin missing");
+        expect(blind.unmeasurable.length).toBe(1);
       } finally {
         discardStagedAcceptance(blind);
       }
     } finally {
       discardStagedAcceptance(first);
       rmSync(vaultDir, { recursive: true, force: true });
+      rmSync(`${vaultDir}.pins.json`, { force: true });
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("the index is the witness when the contract row is gone too (V9 finding 15)", () => {
+    // The person's way back is unchanged and is one level up: removing the
+    // PINS ROOT takes the index with the vault, which is a guardrail change in
+    // 4th gear rather than an ordinary write, and re-pins from the workspace.
+    const dir = workspace();
+    const root = mkdtempSync(join(tmpdir(), "stage-pins-root-"));
+    const vaultDir = join(root, "ws");
+    const first = stageAcceptance(spec(), { workspaceRoot: dir, vault: { dir: vaultDir } });
+    try {
+      writeFileSync(join(dir, ".rune-acceptance", "check.mjs"), FAKE);
+      rmSync(root, { recursive: true, force: true });
+      const after = stageAcceptance(spec(), { workspaceRoot: dir, vault: { dir: vaultDir } });
+      try {
+        expect(after.staged.length).toBe(1);
+        expect(after.notes).toEqual([]);
+      } finally {
+        discardStagedAcceptance(after);
+      }
+    } finally {
+      discardStagedAcceptance(first);
+      rmSync(root, { recursive: true, force: true });
       rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -1324,6 +1356,99 @@ describe("the vault fails closed (V8 critical 3, findings 12 and 13)", () => {
       discardStagedAcceptance(staged);
       rmSync(outside, { recursive: true, force: true });
       rmSync(vaultDir, { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // ─── V9 finding 16: what the check LOADS, and never says it loads ───
+  //
+  // `files:` pins what the author named. A check that imports a sibling helper
+  // the author did not list was not staged, not pinned, and rewriting that
+  // helper — which is rewriting what the oracle measures — produced no note at
+  // all. Static resolution is a real limit and it is stated in the code: a path
+  // the check builds at runtime is not here.
+  test("a sibling the check imports is pinned even though nobody named it", () => {
+    const dir = workspace();
+    const vaultDir = mkdtempSync(join(tmpdir(), "stage-vault-dep-"));
+    writeFileSync(join(dir, ".rune-acceptance", "helper.mjs"), "export const LIMIT = 1;\n");
+    writeFileSync(
+      join(dir, ".rune-acceptance", "check.mjs"),
+      "import { LIMIT } from './helper.mjs';\nconsole.log(LIMIT);\n",
+    );
+    const bare = [
+      {
+        id: "c1",
+        text: "the limit holds",
+        command: "node .rune-acceptance/check.mjs",
+        source: "evaluator" as const,
+      },
+    ];
+    const first = stageAcceptance(bare, { workspaceRoot: dir, vault: { dir: vaultDir } });
+    try {
+      expect(first.pins.map((p) => p.path).sort()).toEqual([
+        ".rune-acceptance/check.mjs",
+        ".rune-acceptance/helper.mjs",
+      ]);
+      expect(first.notes).toEqual([]);
+      // Rewriting the dependency is rewriting the oracle, and it is said.
+      writeFileSync(join(dir, ".rune-acceptance", "helper.mjs"), "export const LIMIT = 9999;\n");
+      const second = stageAcceptance(bare, { workspaceRoot: dir, vault: { dir: vaultDir } });
+      try {
+        expect(second.notes.join("\n")).toContain("helper.mjs");
+        // …and the check is run against the PINNED helper, not the rewrite.
+        expect(readFileSync(join(second.root, ".rune-acceptance", "helper.mjs"), "utf8")).toContain(
+          "LIMIT = 1",
+        );
+      } finally {
+        discardStagedAcceptance(second);
+      }
+    } finally {
+      discardStagedAcceptance(first);
+      rmSync(vaultDir, { recursive: true, force: true });
+      rmSync(`${vaultDir}.pins.json`, { force: true });
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a fixture the check reads through a link is witnessed, not staged", () => {
+    // The link points out of the tree, so the bytes are not the workspace's to
+    // stage (V8 finding 13) — but they ARE what the oracle grades against, so
+    // the digest is pinned as a witness and a change is reported.
+    const dir = workspace();
+    const outside = mkdtempSync(join(tmpdir(), "stage-outside-"));
+    const vaultDir = mkdtempSync(join(tmpdir(), "stage-vault-fx-"));
+    writeFileSync(join(outside, "fixture.json"), '{"expected":1}\n');
+    symlinkSync(join(outside, "fixture.json"), join(dir, ".rune-acceptance", "fixture.json"));
+    writeFileSync(
+      join(dir, ".rune-acceptance", "check.mjs"),
+      "import f from './fixture.json' with { type: 'json' };\nprocess.exit(f.expected === 1 ? 0 : 1);\n",
+    );
+    const bare = [
+      {
+        id: "c1",
+        text: "the fixture says 1",
+        command: "node .rune-acceptance/check.mjs",
+        source: "evaluator" as const,
+      },
+    ];
+    const first = stageAcceptance(bare, { workspaceRoot: dir, vault: { dir: vaultDir } });
+    try {
+      expect(first.pins.map((p) => p.path)).toContain(".rune-acceptance/fixture.json");
+      // Witnessed, never copied: nothing outside the workspace is staged.
+      expect(first.staged.map((r) => r.from)).not.toContain(".rune-acceptance/fixture.json");
+      writeFileSync(join(outside, "fixture.json"), '{"expected":999}\n');
+      const second = stageAcceptance(bare, { workspaceRoot: dir, vault: { dir: vaultDir } });
+      try {
+        expect(second.notes.join("\n")).toContain("fixture.json");
+        expect(second.notes.join("\n")).toContain("does not own");
+      } finally {
+        discardStagedAcceptance(second);
+      }
+    } finally {
+      discardStagedAcceptance(first);
+      rmSync(vaultDir, { recursive: true, force: true });
+      rmSync(`${vaultDir}.pins.json`, { force: true });
+      rmSync(outside, { recursive: true, force: true });
       rmSync(dir, { recursive: true, force: true });
     }
   });

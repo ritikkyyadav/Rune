@@ -27,7 +27,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { notFromParentCommit } from "../../../packages/orchestrator/src/lifecycle";
+import { notFromParentCommit, takeTaskEpoch } from "../../../packages/orchestrator/src/lifecycle";
 import {
   commandProgramPaths,
   runsWholeSuite,
@@ -149,5 +149,56 @@ describe("a commit made during the task is the task's work (V8 critical 5)", () 
     const { dir, seed } = repo("model");
     expect(notFromParentCommit(dir, ["README.md"], { since: seed })).toBeUndefined();
     expect(notFromParentCommit(dir, ["README.md"])).toBeUndefined();
+  });
+});
+
+// ─── V9 finding 8: the durable witness read the commit MESSAGE ───
+//
+// `since..HEAD` is exact and it is empty in a brand-new session, where
+// `baseCommit` is HEAD. So across sessions the only witness left was
+// `--grep='^rune: '` — and this repo's own commits are `docs:`, `ui:`, `ci:`,
+// `install:`, `tests:`. A run that wrote its own oracle, committed it the way
+// a task normally ends, and stopped was unattributed for every session after.
+// A commit message is the one part of a commit its author chooses; the tree is
+// not, so the second reading is a tree diff from the previous task's base.
+describe("the durable witness reads the tree, not the subject (V9 finding 8)", () => {
+  test("a `chore:` commit made during the task is the task's work in the NEXT session", () => {
+    const { dir, seed } = repo("model"); // committed as "chore: add the acceptance check"
+    const head = git(dir, "rev-parse", "HEAD").trim();
+    // In-session: `since` is the parent, and it was already caught.
+    expect(notFromParentCommit(dir, ["check.mjs"], { since: seed })).toBe("check.mjs");
+    // A new session: `baseCommit` is HEAD, so `since..HEAD` is empty and the
+    // subject says nothing. With the epoch — the base of the task before this
+    // one — the tree answers.
+    expect(notFromParentCommit(dir, ["check.mjs"], { since: head })).toBeUndefined();
+    expect(notFromParentCommit(dir, ["check.mjs"], { since: head, epoch: seed })).toBe("check.mjs");
+  });
+
+  test("an amended subject does not change what the tree says", () => {
+    const { dir, seed } = repo("rune");
+    git(dir, "commit", "-q", "--amend", "-m", "chore: three");
+    const head = git(dir, "rev-parse", "HEAD").trim();
+    expect(notFromParentCommit(dir, ["check.mjs"], { since: head, epoch: seed })).toBe("check.mjs");
+  });
+
+  test("a file the epoch window never touched is still the repo's", () => {
+    const { dir, seed } = repo("model");
+    const head = git(dir, "rev-parse", "HEAD").trim();
+    expect(notFromParentCommit(dir, ["README.md"], { since: head, epoch: seed })).toBeUndefined();
+  });
+
+  test("the epoch is the PREVIOUS task's base, recorded beside the database", () => {
+    const { dir, seed } = repo("model");
+    const state = mkdtempSync(join(tmpdir(), "v9-epoch-"));
+    // First task ever in this workspace: nothing to look back to.
+    expect(takeTaskEpoch(state, dir, seed)).toBeNull();
+    const head = git(dir, "rev-parse", "HEAD").trim();
+    // The next task opens at HEAD and is handed the base of the one before it.
+    expect(takeTaskEpoch(state, dir, head)).toBe(seed);
+    expect(takeTaskEpoch(state, dir, head)).toBe(head);
+    // Another workspace is another epoch.
+    expect(takeTaskEpoch(state, join(dir, "sub"), head)).toBeNull();
+    // A head git cannot name records nothing and claims nothing.
+    expect(takeTaskEpoch(state, dir, null)).toBe(head);
   });
 });
