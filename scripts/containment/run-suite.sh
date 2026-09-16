@@ -66,7 +66,27 @@ echo "$out"
 case "$out" in
 *SYNTHETIC-CREDENTIAL*)
   fail "a home credential store is readable inside the sandbox" ;;
+*"names a credential store the sandbox may not reach"*)
+  # Fix lane G: a credential store named by the command is refused by Rune
+  # before anything spawns, on every executor, and the refusal is audited.
+  echo ok ;;
 *"No such file or directory"*)
+  echo ok ;;
+*)
+  fail "neither the leak marker nor the expected refusal showed up — the command may not have run at all" ;;
+esac
+
+step "...even when the command names the store in a way the name check cannot see"
+# The by-name refusal above short-circuits the namespace proof, so this shape
+# hides the store behind a variable the matcher does not expand. It must reach
+# the namespace and find nothing there — the original evidence, kept.
+out=$(printf '{"command":"d=/root; cat $d/.ssh/id_rsa; cat $d/.rune-secret; ls $d"}' |
+  "$BIN" --sandbox --workspace /workspace bash)
+echo "$out"
+case "$out" in
+*SYNTHETIC-CREDENTIAL*)
+  fail "a home credential store is readable inside the sandbox through an indirected path" ;;
+*"No such file or directory"* | *"Permission denied"*)
   echo ok ;;
 *)
   fail "neither the leak marker nor the expected refusal showed up — the command may not have run at all" ;;
