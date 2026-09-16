@@ -1,15 +1,15 @@
 {
   "version": 1,
-  "updated": "2026-09-03",
+  "updated": "2026-09-16",
   "plugins": [
     {
       "name": "rune-example-skills",
       "description": "A skills-only plugin: one release-notes playbook, no code and no connectors.",
       "source": "../examples/plugins/rune-example-skills",
       "version": "0.1.0",
-      "runeVersion": ">=0.2.0",
+      "runeVersion": ">=0.1.0",
       "capabilities": ["skills"],
-      "integrity": "sha256-8279f785dcc9622cfdc5bc54a6093e6722f4d9553a1fa36cd8e500c9acf36311",
+      "integrity": "sha256-b0a57f0146fa125282a00eb1a41cf0c34c32bd26d7d62b2f500630d3d17003ed",
       "maintainer": "Savoir <rune@savoir.dev>",
       "homepage": "https://github.com/ritikkyyadav/Rune/tree/main/examples/plugins/rune-example-skills"
     },
@@ -18,9 +18,9 @@
       "description": "An MCP-server plugin: one stdio connector plus the slash command that drives it.",
       "source": "../examples/plugins/rune-example-connector",
       "version": "0.1.0",
-      "runeVersion": ">=0.2.0",
+      "runeVersion": ">=0.1.0",
       "capabilities": ["mcp", "commands"],
-      "integrity": "sha256-0759b5f9c299f28bdca2d0422930c083b3034a2ac4f94f48922cd552afa6ec00",
+      "integrity": "sha256-3ba02fa849576af0da981d9efe02e3cbf0e323651f435a748f629954c90e594f",
       "maintainer": "Savoir <rune@savoir.dev>",
       "homepage": "https://github.com/ritikkyyadav/Rune/tree/main/examples/plugins/rune-example-connector"
     },
@@ -29,9 +29,9 @@
       "description": "Executable tools under the OS sandbox: a workspace-write file tool and a host-scoped HTTP tool.",
       "source": "../examples/plugins/rune-example-tools",
       "version": "0.1.0",
-      "runeVersion": ">=0.2.0",
+      "runeVersion": ">=0.1.0",
       "capabilities": ["tools:workspace-write", "tools:network"],
-      "integrity": "sha256-541b3f5fecee0c51afc4efbfcda0ff7d6aa0c2b29fa7712aabbcad7d9840a60a",
+      "integrity": "sha256-df95148285f8f59b3c86828cf4ed343b7611a2ea6024f32f573ad24503e02478",
       "maintainer": "Savoir <rune@savoir.dev>",
       "homepage": "https://github.com/ritikkyyadav/Rune/tree/main/examples/plugins/rune-example-tools"
     }
