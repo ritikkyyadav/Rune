@@ -2,7 +2,7 @@
   "name": "rune-example-tools",
   "version": "0.1.0",
   "description": "Executable tools under the OS sandbox: a workspace-write file tool and a host-scoped HTTP tool.",
-  "runeVersion": ">=0.2.0",
+  "runeVersion": ">=0.1.0",
   "tools": [
     {
       "id": "files",
