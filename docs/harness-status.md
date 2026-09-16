@@ -1977,3 +1977,29 @@ Sonnet is checking the fourth pass's critical fixes and the release readiness on
 its recommendation decides the tag. Everything outside the first public version — M6 and
 Phase 6, Windows, the live comparison series, the §2.8 leftovers, the two credential stores —
 is on hold by the founder's decision of 2026-09-16.
+
+### Addendum 37 — Fifth pass (scoped): the release is clearable, the memory store is not
+
+The scoped verifier (`verify-batch-5-report.md`, Sonnet, zero live calls) found the tree at
+`6597466` — docs only above `534ae2a`, so every finding transfers. Release readiness held on
+every check: `scripts/version.sh` prints `0.1.0-dev+<sha>`, the notes carry no internal
+number, every package and the Cargo workspace say `0.1.0`, the plugin index digests match
+the trees, `tests/verification/` is empty. F1 confirmed live through the rebuilt native
+sandbox with the harness sandbox off (a nested Seatbelt does not start; with it on, every
+call fell back to the path guard and would have under-tested silently): quoted, `$HOME`,
+tilde, python, symlink, `cp` and `tar` reads of the signing key all refused, 54 / 54. F2's
+memory suites 294 / 294. Then the pass found a **new critical**: `~<username>` — a tilde
+followed by the user's own login name — expands to the passwd home regardless of `$HOME`,
+the TypeScript matcher drops the classification, and the native deny list is built from the
+overridable `$HOME`, so a session whose home is a scratch directory reaches the real
+`~/.rune/memory` unblocked and unlogged. Two highs remain: 11 of 14 fresh ordinary-phrasing
+weakenings pass the clause-level guard, and the narrative guard's table and fence handling
+does not generalise. **Verdict as written: v0.1.0 may be tagged from 534ae2a; memory in
+`auto` is not safe until the tilde-user hole is closed.** The keychain-versus-forged-file
+property was **not** verified live: the probe needs a store outside the temp root, and its
+`security` calls raised the founder's login-keychain prompt (cancelled; the agent was told to
+stop); it rests on the mocked runner tests only. The two test items the probe named are not
+in the keychain (checked by service name; both absent). Fix lane G was launched for the
+tilde-user hole in both layers and for the durable answer to the guard highs: memory text is
+injected as quoted data under a description that says boundaries are runtime-enforced, with
+a test that a weakening entry changes no runtime decision; the guard stays as depth.
