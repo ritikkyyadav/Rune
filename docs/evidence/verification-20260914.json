@@ -1,11 +1,13 @@
 {
   "kind": "local-verification",
   "recordedAt": "2026-09-14",
-  "phase": "Claude Code handoff \u2014 M0 (reconcile + finish the interrupted lanes), M1 (acceptance semantics), original Phase 4 \u00a72.8 (wizard in the frame); closing pass",
+  "phase": "Claude Code handoff — M0 (reconcile + finish the interrupted lanes), M1 (acceptance semantics), original Phase 4 §2.8 (wizard in the frame); closing pass",
   "sourceCommit": "a22866b86ef01896506307cc0596e5bfc68cd206",
   "workingTree": {
     "tracked": "M docs/CLAUDE_CODE_HANDOFF.md\n M docs/harness-status.md\n M docs/program/backlog.md",
-    "untracked": ["scripts/tui-capture/first-run-frame.ts"]
+    "untracked": [
+      "scripts/tui-capture/first-run-frame.ts"
+    ]
   },
   "commits": [
     "a22866b harness: the provider you saved is the provider you get back",
@@ -15,7 +17,7 @@
     "75a1153 ui: the setup wizard takes the whole frame, not the footer",
     "9421556 harness: a model amendment keeps what the user and the evaluator stated",
     "4d227fd harness: a criterion has an id, a source, and a status that is derived",
-    "a0ba6be docs: M0 closes \u2014 the interrupted lanes are finished, and the M1 spec is written down",
+    "a0ba6be docs: M0 closes — the interrupted lanes are finished, and the M1 spec is written down",
     "9d0f9da ui: the wizard shows which source won, and a wrong host stops reading as a wrong key",
     "ec8490e ui: the agents panel counts one tool call once, and never shows one cell for two agents",
     "31c6c56 ui: the caret sits on the field, and a narrow window keeps its transcript",
@@ -54,11 +56,11 @@
       "exit": 0
     },
     "lint": {
-      "firstRun": "exit 1 \u2014 prettier on 13 lane files; fixed in 4a6774d",
+      "firstRun": "exit 1 — prettier on 13 lane files; fixed in 4a6774d",
       "rerun": "exit 0"
     },
     "formatCheck": {
-      "firstRun": "exit 1 \u2014 same 13 files",
+      "firstRun": "exit 1 — same 13 files",
       "rerun": "exit 0"
     },
     "cargoFmt": {
@@ -88,7 +90,7 @@
     "gitDiffCheck": {
       "exit": 0
     },
-    "gateSubject": "16fe3ae (all gates) \u2014 the formatting commit 4a6774d that followed changes whitespace, two leading union pipes and one quote style only; the touched suites were rerun on it (261/0) and lint + format:check rerun green",
+    "gateSubject": "16fe3ae (all gates) — the formatting commit 4a6774d that followed changes whitespace, two leading union pipes and one quote style only; the touched suites were rerun on it (261/0) and lint + format:check rerun green",
     "note": "All gates in `gates` ran on 16fe3ae. 4a6774d (formatting) and a22866b (the boot fix) followed; the reruns on them are in `afterFix` and in the harness-status entry."
   },
   "artifacts": {
@@ -113,7 +115,10 @@
     "kind": "installed-walkthrough",
     "binary": "/Users/ritikyadav890/.rune/bin/rune",
     "rig": ".codex/audit-20260910/handoff/m0/walkthrough-installed.py (capture-p4.py's walk with ARGV swapped to the installed launcher)",
-    "sizes": ["120x40", "80x24"],
+    "sizes": [
+      "120x40",
+      "80x24"
+    ],
     "frames": [
       "120x40-idle.txt",
       "120x40-setup-esc.txt",
@@ -132,7 +137,7 @@
       "80x24-setup-reopened.txt",
       "80x24-setup-url.txt"
     ],
-    "steps": "idle \u2192 /setup \u2192 provider=custom \u2192 base URL (loopback GET /v1/models mock) \u2192 model \u2192 key typed (masked) \u2192 key accepted (200 OK, keychain) \u2192 esc \u2192 NEW process on the same profile \u2192 /setup shows what was kept",
+    "steps": "idle → /setup → provider=custom → base URL (loopback GET /v1/models mock) → model → key typed (masked) → key accepted (200 OK, keychain) → esc → NEW process on the same profile → /setup shows what was kept",
     "keyLeak": "asserted absent from every frame and every file under the scratch profile, both sizes",
     "modelCalls": 0,
     "keychain": "the mock key was written to the login keychain by the key step and removed by the rig afterwards; the founder's credentials.index.json has no provider:custom account, so nothing real was overwritten",
@@ -151,7 +156,7 @@
       ],
       "cause": "rune-cli.ts:904 gated the saved provider on a six-id isCliProvider list; :1316 defaulted every other provider's model to gemini-2.5-flash",
       "fixedIn": "a22866b",
-      "reproven": "restart-proof-keyed.py on v0.4.1-dev+a22866b: strip `> 1st gear \u00b7 mock-small`, SAVED vs ACTIVE custom/custom, mock-small/mock-small"
+      "reproven": "restart-proof-keyed.py on v0.4.1-dev+a22866b: strip `> 1st gear · mock-small`, SAVED vs ACTIVE custom/custom, mock-small/mock-small"
     },
     "binaryAfterFix": "v0.4.1-dev+a22866b"
   },
@@ -162,7 +167,7 @@
     "pass": 47,
     "fail": 0,
     "control": "RUNE_SCENARIO_CLI=/nonexistent/rune makes the suite fail with 'points at a binary that does not exist' (rerun this pass)",
-    "modelCalls": "none \u2014 loopback mock, scratch RUNE_HOME, credential-free child environment (the suite's own proof)",
+    "modelCalls": "none — loopback mock, scratch RUNE_HOME, credential-free child environment (the suite's own proof)",
     "rerunOn": {
       "binary": "v0.4.1-dev+a22866b",
       "pass": 47,
@@ -180,17 +185,17 @@
       "prettier": "clean on the lane's files"
     },
     "installed": {
-      "doctorBuildLine": "current \u2014 gear/phase-0-stabilize@a22866b8+dirty (the untracked capture script)",
-      "toolsSmoke": "write \u00b7 read \u00b7 edit \u00b7 bash round-trip",
+      "doctorBuildLine": "current — gear/phase-0-stabilize@a22866b8+dirty (the untracked capture script)",
+      "toolsSmoke": "write · read · edit · bash round-trip",
       "lifecycleThroughBinary": "47 / 0"
     }
   },
   "notProven": [
     "Windows (reasoned, never run)",
-    "Linux (Docker client present, no daemon socket, not reset; containment-linux and install-smoke CI jobs never executed \u2014 branch unpushed)",
+    "Linux (Docker client present, no daemon socket, not reset; containment-linux and install-smoke CI jobs never executed — branch unpushed)",
     "any live model call",
     "--acceptance on the installed binary (by construction only: --help shows it; T1/T2/FP/FN exercise the finish-gate run in-process on source)",
-    "\u00a72.8 remainder: /model, /sandbox, /keys in the footer; /help, /status not in the workspace; narration rows unwritten",
+    "§2.8 remainder: /model, /sandbox, /keys in the footer; /help, /status not in the workspace; narration rows unwritten",
     "resize during a wizard step and a same-session /config change on the installed binary",
     "M1's kept-protection across a NEW message after a clean finish (per-run + per-resume by the spec's rule)",
     "the two CI workflows have never run"
@@ -201,7 +206,13 @@
     "`rune tools-smoke` names ~/.alan/bin/rune-tools: the legacy shim still resolves first on the founder's PATH (tracked in the backlog since Phase 1)."
   ],
   "afterM2": {
-    "commits": ["564ef36", "3ae51ee", "48caa0c", "a9a9f37", "b5632fb"],
+    "commits": [
+      "564ef36",
+      "3ae51ee",
+      "48caa0c",
+      "a9a9f37",
+      "b5632fb"
+    ],
     "gatesAt": "b5632fb",
     "gates": {
       "unit": "5,068 pass / 1 skip / 0 fail (386 files, 58.3 s)",
@@ -212,12 +223,12 @@
       "formatCheck": "clean",
       "prettier": "clean",
       "gitDiffCheck": "clean",
-      "cargoClippyEvals": "reused from the 16fe3ae run \u2014 crates/ and tests/eval unchanged"
+      "cargoClippyEvals": "reused from the 16fe3ae run — crates/ and tests/eval unchanged"
     },
     "installed": {
       "version": "Rune v0.4.1-dev+a47e9fc",
       "cliSha256": "d842162656d2beecd4e71ab80c1881466aabffd2576129948a40123de7c2a17d",
-      "doctorBuildLine": "current \u2014 gear/phase-0-stabilize@a47e9fc4+dirty",
+      "doctorBuildLine": "current — gear/phase-0-stabilize@a47e9fc4+dirty",
       "lifecycleThroughBinary": "47 / 0"
     },
     "shadowReport": {
@@ -227,12 +238,12 @@
           "guard": "G9",
           "arbiter": "abandoned(environment)",
           "guard_did": "complete(end_turn)",
-          "reading": "a label \u2014 the loop falls through to the finish gates and the verdict; M3 relabels it verifying"
+          "reading": "a label — the loop falls through to the finish gates and the verdict; M3 relabels it verifying"
         }
       ],
       "unknowns": 2,
       "unshadowed": 2,
-      "overhead": "0\u20134 rows/run; p50 8\u2013364 \u00b5s; p95 \u2264 948 \u00b5s; \u2264 1.4 ms/run; scripted rig"
+      "overhead": "0–4 rows/run; p50 8–364 µs; p95 ≤ 948 µs; ≤ 1.4 ms/run; scripted rig"
     }
   },
   "afterFixes": {
@@ -257,11 +268,11 @@
       "version": "Rune v0.4.1-dev+e3fb2eb",
       "cliSha256": "4cccec1d1773cd8960dcde96e863ec3036df5af17304b1dc5dc24560a7218bbd",
       "nativeSha256": "c5b44f6e3620aae0cf82941a9e155fb95097815b1cd673eb9c98aa1347a28416",
-      "doctorBuildLine": "current \u2014 gear/phase-0-stabilize@e3fb2ebd+dirty (the untracked capture script)",
+      "doctorBuildLine": "current — gear/phase-0-stabilize@e3fb2ebd+dirty (the untracked capture script)",
       "doctorBrowserLine": "off by config (@playwright/mcp fetched by bunx on first use; no playwright module resolved here; chromium chromium-1243)",
-      "toolsSmoke": "write \u00b7 read \u00b7 edit \u00b7 bash round-trip",
+      "toolsSmoke": "write · read · edit · bash round-trip",
       "lifecycleThroughBinary": "47 / 0",
-      "restartProofKeyed": "strip reads `> 1st gear \u00b7 mock-small`; keychain left as found"
+      "restartProofKeyed": "strip reads `> 1st gear · mock-small`; keychain left as found"
     },
     "verifierPass": {
       "report": ".codex/audit-20260910/handoff/m0/verify-batch-report.md",
@@ -270,7 +281,10 @@
       "high": 7,
       "medium": 11,
       "low": 8,
-      "closedBy": ["Fix lane A f85b263..d9c524e", "Fix lane B 0424906..edd96ef"],
+      "closedBy": [
+        "Fix lane A f85b263..d9c524e",
+        "Fix lane B 0424906..edd96ef"
+      ],
       "verificationDirEmpty": true
     },
     "corpusOffline": {
@@ -282,7 +296,7 @@
     },
     "notProvenStill": [
       "Windows",
-      "Linux (no Docker daemon; CI jobs never executed \u2014 branch unpushed)",
+      "Linux (no Docker daemon; CI jobs never executed — branch unpushed)",
       "any live model call",
       "the visual rubric run by a real independent reviewer",
       "live frontend or corpus runs (no budget)",
@@ -292,7 +306,7 @@
   "afterFounderAsks": {
     "date": "2026-09-15",
     "commits": "1eee25d, c2862b8 (UI), 44111d2, ca23537, 36f3d31, 1e2834a, ba1f3f6 (memory)",
-    "gatesAt": "6696fa2 fast set + eval (eval red \u2192 fixed in ba1f3f6, rerun 63/63 at 0.27)",
+    "gatesAt": "6696fa2 fast set + eval (eval red → fixed in ba1f3f6, rerun 63/63 at 0.27)",
     "gates": {
       "unit": "5,356 ran / 0 fail (404 files)",
       "integration": "371 ran / 0 fail (61 files)",
@@ -331,7 +345,7 @@
     "installed": {
       "version": "Rune v0.4.1-dev+8024ac0",
       "cliSha256": "8678752aae937168f63fe9d52d3759cbdda18cbd16f0ed4fe3de878967e0953a",
-      "doctorBuildLine": "current \u2014 gear/phase-0-stabilize@8024ac08+dirty",
+      "doctorBuildLine": "current — gear/phase-0-stabilize@8024ac08+dirty",
       "toolsSmoke": "green",
       "nativeSha256": "f53cbddf32431706edf64c030db729c9d7352e50b6d1fe3d81317fe388579bc0"
     },
@@ -360,9 +374,9 @@
     "installed": {
       "version": "Rune v0.4.1-dev+c68a349",
       "cliSha256": "bfad16ef017c4fa5cda6699b933b3e475ce0fade8753538a82128948fc93f221",
-      "doctorBuildLine": "current \u2014 gear/phase-0-stabilize@c68a3490+dirty",
+      "doctorBuildLine": "current — gear/phase-0-stabilize@c68a3490+dirty",
       "toolsSmoke": "green",
-      "runeMemoryScratchHome": "Memory: auto \u2014 Rune decides when to update its memory",
+      "runeMemoryScratchHome": "Memory: auto — Rune decides when to update its memory",
       "nativeSha256": "f53cbddf32431706edf64c030db729c9d7352e50b6d1fe3d81317fe388579bc0"
     },
     "secondVerifierPass": {
@@ -385,7 +399,7 @@
     "nativeSha256Now": "f53cbddf32431706edf64c030db729c9d7352e50b6d1fe3d81317fe388579bc0",
     "nativeMovedAt": "install of 8024ac0 (first install after 44a4e43 rebuilt rune-tools)",
     "claimsCorrected": [
-      "afterM4.installed and afterFoundersCorrections.installed said native unchanged \u2014 false",
+      "afterM4.installed and afterFoundersCorrections.installed said native unchanged — false",
       "doctorBuildLine 'current' claims are true at install time and stale by the commit that records them"
     ],
     "thirdVerifierPass": {
@@ -418,7 +432,7 @@
       "autoSafetyOffline": "P 92.8 / R 89.1 / F1 90.9, 0 live",
       "prettier": "red only on two untracked verifier files"
     },
-    "audit": "7,167 \u2192 7,167 through the gate run; 7,167 \u2192 7,168 by the installer's serve --check smoke (fixed next)",
+    "audit": "7,167 → 7,167 through the gate run; 7,167 → 7,168 by the installer's serve --check smoke (fixed next)",
     "installed": {
       "version": "Rune v0.4.1-dev+8cb23b0",
       "cliSha256": "7f121f32ee228a85d275e223fa6519f02aa1da851e8577f5e25f51a21d138858",
@@ -431,9 +445,9 @@
     "push": "943efee..0530c52 then 414ac89 (2026-09-15 ~23:30 IST, on the founder's word)",
     "firstRun": {
       "id": 35005128311,
-      "result": "containment-linux success; install-smoke failed on both runners at scripts/install.sh \u2014 rustup had no toolchain because HOME was moved"
+      "result": "containment-linux success; install-smoke failed on both runners at scripts/install.sh — rustup had no toolchain because HOME was moved"
     },
-    "fix": "414ac89 pins RUSTUP_HOME/CARGO_HOME/BUN_INSTALL before HOME moves; reproduced locally red\u2192green from a fresh clone",
+    "fix": "414ac89 pins RUSTUP_HOME/CARGO_HOME/BUN_INSTALL before HOME moves; reproduced locally red→green from a fresh clone",
     "secondRun": {
       "id": 35005701419,
       "url": "https://github.com/ritikkyyadav/Rune/actions/runs/35005701419",
@@ -443,7 +457,10 @@
         "Clean-machine install (macos-latest)": "success"
       }
     },
-    "notHosted": ["ci.yml (runs on pull_request only for this branch)", "Windows"]
+    "notHosted": [
+      "ci.yml (runs on pull_request only for this branch)",
+      "Windows"
+    ]
   },
   "afterUiMediums": {
     "date": "2026-09-15 night",
@@ -454,14 +471,14 @@
       "version": "Rune v0.4.1-dev+13ebcd1",
       "cliSha256": "ca8370a13c570381d2c27ab0eff57f0b30656238026f47fa30345045b5e5721b",
       "nativeSha256": "f53cbddf32431706edf64c030db729c9d7352e50b6d1fe3d81317fe388579bc0",
-      "auditBracket": "7,168 \u2192 7,168 through the install (0530c52 smoke fix proven)"
+      "auditBracket": "7,168 → 7,168 through the install (0530c52 smoke fix proven)"
     },
     "pushed": "414ac89..13ebcd1",
     "fourthVerifierPass": "launched on 13ebcd1; report verify-batch-4-report.md"
   },
   "release010": {
     "date": "2026-09-16",
-    "versionReset": "1d988e2 (0.4.1 \u2192 0.1.0 everywhere); ae3bff8 example plugins >=0.1.0; 534ae2a plugin index digests + pins",
+    "versionReset": "1d988e2 (0.4.1 → 0.1.0 everywhere); ae3bff8 example plugins >=0.1.0; 534ae2a plugin index digests + pins",
     "fixLanes": "F1 785a9f2..e3b997e (sandbox deny paths, quoting, probe control); F2 fc4fcad..2461f7c (key in credential store, clause guard, tree witness, redaction)",
     "gatesAt": "534ae2a",
     "gateLogs": ".codex/audit-20260910/handoff/m0/gates/534ae2a-20260916T081414Z/",
@@ -470,17 +487,41 @@
       "version": "Rune v0.1.0-dev+534ae2a",
       "cliSha256": "62a1ff715a8a3d2088bb1e948b2b6d71b9883c14cae8a968f414c33956b75763",
       "nativeSha256Prefix": "084302c8be0f7e5d",
-      "auditBracket": "7,170 \u2192 7,170"
+      "auditBracket": "7,170 → 7,170"
     },
     "pushed": "13ebcd1..534ae2a",
     "releaseNotes": "docs/releases/v0.1.0.md",
-    "scopedVerifier": "launched (Sonnet) \u2192 verify-batch-5-report.md; the tag waits on it",
+    "scopedVerifier": "verify-batch-5-report.md (Sonnet): release readiness clear; F1 confirmed live 54/54, F2 294/294; NEW CRITICAL ~<username> bypass at both layers; guard highs; keychain half NOT verified live (probe raised the founder's keychain prompt)",
     "onHold": [
       "M6/Phase 6",
       "Windows",
       "live comparison series",
-      "\u00a72.8 leftovers",
+      "§2.8 leftovers",
       "two credential stores"
+    ]
+  },
+  "afterFixG": {
+    "date": "2026-09-16",
+    "fixLaneG": "dea5dda (containment: passwd home in both deny layers, credential pre-flight in the PathGuard fallback, refusals audited), 2178e6e (memory injected as quoted data; runtime-boundary test), e75e9f3 (memory e2e reads the preamble); docs a5393ac (Addendum 37), 812c0fe (release notes: guard is a filter)",
+    "incident": "lane G's mutation probe printed the founder's real ~/.rune/memory/.key into its own transcript (not written, committed or sent); rotation advised: rm the legacy .key, then `rune memory resign --all`",
+    "gatesAt": "e75e9f3",
+    "gateLogs": ".codex/audit-20260910/handoff/m0/gates/e75e9f3-20260916T091154Z/",
+    "gates": "twelve green; integration 385 / 3 / 7 skip under the full run's load (lifecycle-durability driver did not complete; background-sandbox descendant test timed out) — the two files rerun in isolation 51 / 0; integration gate rerun alone at 812c0fe: PENDING",
+    "cargoTests": "114 / 0 (tilde_user_home new); ~/.rune/audit.jsonl 7,170 before and after",
+    "supervisorProbes": {
+      "installedNative": "from a scratch HOME/RUNE_HOME: `wc -c ~<user>/.rune/memory/.key`, `test -e ~<user>/.rune/.env`, the quoted form and `~/.rune/...` refused by name at the real path; indirected `V=memory/.key; wc -c ~<user>/.rune/$V` denied by Seatbelt (Operation not permitted) at the real path; ordinary command runs sandboxed",
+      "tsLayer": "commandPaths resolves ~<user>/.rune/memory/.key and ~<user>/.rune/.env to the real home, isSecretControlPath true; ~<user>/notes.txt false"
+    },
+    "installed": {
+      "version": "Rune v0.1.0-dev+812c0fe",
+      "cliSha256Prefix": "80a5ce6c7dbe4b25",
+      "nativeSha256Prefix": "c6bce8ef1c012119",
+      "auditBracket": "7,170 → 7,170"
+    },
+    "notVerified": [
+      "keychain-vs-forged-file live (mocked runner tests only)",
+      "Linux/bubblewrap tilde-user refusal (shared deny list, reasoned not measured)",
+      "guard porosity unchanged by design"
     ]
   }
 }

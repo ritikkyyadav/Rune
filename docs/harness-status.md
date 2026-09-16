@@ -2003,3 +2003,40 @@ in the keychain (checked by service name; both absent). Fix lane G was launched 
 tilde-user hole in both layers and for the durable answer to the guard highs: memory text is
 injected as quoted data under a description that says boundaries are runtime-enforced, with
 a test that a weakening entry changes no runtime decision; the guard stays as depth.
+
+### Addendum 38 — Fix lane G: the deny lists no longer come from `$HOME`; the memory boundary is the runtime
+
+The tilde-user hole is closed at both layers (`dea5dda`). TypeScript: the path matcher takes
+`~<name>` as a home spelling and resolves it without `$HOME` (Bun's `os.userInfo()` answers
+from the environment, so it could not be the source; the home parent is a platform constant
+with the environment home's parent as fallback), and the old parse — which read the token
+as a bare `~` and threw the rest of the path away — is a permanent test. Rust: the passwd
+home of the effective uid (`getpwuid_r`, `getpwnam_r` through the crate's existing `libc`)
+joins the environment home in `home_roots()`, and every deny list derives from both. Two
+things the brief did not ask for, found while there: the PathGuard-only fallback knew only
+destructive verbs and let every credential read through, so it now pre-flights credential
+paths by name; and a refused command returned before any executor reached the audit log,
+so every block had been unlogged — refusals are now recorded. The two guard highs are
+answered as instructed (`2178e6e`): remembered lines render as quoted data on one line
+(curly delimiters, newlines and control characters collapsed, so a line cannot forge a
+bullet or a heading), the auto-mode doctrine names the block as data whose boundaries are
+runtime-enforced (the always-on doctrine was tried and cost 101 tokens per request, so it
+was not used), and `memory-boundary.test.ts` writes fourteen weakenings straight into a
+promoted store past every filter and asserts that no permission decision, containment
+route, sandbox choice or turn budget moves, plus a structural check that the five deciding
+modules import nothing from the memory module. The guard is unchanged and the release
+notes say so (`812c0fe`). **Incident, the lane's own report:** its Rust mutation probe used
+`cat` on the founder's real key path instead of the synthetic stand-in the brief required,
+and the key was printed into the lane's transcript — not written, committed or sent
+anywhere; the founder was told to rotate it (remove the legacy `.key`; the next session
+mints one in the credential store; `rune memory resign --all`). Gates on `e75e9f3`: twelve
+green; integration **385 / 3** under the full run's load (the lifecycle-durability driver did
+not complete; the background-sandbox descendant test hit its 30 s limit) and the same two
+files **51 / 0** in isolation; cargo 114 / 0 with the audit log at 7,170 before and after.
+Supervisor's own probes on the installed native binary from a scratch home: the
+tilde-username key and `.env` reads refused by name at the real path, the quoted form too,
+an indirected form denied by Seatbelt at the real path, ordinary work untouched; the
+TypeScript layer resolves both forms to the real home and classifies them secret.
+Installed **Rune v0.1.0-dev+812c0fe** (CLI `80a5ce6c…`, native `c6bce8ef…`), audit bracket
+7,170 → 7,170. Not verified: the keychain half live, Linux for the tilde case, and the guard's
+porosity, which is now a stated limit rather than a claim.
