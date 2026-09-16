@@ -343,9 +343,46 @@ export function isSelfProtectionPath(workspaceRoot: string, target: string): boo
   // keep the relative-only scan so a workspace living under .rune/ remains
   // ordinary project territory.
   if (rel.split(sep)[0] === ".." || isAbsolute(rel)) {
-    return scanControlSegments(abs.split(sep).filter(Boolean));
+    if (scanControlSegments(abs.split(sep).filter(Boolean))) return true;
+  }
+  // A Rune home named by `$RUNE_HOME` need not be CALLED `.rune` — every rig,
+  // capture script and test harness in this repo points it at a scratch
+  // directory, and a scanner that only knows the literal segment reads
+  // `$RUNE_HOME/memory/entries/a.json` as an ordinary out-of-workspace write.
+  // The resolved roots are scanned as if the root itself were the control
+  // directory, so only its immediate children qualify — a detached worktree at
+  // `<home>/worktrees/<run>` stays ordinary project territory.
+  for (const root of runeHomeRoots()) {
+    const inside = relative(root, abs);
+    if (inside !== "" && (inside.split(sep)[0] === ".." || isAbsolute(inside))) continue;
+    if (scanControlSegments([".rune", ...inside.split(sep).filter(Boolean)])) return true;
   }
   return false;
+}
+
+/**
+ * The subset of the control surface that is a SECRET: the provider keys, the
+ * memory signing key, the credential index, a private key or certificate.
+ *
+ * Reading Rune's rules is not breaking them — `cat .rune/config.toml` is how an
+ * agent finds out what it may do. Reading Rune's KEYS is a different act. V9
+ * criticals 2 and 4 chained a read of `~/.rune/memory/.key` into a forged
+ * `user-corrected` memory entry that verified, with no guardrail event at any
+ * step, because the containment layer only ever asked about mutations.
+ */
+const CONTROL_SECRET_FILE_RE =
+  /^(?:\.env(?:\..*)?|.*\.(?:key|pem)|(?:secrets?|keys?|credentials?)(?:[._-].*)?\.(?:json|toml|txt|env))$/i;
+
+export function isSecretControlPath(workspaceRoot: string, target: string): boolean {
+  const leaf = expandHome(target, resolve(workspaceRoot))
+    .split(sep)
+    .filter(Boolean)
+    .pop()
+    ?.toLowerCase();
+  if (!leaf || !CONTROL_SECRET_FILE_RE.test(leaf)) return false;
+  // The workspace's own `.env` and a project's `fixtures/test.pem` are nobody's
+  // control surface; only a secret inside a Rune control home is.
+  return isSelfProtectionPath(workspaceRoot, target);
 }
 
 function scanControlSegments(parts: string[]): boolean {
@@ -382,16 +419,31 @@ const RUNE_CONFIG_WRITE_RE =
  * Returned as prose because the circuit breaker quotes it to the agent.
  */
 export function shellGuardrailChange(action: AutoModeAction): string | undefined {
-  if (action.toolName !== "bash") return undefined;
-  const command = String(action.args.command ?? "");
-  if (!command) return undefined;
-  if (RUNE_CONFIG_WRITE_RE.test(command)) {
-    return "the action changes Rune's own configuration, policy, or sandbox switch through the CLI";
+  if (action.toolName === "bash") {
+    const command = String(action.args.command ?? "");
+    if (command) {
+      if (RUNE_CONFIG_WRITE_RE.test(command)) {
+        return "the action changes Rune's own configuration, policy, or sandbox switch through the CLI";
+      }
+      if (CONTROL_MUTATION_RE.test(command)) {
+        const target = commandPaths(command).find((p) =>
+          isSelfProtectionPath(action.workspaceRoot, p),
+        );
+        if (target) {
+          return `the action edits Rune's own configuration, hooks, skills, or policy surface through the shell (${target})`;
+        }
+      }
+    }
   }
-  if (!CONTROL_MUTATION_RE.test(command)) return undefined;
-  const target = commandPaths(command).find((p) => isSelfProtectionPath(action.workspaceRoot, p));
-  return target
-    ? `the action edits Rune's own configuration, hooks, skills, or policy surface through the shell (${target})`
+  // A secret is different: NAMING one at all is the guardrail action, through
+  // any tool and with any verb. No reader list — `cat`, `wc -c <`, `shasum`,
+  // `$(<file)`, `python3 -c open(...)`, `read_file` and a `cp` to a public
+  // directory are the same act, and a list of the verbs somebody thought of is
+  // how `wc` walked. The mutation branch runs first so an edit keeps its own,
+  // more specific, reason.
+  const secret = targetPaths(action).find((p) => isSecretControlPath(action.workspaceRoot, p));
+  return secret
+    ? `the action reaches Rune's own credential store — the provider keys, the memory signing key, or a private key (${secret})`
     : undefined;
 }
 
@@ -1023,18 +1075,98 @@ function stripBypassFlags(command: string): string {
 }
 
 /**
- * The filesystem paths a command names, as written. Shallow on purpose — it
- * reads the literal text, not the shell's eventual expansion — so both
- * questions asked of it below are phrased to need only positive evidence.
+ * The filesystem paths a command names.
+ *
+ * V9 critical 3: the old matcher required a path to be preceded by
+ * start-of-string or WHITESPACE and excluded `"`, `'` and `$` from the
+ * candidate, so quoting a path hid it from every control-path check in this
+ * module. `cp f.json ~/.rune/memory/entries/a.json` was a guardrail change;
+ * the same line with the path in double quotes named no paths at all, and
+ * `rm -rf "/Users/<user>"` tripped no breaker. Every control surface the
+ * guardrail list knows was reachable by pressing the quote key.
+ *
+ * So the scan is no longer anchored to whitespace. A candidate may start after
+ * a quote, a backtick, an `=`, an opening bracket or a separator — which also
+ * means an inline program (`python3 -c "…expanduser('~/.rune/…')…"`,
+ * `node -e '…HOME+"/.rune/…"'`, `perl -e`) is scanned by the same matcher as
+ * the shell text around it, because the path inside its source is a path
+ * either way. One matcher, not a special case per interpreter: an interpreter
+ * list is a list of the interpreters somebody thought of.
+ *
+ * The home spellings are expanded here rather than left "as written", because
+ * every caller below asks a question about WHERE the path lands — and
+ * `$HOME/.rune/…` landed nowhere, resolving against the workspace as a
+ * relative path named `$HOME`.
  */
+const PATH_CANDIDATE_RE = new RegExp(
+  // Boundary: start, whitespace, or a character a path can legitimately follow.
+  // `:` is deliberately absent so `https://host/path` is not read as a path.
+  String.raw`(?:^|[\s"'` +
+    "`" +
+    String.raw`=(,;|&<>])` +
+    // A home spelling, alone or with a path after it …
+    String.raw`((?:~|\$\{?(?:HOME|RUNE_HOME|GEAR_HOME|ALAN_HOME)\}?)(?:/[^\s"'` +
+    "`" +
+    String.raw`;|&()<>]*)?` +
+    // … or an ordinary absolute, relative or bare-directory path.
+    String.raw`|(?:\.{0,2}/|[\w.@-]+/)[^\s"'` +
+    "`" +
+    String.raw`;|&()<>]*)`,
+  "g",
+);
+
+const HOME_TOKEN_RE = /^(?:~|\$\{?(?:HOME|RUNE_HOME|GEAR_HOME|ALAN_HOME)\}?)/;
+
 function namedPaths(command: string): string[] {
-  const candidates = command.match(/(?:^|\s)((?:\.{0,2}\/|~\/|[\w.@-]+\/)[^\s;|&"']*)/g) ?? [];
-  return candidates.map((c) => c.trim()).filter(Boolean);
+  const out: string[] = [];
+  for (const match of command.matchAll(PATH_CANDIDATE_RE)) {
+    const raw = match[1]?.trim();
+    if (raw) out.push(expandHomeTokens(raw));
+  }
+  return out;
 }
 
 /** The same list, exported for the guardrail check in auto-mode.ts. */
 export function commandPaths(command: string): string[] {
   return namedPaths(command);
+}
+
+/** Every directory that is a Rune home: the configured one, then the defaults. */
+function runeHomeRoots(): string[] {
+  const roots: string[] = [];
+  for (const key of ["RUNE_HOME", "GEAR_HOME", "ALAN_HOME"]) {
+    const value = process.env[key]?.trim();
+    if (value) roots.push(resolve(value));
+  }
+  for (const name of [".rune", ".gear", ".alan"]) {
+    const candidate = resolve(homedir(), name);
+    if (!roots.includes(candidate)) roots.push(candidate);
+  }
+  return roots;
+}
+
+/**
+ * Expand the home spellings a shell would expand: `~`, `$HOME`, `${HOME}` and
+ * the Rune-home variables every rig in this repo sets.
+ *
+ * `$RUNE_HOME` resolves to the home it actually names, which under a scratch
+ * profile is not called `.rune` at all — `isSelfProtectionPath` knows that and
+ * checks the resolved roots as well as the literal `.rune` segment.
+ */
+function expandHomeTokens(target: string): string {
+  const token = target.match(HOME_TOKEN_RE)?.[0];
+  if (!token) return target;
+  const rest = target.slice(token.length).replace(/^[\\/]+/, "");
+  const name = token === "~" ? "HOME" : token.replace(/^\$\{?/, "").replace(/\}$/, "");
+  const root =
+    name === "HOME"
+      ? homedir()
+      : (process.env[name]?.trim() ??
+        resolve(
+          homedir(),
+          name === "GEAR_HOME" ? ".gear" : name === "ALAN_HOME" ? ".alan" : ".rune",
+        ));
+  return rest ? resolve(root, rest) : resolve(root);
 }
 
 /**
@@ -1044,12 +1176,13 @@ export function commandPaths(command: string): string[] {
  * INSIDE the workspace, and took the workspace tier: an ordinary reversible
  * project edit, according to the only check that looked. It is a shell profile
  * on the developer's machine.
+ *
+ * `$HOME` and `$RUNE_HOME` are expanded by the same rule, so a path that
+ * arrives through a tool argument rather than through `namedPaths` is judged
+ * the same way.
  */
 export function expandHome(target: string, absRoot: string): string {
-  const expanded =
-    target === "~" || target.startsWith(`~/`) || target.startsWith(`~\\`)
-      ? resolve(homedir(), target.slice(1).replace(/^[\\/]+/, ""))
-      : target;
+  const expanded = HOME_TOKEN_RE.test(target) ? expandHomeTokens(target) : target;
   return isAbsolute(expanded) ? resolve(expanded) : resolve(absRoot, expanded);
 }
 
@@ -1190,8 +1323,16 @@ function safeStringify(value: unknown): string {
   }
 }
 
-/** A literal reference to the home directory, however it is spelled. */
-const HOME_REFERENCE_RE = /(?:^|\s)(?:~|\$HOME|\$\{HOME\})(?:\/|\s|$)/;
+/**
+ * A literal reference to the home directory, however it is spelled.
+ *
+ * The boundaries include the quote characters: `rm -rf "${HOME}"` was preceded
+ * by `"` and followed by `"`, matched nothing, and — because the old
+ * `namedPaths` could not see inside quotes either — tripped no breaker at all
+ * (V9 critical 3, row 5).
+ */
+const HOME_REFERENCE_RE =
+  /(?:^|[\s"'`=(,;|&])(?:~|\$\{?(?:HOME|RUNE_HOME|GEAR_HOME|ALAN_HOME)\}?)(?:[/\s"'`)]|$)/;
 
 /**
  * Whether the command positively names something OUTSIDE the workspace.

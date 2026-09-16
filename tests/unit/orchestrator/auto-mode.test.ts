@@ -440,6 +440,39 @@ describe("Auto mode mechanical boundaries", () => {
     expect(classifier.calls).toHaveLength(0);
   });
 
+  test("reading Rune's credential store is refused before the sandbox is asked (V9 criticals 2 and 4)", async () => {
+    // `wc -c < $HOME/.rune/memory/.key` walked every gate: the containment
+    // layer only asked about mutations, so a READ of the HMAC secret the whole
+    // memory-integrity design rests on was an ordinary sandboxed command. The
+    // sandbox deny list now refuses it too, but the breaker is the layer that
+    // should make the question moot — and quoting the path defeated the
+    // scanner as well (V9 critical 3).
+    for (const command of [
+      "wc -c < $HOME/.rune/memory/.key",
+      'cat "$HOME/.rune/.env"',
+      "shasum ~/.rune/memory/.key",
+      "cat ~/.rune/credentials.index.json",
+    ]) {
+      const { controller, classifier } = setup(["ALLOW"]);
+      const review = await controller
+        .startRun(["Summarize what you know about me."])
+        .review(action("bash", { command }));
+      expect({ command, verdict: review.verdict, source: review.source }).toEqual({
+        command,
+        verdict: "deny",
+        source: "guardrail_circuit_breaker",
+      });
+      expect(classifier.calls).toHaveLength(0);
+    }
+    // The project's own `.env` is not Rune's credential store, and a run that
+    // reads it is doing ordinary work.
+    const { controller } = setup(["ALLOW"]);
+    const ok = await controller
+      .startRun(["Check the env template."])
+      .review(action("bash", { command: "cat .env.example" }));
+    expect(ok.source).not.toBe("guardrail_circuit_breaker");
+  });
+
   test("oversized risky payloads bounce back to the agent with split instructions", async () => {
     const { controller, classifier } = setup(["ALLOW"]);
     const review = await controller
