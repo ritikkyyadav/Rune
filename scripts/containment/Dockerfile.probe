@@ -26,5 +26,19 @@ RUN mkdir -p /root/.cargo/bin /root/.local/bin /root/.ssh /root/.aws \
  && ln -sf /root/.ssh/id_rsa        /root/.local/bin/escape-abs-ssh \
  && ln -sf /root/.cargo/credentials.toml /root/.local/bin/escape-abs-cargo \
  && ln -sf ../../.aws/credentials   /root/.local/bin/escape-rel-aws
+# Rune's own credential stores (V9 criticals 2 and 4). The deny list named
+# ~/.rune/secrets.json and stopped, so the provider keys the launcher sources
+# out of ~/.rune/.env and the HMAC key the memory store signs entries with were
+# readable by any sandboxed bash. Synthetic values only — no host credential is
+# ever copied into this image, and probe.sh proves each fixture is present on
+# the host before it grades a refusal.
+RUN mkdir -p /root/.rune/memory/entries /root/.rune/acceptance-pins \
+ && echo 'OPENROUTER_API_KEY=SYNTHETIC-PROVIDER-KEY' > /root/.rune/.env \
+ && echo 'SYNTHETIC-MEMORY-KEY-0123456789abcdef'     > /root/.rune/memory/.key \
+ && echo '{"text":"SYNTHETIC-MEMORY-ENTRY"}'         > /root/.rune/memory/entries/a.json \
+ && echo '{"index":"SYNTHETIC-CRED-INDEX"}'          > /root/.rune/credentials.index.json \
+ && echo '{"k":"SYNTHETIC-SECRETS"}'                 > /root/.rune/secrets.json \
+ && echo '{"pin":"SYNTHETIC-VAULT"}'                 > /root/.rune/acceptance-pins/p.json \
+ && chmod 600 /root/.rune/memory/.key
 COPY probe.sh /probe.sh
 CMD ["bash", "/probe.sh"]

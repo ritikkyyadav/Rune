@@ -80,15 +80,75 @@ case "$out" in
 esac
 
 step "THE finding: a toolchain root that is itself a symlink to \$HOME (V1-4)"
-mv /root/.local/bin /root/.local/bin.real
-ln -s /root /root/.local/bin
-assert_probe "bound root is a symlink to \$HOME: ~/.ssh via it stays refused" \
-  'cat /root/.local/bin/.ssh/id_rsa' 'No such file or directory' 'SYNTHETIC-CREDENTIAL'
-assert_probe "...and ~/.aws via it stays refused" \
-  'cat /root/.local/bin/.aws/credentials' 'No such file or directory' 'SYNTHETIC-AWS-CREDENTIAL'
-assert_probe "...and the direct path stays refused too" \
-  'cat /root/.ssh/id_rsa' 'No such file or directory' 'SYNTHETIC-CREDENTIAL'
-rm -f /root/.local/bin && mv /root/.local/bin.real /root/.local/bin
+# V9 finding 12: `set -uo pipefail` has no `-e`, and the `mv` below was
+# unchecked. When it failed, the `ln -s` returned 0 having built the WRONG
+# link, the hazard fixture was never created, and all three asserts — which
+# look for 'No such file or directory' — passed on the missing-fixture error.
+# The script exited 0 and the job went green having tested nothing. This is
+# the file whose sibling (run-suite.sh:57-62) was explicitly hardened against
+# "a check that cannot fail mistaken for one that passed".
+#
+# So: build the hazard, then PROVE it is standing before grading anything
+# inside it. The positive control is the escape working UNSANDBOXED — if
+# `/root/.local/bin/.ssh/id_rsa` does not hand a credential back to a plain
+# `cat` on the host, then the refusals below are the fixture's absence rather
+# than the sandbox's work, and they must not be allowed to read as passes.
+if ! mv /root/.local/bin /root/.local/bin.real; then
+  fail "the hazard fixture could not be staged: mv /root/.local/bin failed"
+elif ! ln -s /root /root/.local/bin; then
+  fail "the hazard fixture could not be staged: ln -s /root /root/.local/bin failed"
+fi
+hazard_ready=0
+if [ -L /root/.local/bin ] && [ "$(readlink /root/.local/bin)" = /root ]; then
+  if cat /root/.local/bin/.ssh/id_rsa 2>/dev/null | grep -qF 'SYNTHETIC-CREDENTIAL'; then
+    echo "--- positive control: the escape path resolves on the host and yields the marker"
+    echo ok
+    hazard_ready=1
+  else
+    fail "positive control: /root/.local/bin/.ssh/id_rsa does not yield SYNTHETIC-CREDENTIAL on the host — the refusals below would pass on a missing fixture"
+  fi
+else
+  fail "positive control: /root/.local/bin is not a symlink to /root — the hazard was never built"
+fi
+
+if [ "$hazard_ready" -eq 1 ]; then
+  assert_probe "bound root is a symlink to \$HOME: ~/.ssh via it stays refused" \
+    'cat /root/.local/bin/.ssh/id_rsa' 'No such file or directory' 'SYNTHETIC-CREDENTIAL'
+  assert_probe "...and ~/.aws via it stays refused" \
+    'cat /root/.local/bin/.aws/credentials' 'No such file or directory' 'SYNTHETIC-AWS-CREDENTIAL'
+  assert_probe "...and the direct path stays refused too" \
+    'cat /root/.ssh/id_rsa' 'No such file or directory' 'SYNTHETIC-CREDENTIAL'
+else
+  echo "SKIPPED the three V1-4 asserts: the hazard was not standing (already failed above)"
+fi
+rm -f /root/.local/bin
+mv /root/.local/bin.real /root/.local/bin || fail "the toolchain root was not restored after the hazard test"
+
+step "Rune's own credential stores stay unreadable (V9 criticals 2 and 4)"
+# The deny list named ~/.rune/secrets.json and stopped, so the provider keys in
+# ~/.rune/.env and the memory signing key in ~/.rune/memory/.key were readable
+# by any sandboxed bash. Same shape as above: each fixture is proved present on
+# the host first, or a refusal proves nothing.
+for f in /root/.rune/.env /root/.rune/memory/.key /root/.rune/memory/entries/a.json \
+         /root/.rune/credentials.index.json /root/.rune/acceptance-pins/p.json; do
+  if ! grep -qF 'SYNTHETIC' "$f" 2>/dev/null; then
+    fail "positive control: $f is missing or unmarked on the host — the probe below would pass on nothing"
+  fi
+done
+# bubblewrap masks by MOUNT, so the refusal has two shapes and the assert has
+# to name the right one: a denied FILE is /dev/null (readable, zero bytes), a
+# denied DIRECTORY is an empty tmpfs (ENOENT for everything under it). Either
+# way the marker must be absent — that check is the one that matters.
+assert_probe "~/.rune/.env (the provider keys) reads back empty" \
+  'cat /root/.rune/.env | wc -c | tr -d " "' '"stdout":"0' 'SYNTHETIC-PROVIDER-KEY'
+assert_probe "~/.rune/credentials.index.json reads back empty" \
+  'cat /root/.rune/credentials.index.json | wc -c | tr -d " "' '"stdout":"0' 'SYNTHETIC-CRED-INDEX'
+assert_probe "~/.rune/memory/.key (the memory signing key) is not there at all" \
+  'cat /root/.rune/memory/.key' 'No such file or directory' 'SYNTHETIC-MEMORY-KEY'
+assert_probe "...nor is the memory entry it signs" \
+  'cat /root/.rune/memory/entries/a.json' 'No such file or directory' 'SYNTHETIC-MEMORY-ENTRY'
+assert_probe "the acceptance vault is not there either" \
+  'cat /root/.rune/acceptance-pins/p.json' 'No such file or directory' 'SYNTHETIC-VAULT'
 
 echo
 if [ "$failed" -eq 0 ]; then echo "ALL PROBES PASSED"; else echo "SOME PROBES FAILED"; fi
