@@ -2072,3 +2072,42 @@ authentication: mark the older `v0.2.0`–`v0.4.1` releases as pre-release so th
 public history starts at 0.1.0; and rotate the memory signing key that lane G exposed
 (Addendum 38). The installed development build on this machine is `v0.1.0-dev+812c0fe`;
 the two commits above it change only the containment suites and docs.
+
+### Addendum 40 — v0.1.1: the provider rosters are current
+
+The founder used the product and found the rosters behind the vendors: ChatGPT (Codex) did
+not offer GPT-6 Astra, and the same rot elsewhere. The roster was verified against each
+vendor's own documentation on 2026-09-16 (OpenAI's models page and the Codex changelog,
+Anthropic's models overview with the Bedrock and Vertex pages, Google's model page and
+changelog, xAI, Groq, DeepSeek, Mistral, Kimi, Cerebras, Azure Foundry, GitHub's retirement
+notice) and cross-checked against OpenRouter's public catalogue, then Lane H (`0b45079`)
+brought fourteen first-party presets to those ids: Codex defaults to `gpt-6-astra` with the
+GPT-5.6 line beside it (GPT-5.5 retires from Codex on 2026-10-14 and is not listed); OpenAI
+the same plus Astra Pro, 5.5, 5.4 mini and nano; Anthropic keeps Opus 5 as default with Fable
+5.1, Sonnet 5, Haiku 4.5 and two legacy rows; Google leads with Gemini 3.8 Flash; xAI with
+Grok 4.6; DeepSeek carries the two ids the vendor lists; GitHub Models, retired by GitHub on
+2026-07-30, is removed with a one-line notice for a saved configuration. The lane found five
+tables wrong rather than one: the Codex transport's reasoning rule and the OpenAI transport's
+reasoning-family rule matched a `gpt-5` prefix, so GPT-6 — and every dotted 5.x id on the
+OpenAI route — would have been sent without a reasoning block and with the classic token
+parameter; the idle watchdog gave GPT-6 the short allowance; the tokenizer compacted a
+1.05M-window GPT-5.6 at 400k; and the CLI's `DEFAULT_MODELS` still named an OpenRouter free
+id withdrawn on 2026-09-08. All are family rules now, `DEFAULT_MODELS` is pinned to the
+presets by a test, and a dated roster snapshot makes the next drift a red build. Prices for
+the new ids are estimates and say so. **Gates on `0b45079`: all thirteen green** (unit
+6,073 / 0, integration 388 / 0, lifecycle 47 / 0, eval 63 / 63), audit log 7,170 before and
+after. Supervisor's own checks: the source and the installed binary render the rosters as
+briefed from a scratch home; Google's model page names `gemini-3.8-flash` and
+`gemini-3.5-flash`, while the one key on this machine sees a live catalogue without them —
+the picker shows a signed-in account its own list, and the notes say so. **A finding to
+keep:** that scratch-home session had no `.env` and no environment key, yet the Google
+roster rendered live — provider keys in the OS credential store are keyed by service, not by
+home, so a scratch-home session reaches real provider keys; a catalogue read here, but it
+belongs to the on-hold two-credential-stores item and should be closed with it. Installed
+**Rune v0.1.1-dev+6b9afcf** (CLI `c9c0778c…`, native `43e7bb46…`); tag `v0.1.1` at
+`6b9afcf`; release run 35090126988 green on every job, Latest with eleven assets
+(https://github.com/ritikkyyadav/Rune/releases/tag/v0.1.1); branch containment green on the
+same commit; `origin/main` fast-forwarded `7902024 → 6b9afcf`. Not verified: GPT-6 Astra's
+accepted effort values on Codex (passed through unclamped), Opus 5 / Sonnet 5 / Fable 5.1 on
+Bedrock (not routed by this build), the smaller OpenAI-compatible hosts' seeds, the estimated
+prices, and Ollama Cloud's lineup.

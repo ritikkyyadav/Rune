@@ -517,5 +517,37 @@
       "guard porosity unchanged by design"
     ],
     "tag": "v0.1.0 to be cut from the docs commit above e75e9f3 after the push; release.yml builds from the tag"
+  },
+  "release011": {
+    "date": "2026-09-16",
+    "founderAsk": "provider rosters stale (GPT-6 Astra missing from Codex, and the same elsewhere); update and publish the next version",
+    "roster": "verified against each vendor's docs 2026-09-16 (OpenAI models page + Codex changelog, platform.claude.com models overview + Bedrock/Vertex pages, ai.google.dev models + changelog, docs.x.ai, console.groq.com, api-docs.deepseek.com, docs.mistral.ai, platform.kimi.ai, inference-docs.cerebras.ai, Azure Foundry models page, GitHub Models retirement notice) and cross-checked against OpenRouter's public catalogue",
+    "laneH": "0b45079 — 14 first-party presets current; github-models removed (retired 2026-07-30) with a degrade notice; DEFAULT_MODELS pinned to preset defaults by test; four name-keyed gates were family rules now (codex REASONING_MODEL, openai REASONING_FAMILY incl. dotted 5.x ids, hidden-reasoning idle allowance, tokenizer windows); dated roster snapshot test provider-roster-2026-09.test.ts; 34 MODEL_PRICING rows estimated",
+    "gatesAt": "0b45079 (docs 6b9afcf above)",
+    "gateLogs": ".codex/audit-20260910/handoff/m0/gates/0b45079-20260916T111606Z/",
+    "gates": "all thirteen green: unit 6,073 / 0 / 1 skip, integration 388 / 0 / 7 skip, lifecycle 47 / 0, eval 63 / 63, cargo/clippy/fmt/typecheck/lint/prettier/diffcheck/auto-safety clean; ~/.rune/audit.jsonl 7,170 before and after",
+    "supervisorProbes": "source and installed binary render codex/openai/anthropic/google/xai/deepseek rosters as briefed from a scratch home; ai.google.dev model page names gemini-3.8-flash 6× and gemini-3.5-flash 10× (changelog 4×/5×); the founder's key's live Google list lacks them (project not yet granted) — recorded in the notes",
+    "finding": "a scratch-home session with no .env and no env var rendered the Google roster LIVE: provider keys in the OS credential store are keyed by service, not by home, so scratch-home sessions reach real provider keys (catalogue read only here); belongs to the on-hold two-credential-stores item",
+    "installed": {
+      "version": "Rune v0.1.1-dev+6b9afcf",
+      "cliSha256Prefix": "c9c0778c5df7812f",
+      "nativeSha256Prefix": "43e7bb4661d4175c",
+      "auditBracket": "7,170 → 7,170"
+    },
+    "tag": {
+      "tag": "v0.1.1",
+      "commit": "6b9afcf",
+      "releaseRun": "35090126988 success (5 native targets, CLI, notarize, Authenticode, checksum+smoke+publish, fresh installs ubuntu/macos/windows)",
+      "release": "https://github.com/ritikkyyadav/Rune/releases/tag/v0.1.1 — Latest, 11 assets",
+      "branchCi": "containment.yml on 6b9afcf success",
+      "mainFastForward": "7902024 → 6b9afcf"
+    },
+    "notVerified": [
+      "gpt-6-astra effort matrix on Codex",
+      "Opus 5 / Sonnet 5 / Fable 5.1 on Bedrock (not routed)",
+      "19 smaller OpenAI-compatible hosts' seeds (live discovery governs)",
+      "prices for new ids (estimated)",
+      "Ollama Cloud lineup unchanged since 2026-08-26"
+    ]
   }
 }
