@@ -1,4 +1,41 @@
-# Rune
+<p align="center">
+  <img src="docs/assets/readme/rune-mark.png" alt="" width="104" height="104">
+</p>
+
+<h1 align="center">Rune</h1>
+
+<p align="center">
+  <b>You choose the model. Rune keeps control of execution, acceptance checks, recovery and the
+  evidence trail.</b>
+</p>
+
+<p align="center">
+  <a href="https://github.com/ritikkyyadav/Rune/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/ritikkyyadav/Rune?display_name=tag&amp;color=0938EA"></a>
+  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-0938EA"></a>
+  <a href="https://github.com/ritikkyyadav/Rune/actions/workflows/containment.yml"><img alt="Containment &amp; install smoke" src="https://img.shields.io/github/actions/workflow/status/ritikkyyadav/Rune/containment.yml?branch=main&amp;label=containment"></a>
+  <a href="https://github.com/ritikkyyadav/Rune/actions/workflows/release.yml"><img alt="Release workflow" src="https://img.shields.io/github/actions/workflow/status/ritikkyyadav/Rune/release.yml?label=release"></a>
+</p>
+
+<p align="center">
+  <a href="docs/assets/readme/rune-session-120x40.png"><img src="docs/assets/readme/rune-session-120x40.png" alt="Rune in a terminal: a two-hunk diff on src/cli.js, the test run that passed, the npm test check and the done verdict" width="900"></a>
+</p>
+
+<p align="center">
+  <sub>A real frame, photographed from the CLI through a pseudo-terminal at 120×40 — the diff, the
+  test output, the check and the verdict are the product's own renderer. The model driving it was a
+  local mock, so nothing in the picture was paid for
+  (<a href="scripts/tui-capture/capture-readme-hero.py">how it was taken</a>,
+  <a href="docs/assets/readme/rune-session-120x40.txt">the frame as text</a>).</sub>
+</p>
+
+**Install** — macOS, Linux, and Windows as a preview. Per-OS steps are on the product page,
+[savoir.services/products/rune](https://savoir.services/products/rune); the full story — from
+source, checksums, PATH and uninstall — is under [Install](#install) below.
+
+```sh
+curl -fsSL https://savoir.services/install.sh | bash     # macOS, Linux
+irm https://savoir.services/install.ps1 | iex            # Windows, PowerShell
+```
 
 > A local-first, sandboxed, multi-provider coding agent that lives in your terminal.
 

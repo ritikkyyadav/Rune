@@ -1,0 +1,44 @@
+# frame: hero-120x40-settled
+# terminal: 40 rows x 120 cols (real pty, alt screen)
+# ------------------------------------------------------------
+#0.........1.........2.........3.........4.........5.........6.........7.........8.........9.........0.........1.........
+ 1|
+ 2|  R U N E   ~/code/lantern                                                                            …b0c90847  v0.1.1
+ 3|  ━━━━━━━━─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ 4|
+ 5|  ◇ package.json carries the version, so the flag reads it from there.
+ 6|  ┌ edit  src/cli.js ───────────────────────────────────────────────────────────────────────────────────────────────┐
+ 7|  │    2   // lantern -- a very small task runner.                                                                  │
+ 8|  │    3                                                                                                            │
+ 9|  │    4   function parseArgs(argv) {                                                                               │
+10|  │    5 -   const args = { command: null, json: false };                                                           │
+11|  │    5 +   const args = { command: null, json: false, version: false };                                           │
+12|  │    6     for (const arg of argv.slice(2)) {                                                                     │
+13|  │    7 -     if (arg === "--json") args.json = true;                                                              │
+14|  │    7 +     if (arg === "--version" || arg === "-v") args.version = true;                                        │
+15|  │    8 +     else if (arg === "--json") args.json = true;                                                         │
+16|  │    9       else if (!args.command) args.command = arg;                                                          │
+17|  │   10     }                                                                                                      │
+18|  │ … 9 more lines · ctrl+o                                                                                         │
+19|  └ · observed · +7 -2 | 2 hunks ───────────────────────────────────────────────────────────────────────────────────┘
+20|
+21|  ◇ Running the suite and the flag itself.
+22|  ┌ run   node --test test/cli.test.js && node src/cli.js --version ────────────────────────────────────────────────┐
+23|  │ ✔ --version sets the version flag (0.598ms)                                                                     │
+24|  │ ✔ a command without --version is unaffected (0.066208ms)                                                        │
+25|  │ ℹ tests 2                                                                                                       │
+26|  │ ℹ suites 0                                                                                                      │
+27|  │ … 6 more lines                                                                                                  │
+28|  │ 0.3.2                                                                                                           │
+29|  └ ✓ exit 0 · 232ms ───────────────────────────────────────────────────────────────────────────────────────────────┘
+30|
+31|  ◇ --version and -v now print the version from package.json, and two tests cover the parser. Both tests pass and the
+32|    flag prints 0.3.2.
+33|
+34|    │ ✓ check  npm test
+35|  ▄ done · 11s                                                                                            ctrl+f open
+36|  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+37|  › describe a change, or / for commands
+38|  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+39|  enter send · ctrl+b line · ctrl+f agents · ? keys
+40|  >>> 3rd gear · mock-small · edits + sandboxed shell · 2 files edited                                         ? keys

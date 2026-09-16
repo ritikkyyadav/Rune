@@ -1,0 +1,28 @@
+# frame: hero-80x24-settled
+# terminal: 24 rows x 80 cols (real pty, alt screen)
+# ------------------------------------------------------------
+#0.........1.........2.........3.........4.........5.........6.........7.........
+ 1|
+ 2|  R U N E   ~/code/lantern                                    …e1784676  v0.1.1
+ 3|  ━━━━━━━━─────────────────────────────────────────────────────────────────────
+ 4|
+ 5|  ◇ Running the suite and the flag itself.
+ 6|  ┌ run   node --test test/cli.test.js && node src/cli.js --version ────────┐
+ 7|  │ ✔ --version sets the version flag (0.541291ms)                          │
+ 8|  │ ✔ a command without --version is unaffected (0.053167ms)                │
+ 9|  │ ℹ tests 2                                                               │
+10|  │ ℹ suites 0                                                              │
+11|  │ … 6 more lines                                                          │
+12|  │ 0.3.2                                                                   │
+13|  └ ✓ exit 0 · 223ms ───────────────────────────────────────────────────────┘
+14|
+15|  ◇ --version and -v now print the version from package.json, and two tests
+16|    cover the parser. Both tests pass and the flag prints 0.3.2.
+17|
+18|    │ ✓ check  npm test
+19|  ▄ done · 10s                                                    ctrl+f open
+20|  ────────────────────────────────────────────────────────────────────────────
+21|  › describe a change, or / for commands
+22|  ────────────────────────────────────────────────────────────────────────────
+23|  enter send · ctrl+b line · ctrl+f agents · ? keys
+24|  >>> 3rd gear · mock-small · edits + sandboxed shell · 1 file edited  ? keys

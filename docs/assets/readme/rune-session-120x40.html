@@ -1,0 +1,90 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: transparent; }
+  body { padding: 34px 34px 40px; width: max-content; }
+  .window {
+    background: #0e1016;
+    border-radius: 11px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,.10);
+    box-shadow: 0 24px 60px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.4);
+  }
+  .bar {
+    height: 30px;
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    background: linear-gradient(#2c2f38, #23262e);
+    border-bottom: 1px solid rgba(0,0,0,.55);
+  }
+  .dots { display: flex; gap: 8px; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; }
+  .r { background: #ff5f57; } .y { background: #febc2e; } .g { background: #28c840; }
+  .name {
+    flex: 1; text-align: center; margin-left: -46px;
+    font: 12px/1 -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
+    color: #b9bdc7; letter-spacing: .01em;
+  }
+  pre {
+    margin: 0;
+    padding: 14px 16px 16px;
+    font-family: Menlo, "SF Mono", Monaco, "DejaVu Sans Mono", monospace;
+    font-size: 15px;
+    line-height: 1.32;
+    color: #d6dae3;
+    white-space: pre;
+    font-variant-ligatures: none;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: geometricPrecision;
+  }
+  span { white-space: pre; }
+</style>
+<div class="window">
+  <div class="bar">
+    <div class="dots"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i></div>
+    <div class="name">rune — ~/code/lantern</div>
+  </div>
+  <pre>                                                                                                                        
+ <span style="color:#ffffff;background:#222f65;font-weight:600"> R U N E </span>  ~/code/lantern                                                                            <span style="color:#9ba0a5">…b0c90847</span>  <span style="color:#9ba0a5">v0.1.1</span> 
+  <span style="color:#3e63ff">━━━━━━━━</span><span style="color:#6a6f74">─────────────────────────────────────────────────────────────────────────────────────────────────────────────</span> 
+                                                                                                                        
+  <span style="color:#6a6f74">◇</span> <span style="color:#d6dae3;font-weight:600">package.json</span> carries the version, so the flag reads it from there.                                                  
+  <span style="color:#6a6f74">┌</span> edit  <span style="color:#3e63ff">src/cli.js</span> <span style="color:#6a6f74">───────────────────────────────────────────────────────────────────────────────────────────────┐</span>   
+  <span style="color:#6a6f74">│</span> <span style="color:#6a6f74">   2</span>   <span style="color:#6a9955">// lantern -- a very small task runner.</span>                                                                  <span style="color:#6a6f74">│</span>   
+  <span style="color:#6a6f74">│</span> <span style="color:#6a6f74">   3</span>                                                                                                            <span style="color:#6a6f74">│</span>   
+  <span style="color:#6a6f74">│</span> <span style="color:#6a6f74">   4</span>   <span style="color:#c586c0">function</span><span style="color:#6a6f74"> </span><span style="color:#dcdcaa">parseArgs</span><span style="color:#6a6f74">(argv) {</span>                                                                               <span style="color:#6a6f74">│</span>   
+  <span style="color:#6a6f74">│</span> <span style="color:#ffffff;background:#370603">   5</span><span style="color:#d6dae3;background:#370603"> </span><span style="color:#ffffff;background:#370603">-</span><span style="color:#d6dae3;background:#370603"> </span><span style="color:#ffffff;background:#370603">  </span><span style="color:#c586c0;background:#370603">const</span><span style="color:#ffffff;background:#370603"> args = { command: </span><span style="color:#569cd6;background:#370603">null</span><span style="color:#ffffff;background:#370603">, json: </span><span style="color:#569cd6;background:#370603">false</span><span style="color:#ffffff;background:#370603"> };</span><span style="color:#d6dae3;background:#370603">                                                          </span> <span style="color:#6a6f74">│</span>   
+  <span style="color:#6a6f74">│</span> <span style="color:#000000;background:#ffffff">   5</span><span style="color:#d6dae3;background:#ffffff"> </span><span style="color:#000000;background:#ffffff">+</span><span style="color:#d6dae3;background:#ffffff"> </span><span style="color:#000000;background:#ffffff">  </span><span style="color:#af00db;background:#ffffff">const</span><span style="color:#000000;background:#ffffff"> args = { command: </span><span style="color:#0000ff;background:#ffffff">null</span><span style="color:#000000;background:#ffffff">, json: </span><span style="color:#0000ff;background:#ffffff">false</span><span style="color:#000000;background:#ffffff">, version: </span><span style="color:#0000ff;background:#ffffff">false</span><span style="color:#000000;background:#ffffff"> };</span><span style="color:#d6dae3;background:#ffffff">                                          </span> <span style="color:#6a6f74">│</span>   
+  <span style="color:#6a6f74">│</span> <span style="color:#6a6f74">   6</span>   <span style="color:#6a6f74">  </span><span style="color:#c586c0">for</span><span style="color:#6a6f74"> (</span><span style="color:#c586c0">const</span><span style="color:#6a6f74"> arg </span><span style="color:#c586c0">of</span><span style="color:#6a6f74"> argv.</span><span style="color:#dcdcaa">slice</span><span style="color:#6a6f74">(</span><span style="color:#b5cea8">2</span><span style="color:#6a6f74">)) {</span>                                                                     <span style="color:#6a6f74">│</span>   
+  <span style="color:#6a6f74">│</span> <span style="color:#ffffff;background:#370603">   7</span><span style="color:#d6dae3;background:#370603"> </span><span style="color:#ffffff;background:#370603">-</span><span style="color:#d6dae3;background:#370603"> </span><span style="color:#ffffff;background:#370603">    </span><span style="color:#c586c0;background:#370603">if</span><span style="color:#ffffff;background:#370603"> (arg === </span><span style="color:#ce9178;background:#370603">&quot;--json&quot;</span><span style="color:#ffffff;background:#370603">) args.</span><span style="color:#9cdcfe;background:#370603">json</span><span style="color:#ffffff;background:#370603"> = </span><span style="color:#569cd6;background:#370603">true</span><span style="color:#ffffff;background:#370603">;</span><span style="color:#d6dae3;background:#370603">                                                             </span> <span style="color:#6a6f74">│</span>   
+  <span style="color:#6a6f74">│</span> <span style="color:#000000;background:#ffffff">   7</span><span style="color:#d6dae3;background:#ffffff"> </span><span style="color:#000000;background:#ffffff">+</span><span style="color:#d6dae3;background:#ffffff"> </span><span style="color:#000000;background:#ffffff">    </span><span style="color:#af00db;background:#ffffff">if</span><span style="color:#000000;background:#ffffff"> (arg === </span><span style="color:#a31515;background:#ffffff">&quot;--version&quot;</span><span style="color:#000000;background:#ffffff"> || arg === </span><span style="color:#a31515;background:#ffffff">&quot;-v&quot;</span><span style="color:#000000;background:#ffffff">) args.</span><span style="color:#001080;background:#ffffff">version</span><span style="color:#000000;background:#ffffff"> = </span><span style="color:#0000ff;background:#ffffff">true</span><span style="color:#000000;background:#ffffff">;</span><span style="color:#d6dae3;background:#ffffff">                                       </span> <span style="color:#6a6f74">│</span>   
+  <span style="color:#6a6f74">│</span> <span style="color:#000000;background:#ffffff">   8</span><span style="color:#d6dae3;background:#ffffff"> </span><span style="color:#000000;background:#ffffff">+</span><span style="color:#d6dae3;background:#ffffff"> </span><span style="color:#000000;background:#ffffff">    </span><span style="color:#af00db;background:#ffffff">else</span><span style="color:#000000;background:#ffffff"> </span><span style="color:#af00db;background:#ffffff">if</span><span style="color:#000000;background:#ffffff"> (arg === </span><span style="color:#a31515;background:#ffffff">&quot;--json&quot;</span><span style="color:#000000;background:#ffffff">) args.</span><span style="color:#001080;background:#ffffff">json</span><span style="color:#000000;background:#ffffff"> = </span><span style="color:#0000ff;background:#ffffff">true</span><span style="color:#000000;background:#ffffff">;</span><span style="color:#d6dae3;background:#ffffff">                                                        </span> <span style="color:#6a6f74">│</span>   
+  <span style="color:#6a6f74">│</span> <span style="color:#6a6f74">   9</span>   <span style="color:#6a6f74">    </span><span style="color:#c586c0">else</span><span style="color:#6a6f74"> </span><span style="color:#c586c0">if</span><span style="color:#6a6f74"> (!args.</span><span style="color:#9cdcfe">command</span><span style="color:#6a6f74">) args.</span><span style="color:#9cdcfe">command</span><span style="color:#6a6f74"> = arg;</span>                                                          <span style="color:#6a6f74">│</span>   
+  <span style="color:#6a6f74">│</span> <span style="color:#6a6f74">  10</span>   <span style="color:#6a6f74">  }</span>                                                                                                      <span style="color:#6a6f74">│</span>   
+  <span style="color:#6a6f74">│</span> <span style="color:#6a6f74">… 9 more lines · ctrl+o</span>                                                                                         <span style="color:#6a6f74">│</span>   
+  <span style="color:#6a6f74">└</span> <span style="color:#6a6f74">·</span> observed · <span style="color:#1f9d55">+7</span> <span style="color:#d6544b">-2</span><span style="color:#6a6f74"> | 2 hunks</span> <span style="color:#6a6f74">───────────────────────────────────────────────────────────────────────────────────┘</span>   
+                                                                                                                        
+  <span style="color:#6a6f74">◇</span> Running the suite and the flag itself.                                                                              
+  <span style="color:#6a6f74">┌</span> run   <span style="color:#6a6f74">node --test test/cli.test.js &amp;&amp; node src/cli.js --version</span> <span style="color:#6a6f74">────────────────────────────────────────────────┐</span>   
+  <span style="color:#6a6f74">│</span> <span style="color:#6a6f74">✔ --version sets the version flag (0.598ms)</span>                                                                     <span style="color:#6a6f74">│</span>   
+  <span style="color:#6a6f74">│</span> <span style="color:#6a6f74">✔ a command without --version is unaffected (0.066208ms)</span>                                                        <span style="color:#6a6f74">│</span>   
+  <span style="color:#6a6f74">│</span> <span style="color:#6a6f74">ℹ tests 2</span>                                                                                                       <span style="color:#6a6f74">│</span>   
+  <span style="color:#6a6f74">│</span> <span style="color:#6a6f74">ℹ suites 0</span>                                                                                                      <span style="color:#6a6f74">│</span>   
+  <span style="color:#6a6f74">│</span> <span style="color:#6a6f74">… 6 more lines</span>                                                                                                  <span style="color:#6a6f74">│</span>   
+  <span style="color:#6a6f74">│</span> <span style="color:#6a6f74">0.3.2</span>                                                                                                           <span style="color:#6a6f74">│</span>   
+  <span style="color:#6a6f74">└</span> <span style="color:#1f9d55">✓</span> exit 0 · 232ms <span style="color:#6a6f74">───────────────────────────────────────────────────────────────────────────────────────────────┘</span>   
+                                                                                                                        
+  <span style="color:#6a6f74">◇</span> <span style="color:#d6dae3;font-weight:600">--version</span> and <span style="color:#d6dae3;font-weight:600">-v</span> now print the version from <span style="color:#d6dae3;font-weight:600">package.json</span>, and two tests cover the parser. Both tests pass and the   
+    flag prints <span style="color:#d6dae3;font-weight:600">0.3.2</span>.                                                                                                  
+                                                                                                                        
+    <span style="color:#6a6f74">│</span> <span style="color:#1f9d55">✓</span> check  <span style="color:#6a6f74">npm test</span>                                                                                                 
+  <span style="color:#6a6f74">▄</span> <span style="color:#9ba0a5">done</span><span style="color:#6a6f74"> · 11s</span>                                                                                            <span style="color:#6a6f74">ctrl+f open</span>   
+  <span style="color:#6a6f74">────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</span>  
+  <span style="color:#6a6f74">›</span> <span style="color:#ffffff;background:#3e63ff">d</span><span style="color:#6a6f74">escribe a change, or / for commands                                                                              </span>  
+  <span style="color:#6a6f74">────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</span>  
+  <span style="color:#6a6f74">enter send · ctrl+b line · ctrl+f agents · ? keys</span>                                                                     
+  <span style="color:#c98a1a">&gt;&gt;&gt; 3rd gear</span> <span style="color:#6a6f74">·</span> <span style="color:#3e63ff">mock-small</span> <span style="color:#6a6f74">·</span> <span style="color:#6a6f74">edits + sandboxed shell</span> <span style="color:#6a6f74">·</span> <span style="color:#6a6f74">2 files edited</span>                                         <span style="color:#6a6f74">?</span> <span style="color:#6a6f74">keys</span>   </pre>
+</div>
