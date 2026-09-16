@@ -20,6 +20,31 @@ import { modelSeesImages } from "./model-capabilities";
 import { parseToolArguments } from "@rune/shared";
 
 /**
+ * OpenAI's FIRST-PARTY reasoning families, as a family rule rather than a list
+ * of today's ids.
+ *
+ * The previous form was `/^(gpt-5|o[134])(-|:|$)/`, and it was wrong twice over
+ * by 2026-09: gpt-6-astra did not match at all, and neither did the dotted
+ * gpt-5.6 / gpt-5.5 / gpt-5.4 ids, because the alternation only allowed a
+ * hyphen, a colon or end-of-string after "gpt-5". Every one of those would have
+ * taken the CLASSIC parameter path — `max_tokens` where the model requires
+ * `max_completion_tokens`, sampling params it rejects, and no
+ * `reasoning_effort` at all. `gpt-[5-9]` covers this decade's single-digit
+ * line, `gpt-\d{2}` the next one, and the `\.` in the tail is what admits the
+ * point releases. gpt-4o / gpt-4.1 stay OUT, which is the whole point of the
+ * digit class.
+ */
+export const REASONING_FAMILY = /^(gpt-[5-9]|gpt-\d{2}|o[134])(-|\.|:|$)/;
+
+/**
+ * The same families, matched anywhere after a host route prefix
+ * ("openai/gpt-6-astra"). These stream nothing while they think, so the idle
+ * watchdog gives them a far longer allowance than a model that streams
+ * continuously.
+ */
+export const HIDDEN_REASONING_FAMILY = /(^|\/)(o[134]|gpt-[5-9]|gpt-\d{2})/;
+
+/**
  * Attach a prompt-cache breakpoint to one chat message, promoting its string
  * content to the array-of-parts form that can carry the field. A message with
  * no text to hang it on (an assistant turn that is pure tool_calls) is left
@@ -124,7 +149,7 @@ export class OpenAIProvider implements LlmProvider {
    */
   private isOpenAIReasoningModel(model: string): boolean {
     if (this.name !== "openai") return false;
-    return /^(gpt-5|o[134])(-|:|$)/.test(model.toLowerCase());
+    return REASONING_FAMILY.test(model.toLowerCase());
   }
 
   /**
@@ -140,6 +165,11 @@ export class OpenAIProvider implements LlmProvider {
     const m = model.toLowerCase();
     if (/^gpt-5(?:-mini|-nano|-chat)?(?:-|$)/.test(m) && !m.includes("codex")) return "minimal";
     if (/^gpt-5\.\d/.test(m) && !m.includes("codex")) return "none";
+    // gpt-6 and anything later: UNMEASURED. "none" is the family-consistent
+    // guess (5.1+ replaced "minimal" with it) but a guess that is wrong here
+    // 400s the whole request, and this is the path the Auto-mode classifier
+    // takes on every turn. "low" is accepted by every reasoning model there
+    // has ever been, so the floor falls through to it deliberately.
     return "low";
   }
 
@@ -210,7 +240,7 @@ export class OpenAIProvider implements LlmProvider {
     // minutes while they think — chat-completions does not stream their
     // reasoning — so they get a far more generous allowance than models that
     // stream continuously.
-    const hiddenReasoning = /(^|\/)(o[134]|gpt-5)/.test(request.model.toLowerCase());
+    const hiddenReasoning = HIDDEN_REASONING_FAMILY.test(request.model.toLowerCase());
     const guard = hiddenReasoning
       ? new IdleWatchdog(this.name, opts?.signal, 300_000, 240_000)
       : new IdleWatchdog(this.name, opts?.signal, 120_000, 45_000);

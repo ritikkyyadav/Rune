@@ -202,16 +202,16 @@ describe("accountChoices (level 2)", () => {
 });
 
 describe("modelChoices (level 3)", () => {
-  const current = { provider: "openai", model: "gpt-5" };
+  const current = { provider: "openai", model: "gpt-6-astra" };
 
   it("uses the curated preset list with current/default marks", () => {
     const out = modelChoices(getPreset("openai"), "openai", {
       current,
-      def: { provider: "openai", model: "o3" },
+      def: { provider: "openai", model: "gpt-5.6-terra" },
     });
-    expect(out.find((m) => m.id === "gpt-5")!.current).toBe(true);
-    expect(out.find((m) => m.id === "o3")!.isDefault).toBe(true);
-    expect(out.find((m) => m.id === "gpt-5-mini")!.current).toBe(false);
+    expect(out.find((m) => m.id === "gpt-6-astra")!.current).toBe(true);
+    expect(out.find((m) => m.id === "gpt-5.6-terra")!.isDefault).toBe(true);
+    expect(out.find((m) => m.id === "gpt-5.6-luna")!.current).toBe(false);
   });
 
   it("live listings replace the curated list (only what the endpoint serves)", () => {

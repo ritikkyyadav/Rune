@@ -26,24 +26,27 @@ import { PROVIDER_PRESETS } from "../../../packages/shared/src/providers";
 const codexPreset = PROVIDER_PRESETS.find((p) => p.id === "codex");
 
 describe("the Codex model list", () => {
-  test("offers the three current models and nothing else", () => {
-    // gpt-5.5 is gone: previous frontier, 400s on some Plus tiers, and a fourth
-    // row that may not work is clutter in the one list a person reads while
-    // deciding.
+  test("offers the four current models and nothing else", () => {
+    // Refreshed 2026-09-16: gpt-6-astra is OpenAI's bundled Codex default and
+    // was MISSING from this list, which is the rot the founder hit. gpt-5.5 is
+    // still absent on purpose — it retires 2026-10-14, and a row that dies in
+    // four weeks is clutter in the one list a person reads while deciding.
     expect(codexPreset?.models.map((m) => m.id)).toEqual([
+      "gpt-6-astra",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
     ]);
   });
 
-  test("the picker surfaces exactly those three", () => {
+  test("the picker surfaces exactly those four", () => {
     const models = modelChoices(codexPreset, "codex", {
       current: { provider: "codex", model: "gpt-5.6-sol" },
       def: null,
     });
-    expect(models).toHaveLength(3);
+    expect(models).toHaveLength(4);
     expect(models.find((m) => m.id === "gpt-5.6-sol")?.current).toBe(true);
+    expect(models.find((m) => m.id === "gpt-6-astra")).toBeDefined();
   });
 });
 

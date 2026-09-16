@@ -121,7 +121,11 @@ describe("readProviderRouteReport", () => {
     write(FOUNDER_FILE);
     const joined = lines().join("\n");
     expect(joined).toContain("google: model gpt-5.6-sol recorded retired");
-    expect(joined).toContain("gpt-5.6-sol is a codex model id, not a google one");
+    // The owner named is the FIRST preset offering the id. Since 2026-09-16
+    // that is `openai` (the gpt-5.6 line is on the API too), not `codex`; the
+    // claim the row makes — this was filed against the wrong route — is the
+    // same either way.
+    expect(joined).toContain("gpt-5.6-sol is a openai model id, not a google one");
     expect(joined).toContain("misdirected");
   });
 

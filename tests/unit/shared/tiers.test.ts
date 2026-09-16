@@ -88,9 +88,9 @@ describe("resolveTier", () => {
     expect(
       resolveTier("heavy", undefined, "anthropic", "claude-sonnet-4-6", registered, KNOWN),
     ).toEqual({ provider: "anthropic", model: "claude-opus-5" });
-    expect(resolveTier("light", {}, "deepseek", "deepseek-chat", registered, KNOWN)).toEqual({
+    expect(resolveTier("light", {}, "deepseek", "deepseek-flash", registered, KNOWN)).toEqual({
       provider: "deepseek",
-      model: "deepseek-chat",
+      model: "deepseek-flash",
     });
   });
 

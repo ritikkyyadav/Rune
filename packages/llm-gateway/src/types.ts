@@ -78,7 +78,8 @@ export type ProviderName =
   | "cohere"
   | "deepinfra"
   | "fireworks"
-  | "github-models"
+  // `github-models` was here until 2026-09-16; GitHub retired the product on
+  // 2026-07-30 (playground, catalog and inference API all at once).
   | "huggingface"
   | "hyperbolic"
   | "inception"
@@ -168,13 +169,23 @@ export function reasoningEffortsFor(provider: string, model: string): ReasoningE
   const m = model.toLowerCase();
   if (provider === "codex") {
     if (/^gpt-5\.6/.test(m)) return ["low", "medium", "high", "xhigh", "max"];
+    // gpt-6 and later: INHERITED from the 5.6 line, not measured. OpenAI's
+    // changelog adds `max` and `ultra` for this generation; `ultra` has no
+    // ReasoningEffort value here and is deliberately not invented. Offering
+    // the 5.6 set is the conservative direction — it is a strict subset of
+    // what the changelog claims, so the picker cannot offer a value the
+    // backend has never accepted from an earlier model on the same route.
+    if (/^(gpt-[6-9]|gpt-\d{2})/.test(m)) return ["low", "medium", "high", "xhigh", "max"];
     return ["low", "medium", "high"];
   }
   // Azure serves the same OpenAI models over the same Chat Completions wire, so
   // it carries the same dial. The model here is Rune's model id, which maps to
   // a deployment NAME on the way out — the dial follows the model, not the
   // deployment, which is why this tests the id and not the deployment string.
-  if ((provider === "openai" || provider === "azure-openai") && /^(gpt-5|o[134])(-|:|$)/.test(m)) {
+  if (
+    (provider === "openai" || provider === "azure-openai") &&
+    /^(gpt-[5-9]|gpt-\d{2}|o[134])(-|\.|:|$)/.test(m)
+  ) {
     return ["low", "medium", "high"];
   }
   // Gemini through Vertex is the same model with the same thinking budget; the
@@ -666,6 +677,7 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   // Cache reads at 10% and writes at 125% are the standard Anthropic terms,
   // so these take the defaults rather than restating them per row.
   "claude-fable-5": { inputPerMillion: 10, outputPerMillion: 50 },
+  "claude-fable-5-1": { inputPerMillion: 10, outputPerMillion: 50, estimated: true },
   "claude-mythos-5": { inputPerMillion: 10, outputPerMillion: 50 },
   "claude-opus-5": { inputPerMillion: 5, outputPerMillion: 25 },
   "claude-opus-4-8": { inputPerMillion: 5, outputPerMillion: 25 },
@@ -690,6 +702,9 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   // indistinguishable from free and is the exact hole the coverage guard exists
   // to close. The geo-prefixed inference-profile ids are what the catalogue
   // offers, so those are the ids priced.
+  "global.anthropic.claude-opus-4-6-v1": { inputPerMillion: 5, outputPerMillion: 25 },
+  "global.anthropic.claude-sonnet-4-6": { inputPerMillion: 3, outputPerMillion: 15 },
+  "us.anthropic.claude-opus-4-5-20251101-v1:0": { inputPerMillion: 5, outputPerMillion: 25 },
   "us.anthropic.claude-opus-4-1-20250805-v1:0": { inputPerMillion: 15, outputPerMillion: 75 },
   "us.anthropic.claude-sonnet-4-5-20250929-v1:0": { inputPerMillion: 3, outputPerMillion: 15 },
   "us.anthropic.claude-haiku-4-5-20251001-v1:0": { inputPerMillion: 1, outputPerMillion: 5 },
@@ -718,24 +733,79 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   // Codex-plan models. Reached through a ChatGPT subscription, so the marginal
   // cost is zero — but they are priced at the GPT-5 line's rates so the "what
   // would this have cost metered?" column is real. Estimated until published.
+  // The 2026 line. gpt-6-astra is the flagship and the bundled Codex default;
+  // rates are the GPT-5 line's until OpenAI publishes its own, so the
+  // metered-equivalent column is populated rather than silently zero.
+  "gpt-6-astra": { inputPerMillion: 1.25, outputPerMillion: 10, estimated: true },
+  "gpt-6-astra-pro": { inputPerMillion: 2.5, outputPerMillion: 20, estimated: true },
   "gpt-5.5": { inputPerMillion: 1.25, outputPerMillion: 10, estimated: true },
+  "gpt-5.4-mini": { inputPerMillion: 0.25, outputPerMillion: 2, estimated: true },
+  "gpt-5.4-nano": { inputPerMillion: 0.05, outputPerMillion: 0.4, estimated: true },
   "gpt-5.6-sol": { inputPerMillion: 1.25, outputPerMillion: 10, estimated: true },
   "gpt-5.6-terra": { inputPerMillion: 1.25, outputPerMillion: 10, estimated: true },
   "gpt-5.6-luna": { inputPerMillion: 1.25, outputPerMillion: 10, estimated: true },
 
   // ─── DeepSeek ───
+  // The current pair (2026-09-16). Rates carried from the line they replace;
+  // DeepSeek's cache-read discount is the same 0.07 shape.
+  "deepseek-flash": {
+    inputPerMillion: 0.27,
+    outputPerMillion: 1.1,
+    cacheReadPerMillion: 0.07,
+    estimated: true,
+  },
+  "deepseek-v4-pro": { inputPerMillion: 0.55, outputPerMillion: 2.19, estimated: true },
+  "deepseek-v4.1-flash": {
+    inputPerMillion: 0.27,
+    outputPerMillion: 1.1,
+    cacheReadPerMillion: 0.07,
+    estimated: true,
+  },
   "deepseek-chat": { inputPerMillion: 0.27, outputPerMillion: 1.1, cacheReadPerMillion: 0.07 },
   "deepseek-reasoner": { inputPerMillion: 0.55, outputPerMillion: 2.19 },
   "deepseek-coder-v2": { inputPerMillion: 0.27, outputPerMillion: 1.1, estimated: true },
   deepseek: { inputPerMillion: 0.27, outputPerMillion: 1.1, estimated: true },
 
   // ─── xAI ───
+  // The 2026 line. Estimated from the grok-4 rates it replaces; the code build
+  // takes grok-code-fast-1's shape.
+  "grok-4.6": { inputPerMillion: 3, outputPerMillion: 15, estimated: true },
+  "grok-4.5": { inputPerMillion: 3, outputPerMillion: 15, estimated: true },
+  "grok-4.3": { inputPerMillion: 3, outputPerMillion: 15, estimated: true },
+  "grok-4.20-0309-reasoning": { inputPerMillion: 3, outputPerMillion: 15, estimated: true },
+  "grok-build-0.1": { inputPerMillion: 0.2, outputPerMillion: 1.5, estimated: true },
   "grok-4": { inputPerMillion: 3, outputPerMillion: 15 },
   "grok-4-fast": { inputPerMillion: 0.2, outputPerMillion: 0.5 },
   "grok-code-fast-1": { inputPerMillion: 0.2, outputPerMillion: 1.5 },
 
   // ─── Google Gemini ───
   // Gemini discounts cached input to 25%, not the 10% default.
+  // The 3.x line (2026-09-16). Flash rates estimated from the 2.5 Flash row it
+  // supersedes; the preview Pro id takes 2.5 Pro's.
+  "gemini-3.8-flash": {
+    inputPerMillion: 0.15,
+    outputPerMillion: 0.6,
+    cacheReadPerMillion: 0.0375,
+    estimated: true,
+  },
+  "gemini-3.5-flash": {
+    inputPerMillion: 0.15,
+    outputPerMillion: 0.6,
+    cacheReadPerMillion: 0.0375,
+    estimated: true,
+  },
+  "gemini-3.5-flash-lite": {
+    inputPerMillion: 0.1,
+    outputPerMillion: 0.4,
+    cacheReadPerMillion: 0.025,
+    estimated: true,
+  },
+  "gemini-3.1-pro-preview": {
+    inputPerMillion: 1.25,
+    outputPerMillion: 10,
+    cacheReadPerMillion: 0.3125,
+    estimated: true,
+  },
   "gemini-2.5-flash": {
     inputPerMillion: 0.15,
     outputPerMillion: 0.6,
@@ -769,6 +839,11 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   "gpt-oss:120b": { inputPerMillion: 0.1, outputPerMillion: 0.5, estimated: true },
   "gpt-oss:20b": { inputPerMillion: 0.05, outputPerMillion: 0.2, estimated: true },
   "openai/gpt-oss-120b": { inputPerMillion: 0.1, outputPerMillion: 0.5, estimated: true },
+  "openai/gpt-oss-20b": { inputPerMillion: 0.05, outputPerMillion: 0.2, estimated: true },
+  // Groq's two preview ids and Cerebras' Qwen checkpoint.
+  "qwen3.8-27b": { inputPerMillion: 0.2, outputPerMillion: 0.8, estimated: true },
+  "qwen-3.8-27b": { inputPerMillion: 0.2, outputPerMillion: 0.8, estimated: true },
+  "minimax-m2.7": { inputPerMillion: 0.3, outputPerMillion: 1.2, estimated: true },
   "llama-3.3-70b-versatile": { inputPerMillion: 0.59, outputPerMillion: 0.79, estimated: true },
   // Groq's light tier. Added to the catalogue in P8.6 because the tier table
   // already resolved to it while the picker never listed it.
@@ -828,6 +903,8 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   mercury: { inputPerMillion: 0.25, outputPerMillion: 1 },
 
   // MiniMax
+  "MiniMax-M3": { inputPerMillion: 0.3, outputPerMillion: 1.2, estimated: true },
+  "MiniMax-M2.7": { inputPerMillion: 0.3, outputPerMillion: 1.2, estimated: true },
   "MiniMax-M2": { inputPerMillion: 0.3, outputPerMillion: 1.2 },
   "MiniMax-M1": { inputPerMillion: 0.4, outputPerMillion: 2.2 },
 
@@ -846,12 +923,19 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   },
 
   // Moonshot (Kimi)
+  // Moonshot's current line (2026-09-16); rates estimated from the K2 sheet
+  // the ids replace, with the highspeed variant on the turbo row's shape.
+  "kimi-k3": { inputPerMillion: 0.6, outputPerMillion: 2.5, estimated: true },
+  "kimi-k2.7-code": { inputPerMillion: 0.6, outputPerMillion: 2.5, estimated: true },
+  "kimi-k2.7-code-highspeed": { inputPerMillion: 1.15, outputPerMillion: 8, estimated: true },
+  "kimi-k2.6": { inputPerMillion: 0.6, outputPerMillion: 2.5, estimated: true },
   "kimi-k2-0905-preview": { inputPerMillion: 0.6, outputPerMillion: 2.5 },
   "kimi-k2-thinking": { inputPerMillion: 0.6, outputPerMillion: 2.5 },
   "kimi-k2-turbo-preview": { inputPerMillion: 1.15, outputPerMillion: 8 },
   "kimi-latest": { inputPerMillion: 1, outputPerMillion: 3, estimated: true },
 
   // Z.ai (GLM). The flash tier is a real zero, not an unknown one.
+  "glm-5.2:free": { inputPerMillion: 0, outputPerMillion: 0 },
   "glm-4.6": { inputPerMillion: 0.6, outputPerMillion: 2.2 },
   "glm-4.5": { inputPerMillion: 0.6, outputPerMillion: 2.2 },
   "glm-4.5-air": { inputPerMillion: 0.2, outputPerMillion: 1.1 },
@@ -895,8 +979,8 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
     estimated: true,
   },
 
-  // Gateway-prefixed frontier ids (Vercel AI Gateway, GitHub Models) that the
-  // bare-id fallback cannot reach because the spelling differs from ours.
+  // Gateway-prefixed frontier ids (Vercel AI Gateway) that the bare-id fallback
+  // cannot reach because the spelling differs from ours.
   "claude-sonnet-4.5": { inputPerMillion: 3, outputPerMillion: 15 },
 
   // ─── OpenRouter-prefixed ids for the same models ───

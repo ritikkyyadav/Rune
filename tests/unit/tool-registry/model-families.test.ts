@@ -20,6 +20,16 @@ describe("family detection", () => {
     ["anthropic/claude-sonnet-4-6", "claude"],
     ["gpt-5", "gpt"],
     ["gpt-5.6-sol", "gpt"],
+    // The 2026-09-16 roster refresh. `/^(gpt-|…)/` already covers gpt-6 by
+    // construction — pinned so a future "tighten the regex" cannot quietly
+    // drop the current flagship out of the lineage that gets apply_patch.
+    ["gpt-6-astra", "gpt"],
+    ["gpt-6-astra-pro", "gpt"],
+    ["openai/gpt-6-astra", "gpt"],
+    ["claude-fable-5-1", "claude"],
+    ["anthropic/claude-opus-5", "claude"],
+    ["gemini-3.8-flash", "gemini"],
+    ["grok-4.6", "generic"],
     ["o3", "gpt"],
     ["codex-mini", "gpt"],
     ["openai/gpt-4o", "gpt"],

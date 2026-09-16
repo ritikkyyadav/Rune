@@ -25,14 +25,22 @@ import { AUTO_PROVIDER_PRIORITY, CUSTOM_PROVIDER_ID } from "@rune/shared";
 export type CliProvider =
   "anthropic" | "openai" | "openrouter" | "google" | "ollama-turbo" | "ollama";
 
+/**
+ * The model each built-in provider opens on, when nothing else named one.
+ *
+ * This table OUTRANKS the preset's `defaultModel` (see `modelForProvider`),
+ * which is exactly how it rotted: it went on saying `minimax/minimax-m3:free`
+ * for eleven days after that id was withdrawn to paid and started answering
+ * 404, because the preset beneath it had already been fixed and nobody looked
+ * up. Every entry here must equal its preset's `defaultModel`; the agreement
+ * is pinned in tests/unit/shared/provider-tables.test.ts so the two can never
+ * drift again.
+ */
 export const DEFAULT_MODELS: Record<CliProvider, string> = {
-  anthropic: "claude-sonnet-4-6",
-  openai: "gpt-4o",
-  // qwen/qwen3-coder:free and qwen3-coder:480b were retired 2026-07-15, and
-  // deepseek-v4-flash:free was withdrawn from the free tier 2026-08-26;
-  // these mirror the gateway's refreshed, live-verified defaults.
-  openrouter: "minimax/minimax-m3:free",
-  google: "gemini-2.5-flash",
+  anthropic: "claude-opus-5",
+  openai: "gpt-6-astra",
+  openrouter: "nvidia/nemotron-3-ultra-550b-a55b:free",
+  google: "gemini-3.8-flash",
   "ollama-turbo": "gpt-oss:120b",
   ollama: "llama3.1",
 };
@@ -175,6 +183,20 @@ export interface StartupSelection {
   model: string;
   /** Which rung of the ladder answered — for `/setup`'s SAVED vs ACTIVE and for tests. */
   source: "flag" | "sticky" | "config" | "auto";
+  /**
+   * A saved or sticky provider id this build's registry no longer knows,
+   * present ONLY when one was skipped for that reason.
+   *
+   * Presets get removed when a vendor retires the product behind them —
+   * `github-models` went on 2026-09-16 because GitHub retired GitHub Models on
+   * 2026-07-30. The selection already degraded correctly (both `stickyUsable`
+   * and `configUsable` require a preset, so an unknown id falls through to
+   * auto-detect rather than booting onto a dead host), but it degraded in
+   * SILENCE: a user whose `[llm] defaultProvider` named it would find
+   * themselves on some other provider with no explanation. This field is what
+   * lets the boot say one line about it.
+   */
+  unknownSaved?: string;
 }
 
 /** Context enough to name a provider's model without re-deriving the whole selection. */
@@ -318,6 +340,18 @@ export function resolveStartupSelection(input: StartupSelectionInput): StartupSe
     };
   }
 
+  // A saved or sticky id the registry does not know — a preset removed because
+  // its vendor retired the product. Reported so the boot can say so; never a
+  // throw, and never a reason to stop at this rung.
+  const retired = [lastUsed?.provider, configProvider].find(
+    (id): id is string => !!id && id !== CUSTOM_PROVIDER_ID && getPreset(id) === undefined,
+  );
+
   const detected = detectBestProvider();
-  return { provider: detected, model: modelForProvider(detected, modelCtx), source: "auto" };
+  return {
+    provider: detected,
+    model: modelForProvider(detected, modelCtx),
+    source: "auto",
+    ...(retired ? { unknownSaved: retired } : {}),
+  };
 }

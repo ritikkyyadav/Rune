@@ -420,7 +420,10 @@ export interface LoopControllerConfig {
 }
 
 const DEFAULT_CONFIG: AgentLoopConfig = {
-  model: "claude-sonnet-4-5",
+  // In step with the `anthropic` preset's standard tier (2026-09-16:
+  // claude-sonnet-4-5 → claude-sonnet-5). Every real session overrides this;
+  // it is the floor a loop built with no config lands on.
+  model: "claude-sonnet-5",
   provider: "anthropic",
   maxTokens: 32000,
   maxTurns: 50,

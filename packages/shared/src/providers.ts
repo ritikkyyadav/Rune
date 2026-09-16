@@ -108,8 +108,9 @@ export const PROVIDER_CAPACITY: Record<string, ProviderCapacity> = {
   custom: "funded",
   // The wider roster: pay-as-you-go API keys, every one of them. Funded on the
   // same reasoning as groq/xai/deepseek — a top-up account, not a plan seat and
-  // not a free pool. GitHub Models is the exception: a rate-limited free tier on
-  // a personal token, which is exactly the "cheap and rots" shape `free` names.
+  // not a free pool. `github-models` was the one exception (a rate-limited free
+  // tier on a personal token) and it is gone: GitHub retired the product on
+  // 2026-07-30.
   alibaba: "funded",
   ai21: "funded",
   baseten: "funded",
@@ -118,7 +119,6 @@ export const PROVIDER_CAPACITY: Record<string, ProviderCapacity> = {
   cohere: "funded",
   deepinfra: "funded",
   fireworks: "funded",
-  "github-models": "free",
   huggingface: "funded",
   hyperbolic: "funded",
   inception: "funded",
@@ -336,41 +336,53 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     // OAuth is preferred in the picker; the API key stays the fallback and the
     // env/console path is byte-identical to before for existing key users.
     auth: ["oauth", "api_key"],
-    // Fable 5 is listed but is NOT the default: it is unavailable under zero
-    // data retention, and Rune's compliance-sensitive users are exactly the
-    // ones who run ZDR. Opting in is a choice they should make knowingly.
+    // Roster refreshed 2026-09-16 against Anthropic's model docs. Opus 5 is
+    // the documented starting point ("start with Opus 5 for most workloads")
+    // and stays the default. Fable 5.1 — the line for demanding reasoning and
+    // long-horizon agentic work — is listed but is NOT the default: the Fable
+    // line is unavailable under zero data retention, and Rune's
+    // compliance-sensitive users are exactly the ones who run ZDR. Opting in
+    // is a choice they should make knowingly. Fable 5 (superseded by 5.1) and
+    // Sonnet 4.5 are gone; 4.8/4.6 stay as the legacy rows people pin to.
+    // Haiku's dated id is claude-haiku-4-5-20251001; the alias is what ships.
     models: [
       { id: "claude-opus-5", label: "Claude Opus 5" },
-      { id: "claude-fable-5", label: "Claude Fable 5" },
-      { id: "claude-opus-4-8", label: "Claude Opus 4.8" },
+      { id: "claude-fable-5-1", label: "Claude Fable 5.1" },
       { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
-      { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
-      { id: "claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
       { id: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
+      { id: "claude-opus-4-8", label: "Claude Opus 4.8" },
+      { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
     ],
     tiers: { heavy: "claude-opus-5", standard: "claude-sonnet-5", light: "claude-haiku-4-5" },
     // Deliberately NOT the default model: a fallback INTO Anthropic is a rescue
     // route, and the cheapest current-generation model that can carry a full
     // agentic transcript is the right thing to land on.
-    fallbackModel: "claude-sonnet-4-6",
+    fallbackModel: "claude-sonnet-5",
   },
   {
     id: "openai",
     label: "OpenAI",
     kind: "openai-compat",
     envVar: "OPENAI_API_KEY",
-    defaultModel: "gpt-5",
+    defaultModel: "gpt-6-astra",
     docsUrl: "https://platform.openai.com/api-keys",
     keyHint: "sk-…",
+    // Roster refreshed 2026-09-16 from OpenAI's model docs: gpt-6-astra is the
+    // flagship (1.05M context / 128K output) and the gpt-5.6 line carries the
+    // same limits. gpt-5, gpt-5-mini, gpt-4o, gpt-4o-mini and o3 are gone —
+    // the picker had been offering a two-generation-old lineup as CURRENT.
     models: [
-      { id: "gpt-5", label: "GPT-5" },
-      { id: "gpt-5-mini", label: "GPT-5 mini" },
-      { id: "gpt-4o", label: "GPT-4o" },
-      { id: "gpt-4o-mini", label: "GPT-4o mini" },
-      { id: "o3", label: "o3" },
+      { id: "gpt-6-astra", label: "GPT-6 Astra (flagship)" },
+      { id: "gpt-6-astra-pro", label: "GPT-6 Astra Pro" },
+      { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+      { id: "gpt-5.6-terra", label: "GPT-5.6 Terra (balanced)" },
+      { id: "gpt-5.6-luna", label: "GPT-5.6 Luna (fast)" },
+      { id: "gpt-5.5", label: "GPT-5.5" },
+      { id: "gpt-5.4-mini", label: "GPT-5.4 mini" },
+      { id: "gpt-5.4-nano", label: "GPT-5.4 nano" },
     ],
-    tiers: { heavy: "gpt-5", standard: "gpt-5", light: "gpt-5-mini" },
-    fallbackModel: "gpt-4o",
+    tiers: { heavy: "gpt-6-astra", standard: "gpt-5.6-sol", light: "gpt-5.6-luna" },
+    fallbackModel: "gpt-5.6-terra",
   },
   {
     id: "openrouter",
@@ -388,12 +400,19 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     // :free variants withdrawn to paid, minimax-m3:free withdrawn to paid on
     // 2026-09-08 — it answered 404 and killed a detached run that day). The
     // Nemotron id completed a live call on 2026-09-08; the live list is what
-    // `rune models` shows, these are only the seed. Stealth models are
-    // ephemeral by nature — keep ox-alpha while it lasts, never as the default.
+    // `rune models` shows, these are only the seed. `stealth/ox-alpha` was
+    // dropped 2026-09-16: stealth ids are ephemeral by nature and that one has
+    // aged out. The paid rows below are seeds for the frontier models people
+    // actually reach for through this router — they are not free, so none of
+    // them is the default or a tier.
     models: [
       { id: "nvidia/nemotron-3-ultra-550b-a55b:free", label: "Nemotron 3 Ultra (free)" },
       { id: "nvidia/nemotron-3-super-120b-a12b:free", label: "Nemotron 3 Super (free)" },
-      { id: "stealth/ox-alpha", label: "Ox Alpha (free)" },
+      { id: "z-ai/glm-5.2:free", label: "GLM-5.2 (free)" },
+      { id: "anthropic/claude-opus-5", label: "Claude Opus 5" },
+      { id: "openai/gpt-6-astra", label: "GPT-6 Astra" },
+      { id: "google/gemini-3.8-flash", label: "Gemini 3.8 Flash" },
+      { id: "deepseek/deepseek-v4.1-flash", label: "DeepSeek V4.1 Flash" },
     ],
     // The :free tier churns constantly (qwen3-coder:free retired 2026-07-15,
     // then deepseek-v4-flash:free and deepseek-r1:free, then minimax-m3:free).
@@ -413,16 +432,29 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     label: "Google Gemini",
     kind: "google",
     envVar: "GOOGLE_API_KEY",
-    defaultModel: "gemini-2.5-flash",
+    defaultModel: "gemini-3.8-flash",
     docsUrl: "https://aistudio.google.com/apikey",
     keyHint: "AIza…",
+    // Roster refreshed 2026-09-16 from the Gemini API model page. 3.8 Flash is
+    // the documented "most intelligent Flash" and carries both the heavy and
+    // the standard tier — the 3.x line collapsed the Pro/Flash split that made
+    // 2.5 Pro the heavy model here. 3.1 Pro is still preview, so it is listed
+    // but never a tier. gemini-2.0-flash is gone; the 2.5 pair stays for
+    // anyone pinned to it.
     models: [
-      { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+      { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash" },
+      { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+      { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash Lite" },
+      { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro (preview)" },
       { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
-      { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
+      { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
     ],
-    tiers: { heavy: "gemini-2.5-pro", standard: "gemini-2.5-pro", light: "gemini-2.5-flash" },
-    fallbackModel: "gemini-2.5-flash",
+    tiers: {
+      heavy: "gemini-3.8-flash",
+      standard: "gemini-3.8-flash",
+      light: "gemini-3.5-flash-lite",
+    },
+    fallbackModel: "gemini-3.5-flash",
   },
   {
     id: "groq",
@@ -430,20 +462,28 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     kind: "openai-compat",
     envVar: "GROQ_API_KEY",
     baseUrl: "https://api.groq.com/openai/v1",
-    defaultModel: "llama-3.3-70b-versatile",
+    defaultModel: "openai/gpt-oss-120b",
     docsUrl: "https://console.groq.com/keys",
     keyHint: "gsk_…",
+    // Roster refreshed 2026-09-16 from Groq's model page: the four production
+    // ids plus the two preview ones, labelled as preview so nobody mistakes a
+    // model Groq may withdraw for a supported one. gpt-oss-120b is the default
+    // and both upper tiers — it is the production id that documents tool use,
+    // which is the whole job here.
     models: [
-      { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B" },
       { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B" },
+      { id: "openai/gpt-oss-20b", label: "GPT-OSS 20B" },
+      { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B" },
       // The light tier resolves to this. It was reachable only through the
       // tier table, so the one list a person reads while picking a model did
       // not contain a model their session would actually run.
       { id: "llama-3.1-8b-instant", label: "Llama 3.1 8B Instant" },
+      { id: "qwen/qwen3.8-27b", label: "Qwen3.8 27B (preview)" },
+      { id: "minimaxai/minimax-m2.7", label: "MiniMax M2.7 (preview)" },
     ],
     tiers: {
-      heavy: "llama-3.3-70b-versatile",
-      standard: "llama-3.3-70b-versatile",
+      heavy: "openai/gpt-oss-120b",
+      standard: "openai/gpt-oss-120b",
       light: "llama-3.1-8b-instant",
     },
   },
@@ -453,15 +493,22 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     kind: "openai-compat",
     envVar: "XAI_API_KEY",
     baseUrl: "https://api.x.ai/v1",
-    defaultModel: "grok-4",
+    defaultModel: "grok-4.6",
     docsUrl: "https://console.x.ai/",
     keyHint: "xai-…",
+    // Roster refreshed 2026-09-16 from xAI's model page. Windows differ across
+    // the line and that is the whole reason the light tier is 4.3 rather than
+    // a smaller model: 4.6/4.5 serve 500k, 4.3 and the reasoning build serve
+    // 1M, grok-build-0.1 serves 256k. grok-4, grok-4-fast and grok-code-fast-1
+    // are retired.
     models: [
-      { id: "grok-4", label: "Grok 4" },
-      { id: "grok-4-fast", label: "Grok 4 Fast" },
-      { id: "grok-code-fast-1", label: "Grok Code Fast" },
+      { id: "grok-4.6", label: "Grok 4.6" },
+      { id: "grok-4.5", label: "Grok 4.5" },
+      { id: "grok-4.3", label: "Grok 4.3" },
+      { id: "grok-build-0.1", label: "Grok Build 0.1 (code)" },
+      { id: "grok-4.20-0309-reasoning", label: "Grok 4.20 Reasoning" },
     ],
-    tiers: { heavy: "grok-4", standard: "grok-4", light: "grok-4-fast" },
+    tiers: { heavy: "grok-4.6", standard: "grok-4.6", light: "grok-4.3" },
   },
   {
     id: "deepseek",
@@ -469,14 +516,18 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     kind: "openai-compat",
     envVar: "DEEPSEEK_API_KEY",
     baseUrl: "https://api.deepseek.com",
-    defaultModel: "deepseek-chat",
+    defaultModel: "deepseek-flash",
     docsUrl: "https://platform.deepseek.com/api_keys",
     keyHint: "sk-…",
+    // Roster refreshed 2026-09-16: DeepSeek's pricing page lists exactly these
+    // two now. `deepseek-flash` is V4.1-Flash (1M context, tools, thinking) and
+    // `deepseek-v4-pro` is V4-Pro-0813. The deepseek-chat / deepseek-reasoner
+    // pair this preset shipped is gone from the vendor's own table.
     models: [
-      { id: "deepseek-chat", label: "DeepSeek Chat" },
-      { id: "deepseek-reasoner", label: "DeepSeek Reasoner" },
+      { id: "deepseek-flash", label: "DeepSeek Flash (V4.1)" },
+      { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro" },
     ],
-    tiers: { heavy: "deepseek-reasoner", standard: "deepseek-chat", light: "deepseek-chat" },
+    tiers: { heavy: "deepseek-v4-pro", standard: "deepseek-flash", light: "deepseek-flash" },
   },
   {
     // ChatGPT Plus/Pro subscription via the Codex backend. Signs in with the
@@ -487,31 +538,35 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     label: "ChatGPT (Codex)",
     kind: "codex",
     // A ChatGPT account (not an API key) can ONLY call the current Codex-for-
-    // ChatGPT allowlist — the GPT-5.6 family plus gpt-5.5. The plain gpt-5 /
-    // gpt-5-codex / 5.2 / 5.3-codex slugs are API-key-only or deprecated here and
-    // 400 with "model is not supported when using Codex with a ChatGPT account".
-    // gpt-5.6-sol is OpenAI's documented default (Power, medium reasoning).
-    // gpt-5.5 is the previous frontier — available on plans that include it
-    // (may 400 on some Plus tiers). Ref: https://learn.chatgpt.com/docs/models
-    defaultModel: "gpt-5.6-sol",
+    // ChatGPT allowlist. Refreshed 2026-09-16: gpt-6-astra is OpenAI's bundled
+    // default for Codex now, with the GPT-5.6 family beneath it. gpt-5.5
+    // retires 2026-10-14 and is deliberately NOT listed — a row that dies in
+    // four weeks is a support ticket, not a choice. The plain gpt-5 /
+    // gpt-5-codex / 5.2 / 5.3-codex slugs are API-key-only or deprecated here
+    // and 400 with "model is not supported when using Codex with a ChatGPT
+    // account". Ref: https://learn.chatgpt.com/docs/models
+    //
+    // This preset was the founder-visible rot: the product shipped without the
+    // model OpenAI had made the Codex default, so signing in with ChatGPT
+    // offered a lineup one generation behind the account's own entitlement.
+    defaultModel: "gpt-6-astra",
     docsUrl: "https://learn.chatgpt.com/docs/models",
     auth: ["oauth"],
-    // The three current Codex models, and only those. gpt-5.5 is gone from the
-    // picker: it is the previous frontier, it 400s on some Plus tiers, and a
-    // fourth row that may not work is clutter in the one list a person reads
-    // while deciding. Depth is a SEPARATE choice now (see effortChoices) —
+    // Depth is a SEPARATE choice from the model (see effortChoices) —
     // sol/terra/luna are model weights, not effort levels.
     models: [
-      { id: "gpt-5.6-sol", label: "GPT-5.6 Sol (flagship)" },
+      { id: "gpt-6-astra", label: "GPT-6 Astra (flagship)" },
+      { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
       { id: "gpt-5.6-terra", label: "GPT-5.6 Terra (balanced)" },
       { id: "gpt-5.6-luna", label: "GPT-5.6 Luna (fast)" },
     ],
     // The gpt-5.6 line encodes reasoning weight in the model NAME (sol > terra
     // > luna) rather than a reasoning.effort param, so the tier split is just
-    // the right variant per weight. Codex had NO tier entry until 2026-08-28,
-    // which meant every "cheap scout" ran a 32-turn gpt-5.6-sol against the
-    // plan quota; one audited session hit the usage limit nine minutes in.
-    tiers: { heavy: "gpt-5.6-sol", standard: "gpt-5.6-terra", light: "gpt-5.6-luna" },
+    // the right variant per weight; gpt-6-astra takes the heavy slot above it.
+    // Codex had NO tier entry until 2026-08-28, which meant every "cheap scout"
+    // ran a 32-turn flagship against the plan quota; one audited session hit
+    // the usage limit nine minutes in.
+    tiers: { heavy: "gpt-6-astra", standard: "gpt-5.6-sol", light: "gpt-5.6-luna" },
     fallbackModel: "gpt-5.6-terra",
   },
   {
@@ -564,23 +619,43 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     id: "bedrock",
     label: "AWS Bedrock",
     kind: "bedrock",
-    defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    defaultModel: "global.anthropic.claude-sonnet-4-6",
     docsUrl: "https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html",
     keyHint: "AWS_PROFILE / AWS_ACCESS_KEY_ID (no key stored)",
     auth: ["chain"],
+    // Refreshed 2026-09-16 to the ids AWS documents for InvokeModel today. Two
+    // prefix shapes live here and both are deliberate:
+    //
+    //   `global.` — a GLOBAL inference profile, already region-agnostic.
+    //   `us.`     — a cross-region profile, rewritten to the caller's geography
+    //               by `applyInferenceProfile` (eu./apac.).
+    //   bare      — a Messages-API id, on-demand invokable, sent verbatim.
+    //
+    // `applyInferenceProfile` rewrites ONLY the us/eu/apac/us-gov prefixes, so
+    // the `global.` ids below pass through untouched — which is what a global
+    // profile needs (tests/unit/gateway/bedrock.test.ts pins that).
+    //
+    // NOT LISTED, deliberately: Opus 5, Sonnet 5 and Fable 5.1. They have no
+    // ARN-versioned Bedrock id and are reached through InvokeModel by their
+    // Messages-API ids (`anthropic.claude-opus-5`, `anthropic.claude-sonnet-5`,
+    // `anthropic.claude-fable-5-1`), which is a newer request shape this build
+    // does not route. Nothing here has been proved against a live Bedrock
+    // account, and a picker row that 404s is worse than a row that is absent —
+    // `/model bedrock/<id>` still accepts any id for anyone who knows better.
+    // Opus 4.1 and the claude-3-5 ids are dropped (deprecated).
     models: [
-      { id: "us.anthropic.claude-opus-4-1-20250805-v1:0", label: "Claude Opus 4.1" },
+      { id: "global.anthropic.claude-opus-4-6-v1", label: "Claude Opus 4.6" },
+      { id: "global.anthropic.claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+      { id: "us.anthropic.claude-opus-4-5-20251101-v1:0", label: "Claude Opus 4.5" },
       { id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0", label: "Claude Sonnet 4.5" },
       { id: "us.anthropic.claude-haiku-4-5-20251001-v1:0", label: "Claude Haiku 4.5" },
-      { id: "anthropic.claude-3-5-sonnet-20241022-v2:0", label: "Claude 3.5 Sonnet v2" },
-      { id: "anthropic.claude-3-5-haiku-20241022-v1:0", label: "Claude 3.5 Haiku" },
     ],
     tiers: {
-      heavy: "us.anthropic.claude-opus-4-1-20250805-v1:0",
-      standard: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      heavy: "global.anthropic.claude-opus-4-6-v1",
+      standard: "global.anthropic.claude-sonnet-4-6",
       light: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
     },
-    fallbackModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    fallbackModel: "global.anthropic.claude-sonnet-4-6",
   },
   {
     // ─── Google Vertex AI ───
@@ -595,26 +670,33 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     id: "vertex",
     label: "Google Vertex AI",
     kind: "vertex",
-    defaultModel: "claude-sonnet-4-5@20250929",
+    defaultModel: "claude-sonnet-5",
     docsUrl: "https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/use-claude",
     keyHint: "GOOGLE_APPLICATION_CREDENTIALS / gcloud ADC (no key stored)",
     auth: ["chain"],
+    // Refreshed 2026-09-16 to the ids Google Cloud documents. The current
+    // Anthropic line is addressed by its plain id on Vertex; only the legacy
+    // Haiku row still carries the `@<version>` suffix. Opus 4.1, Sonnet 4.5
+    // and the gemini-2.5-* rows are dropped.
     models: [
-      { id: "claude-opus-4-1@20250805", label: "Claude Opus 4.1" },
-      { id: "claude-sonnet-4-5@20250929", label: "Claude Sonnet 4.5" },
+      { id: "claude-opus-5", label: "Claude Opus 5" },
+      { id: "claude-fable-5-1", label: "Claude Fable 5.1" },
+      { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
+      { id: "claude-opus-4-8", label: "Claude Opus 4.8" },
+      { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
       { id: "claude-haiku-4-5@20251001", label: "Claude Haiku 4.5" },
-      { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
-      { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+      { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash" },
+      { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash Lite" },
     ],
     // One family for the tiers, deliberately: mixing Gemini into the light tier
     // would make a sub-agent answer in a different model's voice than the run
     // it belongs to. Gemini stays one `/model` away for anyone who wants it.
     tiers: {
-      heavy: "claude-opus-4-1@20250805",
-      standard: "claude-sonnet-4-5@20250929",
+      heavy: "claude-opus-5",
+      standard: "claude-sonnet-5",
       light: "claude-haiku-4-5@20251001",
     },
-    fallbackModel: "claude-sonnet-4-5@20250929",
+    fallbackModel: "claude-sonnet-5",
   },
   {
     // ─── Azure OpenAI ───
@@ -633,24 +715,27 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     label: "Azure OpenAI",
     kind: "azure-openai",
     envVar: "AZURE_OPENAI_API_KEY",
-    defaultModel: "gpt-4o",
+    defaultModel: "gpt-6-astra",
     docsUrl:
       "https://learn.microsoft.com/azure/ai-services/openai/how-to/create-resource?pivots=web-portal",
     keyHint: "resource key, with AZURE_OPENAI_ENDPOINT",
     auth: ["api_key", "chain"],
+    // Refreshed 2026-09-16 against the Foundry model catalogue, which still
+    // lists gpt-4.1 and gpt-4o alongside the current line. They are dropped
+    // here anyway: this list is what a person picks as CURRENT, and the
+    // deployment-name mapping in `[providers.azure-openai.deployments]` is the
+    // place to name whatever an older resource actually has.
     models: [
-      { id: "gpt-5", label: "GPT-5" },
-      { id: "gpt-5-mini", label: "GPT-5 mini" },
-      { id: "gpt-4.1", label: "GPT-4.1" },
-      { id: "gpt-4o", label: "GPT-4o" },
-      { id: "gpt-4o-mini", label: "GPT-4o mini" },
-      { id: "o3", label: "o3" },
+      { id: "gpt-6-astra", label: "GPT-6 Astra (flagship)" },
+      { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+      { id: "gpt-5.6-terra", label: "GPT-5.6 Terra (balanced)" },
+      { id: "gpt-5.6-luna", label: "GPT-5.6 Luna (fast)" },
+      { id: "gpt-5.5", label: "GPT-5.5" },
+      { id: "gpt-5.4-mini", label: "GPT-5.4 mini" },
+      { id: "gpt-5.4-nano", label: "GPT-5.4 nano" },
     ],
-    // gpt-4o rather than gpt-5 as the standard tier and the fallback: it is the
-    // deployment an existing Azure resource is most likely to already have, and
-    // a tier that resolves to a model nobody deployed is a 404 mid-task.
-    tiers: { heavy: "gpt-5", standard: "gpt-4o", light: "gpt-4o-mini" },
-    fallbackModel: "gpt-4o",
+    tiers: { heavy: "gpt-6-astra", standard: "gpt-5.6-sol", light: "gpt-5.4-mini" },
+    fallbackModel: "gpt-5.6-terra",
   },
   // ─── The wider roster (2026-09-06) ───
   // Every host below speaks the OpenAI Chat Completions wire, so each one is a
@@ -667,7 +752,16 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   //   2. No `tiers` block. A tier table names ids the summarizer and the scout
   //      sub-agents run unattended; on a host whose lineup nobody here has
   //      verified, the safe answer is the session model (the tier resolver's
-  //      fallback), not a guess that 404s mid-compaction.
+  //      fallback), not a guess that 404s mid-compaction. The exceptions are
+  //      the two hosts whose own current-model pages WERE read on 2026-09-16 —
+  //      Mistral and Moonshot — which is what a tier table costs: a reading.
+  //
+  // SEED LIST, not a catalogue: every id in this block is a starting guess at
+  // what the host serves. `rune models <provider>` discovers the live
+  // catalogue, and that is the answer to trust. The 2026-09-16 roster refresh
+  // deliberately did NOT rewrite these: each host has its own id scheme, no
+  // keyless catalogue could be checked from here, and a guessed id is worse
+  // than a stale one — it fails with a 404 nobody can attribute.
   //
   // A host with a regional twin (DashScope/Moonshot/MiniMax/SiliconFlow in
   // China, Z.ai's coding-plan endpoint) takes the other base URL through
@@ -731,11 +825,11 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     docsUrl: "https://cloud.cerebras.ai/platform",
     keyHint: "csk-…",
     tagline: "fastest tokens per second",
+    // Refreshed 2026-09-16: Cerebras serves these two now. The qwen-3-coder-480b
+    // / qwen-3-235b / llama-3.3-70b rows are gone from their catalogue.
     models: [
       { id: "gpt-oss-120b", label: "GPT-OSS 120B" },
-      { id: "qwen-3-coder-480b", label: "Qwen3 Coder 480B" },
-      { id: "qwen-3-235b-a22b-instruct-2507", label: "Qwen3 235B" },
-      { id: "llama-3.3-70b", label: "Llama 3.3 70B" },
+      { id: "qwen-3.8-27b", label: "Qwen3.8 27B" },
     ],
   },
   {
@@ -803,29 +897,13 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
       { id: "accounts/fireworks/models/llama-v3p3-70b-instruct", label: "Llama 3.3 70B" },
     ],
   },
-  {
-    // Deliberately NOT `GITHUB_TOKEN`: that variable is set on most developer
-    // machines for `gh` and CI, and an env var present means "registered" —
-    // half the world would silently gain a provider whose token lacks the
-    // `models:read` scope. A dedicated name makes the connection a choice.
-    id: "github-models",
-    label: "GitHub Models",
-    kind: "openai-compat",
-    envVar: "GITHUB_MODELS_TOKEN",
-    baseUrl: "https://models.github.ai/inference",
-    defaultModel: "openai/gpt-4.1",
-    docsUrl: "https://github.com/settings/personal-access-tokens",
-    keyHint: "github_pat_… (models:read)",
-    tagline: "free tier on a GitHub token",
-    models: [
-      { id: "openai/gpt-4.1", label: "GPT-4.1" },
-      { id: "openai/gpt-5", label: "GPT-5" },
-      { id: "openai/gpt-4o", label: "GPT-4o" },
-      { id: "deepseek/deepseek-v3-0324", label: "DeepSeek V3" },
-      { id: "meta/llama-3.3-70b-instruct", label: "Llama 3.3 70B" },
-      { id: "mistral-ai/codestral-2501", label: "Codestral" },
-    ],
-  },
+  // NOTE: `github-models` was removed 2026-09-16. GitHub RETIRED the product
+  // on 2026-07-30 — the playground, the model catalog and the inference API
+  // all went at once — so the preset pointed at a host that no longer answers.
+  // It was also the only `free` row in the wider roster, which made it the
+  // row a person with no budget was most likely to pick. A saved config or a
+  // sticky pick that still names it degrades to the auto-detect path with a
+  // notice (startup-selection.ts `unknownSaved`), never a crash.
   {
     id: "huggingface",
     label: "Hugging Face",
@@ -880,12 +958,16 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     kind: "openai-compat",
     envVar: "MINIMAX_API_KEY",
     baseUrl: "https://api.minimax.io/v1",
-    defaultModel: "MiniMax-M2",
+    defaultModel: "MiniMax-M3",
     docsUrl: "https://platform.minimax.io/user-center/basic-information/interface-key",
     tagline: "MiniMax M-series",
+    // 2026-09-16: M3 and M2.7 are the current pair per OpenRouter's mirror of
+    // this vendor (`minimax/minimax-m3`, `minimax/minimax-m2.7`) — the vendor's
+    // own page was NOT reachable from here, so treat the exact casing as
+    // unverified and let `rune models minimax` settle it.
     models: [
-      { id: "MiniMax-M2", label: "MiniMax M2" },
-      { id: "MiniMax-M1", label: "MiniMax M1" },
+      { id: "MiniMax-M3", label: "MiniMax M3" },
+      { id: "MiniMax-M2.7", label: "MiniMax M2.7" },
     ],
   },
   {
@@ -894,17 +976,25 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     kind: "openai-compat",
     envVar: "MISTRAL_API_KEY",
     baseUrl: "https://api.mistral.ai/v1",
-    defaultModel: "mistral-large-latest",
+    defaultModel: "mistral-medium-latest",
     docsUrl: "https://console.mistral.ai/api-keys",
-    tagline: "Codestral, Devstral, EU-hosted",
+    tagline: "Codestral, EU-hosted",
+    // Refreshed 2026-09-16 from Mistral's model page. The `-latest` aliases are
+    // the durable ids and they now point at Medium 3.5, Small 4 and Large 3.
+    // devstral-* and magistral-* are deprecated and gone. Medium is the default
+    // and the standard tier: it is the alias Mistral positions as the
+    // general-purpose one, and Large is a step up rather than the starting point.
     models: [
-      { id: "mistral-large-latest", label: "Mistral Large" },
       { id: "mistral-medium-latest", label: "Mistral Medium" },
-      { id: "devstral-medium-latest", label: "Devstral Medium" },
-      { id: "codestral-latest", label: "Codestral" },
-      { id: "magistral-medium-latest", label: "Magistral Medium" },
+      { id: "mistral-large-latest", label: "Mistral Large" },
       { id: "mistral-small-latest", label: "Mistral Small" },
+      { id: "codestral-latest", label: "Codestral" },
     ],
+    tiers: {
+      heavy: "mistral-large-latest",
+      standard: "mistral-medium-latest",
+      light: "mistral-small-latest",
+    },
   },
   {
     id: "moonshot",
@@ -912,16 +1002,20 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     kind: "openai-compat",
     envVar: "MOONSHOT_API_KEY",
     baseUrl: "https://api.moonshot.ai/v1",
-    defaultModel: "kimi-k2-0905-preview",
+    defaultModel: "kimi-k3",
     docsUrl: "https://platform.moonshot.ai/console/api-keys",
     keyHint: "sk-…",
-    tagline: "Kimi K2 from the source",
+    tagline: "Kimi K3 from the source",
+    // Refreshed 2026-09-16 from platform.kimi.ai. K3 carries a 1M window and is
+    // the default; the k2.7-code pair is the coding line. Every k2-0905 /
+    // k2-thinking / k2-turbo / kimi-latest id this preset shipped is retired.
     models: [
-      { id: "kimi-k2-0905-preview", label: "Kimi K2" },
-      { id: "kimi-k2-thinking", label: "Kimi K2 Thinking" },
-      { id: "kimi-k2-turbo-preview", label: "Kimi K2 Turbo" },
-      { id: "kimi-latest", label: "Kimi (latest)" },
+      { id: "kimi-k3", label: "Kimi K3" },
+      { id: "kimi-k2.7-code", label: "Kimi K2.7 Code" },
+      { id: "kimi-k2.7-code-highspeed", label: "Kimi K2.7 Code Highspeed" },
+      { id: "kimi-k2.6", label: "Kimi K2.6" },
     ],
+    tiers: { heavy: "kimi-k3", standard: "kimi-k2.7-code", light: "kimi-k2.6" },
   },
   {
     id: "nebius",
@@ -1152,7 +1246,6 @@ const VISION_PROVIDERS: ReadonlySet<string> = new Set([
   "alibaba",
   "zai",
   "vercel",
-  "github-models",
 ]);
 const REASONING_PROVIDERS: ReadonlySet<string> = new Set([
   "anthropic",

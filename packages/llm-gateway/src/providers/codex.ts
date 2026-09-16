@@ -30,7 +30,14 @@ import { parseToolArguments } from "@rune/shared";
 
 const RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
 /** Models on Codex that reason (send a `reasoning` param + collect thinking). */
-const REASONING_MODEL = /^(gpt-5|o[134]|codex)/;
+// Which models get a `reasoning` block. Written as a FAMILY rule rather than a
+// list of the ids shipping today: the previous form (`/^(gpt-5|o[134]|codex)/`)
+// was correct the day it was written and silently wrong the day OpenAI made
+// gpt-6-astra the bundled Codex default — that model would have been sent with
+// no reasoning block at all, which is the whole reason the Codex route feels
+// strong. `gpt-[5-9]` covers this decade's single-digit line and `gpt-\d{2}`
+// the next one, so the next generation arrives handled.
+const REASONING_MODEL = /^(gpt-[5-9]|gpt-\d{2}|o[134](-|$)|codex)/;
 // A reasoning model's reasoning items (with encrypted_content) MUST be echoed
 // back in the input before their function call, or a store:false follow-up 400s
 // with "No tool output found for function call". We round-trip each reasoning
@@ -141,8 +148,14 @@ export function codexEffortFor(
   if (thinking?.enabled === false) return "none";
   const wanted = thinking?.effort ?? "high";
   const m = model.toLowerCase();
-  // The gpt-5.6 line takes everything except "minimal" (measured).
+  // The gpt-5.6 line takes everything except "minimal" (measured 2026-08-30).
   if (/^gpt-5\.6/.test(m) && wanted === "minimal") return "low";
+  // gpt-6: UNMEASURED. OpenAI's changelog adds `max` and `ultra` to the effort
+  // vocabulary for this line, but no accepted-effort matrix has been probed
+  // from here and this lane made zero live calls. The requested value passes
+  // through unchanged rather than being clamped against a guess — a wrong
+  // clamp silently weakens every request, while a wrong value 400s once and
+  // says so. Measure it before adding a rule.
   return wanted;
 }
 

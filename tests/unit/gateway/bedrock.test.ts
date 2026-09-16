@@ -133,6 +133,31 @@ describe("inference-profile ids", () => {
     );
   });
 
+  test("the 2026 catalogue's newer prefixes route unchanged", () => {
+    // The check the 2026-09-16 roster refresh ran before adding `global.` ids.
+    // A GLOBAL inference profile is already region-agnostic and a bare
+    // Messages-API id is invoked directly — both must reach the wire EXACTLY as
+    // written. `applyInferenceProfile` rewrites only the us/eu/apac/us-gov
+    // prefixes, so both pass through. (The bare ids are pinned here even though
+    // the preset does not list Opus 5 / Sonnet 5 / Fable 5.1: `/model
+    // bedrock/<id>` accepts any id, and the prefix rule must not mangle one.)
+    for (const family of ["us", "eu", "apac", "none", undefined] as const) {
+      for (const id of [
+        "global.anthropic.claude-opus-4-6-v1",
+        "global.anthropic.claude-sonnet-4-6",
+        "anthropic.claude-opus-5",
+        "anthropic.claude-sonnet-5",
+        "anthropic.claude-fable-5-1",
+      ]) {
+        expect(applyInferenceProfile(id, family)).toBe(id);
+      }
+    }
+    // And the geo-prefixed rows in the same catalogue still follow the region.
+    expect(applyInferenceProfile("us.anthropic.claude-haiku-4-5-20251001-v1:0", "eu")).toBe(
+      "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+    );
+  });
+
   test("an ARN and the 'none' escape are both left alone", () => {
     const arn = "arn:aws:bedrock:us-east-1:1:inference-profile/us.anthropic.x";
     expect(applyInferenceProfile(arn, "eu")).toBe(arn);

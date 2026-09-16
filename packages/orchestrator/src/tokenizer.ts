@@ -137,6 +137,9 @@ export class TokenCounter {
       // and silently compacted every one of them at ~140k, discarding 85% of
       // the window and paying for summarizer round-trips that bought nothing.
       // These MUST stay above the generic "claude" rule — first match wins.
+      // `claude-fable-5` is a SUBSTRING rule, so it also covers
+      // `claude-fable-5-1` — pinned by a test, because the day it stops being
+      // true is the day Fable's window silently drops to 200k.
       ["claude-fable-5", 1000000],
       ["claude-mythos-5", 1000000],
       ["claude-opus-5", 1000000],
@@ -148,7 +151,18 @@ export class TokenCounter {
       // Everything older on the Claude line (Sonnet 4.5, Haiku 4.5, Opus 4.5
       // and back) is genuinely 200k.
       ["claude", 200000],
-      // OpenAI
+      // OpenAI. The 2026 line documents 1.05M context / 128K output — gpt-6
+      // and the whole gpt-5.4/5.5/5.6 generation, with the mini/nano
+      // checkpoints staying at the older 400k. These MUST stay above the
+      // generic "gpt-5" rule: matching is a substring test and the first match
+      // wins, so `gpt-5.6-sol` would otherwise be compacted at 400k — 62% of
+      // its real window thrown away on every long run.
+      ["gpt-6", 1050000],
+      ["gpt-5.6", 1050000],
+      ["gpt-5.5", 1050000],
+      ["gpt-5.4-mini", 400000],
+      ["gpt-5.4-nano", 400000],
+      ["gpt-5.4", 1050000],
       ["gpt-5", 400000],
       ["gpt-4.1", 1000000],
       ["gpt-4o", 128000],
@@ -180,13 +194,29 @@ export class TokenCounter {
       // least that, but "should be" is not evidence — take the safe floor and
       // let the catalog raise it.
       ["minimax", 131072],
+      // GLM-5.x reached through OpenRouter's `z-ai/glm-5.2:free`. Floored to the
+      // GLM-4 line until a catalogue reports otherwise.
+      ["glm-5", 131072],
       ["glm-4", 131072],
+      // DeepSeek's current pair both document a 1M window; the generic
+      // "deepseek" floor below still catches every third-party spelling.
+      ["deepseek-flash", 1000000],
+      ["deepseek-v4-pro", 1000000],
       ["deepseek", 131072],
+      // Kimi K3 documents 1M; the K2 line stays on the floor.
+      ["kimi-k3", 1048576],
       ["kimi", 131072],
       ["llama-3", 131072],
       // Fireworks spells the same family "llama-v3p3-70b-instruct".
       ["llama-v3", 131072],
       ["llama3", 8192],
+      // xAI publishes a different window per model rather than per line, so
+      // each one is its own rule ahead of the generic floor.
+      ["grok-4.6", 500000],
+      ["grok-4.5", 500000],
+      ["grok-4.3", 1000000],
+      ["grok-4.20", 1000000],
+      ["grok-build", 256000],
       ["grok", 131072],
       // ─── The wider roster (2026-09-06) ───
       // Documented windows for the families the new presets seed, floored
@@ -225,6 +255,7 @@ export class TokenCounter {
       ["opus-4-1", 32000],
       ["opus-4-2025", 32000],
       ["claude", 64000],
+      ["gpt-6", 128000],
       ["gpt-5", 128000],
       ["gpt-4.1", 32768],
       ["gpt-4o-mini", 16384],

@@ -87,7 +87,7 @@ describe("resolveStartupSelection", () => {
     );
     expect(selection).toEqual({
       provider: "mistral",
-      model: "mistral-large-latest",
+      model: "mistral-medium-latest",
       source: "config",
     });
   });
@@ -111,7 +111,7 @@ describe("resolveStartupSelection", () => {
     );
     expect(selection).toEqual({
       provider: "anthropic",
-      model: "claude-sonnet-4-6",
+      model: "claude-opus-5",
       source: "auto",
     });
   });
@@ -157,7 +157,7 @@ describe("resolveStartupSelection", () => {
     );
     expect(selection).toEqual({
       provider: "mistral",
-      model: "mistral-large-latest",
+      model: "mistral-medium-latest",
       source: "flag",
     });
   });
@@ -179,6 +179,61 @@ describe("resolveStartupSelection", () => {
       "ollama-turbo",
     );
     expect(resolveStartupSelection(base()).provider).toBe("openrouter");
+  });
+
+  // ─── A preset removed because its vendor retired the product ───
+
+  test("a saved provider this build no longer knows degrades to auto-detect, with a notice", () => {
+    // `github-models` was removed on 2026-09-16: GitHub retired GitHub Models
+    // on 2026-07-30 — playground, catalog and inference API at once. A config
+    // that still names it must not crash and must not boot onto a dead host;
+    // it must fall to auto-detect and SAY SO. Silent degradation is how a user
+    // ends up on an unexpected provider with no explanation.
+    const selection = resolveStartupSelection(
+      base({
+        config: { llm: { defaultProvider: "github-models" } },
+        env: { ANTHROPIC_API_KEY: "sk-ant-test" },
+        // Even with a credential filed under the retired id, it cannot be used.
+        hasStoredCredential: (id) => id === "github-models",
+      }),
+    );
+    expect(selection).toEqual({
+      provider: "anthropic",
+      model: "claude-opus-5",
+      source: "auto",
+      unknownSaved: "github-models",
+    });
+  });
+
+  test("a sticky pick naming a removed preset degrades the same way", () => {
+    const selection = resolveStartupSelection(
+      base({
+        lastUsed: { provider: "github-models", model: "openai/gpt-4.1" },
+        env: { ANTHROPIC_API_KEY: "sk-ant-test" },
+        hasStoredCredential: () => true,
+      }),
+    );
+    expect(selection.source).toBe("auto");
+    expect(selection.provider).toBe("anthropic");
+    expect(selection.unknownSaved).toBe("github-models");
+  });
+
+  test("a normal auto-detect carries no notice", () => {
+    // The field must be ABSENT, not empty: a notice printed on every boot is
+    // noise, and noise is how a real one gets missed.
+    const selection = resolveStartupSelection(base({ env: { ANTHROPIC_API_KEY: "sk" } }));
+    expect(selection.unknownSaved).toBeUndefined();
+    expect(selection).toEqual({ provider: "anthropic", model: "claude-opus-5", source: "auto" });
+  });
+
+  test("the custom endpoint is never reported as an unknown preset", () => {
+    // `custom` has no preset BY DESIGN — it is the escape hatch. Reporting it
+    // as retired would be a lie printed at every keyless boot.
+    const selection = resolveStartupSelection(
+      base({ config: { llm: { defaultProvider: "custom", custom: { model: "mock-small" } } } }),
+    );
+    expect(selection.source).toBe("auto");
+    expect(selection.unknownSaved).toBeUndefined();
   });
 
   // ─── Regressions: the walkthrough's "google from nowhere" ───
@@ -204,8 +259,8 @@ describe("resolveStartupSelection", () => {
     // gemini-2.5-flash, a model it does not serve.
     const ctx = { config: WIZARD.config!, secrets: WIZARD.secrets!, getPreset };
     expect(modelForProvider("custom", ctx)).toBe("mock-small");
-    expect(modelForProvider("mistral", ctx)).toBe("mistral-large-latest");
-    expect(modelForProvider("google", ctx)).toBe("gemini-2.5-flash");
+    expect(modelForProvider("mistral", ctx)).toBe("mistral-medium-latest");
+    expect(modelForProvider("google", ctx)).toBe("gemini-3.8-flash");
   });
 
   test("regression: the custom endpoint's own model is the last-resort default", () => {
@@ -316,7 +371,7 @@ describe("the rungs the mutation matrix found untested", () => {
           config: { llm: { defaultProvider: "anthropic", anthropic: { apiKey: "sk-config" } } },
         }),
       ),
-    ).toEqual({ provider: "anthropic", model: "claude-sonnet-4-6", source: "config" });
+    ).toEqual({ provider: "anthropic", model: "claude-opus-5", source: "config" });
   });
 
   test("config: a /keys secret is one of the four credential sources", () => {

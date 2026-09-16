@@ -62,8 +62,30 @@ describe("context-window coverage", () => {
     expect(getContextLimit("claude-opus-5")).toBe(1_000_000);
     expect(getContextLimit("claude-sonnet-5")).toBe(1_000_000);
     expect(getContextLimit("claude-sonnet-4-5")).toBe(200_000);
-    expect(getContextLimit("gpt-5.6-sol")).toBe(400_000);
+    // The substring rule for `claude-fable-5` must also carry the 5.1 point
+    // release; the day it stops, Fable's window silently drops to 200k.
+    expect(getContextLimit("claude-fable-5-1")).toBe(1_000_000);
+    // The 2026 OpenAI line documents 1.05M, and the rules for it MUST sit
+    // above the generic "gpt-5" rule — first substring match wins, so a
+    // misordering sends gpt-5.6/gpt-6 back to 400k without failing anything
+    // else. mini/nano stay on the older 400k.
+    expect(getContextLimit("gpt-6-astra")).toBe(1_050_000);
+    expect(getContextLimit("gpt-5.6-sol")).toBe(1_050_000);
+    expect(getContextLimit("gpt-5.5")).toBe(1_050_000);
+    expect(getContextLimit("gpt-5.4-mini")).toBe(400_000);
+    expect(getContextLimit("gpt-5.4-nano")).toBe(400_000);
+    expect(getContextLimit("gpt-5")).toBe(400_000);
     expect(getContextLimit("gemini-2.5-flash")).toBe(1_048_576);
+    expect(getContextLimit("gemini-3.8-flash")).toBe(1_048_576);
+    // xAI publishes a window per model, not per line.
+    expect(getContextLimit("grok-4.6")).toBe(500_000);
+    expect(getContextLimit("grok-4.5")).toBe(500_000);
+    expect(getContextLimit("grok-4.3")).toBe(1_000_000);
+    expect(getContextLimit("grok-build-0.1")).toBe(256_000);
+    expect(getContextLimit("kimi-k3")).toBe(1_048_576);
+    expect(getContextLimit("kimi-k2.6")).toBe(131_072);
+    expect(getContextLimit("deepseek-flash")).toBe(1_000_000);
+    expect(getContextLimit("deepseek-v4-pro")).toBe(1_000_000);
     expect(getContextLimit("qwen3-coder:480b")).toBe(262_144);
   });
 

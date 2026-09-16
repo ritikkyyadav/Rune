@@ -129,8 +129,9 @@ const OFFLINE_HINTS: Record<string, string> = {
  * fall back to MID-TASK -- and for that purpose Google is `funded`, because a
  * funded run uses a paid Google key. And a `:free` model id only marks the
  * model, not the route. So this table is its own small fact: Google's AI Studio
- * tier and GitHub Models are free to sign up for, OpenRouter and ollama.com
- * publish free model ids, and Ollama is your own machine.
+ * tier is free to sign up for, OpenRouter and ollama.com publish free model
+ * ids, and Ollama is your own machine. (GitHub Models was a fourth row here
+ * until 2026-09-16, when the preset was removed — GitHub retired the product.)
  *
  * It exists because the first list a new user reads used to open with four
  * providers that all need a funded key. On the machine this was built on there
@@ -140,7 +141,6 @@ const FREE_TIER: Record<string, string> = {
   openrouter: "free models",
   "ollama-turbo": "free tier",
   google: "free tier",
-  "github-models": "free tier",
   ollama: "free, local",
 };
 

@@ -34,7 +34,11 @@ function gateway() {
   } as any;
 }
 
-const MODEL = "gpt-5.6-sol"; // 400k window via the gpt-5 family rule
+// 1.05M window via the gpt-5.6 family rule. It was 400k until 2026-09-16,
+// when the rule for the 2026 OpenAI line was added ABOVE the generic "gpt-5"
+// one — the observed numbers in the docstring above are from the 400k era and
+// are left as the history they are.
+const MODEL = "gpt-5.6-sol";
 const WINDOW = getContextLimit(MODEL);
 
 const msgs = (n: number) =>
@@ -81,8 +85,9 @@ describe("the meter and the compaction trigger share one denominator", () => {
     engine.noteRealUsage({ inputTokens: 99_268 }, MODEL);
 
     const { percent } = engine.getContextUsage();
-    // 99_268 / 400_000 ≈ 25% — a quarter full, so no compaction is due.
-    expect(percent).toBe(25);
+    // 99_268 / 1_050_000 ≈ 9% — nowhere near full, so no compaction is due.
+    expect(percent).toBe(Math.round((99_268 / WINDOW) * 100));
+    expect(percent).toBe(9);
     expect(engine.shouldCompact()).toBe(false);
 
     // Previously the footer rendered 99% here while shouldCompact said false.

@@ -28,6 +28,7 @@ import { PROVIDER_TIER_DEFAULTS } from "../../../packages/shared/src/tiers";
 import { defaultModelForProvider } from "../../../packages/llm-gateway/src/gateway";
 import { billingModeFor } from "../../../packages/llm-gateway/src/types";
 import { declaredCachePolicies } from "../../../packages/llm-gateway/src/providers/cache-policy";
+import { DEFAULT_MODELS } from "../../../packages/orchestrator/src/startup-selection";
 
 /** The ids a preset offers in the picker. */
 function catalogue(id: string): string[] {
@@ -43,6 +44,24 @@ describe("every preset has a usable catalogue", () => {
 
   test.each(PROVIDER_PRESETS.map((p) => p.id))("%s's default model is in its catalogue", (id) => {
     expect(catalogue(id)).toContain(getPreset(id)!.defaultModel);
+  });
+});
+
+describe("the CLI's built-in default models agree with the presets", () => {
+  // A FOURTH table, found rotted on 2026-09-16: `DEFAULT_MODELS` in
+  // startup-selection outranks the preset's own `defaultModel`, and it still
+  // named `minimax/minimax-m3:free` eleven days after that id was withdrawn to
+  // paid and started answering 404 — because the preset beneath it had already
+  // been fixed and nothing tied the two together. Same rule as the tier table:
+  // one id, one place, and a test that fails when they part.
+  test.each(Object.keys(DEFAULT_MODELS))("%s's CLI default is its preset's default", (id) => {
+    const preset = getPreset(id);
+    expect(preset, `${id} is in DEFAULT_MODELS but has no preset`).toBeDefined();
+    expect(DEFAULT_MODELS[id as keyof typeof DEFAULT_MODELS]).toBe(preset!.defaultModel);
+  });
+
+  test.each(Object.keys(DEFAULT_MODELS))("%s's CLI default is in its catalogue", (id) => {
+    expect(catalogue(id)).toContain(DEFAULT_MODELS[id as keyof typeof DEFAULT_MODELS]);
   });
 });
 

@@ -1250,10 +1250,11 @@ const loaderLog = createLogger("engine:loaders");
 // (PROVIDER_TIER_DEFAULTS) — resolved via Engine.resolveModelTier("light").
 
 const DEFAULT_ENGINE_CONFIG: EngineConfig = {
-  // Default to a known-good, free model. The previous default
-  // (openrouter/deepseek-v4-flash:free) is an invalid model id that errors
-  // instantly on OpenRouter, so out-of-the-box runs hit a dead model.
-  model: "gemini-2.5-flash",
+  // Default to a known-good, free-tier model. Kept in step with the `google`
+  // preset's own default (2026-09-16: gemini-2.5-flash → gemini-3.8-flash) —
+  // a hard-coded id here is how out-of-the-box runs used to boot onto a model
+  // the catalogue had already retired.
+  model: "gemini-3.8-flash",
   provider: "google",
   workspaceRoot: process.cwd(),
   dbPath: join(getRuneHome(), "rune.db"),

@@ -1215,7 +1215,7 @@ ${sections}${focus}`
       used: this.lastTokenUsage?.used ?? 0,
       limit:
         this.lastTokenUsage?.limit ??
-        getContextLimit(this.config.summarizerModel || "claude-sonnet-4-6"),
+        getContextLimit(this.config.summarizerModel || "claude-sonnet-5"),
       percent: this.lastTokenUsage
         ? Math.round((this.lastTokenUsage.used / this.lastTokenUsage.limit) * 100)
         : 0,

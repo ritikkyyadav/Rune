@@ -1107,6 +1107,16 @@ async function main() {
     process.exit(1);
   }
 
+  // A saved/sticky provider whose preset this build no longer carries (its
+  // vendor retired the product). The selection already degraded to auto-detect;
+  // saying so in one line is the difference between a boot that looks broken
+  // and one that explains itself.
+  if (selection.unknownSaved) {
+    process.stderr.write(
+      `  ${dim(`Provider "${selection.unknownSaved}" is no longer in this build's registry; using ${selection.provider}. Run \`rune login\` to pick another.`)}\n`,
+    );
+  }
+
   const provider = selection.provider as ProviderName;
   const model = selection.model;
 

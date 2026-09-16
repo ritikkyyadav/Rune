@@ -20,19 +20,19 @@ model, or a search engine — and names products the way you would say them.
 
 ### Model providers
 
-| Route        | Providers                                                                                                                                                                                                                                                                                                                                                        |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Subscription | ChatGPT Plus/Pro (`codex`), Claude Pro/Max (`anthropic`), an OpenRouter account                                                                                                                                                                                                                                                                                  |
-| API key      | `anthropic` `openai` `openrouter` `google` `groq` `xai` `deepseek` `ollama-turbo` `azure-openai` `ai21` `alibaba` `baseten` `cerebras` `chutes` `cohere` `deepinfra` `fireworks` `github-models` `huggingface` `hyperbolic` `inception` `minimax` `mistral` `moonshot` `nebius` `novita` `nvidia` `sambanova` `scaleway` `siliconflow` `together` `vercel` `zai` |
-| Cloud chain  | `bedrock`, `vertex` (and `azure-openai` with an Entra token)                                                                                                                                                                                                                                                                                                     |
-| Offline      | `ollama`, plus any OpenAI-compatible local server (LM Studio, vLLM, llama.cpp, LiteLLM) as the `custom` endpoint                                                                                                                                                                                                                                                 |
+| Route        | Providers                                                                                                                                                                                                                                                                                                                                        |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Subscription | ChatGPT Plus/Pro (`codex`), Claude Pro/Max (`anthropic`), an OpenRouter account                                                                                                                                                                                                                                                                  |
+| API key      | `anthropic` `openai` `openrouter` `google` `groq` `xai` `deepseek` `ollama-turbo` `azure-openai` `ai21` `alibaba` `baseten` `cerebras` `chutes` `cohere` `deepinfra` `fireworks` `huggingface` `hyperbolic` `inception` `minimax` `mistral` `moonshot` `nebius` `novita` `nvidia` `sambanova` `scaleway` `siliconflow` `together` `vercel` `zai` |
+| Cloud chain  | `bedrock`, `vertex` (and `azure-openai` with an Entra token)                                                                                                                                                                                                                                                                                     |
+| Offline      | `ollama`, plus any OpenAI-compatible local server (LM Studio, vLLM, llama.cpp, LiteLLM) as the `custom` endpoint                                                                                                                                                                                                                                 |
 
-The block from `ai21` to `zai` is twenty-four OpenAI-compatible hosts, each a
+The block from `ai21` to `zai` is twenty-three OpenAI-compatible hosts, each a
 base URL + an env var + a short seed model list on the adapter OpenRouter
 already proved out. Two rules kept that block honest, and they are the rules
 for adding the next host:
 
-1. **Seed lists are short and prefer stable aliases** (`mistral-large-latest`,
+1. **Seed lists are short and prefer stable aliases** (`mistral-medium-latest`,
    `qwen-plus`). None of those ids completed a live call from this machine (no
    credential here), so live discovery is the source of truth: `/model` lists
    what the account can actually see and `rune models <id> --refresh` re-asks
@@ -40,16 +40,18 @@ for adding the next host:
 2. **No `tiers` block.** A tier table names ids the summarizer and the scout
    sub-agents run unattended; on a host whose lineup nobody here has verified,
    the tier resolver's fallback — the session model — is the safe answer, not
-   a guess that 404s mid-compaction.
+   a guess that 404s mid-compaction. Mistral and Moonshot are the two
+   exceptions, added 2026-09-16 because their own model pages were read.
+
+`github-models` was removed on 2026-09-16: GitHub retired GitHub Models on
+2026-07-30 (playground, catalog and inference API at once), so the preset
+pointed at a host that no longer answers. A saved config or sticky pick that
+still names it degrades to the auto-detect path with a one-line notice.
 
 Regional twins and plan-specific paths (DashScope in China, Z.ai's coding-plan
 endpoint, MiniMax's `.minimaxi.com` host, SiliconFlow's `.cn`) take the other
 base URL with `/keys url <id> <baseUrl>` — the override `buildGateway` honours
 for every OpenAI-compatible preset; the key is the same on both doors.
-`github-models` deliberately reads `GITHUB_MODELS_TOKEN`, not `GITHUB_TOKEN`:
-that variable is set on most developer machines for `gh` and CI, and an env
-var present means "registered".
-
 `--provider <id>` accepts any preset now (it used to accept six, and
 `rune --provider mistral` silently booted into openrouter — the same rot the
 sticky-model gate had), and a key pasted through `/login` reaches the live
@@ -360,15 +362,24 @@ so the probe is omitted. Anything running on EC2 with an instance role can
 export the standard variables or name a profile; containers are covered by the
 container-credentials rung, which is the case that matters in CI.
 
-**Model ids are cross-region inference profiles.** Current Anthropic models on
+**Model ids are inference profiles, in three shapes.** Most Anthropic models on
 Bedrock are not invokable by their bare foundation-model id; they need a
-geography prefix (`us.anthropic.claude-sonnet-4-5-20250929-v1:0`) and a `us.`
-id is rejected outside US regions. Rune ships one catalogue of `us.` ids and
+geography prefix (`us.anthropic.claude-haiku-4-5-20251001-v1:0`) and a `us.` id
+is rejected outside US regions. Rune ships one catalogue of `us.` ids and
 rewrites the prefix to match the configured region, so an account in Frankfurt
-reaches `eu.` models without a second copy of every row in the picker. Ids that
-genuinely _are_ on-demand (the 3.5 line) carry no prefix and never gain one —
-adding one would turn a working call into "model not found". Set
-`inferenceProfile = "none"` to send ids untouched.
+reaches `eu.` models without a second copy of every row in the picker. The
+other two shapes are left alone on purpose: a `global.` GLOBAL inference
+profile is already region-agnostic, and a bare Messages-API id
+(`anthropic.claude-opus-5`) is invoked directly — prefixing either would turn a
+working call into "model not found". Set `inferenceProfile = "none"` to send
+every id untouched.
+
+Opus 5, Sonnet 5 and Fable 5.1 are **not** in the catalogue. Bedrock reaches
+them through InvokeModel by their Messages-API ids
+(`anthropic.claude-opus-5` and friends), which is a newer request shape this
+build does not route, and nothing here has been proved against a live Bedrock
+account. A picker row that 404s is worse than a row that is absent;
+`/model bedrock/<id>` still accepts any id for anyone who knows better.
 
 **What is proven, and what is not.** There is no AWS credential on this machine,
 so nothing here has made a live Bedrock call. What _is_ proven, by
@@ -408,16 +419,16 @@ project = "my-project"
 location = "us-east5"     # or "global"
 ```
 
-| Piece             | What Rune does                                                                                                                                                |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Routing**       | by model id: `claude…` → the Anthropic publisher, `gemini…` → Google's. Anything else is a 404 that says so rather than a guess that 404s somewhere confusing |
-| **Anthropic**     | `POST …/publishers/anthropic/models/{model}:streamRawPredict`, body carrying `anthropic_version: "vertex-2023-10-16"` and no `model`                          |
-| **Gemini**        | `POST …/publishers/google/models/{model}:streamGenerateContent?alt=sse`, body identical to AI Studio's                                                        |
-| **Auth**          | `Authorization: Bearer` from ADC — a service-account JSON exchanged via a signed RS256 JWT, the gcloud ADC file's refresh token, or the metadata server       |
-| **Streaming**     | already SSE. Nothing to decode; this route is simpler than Bedrock by exactly one decoder                                                                     |
-| **Model ids**     | Anthropic on Vertex is `claude-sonnet-4-5@20250929`; Gemini keeps its plain id                                                                                |
-| **Discovery**     | `rune models vertex` lists BOTH publishers, adding the `@version` suffix Anthropic ids need to be invokable                                                   |
-| **`healthCheck`** | "is there a project and does ADC resolve" — both things a user can act on, neither costing a token                                                            |
+| Piece             | What Rune does                                                                                                                                                                      |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Routing**       | by model id: `claude…` → the Anthropic publisher, `gemini…` → Google's. Anything else is a 404 that says so rather than a guess that 404s somewhere confusing                       |
+| **Anthropic**     | `POST …/publishers/anthropic/models/{model}:streamRawPredict`, body carrying `anthropic_version: "vertex-2023-10-16"` and no `model`                                                |
+| **Gemini**        | `POST …/publishers/google/models/{model}:streamGenerateContent?alt=sse`, body identical to AI Studio's                                                                              |
+| **Auth**          | `Authorization: Bearer` from ADC — a service-account JSON exchanged via a signed RS256 JWT, the gcloud ADC file's refresh token, or the metadata server                             |
+| **Streaming**     | already SSE. Nothing to decode; this route is simpler than Bedrock by exactly one decoder                                                                                           |
+| **Model ids**     | the current Anthropic line is addressed by its plain id (`claude-sonnet-5`); only legacy rows still carry `@<version>`, e.g. `claude-haiku-4-5@20251001`. Gemini keeps its plain id |
+| **Discovery**     | `rune models vertex` lists BOTH publishers, adding the `@version` suffix Anthropic ids need to be invokable                                                                         |
+| **`healthCheck`** | "is there a project and does ADC resolve" — both things a user can act on, neither costing a token                                                                                  |
 
 **The token is a header, never a query parameter.** AI Studio takes `?key=`;
 Vertex takes a bearer. Rune's Google adapter now decides between the two from
@@ -460,25 +471,25 @@ apiVersion = "2024-10-21"
 
 [providers.azure-openai.deployments]
 # model id → the deployment name YOUR resource has. Omit any that match.
-"gpt-4o" = "prod-chat"
-"gpt-4o-mini" = "cheap-chat"
+"gpt-6-astra" = "prod-chat"
+"gpt-5.4-mini" = "cheap-chat"
 ```
 
-| Piece               | What Rune does                                                                                                                                        |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Endpoint**        | `POST {endpoint}/openai/deployments/{deployment}/chat/completions?api-version=…`                                                                      |
-| **Deployments**     | the catalogue lists MODEL ids (what a person picks); `[providers.azure-openai.deployments]` maps each to a deployment, defaulting to the id itself    |
-| **`api-version`**   | a **GA** version by default, never a preview — previews are withdrawn on a schedule, and a withdrawn default breaks every user at once                |
-| **Auth**            | `api-key: <resource key>`, or `Authorization: Bearer` from `AZURE_OPENAI_AD_TOKEN`. The SDK's own placeholder header is stripped, so only one is sent |
-| **Everything else** | inherited from `OpenAIProvider`: tool calls, vision, the gpt-5/o-series parameter swap, `prompt_cache_key`, the usage trailer, the reasoning dial     |
-| **Discovery**       | `rune models azure-openai` lists the deployments the RESOURCE has — a different question from "what does Azure offer", and the useful one             |
+| Piece               | What Rune does                                                                                                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Endpoint**        | `POST {endpoint}/openai/deployments/{deployment}/chat/completions?api-version=…`                                                                                                |
+| **Deployments**     | the catalogue lists MODEL ids (what a person picks); `[providers.azure-openai.deployments]` maps each to a deployment, defaulting to the id itself                              |
+| **`api-version`**   | a **GA** version by default, never a preview — previews are withdrawn on a schedule, and a withdrawn default breaks every user at once                                          |
+| **Auth**            | `api-key: <resource key>`, or `Authorization: Bearer` from `AZURE_OPENAI_AD_TOKEN`. The SDK's own placeholder header is stripped, so only one is sent                           |
+| **Everything else** | inherited from `OpenAIProvider`: tool calls, vision, the reasoning-family parameter swap (gpt-5 and later, o-series), `prompt_cache_key`, the usage trailer, the reasoning dial |
+| **Discovery**       | `rune models azure-openai` lists the deployments the RESOURCE has — a different question from "what does Azure offer", and the useful one                                       |
 
 **The endpoint is normalized.** Pasting the full chat-completions URL out of the
 portal gives you the origin rather than a doubled `/openai` path and a 404 on a
 path nobody typed.
 
 **The reasoning dial follows the MODEL, not the deployment.** A deployment named
-`prod-chat` serving `gpt-5` still gets `reasoning_effort`, because
+`prod-chat` serving `gpt-6-astra` still gets `reasoning_effort`, because
 `reasoningEffortsFor` is asked about the model id — the deployment name is a
 routing detail that never reaches the parameter decision.
 
@@ -643,13 +654,13 @@ answered; only the depth was quietly wrong.
 
 Each provider names the dial differently, and one of them does not have one:
 
-| Provider                     | Wire field                                                                      | Values                                                            | Notes                                                                                                                                                                                                                                               |
-| ---------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `openai`                     | `reasoning_effort`                                                              | low / medium / high                                               | gpt-5 and o-series only; the family also swaps `max_tokens` for `max_completion_tokens`. Thinking off maps to the model's floor, because omitting the field is not "off" — it defaults to medium and eats the completion budget on hidden reasoning |
-| `codex`                      | `reasoning.effort`                                                              | low / medium / high / xhigh / max                                 | measured against the live backend; the gpt-5.6 line rejects `minimal`, so it is floored to `low`                                                                                                                                                    |
-| `google`                     | `generationConfig.thinkingConfig.thinkingBudget` (2.5) or `thinkingLevel` (3.x) | low → 4,096 · medium → 8,192 · high → 16,384 · xhigh/max → 24,576 | Gemini has no effort field: depth is a token budget. 2.5 Pro's floor is 128 and it cannot be switched off. An explicit `budgetTokens` still wins over the effort                                                                                    |
-| `anthropic`                  | `thinking: { type, budget_tokens }`                                             | —                                                                 | adaptive or budgeted thinking; **no effort field exists**, and none is invented                                                                                                                                                                     |
-| every OpenAI-compatible host | —                                                                               | —                                                                 | no dial; a bare `gpt-5` typed against OpenRouter keeps the classic params OpenRouter normalizes                                                                                                                                                     |
+| Provider                     | Wire field                                                                      | Values                                                            | Notes                                                                                                                                                                                                                                                                                                                                                                                   |
+| ---------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `openai`                     | `reasoning_effort`                                                              | low / medium / high                                               | the reasoning FAMILY only — gpt-5 and later (including the dotted 5.4/5.5/5.6 ids and gpt-6), plus the o-series; gpt-4o and gpt-4.1 keep the classic params. The family also swaps `max_tokens` for `max_completion_tokens`. Thinking off maps to the model's floor, because omitting the field is not "off" — it defaults to medium and eats the completion budget on hidden reasoning |
+| `codex`                      | `reasoning.effort`                                                              | low / medium / high / xhigh / max                                 | measured against the live backend on the gpt-5.6 line, which rejects `minimal` and is floored to `low`. gpt-6's accepted set is **not measured**: the requested value is passed through unchanged rather than clamped against a guess                                                                                                                                                   |
+| `google`                     | `generationConfig.thinkingConfig.thinkingBudget` (2.5) or `thinkingLevel` (3.x) | low → 4,096 · medium → 8,192 · high → 16,384 · xhigh/max → 24,576 | Gemini has no effort field: depth is a token budget. 2.5 Pro's floor is 128 and it cannot be switched off. An explicit `budgetTokens` still wins over the effort                                                                                                                                                                                                                        |
+| `anthropic`                  | `thinking: { type, budget_tokens }`                                             | —                                                                 | adaptive or budgeted thinking; **no effort field exists**, and none is invented                                                                                                                                                                                                                                                                                                         |
+| every OpenAI-compatible host | —                                                                               | —                                                                 | no dial; a bare `gpt-6-astra` typed against OpenRouter keeps the classic params OpenRouter normalizes                                                                                                                                                                                                                                                                                   |
 
 `reasoningEffortsFor(provider, model)` is the one source the model picker and
 the status line read, so a dial is offered **only where the wire actually

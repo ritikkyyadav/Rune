@@ -107,7 +107,7 @@ The free routes Rune knows about:
 
 ```bash
 export OPENROUTER_API_KEY=...                        # OpenRouter's free tier
-rune -p openrouter -m minimax/minimax-m3:free
+rune -p openrouter -m nvidia/nemotron-3-ultra-550b-a55b:free
 
 export GOOGLE_API_KEY=...                            # Google's free developer tier
 rune -p google

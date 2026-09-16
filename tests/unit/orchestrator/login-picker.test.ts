@@ -115,7 +115,6 @@ describe("the API-key route", () => {
       "alibaba",
       "nvidia",
       "huggingface",
-      "github-models",
       "vercel",
     ]) {
       expect({ id, listed: list.includes(id) }).toEqual({ id, listed: true });
@@ -128,7 +127,9 @@ describe("the API-key route", () => {
     // a machine with no budget — the ordinary case — those are the four rows
     // that cannot answer a prompt tonight.
     const list = ids("api_key");
-    expect(list.slice(0, 4)).toEqual(["openrouter", "google", "ollama-turbo", "github-models"]);
+    // Three free routes, not four: `github-models` was removed 2026-09-16
+    // (GitHub retired the product on 2026-07-30).
+    expect(list.slice(0, 3)).toEqual(["openrouter", "google", "ollama-turbo"]);
     // Within each group the roster's own order survives: the sort is stable,
     // so the frontier labs still lead the paid block in their old order.
     const paid = list.filter((id) => !isFreeRoute(id));

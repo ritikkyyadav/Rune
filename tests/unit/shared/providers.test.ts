@@ -8,6 +8,7 @@ import {
   authMethodLabel,
   accountLoginLabel,
   AUTO_PROVIDER_PRIORITY,
+  PROVIDER_CAPACITY,
 } from "../../../packages/shared/src/providers";
 
 describe("provider presets", () => {
@@ -89,7 +90,6 @@ describe("the wider roster (2026-09-06)", () => {
       "alibaba",
       "nvidia",
       "huggingface",
-      "github-models",
       "vercel",
       "cohere",
       "sambanova",
@@ -97,7 +97,9 @@ describe("the wider roster (2026-09-06)", () => {
     ]) {
       expect(ids).toContain(id);
     }
-    expect(PROVIDER_PRESETS.length).toBeGreaterThanOrEqual(35);
+    // 35 before `github-models` was removed on 2026-09-16 (GitHub retired the
+    // product on 2026-07-30), so the floor moves with it.
+    expect(PROVIDER_PRESETS.length).toBeGreaterThanOrEqual(34);
   });
 
   it("every wider-roster host is an OpenAI-compatible door: https base URL + its own env var", () => {
@@ -115,14 +117,27 @@ describe("the wider roster (2026-09-06)", () => {
 
   it("never turns a general-purpose GITHUB_TOKEN into a provider credential", () => {
     // Set on most developer machines for gh/CI; an env var present means
-    // "registered", so a dedicated name keeps the connection a choice.
+    // "registered", so a preset must never read it.
     expect(PROVIDER_PRESETS.some((p) => p.envVar === "GITHUB_TOKEN")).toBe(false);
-    expect(getPreset("github-models")!.envVar).toBe("GITHUB_MODELS_TOKEN");
+  });
+
+  it("no longer ships the retired github-models preset", () => {
+    // GitHub retired GitHub Models on 2026-07-30 — playground, catalog and
+    // inference API at once — so the preset pointed at a host that does not
+    // answer. Removed 2026-09-16. A saved config naming it degrades to
+    // auto-detect (tests/unit/orchestrator/startup-selection.test.ts).
+    expect(getPreset("github-models")).toBeUndefined();
+    expect(PROVIDER_CAPACITY["github-models"]).toBeUndefined();
   });
 
   it("ships seed lineups with no tier table: unverified ids never run unattended", () => {
+    // Mistral and Moonshot are the two exceptions, added 2026-09-16: their own
+    // current-model pages were read, which is exactly what a tier table costs.
+    const TIERED = new Set(["mistral", "moonshot"]);
     for (const p of roster) {
-      expect({ id: p.id, tiers: p.tiers }).toEqual({ id: p.id, tiers: undefined });
+      if (!TIERED.has(p.id)) {
+        expect({ id: p.id, tiers: p.tiers }).toEqual({ id: p.id, tiers: undefined });
+      }
       expect(p.models!.length).toBeGreaterThan(0);
       expect(p.models!.some((m) => m.id === p.defaultModel)).toBe(true);
     }

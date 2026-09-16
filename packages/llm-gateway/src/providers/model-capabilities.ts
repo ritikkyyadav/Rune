@@ -26,6 +26,8 @@ const VISION_FAMILIES: RegExp[] = [
   /^gpt-4o/,
   /^gpt-4\.1/,
   /^gpt-5/,
+  // gpt-6-astra is multimodal on the same model page as the 5.x line.
+  /^gpt-6/,
   /^o[134](-|$)/,
   // Google Gemini is multimodal across the line.
   /^gemini-/,
