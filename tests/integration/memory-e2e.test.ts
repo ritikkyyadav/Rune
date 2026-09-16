@@ -145,7 +145,10 @@ describe("Engine memory (end-to-end, fake provider)", () => {
     const firstRequest = bodies[0]!;
     expect(firstRequest).toContain("What Rune remembers about you");
     expect(firstRequest).toContain("no, always run typecheck before you claim a fix");
-    expect(firstRequest).toContain("The current request outranks all of it");
+    expect(firstRequest).toContain("the current request outranks all of it");
+    // The block names the runtime, not its own prose, as what holds the
+    // boundaries (V10 highs 6/7 — tests/unit/orchestrator/memory-boundary.test.ts).
+    expect(firstRequest).toContain("enforced by the runtime");
   }, 30_000);
 
   test("memory off writes nothing and injects nothing", async () => {
