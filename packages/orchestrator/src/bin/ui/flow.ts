@@ -25,6 +25,7 @@
 // else is one of three greys. If a value is unknown it is absent -- no row here
 // ever pads itself with a reassuring guess.
 
+import { displayVersion } from "./brand";
 import {
   bandsEnabled,
   bold,
@@ -284,6 +285,10 @@ export interface FlowHeader {
   name: string;
   /** CLI version. Rendered `v0.3.0`, hard against the right edge. */
   version: string;
+  /** The session id. Rendered as its last eight characters, beside the
+   *  version, so the chat can be found again in `/sessions` or resumed with
+   *  `rune resume <tail>`. */
+  session?: string;
   /** Where you are: the whole directory coordinate, `~`-shortened by the caller.
    *  Not the folder name -- two sessions in `web` and `api` under different
    *  projects produced identical headers, which is the one question a location
@@ -367,7 +372,23 @@ export function lockup(name: string): { text: string; cells: number } {
 /** The build, for the far right of a masthead. Quiet: it is the least urgent
  *  thing on the row and the only one you go looking for rather than read. */
 export function versionTag(version: string): string {
-  return quiet(`v${version}`);
+  return quiet(`v${displayVersion(version)}`);
+}
+
+/**
+ * The session, for the far right of the masthead beside the version: the LAST
+ * eight characters of its id, which is the part of a UUIDv7 that is random.
+ * The first eight are a timestamp and two sessions opened in the same minute
+ * share them, so a head-slice could not tell them apart in `/sessions`. The
+ * elision glyph says "this is the end of a longer id"; `rune resume <tail>`
+ * and `/resume <tail>` accept exactly this string.
+ */
+export function sessionTail(id: string): string {
+  return id.slice(-8);
+}
+
+export function sessionTag(id: string): string {
+  return quiet(`${glyph("elision")}${sessionTail(id)}`);
 }
 
 /** The gap that does the dividing. A vertical bar sat here while the row still
@@ -432,7 +453,11 @@ export function header(opts: FlowHeader): string {
   const budget = surface - gutter.length;
 
   const mark = lockup(opts.name);
-  const version = versionTag(opts.version);
+  // The right end of the row: the session tail, then the version. Both are
+  // quiet; both are things you go looking for rather than read.
+  const version = opts.session
+    ? `${sessionTag(opts.session)}${LOCKUP_GAP}${versionTag(opts.version)}`
+    : versionTag(opts.version);
 
   // What is left after the two fixed ends have taken their columns: the
   // wordmark and its gap on the left, the version and the two-space minimum

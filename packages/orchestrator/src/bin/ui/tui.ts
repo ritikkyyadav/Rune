@@ -1527,7 +1527,8 @@ export class Tui {
   }
 
   shortId(id: string): string {
-    return id.slice(0, 8);
+    // The tail, as the header shows it -- see flow.sessionTail.
+    return id.slice(-8);
   }
 
   sessionGroup(iso: string): string {

@@ -55,5 +55,19 @@ export const PRODUCT_VERSION: string =
     ? RUNE_BUILD_VERSION
     : sourceRunVersion();
 
+/**
+ * The version as a person reads it in the frame: `0.1.1`, never
+ * `0.1.1-dev+6b9afcf`. The build marker is for `--version`, `rune doctor` and
+ * the install guard, which compare builds; the header names the product a
+ * person is using (founder, 2026-09-16: "simply v0.1.1"). A source run keeps its
+ * `-dev` marker stripped too -- the number is still the truth about which
+ * product this is.
+ */
+export function displayVersion(version: string): string {
+  return version.replace(/-dev(\+[0-9a-f]+)?$/i, "");
+}
+
+export const PRODUCT_DISPLAY_VERSION: string = displayVersion(PRODUCT_VERSION);
+
 /** Full public identifier, e.g. for `--version`: "Rune v0.3.0". */
 export const PRODUCT_LABEL = `${PRODUCT_NAME} v${PRODUCT_VERSION}`;

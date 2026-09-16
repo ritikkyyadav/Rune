@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { matchSessionIdish } from "../session-idish";
 import { renderToolActivity, setActivityWorkspaceRoot } from "./ui/activity";
 import type { AgentTurnEvent } from "@rune/protocol";
 import { Engine } from "../engine";
@@ -877,8 +878,7 @@ function relTime(iso: string): string {
 
 /** Find a session by exact id or unique id-prefix, across every status. */
 function findSessionByIdish(engine: Engine, idish: string) {
-  const all = engine.listSessions({ status: "all" });
-  return all.find((s) => s.id === idish) ?? all.find((s) => s.id.startsWith(idish));
+  return matchSessionIdish(engine.listSessions({ status: "all" }), idish);
 }
 
 type ListedSession = ReturnType<Engine["listSessions"]>[number];
@@ -964,7 +964,7 @@ function resolveSessionArg(engine: Engine, arg: string) {
  */
 function resumedBanner(title: string | null | undefined, id: string): string {
   const lead = `  ${faint("\u2576\u2500")} ${muted("resumed")} `;
-  const tail = ` ${faint(id.slice(0, 8))} ${faint("\u2576\u2500")}`;
+  const tail = ` ${faint(F.sessionTail(id))} ${faint("\u2576\u2500")}`;
   const room = Math.max(8, F.measure() - visLen(lead) - visLen(tail));
   return `${lead}${text(truncate(title?.trim() || "untitled", room))}${tail}`;
 }
@@ -1375,7 +1375,7 @@ async function main() {
         const title = s.title?.trim() || dim("untitled");
         const tag = s.status !== "active" ? ` ${brass(`[${s.status}]`)}` : "";
         console.log(
-          `  ${cyanotype(s.id.slice(0, 8))}  ${text(title)}${tag}` +
+          `  ${cyanotype(F.sessionTail(s.id))}  ${text(title)}${tag}` +
             `\n            ${dim(`${relTime(s.updatedAt)} · ${s.eventCount} events · ${s.model}`)}`,
         );
       }

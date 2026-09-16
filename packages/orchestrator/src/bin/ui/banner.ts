@@ -231,6 +231,7 @@ export function renderBanner(opts: BannerOptions): string {
   return flowHeader({
     name: PRODUCT_NAME,
     version: opts.version,
+    session: opts.sessionId,
     workspace: shortPath(opts.workspace),
     // A detached worktree still says it is a worktree. That is the half of the
     // sentence that matters; the branch is the qualifier.
