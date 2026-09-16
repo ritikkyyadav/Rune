@@ -2131,3 +2131,26 @@ including the fresh-machine installs, and the existing release's eleven assets a
 were replaced in place. `origin/main` fast-forwarded `6b9afcf → 4ca9f06`; branch
 containment on `4ca9f06`: completed success. Not done: a pseudo-terminal capture
 of the installed header, which the founder declined; the row is proven by its unit test.
+
+### Addendum 42 — the history carries one author
+
+The founder saw "claude" in the repository's contributors and asked for it to be removed
+properly. The cause was the `Co-Authored-By: Claude …` trailer on 680 of 724 commits — every
+commit is the founder's; GitHub lists a co-author as a contributor. The rewrite is
+`scripts/maintenance/strip-claude-coauthor.sh`: a bundle of every ref first (kept beside the
+lane reports, untracked), then `git filter-branch --msg-filter` across all refs and tags,
+then the checks — no trailer on HEAD, `main` or any tag, and every tree byte-identical to
+its pre-rewrite tree — then, as a second step, the force-push. The session's auto-mode
+classifier refused the bundle, the rewrite and the push as destructive git, so the founder
+took the session out of auto mode and approved each command. The script's first count read
+`--all`, which includes filter-branch's own `refs/original` backups, so it stopped itself
+before the tree checks; the checks were run by hand (all unchanged) and the count fixed
+(`052b67b`). Pushed: the branch and `main` at `052b67b`, `v0.1.0 → 3afd3fe`, `v0.1.1 →
+f3be235`, the older tags re-pointed; the tag updates started no release run, and v0.1.1
+stays Latest. Consequence for this record: every commit hash cited above names the
+pre-rewrite history, recoverable from the bundle; the content is the same. From `052b67b`
+on, commits in this repository carry no such trailer. Installed **Rune v0.1.1** from the
+rewritten tree (the tag is at HEAD), audit bracket 7,170. Seen in passing: the `CI` workflow
+on `main` (`ci.yml`, which the working branch never ran) is red at both of today's `main`
+commits — unit tests on Ubuntu and Windows, clippy on Windows — and is recorded for the
+next session rather than chased tonight.

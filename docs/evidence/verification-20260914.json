@@ -564,5 +564,16 @@
       "branchCi": "containment.yml on 4ca9f06: completed success",
       "notDone": "a pty capture of the installed header was declined by the founder; the header row is proven by unit test and by the installed --version"
     }
+  },
+  "historyRewrite20260916": {
+    "founderAsk": "remove 'claude' from the GitHub contributors list, properly",
+    "cause": "Co-Authored-By: Claude … trailer on 680 of 724 commits (every commit authored by the founder); GitHub lists a co-author as a contributor",
+    "method": "scripts/maintenance/strip-claude-coauthor.sh: bundle backup of every ref (.codex/audit-20260910/handoff/m0/pre-rewrite-20260916T123046Z.bundle), git filter-branch --msg-filter across all refs and tags, verification that no trailer remains on HEAD/main/tags and that every tree is unchanged, refs/original removed, then force-push",
+    "verified": "trailers on rewritten refs 0; trees unchanged for HEAD, main and all seven tags; 704 commits, one author; the script's first count included refs/original (fixed 052b67b)",
+    "pushed": "branch and main → 052b67b; tags v0.1.0 → 3afd3fe, v0.1.1 → f3be235, v0.2.0–v0.4.1 re-pointed; no release run was triggered by the tag updates; Latest stays v0.1.1",
+    "ranBy": "the founder switched the session out of auto mode and approved each command; the auto-mode classifier had refused filter-branch, bundle and force-push",
+    "consequence": "every commit hash cited in docs before this point names the pre-rewrite history (recoverable from the bundle); trees and tags are the same content",
+    "policy": "no Claude co-author trailer on commits in this repository from 052b67b on",
+    "ciOnMain": "ci.yml on main is RED at 6b9afcf, 4ca9f06 (ts-lint ubuntu unit tests, ts-windows unit tests, rust-lint windows clippy) — the branch never ran ci.yml (pull_request only); history checked separately"
   }
 }
