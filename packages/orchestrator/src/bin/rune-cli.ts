@@ -449,6 +449,11 @@ if (command === "memory") {
   // session would actually do, not what the file wishes for.
   const readMode = (): MemoryMode =>
     resolveMemoryMode(loadConfig(workspace).memory, loadSystemMemoryMeta()).mode;
+  // A mode decided by a FAILURE — a sidecar whose signature does not verify —
+  // is a mode the person did not choose, so it is said out loud rather than
+  // left to be inferred from a readout that reads like any other.
+  const modeNotice = (): string | undefined =>
+    resolveMemoryMode(loadConfig(workspace).memory, loadSystemMemoryMeta()).notice;
 
   if (isWithdrawnCadence(sub)) {
     out(`  ${MEMORY_CADENCE_REFUSAL}`);
@@ -477,6 +482,8 @@ if (command === "memory") {
     }
     if (sub === "mode") {
       const mode = readMode();
+      const why = modeNotice();
+      if (why) out(`  ${why}`);
       out(`  memory: ${mode} — ${describeMemoryMode(mode)}`);
       process.exit(0);
     }
@@ -581,6 +588,8 @@ if (command === "memory") {
   const refusals = store.refusals();
   const mode = readMode();
   out("");
+  const notice = modeNotice();
+  if (notice) out(`  ${notice}`);
   out(`  Memory: ${mode} — ${describeMemoryMode(mode)}`);
   if (mode === "off") {
     out("");

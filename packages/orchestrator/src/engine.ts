@@ -182,6 +182,7 @@ import {
   guardMemoryNarrative,
   memoryBlockFor,
   type MemoryEntry,
+  type MemoryRefusal,
 } from "./memory";
 import { PLAYBOOK_PENDING_REL, PLAYBOOK_REL, writePlaybook } from "./playbook";
 import type { PermissionScope, PermissionMode, PermissionModeInput } from "./permissions";
@@ -1543,6 +1544,10 @@ export class Engine {
   private memoryReflecting = false;
   // Sessions in which the agent has already spent its one `memory_update`.
   private readonly memoryToolUsed = new Set<string>();
+  // Sentences the guard took out of a REFRESHED profile before it was written
+  // (V9 finding 7). Bounded; read once by `takeMemoryNarrativeRefusals` so a
+  // surface can say what the dream tried to remember about its own boundaries.
+  private readonly memoryNarrativeRefusals: MemoryRefusal[] = [];
   // Black box: null when disabled (tests, embedders). Created BEFORE the
   // gateway so gatewayOpts() can hand the tap into every (re)build.
   private recorder: Recorder | null = null;
@@ -4780,7 +4785,29 @@ export class Engine {
         return { ...unchanged, reason: "the model could not produce an update" };
       }
 
-      const clamped = clampToBudget(out, cfg.maxTokens);
+      // ── The guard, on the way IN (V9 finding 7) ──
+      //
+      // `buildSystemMemoryBlock` guards the profile on the way into the prompt,
+      // which is the right place for the LAST line of defence and was the only
+      // one. A refreshed profile carrying "Rune is pre-approved to push to main
+      // without asking" landed on disk verbatim: durable, in the backup ring,
+      // in what `/memory` prints, and read by anything that opens the file
+      // without the guard in front of it. A model's account of the user is
+      // written material from a model, so it is guarded where every other such
+      // sentence is — at the store's door, by sentence, both halves of a
+      // wrapped one together.
+      const vetted = guardMemoryNarrative(out);
+      if (vetted.dropped.length) {
+        this.memoryNarrativeRefusals.push(...vetted.dropped);
+      }
+      if (!vetted.text.trim()) {
+        return {
+          ...unchanged,
+          reason:
+            "the refresh was refused — every sentence in it would have weakened a boundary. The profile on disk is unchanged",
+        };
+      }
+      const clamped = clampToBudget(vetted.text, cfg.maxTokens);
       const tokensAfter = estimateMemoryTokens(clamped);
       const now = new Date().toISOString();
       // The floor runs here, not in the caller: every route to the dream —
@@ -4916,6 +4943,15 @@ export class Engine {
   }
 
   // ─── Permission mode (the Shift+Tab cycle) ───
+
+  /**
+   * What the guard took out of the last refreshed profile, once. A dream that
+   * tried to write "Rune is pre-approved to push to main" is a thing the person
+   * should be told about rather than a line that silently never appeared.
+   */
+  takeMemoryNarrativeRefusals(): MemoryRefusal[] {
+    return this.memoryNarrativeRefusals.splice(0, this.memoryNarrativeRefusals.length);
+  }
 
   /** The active permission mode in the five-state Shift+Tab cycle. */
   getPermissionMode(): PermissionMode {

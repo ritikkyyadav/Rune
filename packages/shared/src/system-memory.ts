@@ -121,6 +121,14 @@ export interface SystemMemoryMeta {
   lastReflectedAt?: string;
   /** Mode set live via `/memory off|auto|manual` — overrides the config default. */
   mode?: MemoryMode;
+  /**
+   * Set by the LOADER, never written: the sidecar states a mode whose signature
+   * does not verify. V9 finding 6 — the dropped field used to fall through to
+   * the default, and the default is `auto`, so touching the file turned memory
+   * ON. It fails closed now, and this is how the resolution knows the
+   * difference between "no mode was chosen" and "a mode was tampered with".
+   */
+  modeTampered?: true;
   /** The cadence→mode migration, recorded once (see MemoryModeMigration). */
   modeMigration?: MemoryModeMigration;
   /** The last refresh that landed, with its origin. */
@@ -679,6 +687,11 @@ function sanitizeMeta(raw: Record<string, unknown>): SystemMemoryMeta {
   {
     const mode = parseMemoryMode(raw.mode);
     if (mode && verifyMemoryMac(modePayload(mode), integrity.mode)) m.mode = mode;
+    // A value that IS one of the three modes but carries no signature of this
+    // home is a hand edit of the control. A value that is not a mode at all
+    // (`"daily"`, a withdrawn cadence written where a mode goes) is not a claim
+    // about the control and is still read by the migration below.
+    else if (mode) m.modeTampered = true;
   }
   if (raw.modeMigration && typeof raw.modeMigration === "object") {
     const g = raw.modeMigration as Record<string, unknown>;
@@ -1033,6 +1046,9 @@ export function restoreSystemMemory(from?: string): {
  */
 export function saveSystemMemoryMeta(patch: Partial<SystemMemoryMeta>): SystemMemoryMeta {
   const merged: SystemMemoryMeta = { ...loadSystemMemoryMeta(), ...patch };
+  // A loader's finding, not a stored field: writing it would make the next read
+  // believe a tamper that the write it is part of has just corrected.
+  delete merged.modeTampered;
   // `undefined` in a patch means "clear this" — JSON.stringify drops it, and
   // the MAC below must not be written for a field that is no longer there.
   for (const k of Object.keys(merged) as Array<keyof SystemMemoryMeta>) {
@@ -1121,6 +1137,8 @@ export interface ResolvedMemoryMode {
   mode: MemoryMode;
   /** Set when a withdrawn cadence or `enabled` flag produced this mode. */
   migration?: { from: string; note: string };
+  /** One line for the person when the mode was decided by a failure. */
+  notice?: string;
 }
 
 /**
@@ -1168,6 +1186,18 @@ export function resolveMemoryMode(
         from: "enabled = false",
         note: "[memory] enabled is withdrawn; memory is now off (/memory auto turns it on)",
       },
+    };
+  }
+  // V9 finding 6. A sidecar `mode` whose MAC does not verify used to be simply
+  // absent, and absent falls through to the default — which is `auto`. So a
+  // founder who set `/memory off`, and whose sidecar was then touched by
+  // anything at all, got memory back ON. The signature's failure direction is
+  // the whole point of having one: it fails CLOSED, and says so.
+  if (meta?.modeTampered) {
+    return {
+      mode: "off",
+      notice:
+        "memory is off: the mode in ~/.rune/system-memory.json does not carry this home's signature (`rune memory auto` or `rune memory manual` sets it again)",
     };
   }
   // A mode chosen live via `/memory`, below the two settings a person can reach
