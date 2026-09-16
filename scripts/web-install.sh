@@ -271,16 +271,36 @@ fi
 
 # ─── Promote (nothing before this point touched the install directory) ───
 mkdir -p "$INSTALL_DIR"
+# A source install (scripts/install.sh) marks its files immutable on macOS —
+# the `uchg` flag — so a stray `cp` cannot break the code signature. `mv` over
+# such a file fails with "Operation not permitted", which is what the founder
+# saw the first time this command ran on a machine that had built Rune from
+# source. Clear the flag on whatever this install replaces or retires; a fresh
+# machine has nothing to clear.
+if command -v chflags >/dev/null 2>&1; then
+  for f in rune rune-tools rune-compiled rune-compiled.meta; do
+    [ -e "$INSTALL_DIR/$f" ] && chflags nouchg "$INSTALL_DIR/$f" 2>/dev/null || true
+  done
+fi
 chmod +x "$STAGE/$asset"
+rm -f "$INSTALL_DIR/rune"
 mv "$STAGE/$asset" "$INSTALL_DIR/rune"
 say "$(c 32 ✓) Installed: $INSTALL_DIR/rune"
 if [ "$want_tools" = "1" ]; then
   chmod +x "$STAGE/$tools_asset"
+  rm -f "$INSTALL_DIR/rune-tools"
   mv "$STAGE/$tools_asset" "$INSTALL_DIR/rune-tools"
   say "$(c 32 ✓) Installed: $INSTALL_DIR/rune-tools"
 else
   say "$(c 90 "· RUNE_SKIP_TOOLS=1 — build it with: cargo build --release -p rune-tools")"
 fi
+# The release binary is self-contained. A source install's launcher pair
+# (`rune-compiled` and its `.meta`) is now unreachable and only takes 70 MB.
+for old in rune-compiled rune-compiled.meta; do
+  if [ -f "$INSTALL_DIR/$old" ]; then
+    rm -f "$INSTALL_DIR/$old" && say "$(c 90 "· removed the source build's $old")"
+  fi
+done
 for old in elio berne alan gear; do [ -L "$INSTALL_DIR/$old" ] && rm -f "$INSTALL_DIR/$old"; done
 for old in gear gear-compiled gear-tools gear-compiled.meta; do [ -f "$INSTALL_DIR/$old" ] && rm -f "$INSTALL_DIR/$old"; done
 

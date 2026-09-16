@@ -375,3 +375,40 @@ describe("the daily check", () => {
     expect(cachedUpdateNag(env({ installDir: join(dir, "bin"), statePath }))).toBeNull();
   });
 });
+
+// ─── The immutable flag a source install leaves behind ───
+//
+// scripts/install.sh sets macOS's `uchg` on what it installs; a rename over
+// such a file is EPERM. The web installer hit it on the founder's machine on
+// 2026-09-16, and `rune upgrade` promotes with the same rename.
+import { spawnSync as spawnSyncForFlag } from "node:child_process";
+import {
+  mkdtempSync as mkdtempForFlag,
+  renameSync as renameForFlag,
+  writeFileSync as writeForFlag,
+} from "node:fs";
+import { tmpdir as tmpdirForFlag } from "node:os";
+import { join as joinForFlag } from "node:path";
+import { clearImmutable } from "../../../packages/orchestrator/src/bin/upgrade-cli";
+
+describe("clearImmutable", () => {
+  const darwin = process.platform === "darwin";
+  test.skipIf(!darwin)("a uchg file can be renamed over once the flag is cleared", () => {
+    const dir = mkdtempForFlag(joinForFlag(tmpdirForFlag(), "rune-uchg-"));
+    const target = joinForFlag(dir, "rune");
+    const staged = joinForFlag(dir, "rune.new");
+    writeForFlag(target, "old");
+    writeForFlag(staged, "new");
+    expect(spawnSyncForFlag("chflags", ["uchg", target]).status).toBe(0);
+    expect(() => renameForFlag(staged, target)).toThrow();
+    clearImmutable(target);
+    expect(() => renameForFlag(staged, target)).not.toThrow();
+    // Leave nothing immutable behind in the temp dir.
+    spawnSyncForFlag("chflags", ["nouchg", target]);
+  });
+
+  test("a missing file or a non-Darwin host is nothing to clear", () => {
+    expect(() => clearImmutable("/nonexistent/rune")).not.toThrow();
+    expect(() => clearImmutable("/etc/hosts", "linux")).not.toThrow();
+  });
+});

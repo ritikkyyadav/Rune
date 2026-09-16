@@ -2154,3 +2154,20 @@ rewritten tree (the tag is at HEAD), audit bracket 7,170. Seen in passing: the `
 on `main` (`ci.yml`, which the working branch never ran) is red at both of today's `main`
 commits — unit tests on Ubuntu and Windows, clippy on Windows — and is recorded for the
 next session rather than chased tonight.
+
+### Addendum 43 — the web installer over a source install
+
+The founder ran the published command on their own machine and it stopped at the last step:
+`mv … to ~/.rune/bin/rune: Operation not permitted`. Both binaries had downloaded and
+verified. Cause: `scripts/install.sh` marks what it installs immutable on macOS (`uchg`, so
+a stray `cp` cannot break the code signature), and `scripts/web-install.sh` moved its file
+over the old one without clearing the flag — it cleared it only on the uninstall path. A
+fresh machine has nothing to clear, which is why every fresh-machine job and the scratch-home
+proof passed; the one machine with a source install is the founder's. Fixed in both places:
+the web installer clears the flag on what it replaces or retires, removes the source build's
+`rune-compiled` and `.meta` (unreachable once the release binary is in place), and `rune
+upgrade` clears it before its rename (`clearImmutable`, tested on macOS with a real `uchg`
+file). Proof in a scratch home seeded with an immutable source install: the installer on
+`main` fails with the founder's exact error; the fixed one installs, removes the pair, and
+the result prints `Rune v0.1.1`. Audit bracket 7,170. The website's command serves `main`,
+so the fix is live on push; no release is re-cut for a script.

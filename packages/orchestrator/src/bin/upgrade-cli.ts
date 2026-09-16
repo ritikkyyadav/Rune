@@ -26,6 +26,7 @@
 // wrapper is present and `rune` otherwise, so a source install keeps its
 // wrapper and a release install keeps its shape.
 
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -280,12 +281,32 @@ async function download(env: UpgradeEnv, url: string): Promise<Uint8Array> {
  * `renameSync` within one directory is atomic on every filesystem Rune
  * targets, so there is no instant at which `rune` is a partial file.
  */
+/**
+ * Clear macOS's user-immutable flag on a file this command is about to replace.
+ *
+ * `scripts/install.sh` sets `uchg` on everything it installs so a stray `cp`
+ * cannot break the code signature. `renameSync` over such a file fails with
+ * EPERM ("Operation not permitted") — the web installer hit exactly that on
+ * the founder's machine on 2026-09-16. A missing file, a non-Darwin host, or a
+ * `chflags` that is not there are all "nothing to clear".
+ */
+export function clearImmutable(path: string, platform: NodeJS.Platform = process.platform): void {
+  if (platform !== "darwin" || !existsSync(path)) return;
+  try {
+    spawnSync("chflags", ["nouchg", path], { stdio: "ignore" });
+  } catch {
+    // The rename below reports the real error if the flag is still set.
+  }
+}
+
 function promote(target: string, bytes: Uint8Array, keepBackup: boolean): void {
   const staged = `${target}.new`;
   writeFileSync(staged, bytes);
   chmodSync(staged, 0o755);
+  clearImmutable(target);
   if (keepBackup && existsSync(target)) {
     const backup = `${target}.backup`;
+    clearImmutable(backup);
     try {
       rmSync(backup, { force: true });
     } catch {
