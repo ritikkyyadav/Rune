@@ -44,6 +44,7 @@ import {
   resolveMemoryMode,
   parseMemoryMode,
   describeMemoryMode,
+  describeMemoryKey,
   isWithdrawnCadence,
   MEMORY_CADENCE_REFUSAL,
   type MemoryMode,
@@ -519,6 +520,36 @@ if (command === "memory") {
     out("  memory cleared");
     process.exit(0);
   }
+  // ── resign: the way back from a lost or rotated key ──
+  // A person's verb, never a tool: it is not registered in any mode, so the
+  // model cannot re-sign anything. With no argument it LISTS what is held and
+  // changes nothing; the ids — or `--all`, said out loud — are the review.
+  if (sub === "resign") {
+    const held = store.quarantined();
+    if (!held.length) {
+      out("  nothing is quarantined — every entry carries this store's signature");
+      process.exit(0);
+    }
+    if (!arg) {
+      out("");
+      out(`  ${held.length} entr${held.length === 1 ? "y" : "ies"} this store cannot read:`);
+      for (const q of held) out(`    ${q.id}  ${q.rule}  ${q.path}`);
+      out("");
+      out("  read them first — they are plain JSON — then:");
+      out("  rune memory resign <id> [<id>…]   |   rune memory resign --all");
+      out("");
+      process.exit(0);
+    }
+    const ids =
+      arg === "--all" || arg === "all"
+        ? held.map((q) => q.id)
+        : (positionals.slice(2) as string[]).filter((a) => a !== "--all");
+    const result = store.resign(ids);
+    for (const id of result.resigned) out(`  re-signed: ${id}`);
+    for (const q of result.refused) out(`  refused: ${q.id} — ${q.reason}`);
+    if (!result.resigned.length) out("  nothing re-signed");
+    process.exit(result.refused.length && !result.resigned.length ? 1 : 0);
+  }
   // ── restore the narrative profile from a kept copy ──
   // Every write to ~/.rune/system-memory.md keeps the file it replaces. This
   // is the way back when a dream, an edit or a clear took the wrong thing.
@@ -560,7 +591,19 @@ if (command === "memory") {
     process.exit(0);
   }
   out(`  ${store.root}`);
+  // Where the secret that signs every entry actually is. A person who cannot
+  // say where their key lives cannot reason about what a signature is worth —
+  // and for one release the answer was "a file anything on this machine can
+  // read", which is what V9 critical 2 was.
+  out(`  key: ${describeMemoryKey(store.root)}`);
   out("");
+  const held = store.quarantined();
+  if (held.length) {
+    out(
+      `  ${held.length} entr${held.length === 1 ? "y is" : "ies are"} quarantined and NOT deleted — \`rune memory resign\` lists them`,
+    );
+    out("");
+  }
   if (promoted.length === 0) {
     if (mode === "manual") {
       out("  Nothing yet. In manual mode Rune learns only when you ask it to:");
@@ -605,6 +648,7 @@ if (command === "memory") {
   out("  rune memory show | forget <id> | pin <id> | unpin <id> | clear");
   out("  rune memory update [focus] | rune memory off | auto | manual");
   out("  rune memory restore [--from <stamp|path>] | rune memory backups");
+  out("  rune memory resign [<id>… | --all]   (after a lost or rotated key)");
   out("");
   process.exit(0);
 }

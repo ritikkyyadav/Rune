@@ -13,16 +13,19 @@
 // (`/memory update`) or, in `auto` mode, by the agent itself when it judges a
 // refresh worthwhile. There is no clock: see MemoryMode below.
 
-import { createHmac, randomBytes, timingSafeEqual } from "crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
+import { spawnSync } from "child_process";
 import {
   chmodSync,
   existsSync,
   readFileSync,
+  realpathSync,
   writeFileSync,
   mkdirSync,
   readdirSync,
   unlinkSync,
 } from "fs";
+import { tmpdir } from "os";
 import { basename, dirname, join } from "path";
 import { getRuneHome } from "./paths.js";
 
@@ -203,29 +206,65 @@ export function getMemoryEntriesDir(): string {
   return join(getMemoryStoreDir(), "entries");
 }
 
-// ─── The per-home memory secret ───
+// ─── The memory secret ───
 //
 // V8 critical 1. The read path re-derived the entry id and called that proof
 // that a file "was not written by the store" — but an id is an UNKEYED hash of
 // content a forger chooses, so the forger computes it too. The id proves the
 // text and nothing about where the text came from: one `cat >` with an ordinary
 // sentence bought `user-corrected`, `pinned` and `promoted` in every future
-// session, with an empty refusal log.
+// session, with an empty refusal log. The answer is a secret only the store
+// has, and an HMAC over the whole entry.
 //
-// What the store actually needs is a secret only the store has. It is one file,
-// 32 random bytes, mode 0600, created on the first WRITE and never on a read —
-// and deliberately NOT in config.toml: a config file is copied between machines,
-// pasted into issues and read by every tool in the repo, and a key that travels
-// with the data it authenticates is not a key.
+// V9 critical 2 is what that secret was kept in. It was one 0600 file at
+// `~/.rune/memory/.key`, and a sandboxed `bash` can `cat` a file it is allowed
+// to read: the verifier read the founder's real key through the real native
+// binary, signed a forged `user-corrected` / `pinned` / `promoted` entry with
+// it, and every gate the MAC was supposed to be passed it. A defence whose
+// whole force is a secret cannot keep the secret inside the blast radius.
 //
-// Nothing here ever throws: a home whose key cannot be written is a home where
+// So the key lives in the operating system's own credential store — the same
+// backends `credential-store.ts` gives the login wizard: the macOS Keychain,
+// the Secret Service on Linux. Those are outside the filesystem the sandbox
+// hands a run; reading one needs a tool the profile does not bind and, on
+// macOS, an ACL that names the process. The 0600 file remains for exactly two
+// jobs: it is the MIGRATION SOURCE for a home that already has one (imported
+// on the next read, then removed), and it is the LAST-RESORT fallback for a
+// platform with no secure store, where it sits at the path the sandbox's
+// credential deny list names.
+//
+// Three rules decide the backend, in order:
+//
+//   1. `RUNE_MEMORY_KEY_BACKEND` / `RUNE_CREDENTIAL_BACKEND` = "file" — forced.
+//   2. a store directory under the OS temp directory is a SCRATCH home and
+//      never touches the real credential store. Every test home in this repo is
+//      an `mkdtemp`, so no suite, rig or corpus run can write an item into the
+//      founder's keychain — the property the audit-log leak taught us to build
+//      in rather than to remember.
+//   3. otherwise the platform's store, if its tool is there; else the file.
+//
+// Nothing here ever throws: a home whose key cannot be read is a home where
 // memory does not verify, which means memory is empty. Memory is an amenity.
 
+/** Where a home's memory key is kept. */
+export type MemoryKeyBackend = "keychain" | "secret-service" | "file";
+
+export interface MemoryKeyLocation {
+  backend: MemoryKeyBackend;
+  /** The keychain account, or the absolute path of the fallback file. */
+  account: string;
+  /** False only for the plaintext-file fallback. */
+  secure: boolean;
+  /** One line for `rune memory` / `/memory`. */
+  where: string;
+  /** A legacy `.key` still on disk: a migration source, not a second key. */
+  legacyFile?: string;
+}
+
 /**
- * The per-home HMAC key. Never in config, never in a backup, never logged.
- * `storeDir` lets a caller that already knows its own store directory (the
- * MemoryStore can be constructed with an explicit one) key against that rather
- * than against the ambient home.
+ * The file the key USED to live in, and still does on a platform with no
+ * secure store. Kept exported: the sandbox's deny list names this path, the
+ * migration reads it, and `rune memory` says when it is still there.
  */
 export function getMemoryKeyPath(storeDir?: string): string {
   return join(storeDir ?? getMemoryStoreDir(), ".key");
@@ -233,33 +272,331 @@ export function getMemoryKeyPath(storeDir?: string): string {
 
 const KEY_RE = /^[0-9a-f]{64}$/;
 
+/** The keychain service namespace, shared with `credential-store.ts`. */
+const MEMORY_KEY_SERVICE = "rune";
+
+/** One process, one subprocess per store: a MAC is checked once per entry. */
+const secretCache = new Map<string, string>();
+
+/** Tests and `rune memory resign` re-ask the store rather than a stale cache. */
+export function forgetMemorySecretCache(): void {
+  secretCache.clear();
+}
+
 /**
- * The secret, as hex. `create` mints one (0600) when there is none — passed
- * only by write paths, so a READ of a store that has never been written to
- * verifies nothing rather than quietly minting a key that would make the next
- * forgery verifiable.
+ * The store directory, resolved through symlinks — and through its longest
+ * EXISTING ancestor when the directory itself is not there yet.
+ *
+ * This is the account name's input, so it has to be the same string before and
+ * after the first write. On macOS `/tmp` is a symlink to `/private/tmp`: a home
+ * resolved one way before the directory exists and the other way after it does
+ * would hash to two different accounts, i.e. a key that vanishes the moment the
+ * store is created.
  */
-export function loadMemorySecret(create = false, storeDir?: string): string | null {
-  const p = getMemoryKeyPath(storeDir);
-  try {
-    if (existsSync(p)) {
-      const hex = readFileSync(p, "utf-8").trim();
-      if (KEY_RE.test(hex)) return hex;
-      // A key file that is not a key is not overwritten: it is someone else's
-      // file, or a half-written one, and clobbering it would throw away every
-      // entry it authenticated.
-      return null;
+function resolveDir(storeDir?: string): string {
+  const dir = storeDir ?? getMemoryStoreDir();
+  const tail: string[] = [];
+  let walk = dir;
+  for (let i = 0; i < 40; i++) {
+    try {
+      const real = realpathSync(walk);
+      return tail.length ? join(real, ...tail.reverse()) : real;
+    } catch {
+      const parent = dirname(walk);
+      if (parent === walk) return dir;
+      tail.push(basename(walk));
+      walk = parent;
     }
-    if (!create) return null;
-    const hex = randomBytes(32).toString("hex");
-    mkdirSync(dirname(p), { recursive: true });
-    writeFileSync(p, hex + "\n", { mode: 0o600 });
-    // Explicit, because `mode` is masked by umask on some systems.
-    chmodSync(p, 0o600);
-    return hex;
+  }
+  return dir;
+}
+
+/**
+ * A directory under the OS temp root — i.e. a scratch home, never the
+ * founder's. Both spellings of every root are compared, because `/tmp` and
+ * `/private/tmp` are the same directory on macOS and a path that reached here
+ * unresolved would otherwise walk past this check.
+ */
+function isScratchDir(dir: string): boolean {
+  const roots = [process.env.TMPDIR, tmpdir(), "/tmp", "/private/tmp", "/var/folders"];
+  const forms = new Set<string>();
+  for (const root of roots) {
+    if (!root) continue;
+    forms.add(root);
+    try {
+      forms.add(realpathSync(root));
+    } catch {
+      // A root that does not resolve is compared as written.
+    }
+  }
+  for (const form of forms) {
+    const real = form.replace(/\/+$/, "");
+    if (!real) continue;
+    if (dir === real || dir.startsWith(real + "/")) return true;
+  }
+  return false;
+}
+
+/**
+ * The one place this module shells out. Injectable, so the keychain and
+ * secret-service paths are TESTED rather than argued about — and tested
+ * without an item ever reaching the founder's real keychain, which is the
+ * property that matters more than the coverage.
+ */
+export interface MemoryKeyCommandResult {
+  status: number;
+  stdout: string;
+}
+export type MemoryKeyCommandRunner = (
+  cmd: string,
+  args: readonly string[],
+  input?: string,
+) => MemoryKeyCommandResult;
+
+const realRunner: MemoryKeyCommandRunner = (cmd, args, input) => {
+  const r = spawnSync(cmd, [...args], {
+    encoding: "utf8",
+    timeout: 10_000,
+    ...(input === undefined ? {} : { input }),
+  });
+  if (r.error) return { status: 127, stdout: "" };
+  return { status: r.status ?? 1, stdout: r.stdout ?? "" };
+};
+
+let keyRunner: MemoryKeyCommandRunner = realRunner;
+
+/** Tests only. `null` restores the real one. */
+export function setMemoryKeyRunner(runner: MemoryKeyCommandRunner | null): void {
+  keyRunner = runner ?? realRunner;
+  secretCache.clear();
+}
+
+/** Is the OS tool actually there? 127 is this runner's "not found". */
+function toolPresent(cmd: string, args: string[]): boolean {
+  try {
+    return keyRunner(cmd, args).status !== 127;
+  } catch {
+    return false;
+  }
+}
+
+function forcedKeyBackend(): string {
+  return (process.env.RUNE_MEMORY_KEY_BACKEND ?? process.env.RUNE_CREDENTIAL_BACKEND ?? "").trim();
+}
+
+function memoryKeyBackend(dir: string): MemoryKeyBackend {
+  const forced = forcedKeyBackend();
+  if (forced === "file") return "file";
+  if (forced === "keychain") return "keychain";
+  if (forced === "secret-service") return "secret-service";
+  if (isScratchDir(dir)) return "file";
+  if (process.platform === "darwin" && toolPresent("security", ["help"])) return "keychain";
+  if (process.platform === "linux" && toolPresent("secret-tool", ["--version"]))
+    return "secret-service";
+  return "file";
+}
+
+/**
+ * The account name, bound to the store directory. Two homes on one machine
+ * hold two keys, so an entry cannot be carried from one to the other — the
+ * per-home binding the file gave us for free, kept.
+ */
+function memoryKeyAccount(dir: string): string {
+  return `memory-key:${createHash("sha256").update(dir).digest("hex").slice(0, 16)}`;
+}
+
+/** Where this home's key is, what it is called, and whether it is secure. */
+export function memoryKeyLocation(storeDir?: string): MemoryKeyLocation {
+  const dir = resolveDir(storeDir);
+  const backend = memoryKeyBackend(dir);
+  const file = getMemoryKeyPath(storeDir);
+  const legacy = existsSync(file) ? file : undefined;
+  if (backend === "file") {
+    const why = forcedKeyBackend()
+      ? "forced by RUNE_MEMORY_KEY_BACKEND"
+      : isScratchDir(dir)
+        ? "a scratch home keeps its own key"
+        : "no OS credential store on this platform";
+    return { backend, account: file, secure: false, where: `${file} (0600 — ${why})` };
+  }
+  const account = memoryKeyAccount(dir);
+  const where =
+    backend === "keychain"
+      ? `macOS Keychain — service "${MEMORY_KEY_SERVICE}", account "${account}"`
+      : `Secret Service (libsecret) — service "${MEMORY_KEY_SERVICE}", account "${account}"`;
+  return {
+    backend,
+    account,
+    secure: true,
+    where: legacy
+      ? `${where}; a legacy ${file} is still on disk and imports on the next read`
+      : where,
+    ...(legacy ? { legacyFile: legacy } : {}),
+  };
+}
+
+/** One line for a status readout. */
+export function describeMemoryKey(storeDir?: string): string {
+  return memoryKeyLocation(storeDir).where;
+}
+
+function readSecureSecret(backend: MemoryKeyBackend, account: string): string | null {
+  try {
+    const r =
+      backend === "keychain"
+        ? keyRunner("security", [
+            "find-generic-password",
+            "-a",
+            account,
+            "-s",
+            MEMORY_KEY_SERVICE,
+            "-w",
+          ])
+        : keyRunner("secret-tool", ["lookup", "service", MEMORY_KEY_SERVICE, "account", account]);
+    if (r.status !== 0) return null;
+    const hex = (r.stdout ?? "").trim();
+    return KEY_RE.test(hex) ? hex : null;
   } catch {
     return null;
   }
+}
+
+function writeSecureSecret(backend: MemoryKeyBackend, account: string, hex: string): boolean {
+  try {
+    const r =
+      backend === "keychain"
+        ? // `-T ""` gives the item an empty trusted-application list: nothing
+          // but this binary, with the user's own keychain unlocked, reads it.
+          keyRunner("security", [
+            "add-generic-password",
+            "-a",
+            account,
+            "-s",
+            MEMORY_KEY_SERVICE,
+            "-U",
+            "-w",
+            hex,
+            "-T",
+            "",
+          ])
+        : keyRunner(
+            "secret-tool",
+            [
+              "store",
+              "--label",
+              `${MEMORY_KEY_SERVICE}: ${account}`,
+              "service",
+              MEMORY_KEY_SERVICE,
+              "account",
+              account,
+            ],
+            hex,
+          );
+    if (r.status !== 0) return false;
+    // Believe the readback, not the exit code.
+    return readSecureSecret(backend, account) === hex;
+  } catch {
+    return false;
+  }
+}
+
+function writeFileSecret(path: string, hex: string): boolean {
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, hex + "\n", { mode: 0o600 });
+    // Explicit, because `mode` is masked by umask on some systems.
+    chmodSync(path, 0o600);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readFileSecret(path: string): string | null {
+  try {
+    if (!existsSync(path)) return null;
+    const hex = readFileSync(path, "utf-8").trim();
+    // A key file that is not a key is not overwritten: it is someone else's
+    // file, or a half-written one, and clobbering it would throw away every
+    // entry it authenticated.
+    return KEY_RE.test(hex) ? hex : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The secret, as hex. `create` mints one when there is none — passed only by
+ * write paths, so a READ of a store that has never been written to verifies
+ * nothing rather than quietly minting a key that would make the next forgery
+ * verifiable.
+ *
+ * A legacy `.key` is imported into the secure store on the first call that
+ * finds one and then REMOVED, so the window in which the secret is a file a
+ * run can read is one process long, and closes without anyone being asked.
+ */
+export function loadMemorySecret(create = false, storeDir?: string): string | null {
+  const dir = resolveDir(storeDir);
+  const backend = memoryKeyBackend(dir);
+  const file = getMemoryKeyPath(storeDir);
+  if (backend === "file") return readFileSecret(file) ?? (create ? mintFileSecret(file) : null);
+
+  const account = memoryKeyAccount(dir);
+  const cached = secretCache.get(account);
+  if (cached) return cached;
+
+  const held = readSecureSecret(backend, account);
+  if (held) {
+    // A key that is in both places is a key the migration already moved; the
+    // leftover file is removed on sight rather than left to be read.
+    if (readFileSecret(file) !== null) removeLegacyKeyFile(file);
+    secretCache.set(account, held);
+    return held;
+  }
+  // ── Migration: a home that already has a `.key` ──
+  const legacy = readFileSecret(file);
+  if (legacy) {
+    if (writeSecureSecret(backend, account, legacy)) {
+      removeLegacyKeyFile(file);
+      secretCache.set(account, legacy);
+      return legacy;
+    }
+    // The secure store refused it. The file is the key, and it stays the key:
+    // deleting it here would erase the store to make a point.
+    return legacy;
+  }
+  if (!create) return null;
+  const hex = randomBytes(32).toString("hex");
+  if (writeSecureSecret(backend, account, hex)) {
+    secretCache.set(account, hex);
+    return hex;
+  }
+  // No secure store would take it. Fall back to the 0600 file — the path the
+  // sandbox's credential deny list names — rather than leaving memory unsigned.
+  return mintFileSecret(file);
+}
+
+function mintFileSecret(path: string): string | null {
+  const hex = randomBytes(32).toString("hex");
+  return writeFileSecret(path, hex) ? hex : null;
+}
+
+function removeLegacyKeyFile(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch {
+    // A key we cannot remove is one the next read imports again; harmless.
+  }
+}
+
+/**
+ * True when this store has no key at all — nothing in the secure store and no
+ * file. The store reads this to tell "someone forged an entry" (a wrong MAC)
+ * apart from "the key is gone" (no MAC can be computed), which are the same
+ * failure to `verifyMemoryMac` and very different things to a person.
+ */
+export function memorySecretMissing(storeDir?: string): boolean {
+  return loadMemorySecret(false, storeDir) === null;
 }
 
 /** HMAC-SHA256 over a canonical payload, or undefined when there is no key. */

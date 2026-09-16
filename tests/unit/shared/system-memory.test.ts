@@ -1,6 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { tmpdir } from "os";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "fs";
 import { join } from "path";
 import {
   loadSystemMemory,
@@ -23,6 +31,13 @@ import {
   restoreSystemMemory,
   saveRefreshedSystemMemory,
   resolveMemoryMode,
+  memoryKeyLocation,
+  describeMemoryKey,
+  getMemoryKeyPath,
+  loadMemorySecret,
+  forgetMemorySecretCache,
+  setMemoryKeyRunner,
+  memoryMac,
   parseMemoryMode,
   describeMemoryMode,
   MEMORY_MODES,
@@ -522,5 +537,156 @@ describe("shared/system-memory — the meta sidecar is authenticated", () => {
     writeFileSync(getSystemMemoryMetaPath(), JSON.stringify(meta));
     expect(loadSystemMemoryMeta().profileFloorBytes).toBeUndefined();
     expect(saveRefreshedSystemMemory("y".repeat(200), {}).saved).toBe(false);
+  });
+});
+
+// ─── V9 critical 2: where the key lives ───
+//
+// The whole force of the entry MAC is that the secret is out of the run's
+// reach, and for one release it was a 0600 file a sandboxed `bash` could read:
+// the verifier `cat`ted the founder's real key through the real native binary
+// and signed a `user-corrected` / `pinned` / `promoted` forgery with it. The
+// key is now an item in the OS credential store; the file is a migration
+// source and a last resort.
+//
+// Every test here runs against an INJECTED runner, so the assertions are about
+// the real code path and nothing ever reaches the founder's keychain. The
+// backend in force is asserted in each one, because "it used the file store"
+// is exactly the thing a test like this can silently start doing.
+describe("shared/system-memory — the memory key is not a file a run can read", () => {
+  let dir: string;
+  let calls: Array<{ cmd: string; args: readonly string[]; input?: string }>;
+  let vault: Map<string, string>;
+  let prevBackend: string | undefined;
+
+  const fakeStore = (opts?: { refuseWrite?: boolean }): void => {
+    setMemoryKeyRunner((cmd, args, input) => {
+      calls.push({ cmd, args, ...(input === undefined ? {} : { input }) });
+      if (cmd === "security" && args[0] === "help") return { status: 0, stdout: "" };
+      if (cmd === "security" && args[0] === "find-generic-password") {
+        const account = args[args.indexOf("-a") + 1]!;
+        const held = vault.get(account);
+        return held ? { status: 0, stdout: held + "\n" } : { status: 44, stdout: "" };
+      }
+      if (cmd === "security" && args[0] === "add-generic-password") {
+        if (opts?.refuseWrite) return { status: 45, stdout: "" };
+        vault.set(args[args.indexOf("-a") + 1]!, args[args.indexOf("-w") + 1]!);
+        return { status: 0, stdout: "" };
+      }
+      if (cmd === "secret-tool" && args[0] === "lookup") {
+        const held = vault.get(args[args.indexOf("account") + 1]!);
+        return held ? { status: 0, stdout: held } : { status: 1, stdout: "" };
+      }
+      if (cmd === "secret-tool" && args[0] === "store") {
+        if (opts?.refuseWrite) return { status: 1, stdout: "" };
+        vault.set(args[args.indexOf("account") + 1]!, input ?? "");
+        return { status: 0, stdout: "" };
+      }
+      return { status: 127, stdout: "" };
+    });
+  };
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "rune-key-"));
+    calls = [];
+    vault = new Map();
+    prevBackend = process.env.RUNE_MEMORY_KEY_BACKEND;
+  });
+  afterEach(() => {
+    setMemoryKeyRunner(null);
+    forgetMemorySecretCache();
+    if (prevBackend === undefined) delete process.env.RUNE_MEMORY_KEY_BACKEND;
+    else process.env.RUNE_MEMORY_KEY_BACKEND = prevBackend;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("a scratch home under the temp directory never touches the OS credential store", () => {
+    const where = memoryKeyLocation(dir);
+    expect(where.backend).toBe("file");
+    expect(where.secure).toBe(false);
+    expect(where.account).toBe(getMemoryKeyPath(dir));
+  });
+
+  it("the key is minted into the keychain and never written to disk", () => {
+    process.env.RUNE_MEMORY_KEY_BACKEND = "keychain";
+    fakeStore();
+    expect(memoryKeyLocation(dir).backend).toBe("keychain");
+    const hex = loadMemorySecret(true, dir);
+    expect(hex).toMatch(/^[0-9a-f]{64}$/);
+    // The thing the verifier read is not there to read.
+    expect(existsSync(getMemoryKeyPath(dir))).toBe(false);
+    expect([...vault.values()]).toEqual([hex!]);
+    const write = calls.find((c) => c.args[0] === "add-generic-password")!;
+    expect(write.cmd).toBe("security");
+    // An empty trusted-application list: no other binary is pre-authorised.
+    expect(write.args).toContain("-T");
+    // …and the secret is an argv element of `security`, never a file.
+    expect(loadMemorySecret(false, dir)).toBe(hex);
+  });
+
+  it("a read never mints, on either backend", () => {
+    process.env.RUNE_MEMORY_KEY_BACKEND = "keychain";
+    fakeStore();
+    expect(loadMemorySecret(false, dir)).toBeNull();
+    expect(vault.size).toBe(0);
+    expect(existsSync(getMemoryKeyPath(dir))).toBe(false);
+    delete process.env.RUNE_MEMORY_KEY_BACKEND;
+    expect(memoryKeyLocation(dir).backend).toBe("file");
+    expect(loadMemorySecret(false, dir)).toBeNull();
+    expect(existsSync(getMemoryKeyPath(dir))).toBe(false);
+  });
+
+  it("a home that already has a .key imports it once and the file is gone", () => {
+    // The founder's own home, as the verifier found it: a 65-byte 0600 file.
+    const existing = "a".repeat(64);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(getMemoryKeyPath(dir), existing + "\n", { mode: 0o600 });
+    process.env.RUNE_MEMORY_KEY_BACKEND = "keychain";
+    fakeStore();
+    // A READ migrates it — moving a key that already exists mints nothing.
+    expect(loadMemorySecret(false, dir)).toBe(existing);
+    expect(existsSync(getMemoryKeyPath(dir))).toBe(false);
+    expect([...vault.values()]).toEqual([existing]);
+    // The same secret, so everything signed before the move still verifies.
+    forgetMemorySecretCache();
+    expect(loadMemorySecret(false, dir)).toBe(existing);
+    expect(memoryKeyLocation(dir).legacyFile).toBeUndefined();
+  });
+
+  it("a keychain that refuses the write leaves a 0600 file rather than unsigned memory", () => {
+    process.env.RUNE_MEMORY_KEY_BACKEND = "keychain";
+    fakeStore({ refuseWrite: true });
+    const hex = loadMemorySecret(true, dir);
+    expect(hex).toMatch(/^[0-9a-f]{64}$/);
+    const path = getMemoryKeyPath(dir);
+    expect(existsSync(path)).toBe(true);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    // …and it is named as a key still on disk, so `rune memory` can say so.
+    expect(memoryKeyLocation(dir).legacyFile).toBe(path);
+    expect(memoryKeyLocation(dir).where).toContain("legacy");
+  });
+
+  it("says where the key is, in one line, on every backend", () => {
+    expect(describeMemoryKey(dir)).toContain(getMemoryKeyPath(dir));
+    process.env.RUNE_MEMORY_KEY_BACKEND = "keychain";
+    fakeStore();
+    expect(describeMemoryKey(dir)).toContain("Keychain");
+    process.env.RUNE_MEMORY_KEY_BACKEND = "secret-service";
+    expect(describeMemoryKey(dir)).toContain("Secret Service");
+  });
+
+  it("two homes hold two keys, so an entry cannot be carried between them", () => {
+    process.env.RUNE_MEMORY_KEY_BACKEND = "keychain";
+    fakeStore();
+    const other = mkdtempSync(join(tmpdir(), "rune-key-b-"));
+    try {
+      const a = loadMemorySecret(true, dir);
+      const b = loadMemorySecret(true, other);
+      expect(a).not.toBe(b);
+      expect(vault.size).toBe(2);
+      expect(memoryMac("payload", false, dir)).not.toBe(memoryMac("payload", false, other));
+    } finally {
+      rmSync(other, { recursive: true, force: true });
+    }
   });
 });

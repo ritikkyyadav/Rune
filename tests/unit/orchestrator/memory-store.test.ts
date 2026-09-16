@@ -18,7 +18,7 @@ import {
   entryMacPayload,
   normalizeText,
 } from "../../../packages/orchestrator/src/memory/store";
-import { memoryMac } from "../../../packages/shared/src/system-memory";
+import { memoryMac, forgetMemorySecretCache } from "../../../packages/shared/src/system-memory";
 import { guardMemoryText } from "../../../packages/orchestrator/src/memory/guard";
 import { renderMemoryGuide } from "../../../packages/orchestrator/src/memory/render";
 import type { MemoryCandidate, MemoryEntry } from "../../../packages/orchestrator/src/memory/types";
@@ -487,5 +487,136 @@ describe("memory/store — a signed row is still read through the rules", () => 
     });
     expect(store.all()).toHaveLength(0);
     expect(store.refusals().map((r) => r.rule)).toContain("pin-provenance");
+  });
+});
+
+// ─── V9 finding 18: a lost key quarantines the store, it never erases it ───
+//
+// `rm ~/.rune/memory/.key` is a guardrail change and `: >` the same file is
+// too — but a key can also go by a route nothing watches: a backup restore, a
+// `chmod`, a disk repair, a keychain item deleted in Keychain Access. Every
+// entry then fails its MAC at once. Fail-closed is right. Fail-SILENT is not:
+// the entries are still the person's, they are still on disk, and the store
+// has to say what it is holding and how to get it back.
+describe("memory/store — the key is gone", () => {
+  const seedFive = (): string[] => {
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const r = store.observe({
+        kind: "project",
+        scope: "global",
+        text: `fact number ${i} about the project`,
+        source: "observed",
+        sessionId: `s${i}`,
+      });
+      ids.push(r.entry!.id);
+    }
+    return ids;
+  };
+
+  it("quarantines every entry, counts them, and deletes none", () => {
+    const ids = seedFive();
+    expect(new MemoryStore(dir).all().length).toBe(5);
+    rmSync(join(dir, ".key"));
+    forgetMemorySecretCache();
+
+    const after = new MemoryStore(dir);
+    expect(after.all()).toEqual([]);
+    const held = after.quarantined();
+    expect(held.map((q) => q.id).sort()).toEqual([...ids].sort());
+    expect(held.every((q) => q.rule === "integrity")).toBe(true);
+    // The person is told which of the two things happened, and the move.
+    expect(held[0]!.reason).toContain("no key");
+    expect(held[0]!.reason).toContain("rune memory resign");
+    // Every file is still there to `cat`.
+    expect(readdirSync(join(dir, "entries")).length).toBe(5);
+    // …and `/memory` reads the diary, so it says so without being asked twice.
+    expect(after.refusals().length).toBeGreaterThan(0);
+  });
+
+  it("a fresh key does not erase what the old one signed", () => {
+    const ids = seedFive();
+    rmSync(join(dir, ".key"));
+    forgetMemorySecretCache();
+    const s2 = new MemoryStore(dir);
+    s2.observe({
+      kind: "person",
+      scope: "global",
+      text: "the founder likes short reports",
+      source: "observed",
+      sessionId: "s9",
+    });
+    expect(existsSync(join(dir, ".key"))).toBe(true);
+    const fresh = new MemoryStore(dir);
+    // The new entry reads; the five older ones are held, not gone.
+    expect(fresh.all().length).toBe(1);
+    expect(
+      fresh
+        .quarantined()
+        .map((q) => q.id)
+        .sort(),
+    ).toEqual([...ids].sort());
+    expect(fresh.quarantined()[0]!.reason).toContain("current signature");
+    expect(readdirSync(join(dir, "entries")).length).toBe(6);
+  });
+
+  it("`rune memory resign` brings back exactly what the person named", () => {
+    const ids = seedFive();
+    rmSync(join(dir, ".key"));
+    forgetMemorySecretCache();
+    const s2 = new MemoryStore(dir);
+    const result = s2.resign([ids[0]!, ids[1]!]);
+    expect(result.resigned.sort()).toEqual([ids[0]!, ids[1]!].sort());
+    expect(result.refused).toEqual([]);
+    const after = new MemoryStore(dir);
+    expect(
+      after
+        .all()
+        .map((e) => e.id)
+        .sort(),
+    ).toEqual([ids[0]!, ids[1]!].sort());
+    // The three it was not asked about are still held.
+    expect(after.quarantined().length).toBe(3);
+  });
+
+  it("resign forgives the signature and nothing else", () => {
+    // A forgery that arrived while the key was gone: ordinary text, but a
+    // `user-corrected` pin nobody authorised. Resign is a person's act, so it
+    // is exactly the act an attacker would like to borrow — every content rule
+    // still stands in front of it.
+    const text = "the deploy target is the staging cluster in eu-west-2";
+    const id = entryId("person", "global", text);
+    mkdirSync(join(dir, "entries"), { recursive: true });
+    writeFileSync(
+      join(dir, "entries", `${id}.json`),
+      JSON.stringify({
+        id,
+        kind: "person",
+        status: "promoted",
+        text,
+        provenance: { source: "observed", sessionIds: [], at: "2026-01-01T00:00:00.000Z" },
+        confidence: 1,
+        observedCount: 9,
+        pinned: true,
+        scope: "global",
+      }),
+    );
+    const s = new MemoryStore(dir);
+    expect(s.quarantined()[0]!.rule).toBe("pin-provenance");
+    const r = s.resign([id]);
+    expect(r.resigned).toEqual([]);
+    expect(r.refused.map((q) => q.rule)).toEqual(["pin-provenance"]);
+    expect(new MemoryStore(dir).all()).toEqual([]);
+  });
+
+  it("resign is asked for ids: it never re-signs a store wholesale by default", () => {
+    const ids = seedFive();
+    rmSync(join(dir, ".key"));
+    forgetMemorySecretCache();
+    const s2 = new MemoryStore(dir);
+    expect(s2.resign([]).resigned).toEqual([]);
+    expect(new MemoryStore(dir).all()).toEqual([]);
+    expect(new MemoryStore(dir).quarantined().length).toBe(5);
+    void ids;
   });
 });

@@ -134,3 +134,14 @@ export function scopeKey(scope: MemoryScope): string {
 export function sameScope(a: MemoryScope, b: MemoryScope): boolean {
   return scopeKey(a) === scopeKey(b);
 }
+
+/**
+ * An entry file on disk the store will not read, and why. Nothing here is
+ * deleted: a lost key quarantines the store, it does not erase it.
+ */
+export interface MemoryQuarantine {
+  id: string;
+  path: string;
+  rule: string;
+  reason: string;
+}

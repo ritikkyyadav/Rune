@@ -22,7 +22,13 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
-import { getMemoryEntriesDir, getMemoryStoreDir, memoryMac, verifyMemoryMac } from "@rune/shared";
+import {
+  getMemoryEntriesDir,
+  getMemoryStoreDir,
+  memoryMac,
+  memorySecretMissing,
+  verifyMemoryMac,
+} from "@rune/shared";
 
 import { guardMemoryText } from "./guard";
 import {
@@ -33,6 +39,7 @@ import {
   type MemoryEntry,
   type MemoryIntegrity,
   type MemoryKind,
+  type MemoryQuarantine,
   type MemoryRefusal,
   type MemoryScope,
   type MemorySource,
@@ -277,6 +284,101 @@ export class MemoryStore {
     return dropped;
   }
 
+  // ── Quarantine (V9 finding 18) ──
+
+  /**
+   * Every entry file this store will NOT read, with the rule that turned it
+   * away. Read by `/memory` and `rune memory`, because a store that silently
+   * holds nine unreadable entries and says "Nothing yet" is a store that lied
+   * about losing them.
+   *
+   * Nothing here is deleted, ever. The file is the person's; they can read it
+   * with `cat`, remove it with `rm`, and — once they have read it — bring it
+   * back with `rune memory resign`.
+   */
+  quarantined(): MemoryQuarantine[] {
+    let names: string[];
+    try {
+      if (!existsSync(this.entriesDir)) return [];
+      names = readdirSync(this.entriesDir).filter((n) => n.endsWith(".json"));
+    } catch {
+      return [];
+    }
+    const out: MemoryQuarantine[] = [];
+    for (const name of names.sort()) {
+      const path = join(this.entriesDir, name);
+      let read: MemoryEntry | { refusal: MemoryRefusal } | null;
+      try {
+        read = sanitize(
+          JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>,
+          this.dir,
+        );
+      } catch {
+        continue;
+      }
+      if (read === null || !("refusal" in read)) continue;
+      out.push({
+        id: name.replace(/\.json$/, ""),
+        path,
+        rule: read.refusal.rule,
+        reason: read.refusal.reason,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Re-sign quarantined entries with this store's current key.
+   *
+   * THE PERSON RUNS THIS, never the model: it is a CLI verb (`rune memory
+   * resign <id> | --all`) and it is not registered as a tool in any mode. A key
+   * that is gone is gone, and re-signing is the only way back for entries that
+   * were real — so it is deliberately an act of review, with the ids named or
+   * `--all` said out loud, after `rune memory` has printed what is held.
+   *
+   * It re-signs and nothing else. Every CONTENT rule still stands in front of
+   * it — the guard, the provenance, the id the text derives, the pin authority
+   * — so a file that arrived with a forged `user-corrected` pin is refused
+   * here exactly as it is refused on the read path. What resign forgives is
+   * the signature, which is the only thing a lost key actually broke.
+   */
+  resign(ids: readonly string[]): { resigned: string[]; refused: MemoryQuarantine[] } {
+    const wanted = new Set(ids);
+    const resigned: string[] = [];
+    const refused: MemoryQuarantine[] = [];
+    for (const q of this.quarantined()) {
+      if (!wanted.has(q.id)) continue;
+      if (q.rule !== "integrity") {
+        refused.push(q);
+        continue;
+      }
+      try {
+        const raw = JSON.parse(readFileSync(q.path, "utf8")) as Record<string, unknown>;
+        // Sign what is on disk, then read it back through the ordinary door:
+        // if `sanitize` still refuses it, nothing was gained and the file is
+        // left exactly as it was.
+        const entry = sanitizeForResign(raw, this.dir);
+        if (!entry) {
+          refused.push(q);
+          continue;
+        }
+        const mac = memoryMac(entryMacPayload(entry), true, this.dir);
+        if (!mac) {
+          refused.push(q);
+          continue;
+        }
+        writeFileSync(
+          q.path,
+          JSON.stringify({ ...entry, integrity: { v: 1, mac } }, null, 2) + "\n",
+        );
+        resigned.push(q.id);
+      } catch {
+        refused.push(q);
+      }
+    }
+    return { resigned, refused };
+  }
+
   // ── The refusal diary ──
 
   /** What the guard turned away, newest last. Read by `/memory`. */
@@ -462,6 +564,7 @@ const SOURCES: ReadonlySet<string> = new Set(Object.keys(SOURCE_RANK));
 function sanitize(
   raw: Record<string, unknown>,
   storeDir: string,
+  opts?: { skipMac?: boolean },
 ): MemoryEntry | { refusal: MemoryRefusal } | null {
   if (typeof raw.id !== "string" || !raw.id) return null;
   if (typeof raw.text !== "string" || !raw.text.trim()) return null;
@@ -540,15 +643,34 @@ function sanitize(
     ...(isEntryId(raw.supersedes) ? { supersedes: raw.supersedes as string } : {}),
   };
   const integrity = raw.integrity as MemoryIntegrity | undefined;
-  if (!verifyMemoryMac(entryMacPayload(entry), integrity?.mac, storeDir)) {
+  if (!opts?.skipMac && !verifyMemoryMac(entryMacPayload(entry), integrity?.mac, storeDir)) {
+    // V9 finding 18. Two very different things fail this check and the store
+    // used to say the same sentence about both: a file somebody wrote (a wrong
+    // signature over a key they do not have) and a store whose KEY went — a
+    // restore, a `chmod`, a disk repair, a rotated keychain item. The second is
+    // not forgery and the entries are not forgeries; they are unreadable, they
+    // are QUARANTINED rather than deleted, and the person is told which of the
+    // two happened and what the move is.
+    const keyGone = memorySecretMissing(storeDir);
     return {
       refusal: {
         rule: "integrity",
-        reason: `entry ${raw.id} does not carry this store's signature — it was not written by the store`,
+        reason: keyGone
+          ? `entry ${raw.id} cannot be verified: this store has no key — quarantined, not deleted (\`rune memory resign\` after you have read it)`
+          : `entry ${raw.id} does not carry this store's current signature — quarantined, not deleted (\`rune memory resign\` after you have read it; a key that was lost or rotated cannot be recovered)`,
       },
     };
   }
   return entry;
+}
+
+/**
+ * `sanitize` with the SIGNATURE question suspended and every other rule
+ * intact. Only `resign` uses it, and only on an entry the person has named.
+ */
+function sanitizeForResign(raw: Record<string, unknown>, storeDir: string): MemoryEntry | null {
+  const read = sanitize(raw, storeDir, { skipMac: true });
+  return read && !("refusal" in read) ? read : null;
 }
 
 /** `supersedes` / `supersededBy` name another ENTRY, so only an id will do. */
