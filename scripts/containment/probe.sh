@@ -44,6 +44,22 @@ assert_probe() {
     fail "$name: leaked '$forbid'"
     return
   fi
+  # Fix lane G: a credential store named by the command is refused by Rune
+  # before anything spawns, on every executor. That refusal is the stronger
+  # outcome, but it pre-empts the evidence this probe exists to collect — that
+  # the NAMESPACE exposes nothing — so the same command is run again with the
+  # home hidden behind a shell variable the name check does not expand, and
+  # the original expectation is asserted on that run.
+  if printf '%s' "$out" | grep -qF "names a credential store the sandbox may not reach"; then
+    echo "refused by name; repeating through an indirected path"
+    local indirect="d=/root; ${cmd//\/root\//\$d/}"
+    out="$(run "$indirect")"
+    echo "$out"
+    if [ -n "$forbid" ] && printf '%s' "$out" | grep -qF "$forbid"; then
+      fail "$name: leaked '$forbid' through an indirected path"
+      return
+    fi
+  fi
   if ! printf '%s' "$out" | grep -qF "$want"; then
     fail "$name: expected '$want' not found"
     return
