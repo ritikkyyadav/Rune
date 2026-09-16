@@ -296,7 +296,7 @@
     │ 
     │ Playwright version: 1.55.0
     │   Browsers:
-    │     /Users/ritikyadav890/Library/Caches/ms-playwright/chromium-1187
+    │     ~/Library/Caches/ms-playwright/chromium-1187
     │ … 45 more lines
     │ ╚═══════════════════════════════════════════════════════════════════════════════╝
 
@@ -319,11 +319,11 @@
     │ npm notice run 'playwright' screenshot --browser=chromium --viewport-size=1440,1000 --wait-for-selector=#grid .…
     │ Error: i.parse: spawn Unknown system error -88
     │ Call log:
-    │   - <launching> /Users/ritikyadav890/Library/Caches/ms-playwright/chromium_headless_shell-1187/chrome-mac/headl…
+    │   - <launching> ~/Library/Caches/ms-playwright/chromium_headless_shell-1187/chrome-mac/headl…
 
     │ ✗ run   npx --yes playwright@1.55.0 screenshot --browser=chromium --device='iPhone 13' --wait-for-selector='#gr…
     │ … 2 lines
-    │ Error: i.parse: Executable doesn't exist at /Users/ritikyadav890/Library/Caches/ms-playwright/webkit-2203/pw_ru…
+    │ Error: i.parse: Executable doesn't exist at ~/Library/Caches/ms-playwright/webkit-2203/pw_ru…
     │ … 4 lines
     │ ║     npx playwright install                                              ║
     │ ║                                                                         ║
@@ -797,7 +797,7 @@
     │ 249 | FILE	*freopen(const char * __restrict, const char * __restrict,
 
     │   run   swift - <<'SWIFT'  0ms
-    │ snapshot written: /Users/ritikyadav890/Project/code/bangla-sweets/_review/live-webkit-render.png 3394474 bytes
+    │ snapshot written: ~/Project/code/bangla-sweets/_review/live-webkit-render.png 3394474 bytes
 
     │ › read
     │ › hypothesis
@@ -823,7 +823,7 @@
     │  174   
 
     │   run   swift - <<'SWIFT'  0ms
-    │ snapshot written: /Users/ritikyadav890/Project/code/bangla-sweets/_review/live-webkit-final.png
+    │ snapshot written: ~/Project/code/bangla-sweets/_review/live-webkit-final.png
 
     │   read  .../code/bangla-sweets/_review/live-webkit-final.png  0 lines
     │   plan  updated  3 steps

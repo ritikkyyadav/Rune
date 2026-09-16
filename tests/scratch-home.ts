@@ -106,3 +106,22 @@ if (!inherited) {
 // as much as the default one above does, and it is what makes those rigs'
 // existing assertions true.
 inheritCurrentEnv();
+
+// ── No suite runs with a real provider key ──
+//
+// Bun loads a `.env` from the working directory into every `bun test` and
+// `bun run`, and the checkout carried one for months (audit, 2026-09-16:
+// GOOGLE, OPENROUTER and BRAVE keys). `RUNE_NO_ENV_FILE` guards the launcher's
+// `~/.rune/.env`, not Bun's own autoload, so every unit, integration and mock
+// eval run had live keys in its environment — one misrouted call away from
+// spend, one careless dump away from a log. The keys are stripped here, before
+// any module reads them. The live comparison series is the one caller that
+// wants them, and it says so with `RUNE_EVAL_REAL=1`.
+function scrubProviderKeys(): void {
+  if (process.env.RUNE_EVAL_REAL === "1") return;
+  const secretName = /(_API_KEY|_AUTH_TOKEN|_ACCESS_TOKEN|_SECRET_KEY)$/;
+  for (const name of Object.keys(process.env)) {
+    if (secretName.test(name) && name !== "RUNE_TEST_FAKE_API_KEY") delete process.env[name];
+  }
+}
+scrubProviderKeys();

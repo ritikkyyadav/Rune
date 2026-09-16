@@ -269,7 +269,7 @@
     │ 
     │ Playwright version: 1.55.0
     │   Browsers:
-    │     /Users/ritikyadav890/Library/Caches/ms-playwright/chromium-1187
+    │     ~/Library/Caches/ms-playwright/chromium-1187
     │ … 45 more lines
     │ ╚══════════════════════════════════════════════════════════════════════…
 
@@ -290,10 +290,10 @@
     │ npm notice run 'playwright' screenshot --browser=chromium --viewport-si…
     │ Error: i.parse: spawn Unknown system error -88
     │ Call log:
-    │   - <launching> /Users/ritikyadav890/Library/Caches/ms-playwright/chrom…
+    │   - <launching> ~/Library/Caches/ms-playwright/chrom…
     │ ✗ run   npx --yes playwright@1.55.0 screenshot --browser=chromium …  0ms
     │ … 2 lines
-    │ Error: i.parse: Executable doesn't exist at /Users/ritikyadav890/Librar…
+    │ Error: i.parse: Executable doesn't exist at ~/Librar…
     │ … 4 lines
     │ ║     npx playwright install                                           …
     │ ║                                                                      …
@@ -740,7 +740,7 @@
     │ 249 | FILE	*freopen(const char * __restrict, const char * __restrict,
 
     │   run   swift - <<'SWIFT'  0ms
-    │ snapshot written: /Users/ritikyadav890/Project/code/bangla-sweets/_revi…
+    │ snapshot written: ~/Project/code/bangla-sweets/_revi…
 
     │   read  .../code/bangla-sweets/_review/live-webkit-render.png  0 lines
 
@@ -764,7 +764,7 @@
     │  174   
 
     │   run   swift - <<'SWIFT'  0ms
-    │ snapshot written: /Users/ritikyadav890/Project/code/bangla-sweets/_revi…
+    │ snapshot written: ~/Project/code/bangla-sweets/_revi…
 
     │   read  .../code/bangla-sweets/_review/live-webkit-final.png  0 lines
     │   plan  updated  3 steps

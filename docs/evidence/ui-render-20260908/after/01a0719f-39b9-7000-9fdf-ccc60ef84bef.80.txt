@@ -30,7 +30,7 @@
     check the photo situation, then I'll read back.
 
     │   read  .../Project/code/bangla-sweets/styles.css  lines 121-520
-    │   run   ls /Users/ritikyadav890/Project/code/bangla-sweets/assets/…  0ms
+    │   run   ls ~/Project/code/bangla-sweets/assets/…  0ms
     │ chom-chom.jpg
     │ gulab-jamun.jpg
     │ kalo-jam.jpg
@@ -47,7 +47,7 @@
     Let me confirm the photos work and check the SVGs look right, then read
     back.
 
-    │   run   cd /Users/ritikyadav890/Project/code/bangla-sweets && for …  0ms
+    │   run   cd ~/Project/code/bangla-sweets && for …  0ms
     │ assets/photos/chom-chom.jpg                233531 bytes
     │ assets/photos/gulab-jamun.jpg              207722 bytes
     │ assets/photos/kalo-jam.jpg                 149861 bytes
@@ -210,14 +210,14 @@
     │    … 69 more lines
 
   ◇ Appending categories, grid, trust, story, ritual, footer to index.html.
-    │   run   cat >> /Users/ritikyadav890/Project/code/bangla-sweets/ind…  0ms
-    │ 206 /Users/ritikyadav890/Project/code/bangla-sweets/index.html
+    │   run   cat >> ~/Project/code/bangla-sweets/ind…  0ms
+    │ 206 ~/Project/code/bangla-sweets/index.html
 
   ◇ Now appending the modals (item, cart drawer, checkout, confirm, track,
     toast) to index.html.
 
-    │   run   cat >> /Users/ritikyadav890/Project/code/bangla-sweets/ind…  0ms
-    │      389 /Users/ritikyadav890/Project/code/bangla-sweets/index.html
+    │   run   cat >> ~/Project/code/bangla-sweets/ind…  0ms
+    │      389 ~/Project/code/bangla-sweets/index.html
     │   <script src="./app.js?v=20260905-redesign"></script>
     │ </body>
     │ </html>
@@ -267,7 +267,7 @@
   ◇ Updating the todo list to reflect what's actually done:
     │   plan  updated  7 steps
   ◇ Now serving the page and visually verifying it.
-    │   run   cd /Users/ritikyadav890/Project/code/bangla-sweets && pyth…  0ms
+    │   run   cd ~/Project/code/bangla-sweets && pyth…  0ms
     │   poll  shell_1
 
   ◇ Now rendering the page with headless Chrome to actually look at the
@@ -355,7 +355,7 @@
 
     To unblock and finish. Open the file directly:
 
-    open /Users/ritikyadav890/Project/code/bangla-sweets/index.html
+    open ~/Project/code/bangla-sweets/index.html
 
     or python3 -m http.server 8000 inside bangla-sweets/. Walk the page at
     desktop and at ≤540 px, then add a Sandesh, step the qty, checkout, place
@@ -418,49 +418,49 @@
   ◇ Sandbox blocks the singleton lock; dropping --no-sandbox already on, and
     trying a writeable temp dir under the workspace.
 
-    │   run   mkdir -p /Users/ritikyadav890/Project/code/.snap/p1  0ms
+    │   run   mkdir -p ~/Project/code/.snap/p1  0ms
     │ [0905/184057.789914:ERROR:third_party/crashpad/crashpad/util/file/file_…
     │ [79551:12682233:0905/184057.799894:ERROR:chrome/browser/process_singlet…
     │ [79551:12682233:0905/184057.800084:ERROR:chrome/app/chrome_main_delegat…
-    │ /Users/ritikyadav890/Project/code/.snap/desktop.png: cannot open `/User…
+    │ ~/Project/code/.snap/desktop.png: cannot open `/User…
     │ … 1 more line
-    │ ls: /Users/ritikyadav890/Project/code/.snap/desktop.png: No such file o…
+    │ ls: ~/Project/code/.snap/desktop.png: No such file o…
 
   ◇ Sandbox is blocking the headless browser's two write paths (Crashpad
     settings + the singleton socket). Trying without the
     Brave-Browser/Crashpad path entirely by using --disable-crashpad and
     pointing the singleton off the default temp tree.
 
-    │   run   mkdir -p /Users/ritikyadav890/Project/code/.snap/p2  0ms
+    │   run   mkdir -p ~/Project/code/.snap/p2  0ms
     │ [0905/184102.783246:ERROR:third_party/crashpad/crashpad/util/file/file_…
     │ [0905/184102.783648:ERROR:third_party/crashpad/crashpad/util/file/file_…
     │ [0905/184102.783789:ERROR:third_party/crashpad/crashpad/util/file/file_…
     │ [79573:12682331:0905/184102.793435:ERROR:chrome/browser/process_singlet…
     │ … 2 more lines
-    │ /Users/ritikyadav890/Project/code/.snap/desktop.png: cannot open `/User…
+    │ ~/Project/code/.snap/desktop.png: cannot open `/User…
 
   ◇ Sandbox is blocking the browser's ~/Library/Application
     Support/BraveSoftware write. Working around it by setting the app data
     directory explicitly to a workspace path.
 
-    │   run   mkdir -p /Users/ritikyadav890/Project/code/.snap/p3 /Users…  0ms
+    │   run   mkdir -p ~/Project/code/.snap/p3 /Users…  0ms
     │ [0905/184108.972384:ERROR:third_party/crashpad/crashpad/util/file/file_…
     │ [79629:12682561:0905/184108.981565:ERROR:chrome/browser/process_singlet…
     │ [79629:12682561:0905/184108.981765:ERROR:chrome/app/chrome_main_delegat…
-    │ ls: /Users/ritikyadav890/Project/code/.snap/desktop.png: No such file o…
-    │ /Users/ritikyadav890/Project/code/.snap/desktop.png: cannot open `/User…
+    │ ls: ~/Project/code/.snap/desktop.png: No such file o…
+    │ ~/Project/code/.snap/desktop.png: cannot open `/User…
 
   ◇ Sandbox is blocking Brave's hardcoded writes to ~/Library/Application
     Support/BraveSoftware and /var/folders/... for the singleton socket — the
     --user-data-dir flag only redirects the profile dir, not the app-data
     tree. Bypassing the sandbox for this one call.
 
-    │   run   mkdir -p /Users/ritikyadav890/Project/code/.snap/p4 /Users…  0ms
+    │   run   mkdir -p ~/Project/code/.snap/p4 /Users…  0ms
     │ [0905/184113.069221:ERROR:third_party/crashpad/crashpad/util/file/file_…
     │ [0905/184113.069648:ERROR:third_party/crashpad/crashpad/util/file/file_…
     │ [0905/184113.069764:ERROR:third_party/crashpad/crashpad/util/file/file_…
-    │ ls: /Users/ritikyadav890/Project/code/.snap/desktop.png: No such file o…
-    │ /Users/ritikyadav890/Project/code/.snap/desktop.png: cannot open `/User…
+    │ ls: ~/Project/code/.snap/desktop.png: No such file o…
+    │ ~/Project/code/.snap/desktop.png: cannot open `/User…
 
   ◇ Browser still failing on hardcoded paths. Trying Firefox which I saw in
     /Applications/.
@@ -476,8 +476,8 @@
     │   run   "/Applications/Firefox.app/Contents/MacOS/firefox" --headl…  0ms
     │ *** You are running in headless mode.
     │ A copy of Firefox is already open. Only one copy of Firefox can be open…
-    │ ls: /Users/ritikyadav890/Project/code/.snap/desktop.png: No such file o…
-    │ /Users/ritikyadav890/Project/code/.snap/desktop.png: cannot open `/User…
+    │ ls: ~/Project/code/.snap/desktop.png: No such file o…
+    │ ~/Project/code/.snap/desktop.png: cannot open `/User…
 
   ◇ Closing the running Firefox first, then trying with -no-remote and a fresh
     profile.
@@ -490,13 +490,13 @@
     instead, since --no-remote should let it coexist with the running
     instance.
 
-    │   run   mkdir -p /Users/ritikyadav890/Project/code/.snap/ff1  0ms
+    │   run   mkdir -p ~/Project/code/.snap/ff1  0ms
     │ [WARN  minidump_unwind::symbols::debuginfo] failed to open /System/Libr…
     │ [WARN  minidump_unwind::symbols::debuginfo] failed to open /System/Libr…
     │ [WARN  minidump_unwind::symbols::debuginfo] failed to open /System/Libr…
     │ [WARN  minidump_unwind::symbols::debuginfo] failed to open /System/Libr…
     │ … 5 more lines
-    │ /Users/ritikyadav890/Project/code/.snap/desktop.png: cannot open `/User…
+    │ ~/Project/code/.snap/desktop.png: cannot open `/User…
 
   ◇ Same ~/Library/Application Support write block. Firefox has a flag to
     redirect that — MOZ_DATA_REPORTING_DIRECTORY. Trying the
@@ -522,7 +522,7 @@
   ◇ Installing puppeteer-core so I can drive a portable Chromium that lives
     entirely under the workspace.
 
-    │ ✗ run   cd /Users/ritikyadav890/Project/code/.snap && npm init -y …  0ms
+    │ ✗ run   cd ~/Project/code/.snap && npm init -y …  0ms
     │ Brave Browser
     │ Brave Browser
 
@@ -530,10 +530,10 @@
     visible progress flag, and also checking whether any system-level node
     tools or any chromium-bundled npm global is sitting around.
 
-    │ ✗ run   cd /Users/ritikyadav890/Project/code/.snap && rm -rf node_…  0ms
+    │ ✗ run   cd ~/Project/code/.snap && rm -rf node_…  0ms
     │ │ Error: Command failed: Sandbox violation: command blocked: chained rm…
     │ │ same failure repeated 1 more time
-    │   run   rm -rf /Users/ritikyadav890/Project/code/.snap/node_module…  0ms
+    │   run   rm -rf ~/Project/code/.snap/node_module…  0ms
     │ total 0
     │ drwxr-xr-x@  9 ritikyadav890  staff  288  5 Sep 18:41 .
     │ drwxr-xr-x  30 ritikyadav890  staff  960  5 Sep 18:40 ..
@@ -561,15 +561,15 @@
     jsdom render — that actually executes the JS, exercises every selector,
     and reports what the page looks like in DOM terms.
 
-    │   run   npm i --prefix /Users/ritikyadav890/Project/code/.snap jsd…  0ms
-    │ npm error   sudo chown -R 501:20 "/Users/ritikyadav890/.npm"
+    │   run   npm i --prefix ~/Project/code/.snap jsd…  0ms
+    │ npm error   sudo chown -R 501:20 "~/.npm"
     │ npm error Log files were not written due to an error writing to the dir…
     │ npm error You can rerun the command with `--loglevel=verbose` to see th…
 
   ◇ npm install is failing on permission to ~/.npm — fixing the npm config and
     trying again.
 
-    │   run   npm config set cache /Users/ritikyadav890/Project/code/.sn…  0ms
+    │   run   npm config set cache ~/Project/code/.sn…  0ms
     │ npm error Log files were not written due to an error writing to the dir…
     │ npm error You can rerun the command with `--loglevel=verbose` to see th…
     │ npm error
@@ -581,21 +581,21 @@
     already the user's preferred runtime for tests, and it won't touch ~/.npm.
 
     │   run   which bun 2>&1  0ms
-    │ /Users/ritikyadav890/.bun/bin/bun
+    │ ~/.bun/bin/bun
     │ 1.3.14
 
   ◇ bun is here. Using it to install jsdom and run the live page through it —
     fetches the served HTML, executes the served JS, renders to DOM, then I
     walk the result.
 
-    │   run   cd /Users/ritikyadav890/Project/code/.snap && bun add jsdo…  0ms
+    │   run   cd ~/Project/code/.snap && bun add jsdo…  0ms
     │ bun add v1.3.14 (0d9b296a)
     │ error: bun is unable to write files to tempdir: PermissionDenied
 
   ◇ bun's temp dir is also blocked. Trying to override its TMPDIR and
     pre-existing install of jsdom elsewhere.
 
-    │   run   ls /Users/ritikyadav890/Project/code/.snap/ 2>&1  0ms
+    │   run   ls ~/Project/code/.snap/ 2>&1  0ms
     │ cache
     │ dumps
     │ ff1
@@ -603,7 +603,7 @@
     │ … 5 more lines
     │ error: bun is unable to write files to tempdir: PermissionDenied
 
-    │   run   ls /Users/ritikyadav890/Project/code/.snap/ 2>&1  0ms
+    │   run   ls ~/Project/code/.snap/ 2>&1  0ms
     │ cache
     │ dumps
     │ ff1
@@ -666,11 +666,11 @@
     │    … 123 more lines
 
   ◇ Running the verification script.
-    │   run   python3 /Users/ritikyadav890/Project/code/.snap/verify.py …  0ms
+    │   run   python3 ~/Project/code/.snap/verify.py …  0ms
     │ Traceback (most recent call last):
-    │   File "/Users/ritikyadav890/Project/code/.snap/verify.py", line 18, in…
+    │   File "~/Project/code/.snap/verify.py", line 18, in…
     │     browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
-    │   File "/Users/ritikyadav890/Library/Python/3.14/lib/python/site-packag…
+    │   File "~/Library/Python/3.14/lib/python/site-packag…
     │ … 62 more lines
     │ - [pid=80503] <gracefully close end>
 
@@ -713,7 +713,7 @@
     │    3 + from playwright.sync_api import sync_playwright                 
     │    4 +                                                                 
     │    5 + URL = "http://127.0.0.1:8765/index.html"                        
-    │    6 + OUT = "/Users/ritikyadav890/Project/code/.snap"                 
+    │    6 + OUT = "~/Project/code/.snap"                 
     │    7 + results = {}                                                    
     │    8 +                                                                 
     │    9 + with sync_playwright() as p:                                    
@@ -723,24 +723,24 @@
     │    … 94 more lines
 
   ◇ Running the Firefox verification now.
-    │   run   python3 /Users/ritikyadav890/Project/code/.snap/verify_fx.…  0ms
+    │   run   python3 ~/Project/code/.snap/verify_fx.…  0ms
     │ Traceback (most recent call last):
-    │   File "/Users/ritikyadav890/Project/code/.snap/verify_fx.py", line 10,…
+    │   File "~/Project/code/.snap/verify_fx.py", line 10,…
     │     browser = p.firefox.launch(headless=True)
-    │   File "/Users/ritikyadav890/Library/Python/3.14/lib/python/site-packag…
+    │   File "~/Library/Python/3.14/lib/python/site-packag…
     │ … 32 more lines
     │ ╚════════════════════════════════════════════════════════════╝
 
   ◇ Firefox path doesn't exist on disk. Using the system Firefox with
     playwright.
 
-    │   run   ls /Users/ritikyadav890/Library/Caches/ms-playwright/ 2>/d…  0ms
+    │   run   ls ~/Library/Caches/ms-playwright/ 2>/d…  0ms
     │ __dirlock
     │ b
     │ chromium_headless_shell-1187
     │ chromium_headless_shell-1234
     │ … 7 more lines
-    │ /Users/ritikyadav890/Library/Caches/ms-playwright/chromium-1234/chrome-…
+    │ ~/Library/Caches/ms-playwright/chromium-1234/chrome-…
 
   ◇ Tried the full Chrome for Testing — it segfaults in the sandbox just like
     the headless shell. Trying the system Firefox via executable_path instead.
@@ -751,7 +751,7 @@
   ◇ Trying the system Firefox directly with playwright.
     │   run   python3 << 'PY' 2>&1 | tail -50  0ms
     │   File "<stdin>", line 7, in <module>
-    │   File "/Users/ritikyadav890/Library/Python/3.14/lib/python/site-packag…
+    │   File "~/Library/Python/3.14/lib/python/site-packag…
     │     self._sync(
     │     ~~~~~~~~~~^
     │ … 44 more lines
@@ -865,7 +865,7 @@
     with a workspace-local install path, so its sandbox-violating writes stay
     inside the workspace.
 
-    │   run   mkdir -p /Users/ritikyadav890/Project/code/.snap/pw-browse…  0ms
+    │   run   mkdir -p ~/Project/code/.snap/pw-browse…  0ms
     │ |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                      …
     │ |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                              …
     │ |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                      …
@@ -878,7 +878,7 @@
     │ server: HTTP 200
     │ Traceback (most recent call last):
     │   File "<stdin>", line 7, in <module>
-    │   File "/Users/ritikyadav890/Library/Python/3.14/lib/python/site-packag…
+    │   File "~/Library/Python/3.14/lib/python/site-packag…
     │ … 62 more lines
     │ - [pid=81175] <gracefully close end>
 
@@ -888,10 +888,10 @@
     headless shell to a workspace path and re-run; last attempt still hit
     /var/folders/... for the profile path.
 
-    │   run   mkdir -p /Users/ritikyadav890/Project/code/.snap/profile  0ms
+    │   run   mkdir -p ~/Project/code/.snap/profile  0ms
     │ Traceback (most recent call last):
     │   File "<stdin>", line 8, in <module>
-    │   File "/Users/ritikyadav890/Library/Python/3.14/lib/python/site-packag…
+    │   File "~/Library/Python/3.14/lib/python/site-packag…
     │     self._sync(
     │ … 23 more lines
     │ playwright._impl._errors.Error: BrowserType.launch: Pass user_data_dir …
@@ -899,10 +899,10 @@
   ◇ Re-reading the error — I need to use launch_persistent_context instead of
     launch when passing a user-data dir.
 
-    │   run   PLAYWRIGHT_BROWSERS_PATH=/Users/ritikyadav890/Project/code…  0ms
+    │   run   PLAYWRIGHT_BROWSERS_PATH=~/Project/code…  0ms
     │ Traceback (most recent call last):
     │   File "<stdin>", line 7, in <module>
-    │   File "/Users/ritikyadav890/Library/Python/3.14/lib/python/site-packag…
+    │   File "~/Library/Python/3.14/lib/python/site-packag…
     │     self._sync(
     │ … 61 more lines
     │ - [pid=81275] <gracefully close end>
@@ -916,8 +916,8 @@
     │   run   curl -s -o /dev/null -w "server: HTTP %{http_code}\n" http…  0ms
     │ server: HTTP 200
     │ ---
-    │     1011 /Users/ritikyadav890/Project/code/bangla-sweets/styles.css
-    │      389 /Users/ritikyadav890/Project/code/bangla-sweets/index.html
+    │     1011 ~/Project/code/bangla-sweets/styles.css
+    │      389 ~/Project/code/bangla-sweets/index.html
     │ … 1 more line
     │ 1875 total
 
@@ -926,7 +926,7 @@
   ◇ Right — installing playwright Chromium to a workspace-local path and then
     driving it from outside the sandbox.
 
-    │   run   mkdir -p /Users/ritikyadav890/Project/code/.snap/pw  0ms
+    │   run   mkdir -p ~/Project/code/.snap/pw  0ms
     │ |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■…
     │ |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■…
     │ Chrome Headless Shell 151.0.7922.34 (playwright chromium-headless-shell…
@@ -954,7 +954,7 @@
       (single column under the 540 breakpoint).
 
     Screenshots are at
-    /Users/ritikyadav890/Project/code/.snap/desktop_full.png,
+    ~/Project/code/.snap/desktop_full.png,
     desktop_hero.png, desktop_item_modal.png, desktop_cart_drawer.png,
     desktop_confirm.png, desktop_track.png, mobile_full.png, mobile_hero.png.
 
@@ -967,7 +967,7 @@
 
     To look at it yourself.
 
-    cd /Users/ritikyadav890/Project/code/bangla-sweets
+    cd ~/Project/code/bangla-sweets
     python3 -m http.server 8000
 
     then open http://127.0.0.1:8000/. Or open bangla-sweets/index.html for
@@ -996,7 +996,7 @@
     │    5 + from playwright.sync_api import sync_playwright                 
     │    6 +                                                                 
     │    7 + URL = "http://127.0.0.1:8765/index.html"                        
-    │    8 + OUT = "/Users/ritikyadav890/Project/code/.snap"                 
+    │    8 + OUT = "~/Project/code/.snap"                 
     │    9 + PROFILE = f"{OUT}/chrome-profile"                               
     │   10 + os.makedirs(PROFILE, exist_ok=True)                             
     │   11 +                                                                 
@@ -1007,7 +1007,7 @@
     │   run   curl -s -o /dev/null -w "server: HTTP %{http_code}\n" http…  0ms
     │ server: HTTP 200
     │ Traceback (most recent call last):
-    │   File "/Users/ritikyadav890/Project/code/.snap/verify2.py", line 14, i…
+    │   File "~/Project/code/.snap/verify2.py", line 14, i…
     │     browser = p.chromium.launch_persistent_context(
     │ … 70 more lines
     │ - [pid=81719] <gracefully close end>
@@ -1052,8 +1052,8 @@
     │    4 + // the served HTML's elements expect.                           
     │    5 + import { readFileSync } from "fs";                              
     │    6 +                                                                 
-    │    7 + const html = readFileSync("/Users/ritikyadav890/Project/code/ba…
-    │    8 + const js   = readFileSync("/Users/ritikyadav890/Project/code/ba…
+    │    7 + const html = readFileSync("~/Project/code/ba…
+    │    8 + const js   = readFileSync("~/Project/code/ba…
     │    9 +                                                                 
     │   10 + // ---------- element registry ----------                       
     │   11 + const ids = [...html.matchAll(/\bid="([\w-]+)"/g)].map(m => m[1…
@@ -1069,8 +1069,8 @@
     │    3 + // drawer, checkout, place order, track. We confirm the same da…
     │    4 + // served HTML's elements expect.                               
     │    5 + const fs = require("fs");                                       
-    │    6 + const html = fs.readFileSync("/Users/ritikyadav890/Project/code…
-    │    7 + const js   = fs.readFileSync("/Users/ritikyadav890/Project/code…
+    │    6 + const html = fs.readFileSync("~/Project/code…
+    │    7 + const js   = fs.readFileSync("~/Project/code…
     │    8 +                                                                 
     │    9 + // ---------- element registry ----------                       
     │   10 + const ids = [...html.matchAll(/\bid="([\w-]+)"/g)].map(m => m[1…
@@ -1078,7 +1078,7 @@
     │   12 + function makeEl(id) {                                           
     │    … 78 more lines
 
-    │   run   node /Users/ritikyadav890/Project/code/.snap/flow.js 2>&1 …  0ms
+    │   run   node ~/Project/code/.snap/flow.js 2>&1 …  0ms
     │ JS threw: Cannot read properties of undefined (reading 'window')
     │ === Flow check results ===
     │ FAIL  grid populated                innerHTML=0b
@@ -1106,8 +1106,8 @@
     │    3 + // confirm, paint track. We assert on the same element ids the …
     │    4 + const fs = require("fs");                                       
     │    5 + const path = require("path");                                   
-    │    6 + const html = fs.readFileSync("/Users/ritikyadav890/Project/code…
-    │    7 + const js   = fs.readFileSync("/Users/ritikyadav890/Project/code…
+    │    6 + const html = fs.readFileSync("~/Project/code…
+    │    7 + const js   = fs.readFileSync("~/Project/code…
     │    8 +                                                                 
     │    9 + // ---------- element registry (mirrors what the served HTML pr…
     │   10 + const ids = [...html.matchAll(/\bid="([\w-]+)"/g)].map(m => m[1…
@@ -1115,11 +1115,11 @@
     │   12 + function makeEl(id) {                                           
     │    … 172 more lines
 
-    │   run   node /Users/ritikyadav890/Project/code/.snap/flow.js 2>&1 …  0ms
+    │   run   node ~/Project/code/.snap/flow.js 2>&1 …  0ms
     │ JS threw: Cannot read properties of undefined (reading 'localStorage')
     │ TypeError: Cannot read properties of undefined (reading 'localStorage')
-    │     at Object.eval (eval at <anonymous> (/Users/ritikyadav890/Project/c…
-    │     at Object.<anonymous> (/Users/ritikyadav890/Project/code/.snap/flow…
+    │     at Object.eval (eval at <anonymous> (~/Project/c…
+    │     at Object.<anonymous> (~/Project/code/.snap/flow…
     │ … 16 more lines
     │ Node.js v26.0.0
 
@@ -1133,8 +1133,8 @@
     │    4 + // served HTML has.                                             
     │    5 + const fs = require("fs");                                       
     │    6 +                                                                 
-    │    7 + const html = fs.readFileSync("/Users/ritikyadav890/Project/code…
-    │    8 + const js   = fs.readFileSync("/Users/ritikyadav890/Project/code…
+    │    7 + const html = fs.readFileSync("~/Project/code…
+    │    8 + const js   = fs.readFileSync("~/Project/code…
     │    9 +                                                                 
     │   10 + // ---------- element registry (mirrors what the served HTML pr…
     │   11 + const ids = [...html.matchAll(/\bid="([\w-]+)"/g)].map(m => m[1…
@@ -1142,7 +1142,7 @@
     │    … 140 more lines
 
   ◇ Running the flow harness now.
-    │   run   node /Users/ritikyadav890/Project/code/.snap/flow.js 2>&1 …  0ms
+    │   run   node ~/Project/code/.snap/flow.js 2>&1 …  0ms
     │ <anonymous_script>:487
     │ })
     │   
@@ -1153,7 +1153,7 @@
   ◇ The IIFE unwrap regex consumed too much — fixing the trim so the function
     body stays balanced, then running it.
 
-    │   run   tail -8 /Users/ritikyadav890/Project/code/bangla-sweets/ap…  0ms
+    │   run   tail -8 ~/Project/code/bangla-sweets/ap…  0ms
     │ 
     │   /* ---------- boot ---------- */
     │   document.addEventListener("DOMContentLoaded", () => {
@@ -1205,13 +1205,13 @@
     │    8 + const vm = require("vm");                                       
     │    9 + const path = require("path");                                   
     │   10 +                                                                 
-    │   11 + const ROOT = "/Users/ritikyadav890/Project/code/bangla-sweets"; 
+    │   11 + const ROOT = "~/Project/code/bangla-sweets"; 
     │   12 + const html = fs.readFileSync(`${ROOT}/index.html`, "utf8");     
     │    … 187 more lines
 
   ◇ Running the new harness.
-    │   run   node /Users/ritikyadav890/Project/code/.snap/flow.js 2>&1 …  0ms
-    │ /Users/ritikyadav890/Project/code/.snap/flow.js:93
+    │   run   node ~/Project/code/.snap/flow.js 2>&1 …  0ms
+    │ ~/Project/code/.snap/flow.js:93
     │   seen[id].value = value;
     │                  ^
     │ 
@@ -1219,8 +1219,8 @@
     │ Node.js v26.0.0
 
     · compacted  older messages summarized  50% -> 44% | -6.7k tokens
-    │   run   node /Users/ritikyadav890/Project/code/.snap/flow.js 2>&1 …  0ms
-    │ /Users/ritikyadav890/Project/code/.snap/flow.js:93
+    │   run   node ~/Project/code/.snap/flow.js 2>&1 …  0ms
+    │ ~/Project/code/.snap/flow.js:93
     │   seen[id].value = value;
     │                  ^
     │ 
@@ -1250,7 +1250,7 @@
     │   95     for (const h of handlers) { try { h.fn({ target: seen[id] });…
     │   96   
 
-    │   run   node /Users/ritikyadav890/Project/code/.snap/flow.js 2>&1 …  0ms
+    │   run   node ~/Project/code/.snap/flow.js 2>&1 …  0ms
     │ 
     │ === Page-render checks ===
     │ PASS  app.js executed without throwing          ok
@@ -1275,7 +1275,7 @@
     but addEventListener in the stub doesn't fire the handler because the
     event object passed to it isn't an Event. Fixing the dispatch.
 
-    │   run   sed -n '466,475p' /Users/ritikyadav890/Project/code/bangla…  0ms
+    │   run   sed -n '466,475p' ~/Project/code/bangla…  0ms
     │     });
     │   }
     │ 
@@ -1290,7 +1290,7 @@
     only thing standing between the harness and a real boot.
 
     │ ✗ edit  .../Project/code/.snap/flow.js  0ms
-    │ │ Error: Invalid arguments: old_text not found in /Users/ritikyadav890/…
+    │ │ Error: Invalid arguments: old_text not found in ~/…
 
   ! All providers rate limited — waiting 62s, then resuming…
 
@@ -1317,11 +1317,11 @@
         engine the page uses — using bun to execute app.js with a
         window/localStorage/document stub.
     Files touched: bangla-sweets/styles.css, bangla-sweets/index.html,
-    bangla-sweets/app.js, /Users/ritikyadav890/Project/code/.snap/verify.py,
-    /Users/ritikyadav890/Project/code/.snap/verify_fx.py,
-    /Users/ritikyadav890/Project/code/.snap/verify2.py,
-    /Users/ritikyadav890/Project/code/.snap/flow.ts,
-    /Users/ritikyadav890/Project/code/.snap/flow.js
+    bangla-sweets/app.js, ~/Project/code/.snap/verify.py,
+    ~/Project/code/.snap/verify_fx.py,
+    ~/Project/code/.snap/verify2.py,
+    ~/Project/code/.snap/flow.ts,
+    ~/Project/code/.snap/flow.js
     Verification: passed
     Next step: End-to-end flow check: walk
     cart→drawer→checkout→confirm→track→reload. Reason: same headless-browser

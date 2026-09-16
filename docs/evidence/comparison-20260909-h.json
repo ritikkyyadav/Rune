@@ -18,7 +18,7 @@
     "taskDigest": "5fd97f19c54b1022761dedc21a6157f256718311a6fb33f4d94d0dc8a0cc674a",
     "runeExecutableSha256": "1321e88060a9c60d3f943393b819fe83ea566fd0544866eb775c046a6b8ed791",
     "runeCommand": [
-      "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/bundle-final/rune-compiled"
+      "~/Project/Alan/.codex/audit-20260909/bundle-final/rune-compiled"
     ],
     "opencodeCommand": [
       "opencode"
@@ -54,7 +54,7 @@
       "acceptancePassed": true,
       "onBudget": false,
       "success": false,
-      "evidence": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/comparison-h/csv-state-machine-1-rune",
+      "evidence": "~/Project/Alan/.codex/audit-20260909/comparison-h/csv-state-machine-1-rune",
       "patchSha256": "b1393532e52f86b0f4e4a671a52ccd8cf22ff05121260a8a03bef031ccc0482e",
       "completedAt": "2026-09-09T17:52:58.047Z"
     },
@@ -76,7 +76,7 @@
       "acceptancePassed": true,
       "onBudget": true,
       "success": true,
-      "evidence": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/comparison-h/csv-state-machine-1-opencode",
+      "evidence": "~/Project/Alan/.codex/audit-20260909/comparison-h/csv-state-machine-1-opencode",
       "patchSha256": "32a52c29e77dcdfc1c3368ee45e9009f5b22d2ff29d058babfc73fe4c98d6f04",
       "completedAt": "2026-09-09T17:56:27.393Z"
     }

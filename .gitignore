@@ -85,3 +85,7 @@ scripts/tui-capture/__pycache__/
 # The containment audit's Docker build context: containment.yml regenerates
 # this from `git ls-files` on every run; it is never a source artefact.
 scripts/containment/source.tar
+
+# Python bytecode caches carry absolute paths and are never source
+__pycache__/
+*.pyc

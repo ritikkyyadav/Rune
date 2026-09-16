@@ -2420,12 +2420,12 @@
     │ › run 
 
     │ ✗ list  ..  0ms
-    │ │ Error: Path escape: /Users/ritikyadav890/Project/evolab7/.. is outside workspace /Users/ritikyadav890/Project…
+    │ │ Error: Path escape: ~/Project/evolab7/.. is outside workspace ~/Project…
 
     │   read  .../Project/evolab7/.gear/mission.md  lines 1-80
 
     │   run   pwd && git status --short --branch 2>&1 || true && git rev-parse --show-toplevel 2>&1 || true && du -sh…
-    │ /Users/ritikyadav890/Project/evolab7
+    │ ~/Project/evolab7
     │ fatal: not a git repository (or any of the parent directories): .git
     │ fatal: not a git repository (or any of the parent directories): .git
     │ 28K	.
@@ -2455,7 +2455,7 @@
     │    1 + # EvoLab state of system                                                                                
     │    2 +                                                                                                         
     │    3 + **Audit date:** 2026-09-01                                                                              
-    │    4 + **Workspace:** `/Users/ritikyadav890/Project/evolab7`                                                   
+    │    4 + **Workspace:** `~/Project/evolab7`                                                   
     │    5 + **Baseline:** empty application workspace                                                               
     │    6 +                                                                                                         
     │    7 + ## Method                                                                                               
@@ -3316,7 +3316,7 @@
     │     Expected: visible
     │     Error: strict mode violation: getByText('NCBI source record') resolved to 4 elements:
     │ … 16 lines
-    │         at /Users/ritikyadav890/Project/evolab7/frontend/tests/laboratory.spec.ts:18:54
+    │         at ~/Project/evolab7/frontend/tests/laboratory.spec.ts:18:54
     │ … 1 line
     │     Error Context: test-results/laboratory-FOXP2-laborator-eb1b5-preserves-the-evidence-path/error-context.md
     │ … 2 lines
@@ -3672,7 +3672,7 @@
     │ - Expected  - 1
     │ + Received  + 3
     │ … 1 line
-    │       at <anonymous> (/Users/ritikyadav890/Project/evolab7/frontend/tests/runner-isolation.test.ts:63:23)
+    │       at <anonymous> (~/Project/evolab7/frontend/tests/runner-isolation.test.ts:63:23)
     │ … 2 lines
     │  1 pass
     │  1 fail

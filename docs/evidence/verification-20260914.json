@@ -111,7 +111,7 @@
   },
   "walkthrough": {
     "kind": "installed-walkthrough",
-    "binary": "/Users/ritikyadav890/.rune/bin/rune",
+    "binary": "~/.rune/bin/rune",
     "rig": ".codex/audit-20260910/handoff/m0/walkthrough-installed.py (capture-p4.py's walk with ARGV swapped to the installed launcher)",
     "sizes": ["120x40", "80x24"],
     "frames": [
@@ -157,7 +157,7 @@
   },
   "scenario-installed": {
     "kind": "scenario-suite-on-installed-binary",
-    "binary": "/Users/ritikyadav890/.rune/bin/rune",
+    "binary": "~/.rune/bin/rune",
     "suite": "tests/integration/lifecycle-durability.test.ts via RUNE_SCENARIO_CLI",
     "pass": 47,
     "fail": 0,

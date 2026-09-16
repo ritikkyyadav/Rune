@@ -6,13 +6,13 @@
   "version": "Rune v0.4.0-dev+4f3e3a1",
   "artifacts": {
     "rune-compiled": {
-      "source": "/Users/ritikyadav890/.rune/bin/rune-compiled",
-      "copy": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/bundle/rune-compiled",
+      "source": "~/.rune/bin/rune-compiled",
+      "copy": "~/Project/Alan/.codex/audit-20260909/bundle/rune-compiled",
       "sha256": "a0014668e3bf6591db8830de9141a6813f7aadb4d002c43aef03573c8f8dfe28"
     },
     "rune-tools": {
-      "source": "/Users/ritikyadav890/.rune/bin/rune-tools",
-      "copy": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/bundle/rune-tools",
+      "source": "~/.rune/bin/rune-tools",
+      "copy": "~/Project/Alan/.codex/audit-20260909/bundle/rune-tools",
       "sha256": "7d9171836f3e70dc96e32e19acd63fca279ffca2f4946f583f16c842b44d26f6"
     }
   },
@@ -25,7 +25,7 @@
         "skipped": 1,
         "failed": 0
       },
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/unit.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260909/unit.log",
       "logSha256": "fd027b9c8404197683a438252566d9581ce206ea3eb8d329014f6e1dc31341c1"
     },
     {
@@ -36,7 +36,7 @@
         "skipped": 5,
         "failed": 0
       },
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/integration.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260909/integration.log",
       "logSha256": "dc2cd583c1931bdf856f055702fc770b5c2b0f75d0092e47e0e2ebeecfccde99"
     },
     {
@@ -46,7 +46,7 @@
         "passed": 94,
         "failed": 0
       },
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/rust.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260909/rust.log",
       "logSha256": "6ebb7a6cef3ab02e5502a9741ae844c0fab8a7699aad1900f95dec9e31b0994c"
     },
     {
@@ -56,7 +56,7 @@
         "passedTasks": 14,
         "cachedTasks": 0
       },
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/typecheck.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260909/typecheck.log",
       "logSha256": "3517fc13b5cea693d66b1df2f8b54ef2dcfe18862fd19198cbc6eb59b5874f6c"
     },
     {
@@ -66,7 +66,7 @@
         "passedTasks": 7,
         "cachedTasks": 0
       },
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/lint.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260909/lint.log",
       "logSha256": "d3bcba96c863bfe21c646083fe0d9c735cc491afaac324b6b0b7a86ff58ad931"
     },
     {
@@ -78,7 +78,7 @@
         "governanceCompletionsPerTask": 0.26,
         "baselineChanged": false
       },
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/mock.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260909/mock.log",
       "logSha256": "2fb7ac9c88bc9f9c5aa9fdd7e90e3cf1e194e4bf6a4bb9dec914d6fe6ece0b83"
     },
     {
@@ -89,7 +89,7 @@
         "failed": 2,
         "reason": "Chromium SIGSEGV"
       },
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/browser-before.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260909/browser-before.log",
       "logSha256": "6ac3731e90049dda0a477f20d409f452beaa5c1a34278a53283a5de91616fd26"
     },
     {
@@ -99,7 +99,7 @@
         "passed": 2,
         "failed": 0
       },
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/browser-after.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260909/browser-after.log",
       "logSha256": "ef0d46f42591b1ec25ca81d2af25d6340ff5d2b367bf3f1e753fe2db4788ea42"
     },
     {
@@ -109,7 +109,7 @@
         "passed": 2,
         "failed": 0
       },
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/browser-installed.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260909/browser-installed.log",
       "logSha256": "bcf27bcb860db04870e32d1deca69ddf5e2a4ec3a90bd6d3368905b39b06c507"
     },
     {
@@ -119,7 +119,7 @@
         "passed": true,
         "overrideUsed": false
       },
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/install.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260909/install.log",
       "logSha256": "cc25b7e9cda946dab3aee573432ddedb4a5d5f400d3841659f6b0dc2a45bc332"
     }
   ],

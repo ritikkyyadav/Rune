@@ -286,7 +286,7 @@ Fix commits: `a464234` (the `custom` provider was rejected by the sticky-model p
 
 - `rune doctor` reports supervisor false-positive kills at 0.98 per 100 runs, with the caveat that the new per-verdict rows have no denominator yet.
 - A run writes `.rune/skills/playbook/PENDING.md` into the workspace and `.gitignore` does not cover it (backlog).
-- The founder's own `filesystem` MCP server points at `/Users/ritikyadav890/Projects/Alan` (typo), so `rune -P` prints a connector-down notice; fix in the user's `mcp.json`.
+- The founder's own `filesystem` MCP server points at `~/Projects/Alan` (typo), so `rune -P` prints a connector-down notice; fix in the user's `mcp.json`.
 
 ## Pull requests
 

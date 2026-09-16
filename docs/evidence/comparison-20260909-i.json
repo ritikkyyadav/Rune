@@ -18,7 +18,7 @@
     "taskDigest": "5fd97f19c54b1022761dedc21a6157f256718311a6fb33f4d94d0dc8a0cc674a",
     "runeExecutableSha256": "961b8739d8b484d851597227ff95bf9f607f156fb2a1b48b8018d84daa436109",
     "runeCommand": [
-      "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/delivery/rune-compiled"
+      "~/Project/Alan/.codex/audit-20260909/delivery/rune-compiled"
     ],
     "opencodeCommand": [
       "opencode"
@@ -54,7 +54,7 @@
       "acceptancePassed": false,
       "onBudget": true,
       "success": false,
-      "evidence": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260909/comparison-i/csv-state-machine-1-rune",
+      "evidence": "~/Project/Alan/.codex/audit-20260909/comparison-i/csv-state-machine-1-rune",
       "patchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "completedAt": "2026-09-09T18:11:04.887Z"
     }

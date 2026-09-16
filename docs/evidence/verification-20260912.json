@@ -109,7 +109,7 @@
   ],
   "artifacts": {
     "rune-tools-debug": {
-      "path": "/Users/ritikyadav890/Project/Alan/target/debug/rune-tools",
+      "path": "~/Project/Alan/target/debug/rune-tools",
       "sha256": "3c24a49e6764e66d4fbb126e1a03a4c152d4d9c6bc03f5dcd4d85fe9f35290ff",
       "note": "Unchanged across both 3C sittings — re-hashed at the start of this pass and it still matched, so nothing was rebuilt. Exported as RUNE_TOOLS_BIN and RUNE_TOOLS_BINARY on every bun line below."
     },
@@ -859,7 +859,7 @@
     {
       "id": "(a) attribution equalities",
       "subject": "the installed binary, driven through `tests/helpers/scenario.ts`",
-      "binary": "/Users/ritikyadav890/.rune/bin/rune (the launcher, sha256 5a22d151…) which execs rune-compiled (28668d09…). The launcher was chosen over rune-compiled because it is what `rune` means on this machine — it sets RUNE_TOOLS_BIN to the INSTALLED rune-tools (c5b44f6e…), so this measurement grades the installed PAIR.",
+      "binary": "~/.rune/bin/rune (the launcher, sha256 5a22d151…) which execs rune-compiled (28668d09…). The launcher was chosen over rune-compiled because it is what `rune` means on this machine — it sets RUNE_TOOLS_BIN to the INSTALLED rune-tools (c5b44f6e…), so this measurement grades the installed PAIR.",
       "proofItWasTheInstalledBinary": "The binary prints its own build on its header: `v0.4.1-dev+2f13c19` in `.codex/audit-20260910/handoff/phase3/installed/attribution/resume-render.log`.",
       "method": "`.codex/audit-20260910/handoff/phase3/installed/driver-installed-attribution.ts` — a scratch RUNE_HOME whose only route is a loopback mock, `assertNoLiveCredentials` before the process starts, the same 5-action script `tests/integration/overhead-attribution.test.ts` uses, then `bun run scripts/overhead-report.ts --db <scratch db> --no-pilots --blackbox <none> --out <json>` by hand.",
       "numbers": {

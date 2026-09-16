@@ -11,11 +11,11 @@
   "sourcePatchSha256": "f233be43f5c85574dab473beff8221ebc72a50e71d46737e0e61e96c4a06fcef",
   "artifacts": {
     "rune-compiled": {
-      "installedPath": "/Users/ritikyadav890/.rune/bin/rune-compiled",
+      "installedPath": "~/.rune/bin/rune-compiled",
       "sha256": "c337e2e0beea270fbf9bfda202ed78eed5069f2e3eca7966f2637a24f2f28aa2"
     },
     "rune-tools": {
-      "installedPath": "/Users/ritikyadav890/.rune/bin/rune-tools",
+      "installedPath": "~/.rune/bin/rune-tools",
       "sha256": "4aedd8ed0b215ff04a308d884d2d6caa75684f43d4006ccac78414a349e3c287"
     }
   },
@@ -28,7 +28,7 @@
         "failed": 0,
         "skipped": 1
       },
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/unit-final.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/unit-final.log",
       "logSha256": "d339ebb612b531f164f42de7b950698fb6d6a132b122aa08aa3e8d66080b9e4a"
     },
     {
@@ -41,7 +41,7 @@
         "realMcpTestsPassed": 7,
         "realChromiumTestsPassed": 2
       },
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/integration-final.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/integration-final.log",
       "logSha256": "b322be7c12e7351dba9d0b9b746d61b9699a18b411ea6d226ec391def9a31d3c"
     },
     {
@@ -51,7 +51,7 @@
         "passedTasks": 14,
         "cachedTasks": 0
       },
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/typecheck-final.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/typecheck-final.log",
       "logSha256": "18aa0f5bd69b4a8afb8fe045a65723c52553e5afe81f1b4ad9b688d43760baa9"
     },
     {
@@ -61,7 +61,7 @@
         "passedTasks": 7,
         "cachedTasks": 0
       },
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/lint-final.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/lint-final.log",
       "logSha256": "ecbc3d15956a35a4e22421379e7b9b1c7944bc18b64db13139f1d05cd472ec83"
     },
     {
@@ -70,7 +70,7 @@
       "result": {
         "passed": true
       },
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/test-types-final.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/test-types-final.log",
       "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
@@ -82,7 +82,7 @@
         "governanceCompletionsPerTask": 0.26,
         "baselineChanged": false
       },
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/mock-final.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/mock-final.log",
       "logSha256": "4c2f1d97d00ba05649d5b4a75f74da2473ecfffd6092cf5a5aecccbd49e6c3a3"
     },
     {
@@ -92,7 +92,7 @@
         "passed": true,
         "overrideUsed": false
       },
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/install-final.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/install-final.log",
       "logSha256": "3f5f1b1652edf3616d17ad217477a4015458151573f13c17f905262fdb48be5e"
     },
     {
@@ -103,7 +103,7 @@
         "doctorFullyGreen": false,
         "qualification": "Minimal PATH omits npx; doctor reports the configured MCP command missing. Native write/read/edit/bash smoke passed."
       },
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/installed-final.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/installed-final.log",
       "logSha256": "53c3c0dbbea5136db2f54da7aefd5388057047ded7ef6ed5d3b9baf1e7de48ff"
     },
     {
@@ -114,7 +114,7 @@
         "failed": 0,
         "skipped": 0
       },
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/installed-evidence-final.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/installed-evidence-final.log",
       "logSha256": "5c1c5e320ea24b07624a28a4957169c63f8cb1dcfbf9a72c2d1f1688aad88965"
     },
     {
@@ -127,7 +127,7 @@
         "cleanExits": 2,
         "modelUsageEvents": 0
       },
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/settings-final.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/settings-final.log",
       "logSha256": "eb4dd9856c00c0161e61adc2814922922aec0bfaef80c37494a9b1e052e57458"
     },
     {
@@ -136,7 +136,7 @@
       "result": {
         "expectedRegressionFailure": true
       },
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/settled-before-fix.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/settled-before-fix.log",
       "logSha256": "4c60b2366770992bfb66fbd7a4fd0cb012b77051ed132485380bf6a13323002b"
     }
   ],

@@ -9,7 +9,7 @@
     "head": "95c3d5469573fcc361fa734343c564cadd2ba80f",
     "dirty": true,
     "dirtyPatchSha256": "9c8035295cb7778a18b7bcf22aa8aa6e0d1f394a60cb6c6fe26bbcc225934ff7",
-    "toolsBinary": "/Users/ritikyadav890/project/alan/target/release/rune-tools",
+    "toolsBinary": "~/project/alan/target/release/rune-tools",
     "toolsBinarySha256": "c5b44f6e3620aae0cf82941a9e155fb95097815b1cd673eb9c98aa1347a28416",
     "bun": "1.3.14",
     "node": "24.3.0",

@@ -6,7 +6,7 @@
   "script": "scripts/overhead-report.ts",
   "source": {
     "corpus": {
-      "db": "/Users/ritikyadav890/.rune/rune.db",
+      "db": "~/.rune/rune.db",
       "readonly": true,
       "sessions": 684,
       "events": 26861,
@@ -22,7 +22,7 @@
       "databases": 15,
       "note": "Per-run databases written by tests/eval/comparison. One task, one build, one arm each, and 100% role-tagged — exact attribution on controlled runs."
     },
-    "blackbox": "/Users/ritikyadav890/.rune/blackbox.db"
+    "blackbox": "~/.rune/blackbox.db"
   },
   "method": {
     "runDefinition": "One user turn: from a user_msg with no `harness` marker to the event before the next one. Session start opens the first run. A run with no cost row is excluded — the handoff's \"every run that has usage rows\".",

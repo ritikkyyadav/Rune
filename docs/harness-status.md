@@ -2199,3 +2199,17 @@ launcher's `RUNE_NO_ENV_FILE` guard covers `~/.rune/.env`, not this file. It sho
 removed from the checkout (the product reads `~/.rune/.env`), and the keys rotated if they
 predate the fourth pass's advice. (2) Sixty-two tracked files — evidence JSON and the handoff
 — carry the founder's home path, which discloses a macOS username; low, cosmetic.
+
+### Addendum 45 — the audit's two items, acted on
+
+The repository-root `.env` (Google, OpenRouter and Brave keys, last written 2026-06-02) is out
+of the checkout: the Brave key was carried into `~/.rune/.env`, which the product reads and
+which already held the other two, and the file itself was moved to a backup outside any
+repository until the founder rotates the three keys. Bun's autoload of a working-directory
+`.env` is now harmless as well: the test preload strips every `*_API_KEY`, `*_AUTH_TOKEN`,
+`*_ACCESS_TOKEN` and `*_SECRET_KEY` from the environment before any module reads it, unless
+`RUNE_EVAL_REAL=1` names the live series on purpose — probed both ways; unit 6,078 / 0 with
+it. The home path is replaced by `~` in all 59 tracked docs and evidence files, the three
+compiled Python caches that carried it are untracked, and `__pycache__/` is ignored. Left
+to the founder: rotate the Google, OpenRouter and Brave keys (the file that held them sat in a
+folder Bun loaded for every test since June), then delete the backup.

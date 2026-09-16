@@ -1,6 +1,6 @@
 # Rune: execution handoff to Claude Code
 
-Prepared 2026-09-10 in `/Users/ritikyadav890/Project/Alan`.
+Prepared 2026-09-10 in `~/Project/Alan`.
 
 ## Start here
 
@@ -14,7 +14,7 @@ The user explicitly chose **keep the current license**. Preserve `LicenseRef-Pro
 
 ## Snapshot and ownership
 
-- Checkout: `/Users/ritikyadav890/Project/Alan`.
+- Checkout: `~/Project/Alan`.
 - Branch: `gear/phase-0-stabilize`.
 - Observed HEAD: `8c4c58f885f4eb3058d1bd1f839b06a1a3011189`.
 - **The branch and installed binaries advanced while this session was paused.** Re-read HEAD, status, and relevant diffs before changing anything. Preserve other contributors' work. Do not reset, clean, blanket-stage, or replace files from an older snapshot.

@@ -17,8 +17,8 @@
     "dirtyPatchSha256": "11563a3c933abab090c8fb281e22e4243e4bdc94bf7448a6fd66a7f83e03a2d1",
     "taskDigest": "00931a9bb12af7ab95d494e2009b9db1750841c4992cfa1b6e6d2c4d7b9692dd",
     "runeCommand": [
-      "/Users/ritikyadav890/.bun/bin/bun",
-      "/Users/ritikyadav890/Project/Alan/packages/orchestrator/src/bin/rune-cli.ts"
+      "~/.bun/bin/bun",
+      "~/Project/Alan/packages/orchestrator/src/bin/rune-cli.ts"
     ],
     "opencodeCommand": [
       "opencode"

@@ -45,24 +45,24 @@
   },
   "artifacts": {
     "rune-tools-debug": {
-      "path": "/Users/ritikyadav890/Project/Alan/target/debug/rune-tools",
+      "path": "~/Project/Alan/target/debug/rune-tools",
       "sha256": "af10bd526035a84d6e35a45dc4ef5cc8483283fa514bda4b3e42cfd4fde951af",
       "built": "cargo build --locked -p rune-tools",
       "note": "Every bun suite below was pointed at this artifact by exporting RUNE_TOOLS_BIN and RUNE_TOOLS_BINARY on the command line."
     },
     "installedBefore": {
       "rune": {
-        "path": "/Users/ritikyadav890/.rune/bin/rune",
+        "path": "~/.rune/bin/rune",
         "sha256": "5a22d1513ef3a12596add9c53f2591f1f46a8938a3ef9f8cd7db0c3f6edfc2f5",
         "bytes": 2641
       },
       "rune-compiled": {
-        "path": "/Users/ritikyadav890/.rune/bin/rune-compiled",
+        "path": "~/.rune/bin/rune-compiled",
         "sha256": "78239eb482d93198b59bb8cff882605b731cd2504fe5574583bb7feddf246407",
         "bytes": 76424546
       },
       "rune-tools": {
-        "path": "/Users/ritikyadav890/.rune/bin/rune-tools",
+        "path": "~/.rune/bin/rune-tools",
         "sha256": "f849020a257b10c26eb6f72ad97c7c49960be48170e5e1faf5259031996633c2",
         "bytes": 11238768
       },
@@ -73,18 +73,18 @@
     },
     "installedAfter": {
       "rune": {
-        "path": "/Users/ritikyadav890/.rune/bin/rune",
+        "path": "~/.rune/bin/rune",
         "sha256": "5a22d1513ef3a12596add9c53f2591f1f46a8938a3ef9f8cd7db0c3f6edfc2f5",
         "bytes": 2641,
         "note": "UNCHANGED \u2014 the launcher shim is not rebuilt."
       },
       "rune-compiled": {
-        "path": "/Users/ritikyadav890/.rune/bin/rune-compiled",
+        "path": "~/.rune/bin/rune-compiled",
         "sha256": "d0f03687af414fa18eef856fc0d0e68c32ae65ee48130d65dcd20079f8bda9c2",
         "bytes": 76474082
       },
       "rune-tools": {
-        "path": "/Users/ritikyadav890/.rune/bin/rune-tools",
+        "path": "~/.rune/bin/rune-tools",
         "sha256": "01d8600becbcaf4bbd8fe0843d9f5c6d3ceb69b8737e798c2715a8df7a2cee48",
         "bytes": 11279440
       },
@@ -96,7 +96,7 @@
   },
   "diagnosticsVerified": {
     "method": "A strict scratch tsc (strict, noUnusedLocals, noUnusedParameters, types:[bun], typeRoots at the repo's node_modules/@types, and `paths` for all seven @rune/* packages \u2014 there is no node_modules/@rune symlink, bun resolves workspaces internally and tsc cannot) over the seven named files plus everything they import.",
-    "record": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/step0-diagnostics.md",
+    "record": "~/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/step0-diagnostics.md",
     "verdicts": [
       {
         "item": "bin/ui/events.ts:430 \u2014 AGENT_TURN_EVENT_TYPES missing `lifecycle`",
@@ -151,7 +151,7 @@
       },
       "wallSeconds": 0.1,
       "note": "Artifact sha256 af10bd526035a84d6e35a45dc4ef5cc8483283fa514bda4b3e42cfd4fde951af; recorded separately in artifacts.",
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/cargo-build.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/cargo-build.log",
       "logSha256": "662f4f3b1f9b938897c0d2ef4493b0a6905f0842e95f77c06173b2ac449c25b0",
       "correctedBy": "corrections[0] (2026-09-11): a cache hit, and the artifact hash it names is no longer on disk."
     },
@@ -175,7 +175,7 @@
         }
       ],
       "note": "Sandbox OFF (spurious EADDRINUSE otherwise). Phase 1 baseline was 4,480/0/1 across 355 files; +47 tests, +1 file \u2014 the child-ledger suite (7) and the two turn-ceiling tests, plus the lanes'.",
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/unit.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/unit.log",
       "logSha256": "6d16f9ff42340d0adaf234b8536139169b9e52c70734bca7a0d5539afe50b292"
     },
     {
@@ -212,7 +212,7 @@
         }
       ],
       "note": "Sandbox OFF. INCLUDES tests/integration/lifecycle-durability.test.ts \u2014 the Phase 2 scenario ran inside the whole-directory run, not only alone. Phase 1 baseline was 159/0/5 across 34 files; the 42 new tests and 2 new skips are the scenario suite and the two Chromium cases.",
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/integration.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/integration.log",
       "logSha256": "68f8cddfc98c9220c6d5c7f69f73c4b077ce179712fdd3a37558347f2d8c4650"
     },
     {
@@ -229,7 +229,7 @@
       },
       "wallSeconds": 72.7,
       "note": "All three identical: 42 pass / 0 fail / 0 todo / 130 expect() calls. Both of Lane S's `test.todo` entries are now real tests with the same bodies. The S-1 driver prints a receipt line ONLY when a process outlived the killed engine; no run printed one. The precondition test 'the kill really landed inside a tool call' passed in all three, so the orphan assertion was not vacuous. Sandbox OFF (Bun.serve needs to listen). Additional logs: durability-run2.log sha256 def8d1a2e2130a7aa8bdb2f7fdfbc514594f9d24bd14887730d951a93052c18d, durability-run3.log sha256 b698d547f11305dcd683ff97308039f7a000ccc6b64f5741afae0c7603adee84.",
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/durability-run1.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/durability-run1.log",
       "logSha256": "79699d54f698df00d6e271964449ebab9b777e49da6af29457fb6edf8efa35cd"
     },
     {
@@ -243,7 +243,7 @@
       },
       "wallSeconds": 1.43,
       "note": "Playwright 1.62.1 was already in bun's store (node_modules/.bun/playwright@1.62.1) with Chromium in ~/Library/Caches/ms-playwright. Nothing was installed or downloaded. NOT counted as passed in the integration row above, where they skipped.",
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/browser.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/browser.log",
       "logSha256": "0d8af3f7d47ac66d9b860ecf1d0076272ef87c6966158b4682e2dc8145e971e0"
     },
     {
@@ -255,7 +255,7 @@
         "cached": "0 cached"
       },
       "wallSeconds": 3.5,
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/typecheck.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/typecheck.log",
       "logSha256": "caca9a9fb29089d843a7a98f69728230209744d3aef493d29cf8698be6b2538e"
     },
     {
@@ -267,7 +267,7 @@
         "cached": "0 cached"
       },
       "wallSeconds": 2.5,
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/lint.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/lint.log",
       "logSha256": "457cea4426628cfbcacd0b0cc5b9cec651d246950b5ae5791eab2bc29670c048"
     },
     {
@@ -278,7 +278,7 @@
         "output": "empty"
       },
       "wallSeconds": 0.4,
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/cargo-fmt.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/cargo-fmt.log",
       "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "correctedBy": "corrections[1] (2026-09-11): certified by a zero-byte log, which proves nothing on its own."
     },
@@ -298,7 +298,7 @@
       },
       "wallSeconds": 2.0,
       "note": "Phase 1 recorded 97/0. The six new tests are parent_death (3) and child_ledger (3) in rune-sandbox.",
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/cargo-test.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/cargo-test.log",
       "logSha256": "52bcd0b88ce94ca1402ade08af3e4395302436b64840002bbb68ba1c4b46a575"
     },
     {
@@ -311,7 +311,7 @@
       },
       "wallSeconds": 1.0,
       "note": "A first run finished in 0.10s off cache; the recorded run re-checked every crate after touching each lib root, and the log shows rune-index, rune-sandbox and rune-tools being checked.",
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/clippy.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/clippy.log",
       "logSha256": "d706c9bb18728519ede643608cee796966720d3ccf7bad0f0fb86a8abafbbe9a"
     },
     {
@@ -328,7 +328,7 @@
       },
       "wallSeconds": 16.0,
       "note": "Sandbox OFF. tests/eval/baseline-mock.json was NOT re-anchored. G21's open-steps exit code did not move it, as Lane L already recorded.",
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/eval.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/eval.log",
       "logSha256": "1399bb34d6eec66570a85929aac6a6648c15bb77c2199553d029f5adcef6d47e"
     },
     {
@@ -347,7 +347,7 @@
       },
       "wallSeconds": 1.0,
       "note": "Sandbox OFF. 0 live requests, no credential used. 38 rows still carry an INFERRED label awaiting human review \u2014 unchanged from Phase 1.",
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/eval-auto-safety.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/eval-auto-safety.log",
       "logSha256": "fa7ed710ed4a1a09342b61e5dd1ca397def68bfc4944cf56e008650d6fd863df",
       "correctedBy": "corrections[2] (2026-09-11): the log's reviewer-required figure is not carried into `result`."
     },
@@ -360,7 +360,7 @@
       },
       "wallSeconds": 0.1,
       "note": "Shares a log slot with cargo fmt because both produced no output; the command was run separately and exited 0.",
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/cargo-fmt.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/cargo-fmt.log",
       "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "correctedBy": "corrections[1] (2026-09-11): certified by a zero-byte log, which proves nothing on its own."
     },
@@ -373,7 +373,7 @@
       },
       "wallSeconds": 12.0,
       "note": "A first run named two files: docs/program/phase-2-lifecycle.md (the untracked design doc, formatted and committed here) and tests/unit/protocol/exhaustiveness.test.ts \u2014 a pre-existing violation that arrived with Lane L's 54459b0 and was already failing at 2e564e9 (verified against that revision's copy). Both were fixed with prettier --write; the exhaustiveness change is one call argument list wrapped across four lines, and its suite re-ran 22 pass / 0 fail. The recorded log is the clean re-run on the final source.",
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/format-check.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/format-check.log",
       "logSha256": "17aa973d3f004560237d9a95171210b0671deff23d61628eecf7322ff5938f20"
     },
     {
@@ -392,7 +392,7 @@
       },
       "wallSeconds": 12.0,
       "note": "Twelve files: the ten `git diff --name-only 7522459..HEAD -- tests` names plus this step's own tests/unit/tool-registry/child-ledger.test.ts. ZERO errors in any test file. The 23 remaining are all unused-symbol findings in packages/ under noUnusedLocals/noUnusedParameters \u2014 flags no tsconfig in this repo enables, so `bun run typecheck` is green with or without them. They are pre-existing and outside this phase; the four that were named in the IDE report were removed (see step 0). Exit 2 is those 23, not a test-file error.",
-      "privateLog": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/tsc-tests-strict.log",
+      "privateLog": "~/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/tsc-tests-strict.log",
       "logSha256": "4c5a15f406c6239d1b059ad4d06fb808c72e19ef6730eb901cc0aecfbd1f75e2"
     }
   ],
@@ -412,7 +412,7 @@
         "home credentials unreadable": "ok",
         "integration suites": "32 pass / 0 fail / 167 expect() calls across background-sandbox, plugin-tools-sandbox, engine-command-evidence"
       },
-      "log": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/linux-image.log",
+      "log": "~/Project/Alan/.codex/audit-20260910/handoff/gates-phase2/linux-image.log",
       "logSha256": "5a7ed0aa6a9ce15fa4b4c0312c24b5ca460752accea72de47750de2a4b926a13",
       "note": "Rebuilt because crates/ changed (parent_death.rs, child_ledger.rs, active_child.rs, linux.rs, noop.rs). Lane B's method: `git ls-files` over the COMMITTED tree into source-phase2.tar, Dockerfile.phase2 (a copy of Dockerfile.final pointed at it), `docker run --rm --privileged`. The image is built twice \u2014 once at 3c075b9, once at b1b1262 \u2014 and the recorded id and log are the second. All six new Rust tests ran on a real Linux kernel and passed by name: parent_death::tests::{an_unchanged_parent_is_not_gone, a_different_parent_reads_as_gone, init_is_not_a_parent_worth_watching} and child_ledger::tests::{a_noted_child_is_written_and_then_forgotten, forget_leaves_another_process_entry_alone, no_workspace_means_no_file_and_no_panic}. --privileged is a qualification of this rig (Docker Desktop's VM refuses nested unprivileged user namespaces, which bwrap needs); it is NOT Rune's runtime requirement."
     }
@@ -427,13 +427,13 @@
     {
       "name": "bash scripts/install.sh",
       "exit": 0,
-      "output": "Installed atomically: /Users/ritikyadav890/.rune/bin/rune-compiled \u00b7 CLI checksum d0f03687af414fa18eef856fc0d0e68c32ae65ee48130d65dcd20079f8bda9c2 \u00b7 Legacy-installer guard: macOS user-immutable artifacts",
+      "output": "Installed atomically: ~/.rune/bin/rune-compiled \u00b7 CLI checksum d0f03687af414fa18eef856fc0d0e68c32ae65ee48130d65dcd20079f8bda9c2 \u00b7 Legacy-installer guard: macOS user-immutable artifacts",
       "note": "No override flag was set. No guard stopped it. The installer staged, compiled IN PLACE (never a `cp` \u2014 that breaks the codesign) and ran its own session-host smoke ('the binary hosts a session', 'zero leaked hosts') before swapping. Run twice: once at 3c075b9, then again at b1b1262 after the checkpoint-advisory fix. The hashes below are the second."
     },
     {
       "name": "command -v rune",
       "exit": 0,
-      "output": "/Users/ritikyadav890/.alan/bin/rune",
+      "output": "~/.alan/bin/rune",
       "note": "UNCHANGED FINDING from Phase 1: PATH still resolves the LEGACY ~/.alan/bin shim ahead of ~/.rune/bin. The shim forwards to the new build \u2014 the version below is the new commit \u2014 but `rune` on this machine still means the rename generation's compatibility path."
     },
     {
@@ -446,25 +446,25 @@
       "name": "rune doctor",
       "exit": 0,
       "output": "! checkpoints: 747 rows across 195 runs, 184 MB 2026-05-30 08:34 -> 2026-09-09 15:12\n    reclaimable: 428 superseded or orphaned rows, 106 MB \u2014 rune doctor prune-checkpoints (dry run; --apply removes them)",
-      "note": "The advisory Lane L added (G7), quoted verbatim, against the founder's real ~/.rune/rune.db. At 3c075b9 it said 552 rows / 136 MB while the prune command it names offered 428 / 106 \u2014 the report counted every row with ANY newer version, the prune keeps the newest two. Fixed in b1b1262; the two now agree. Also in the same report: 'build: current \u2014 gear/phase-0-stabilize@b1b1262+dirty', 'rune-tools: /Users/ritikyadav890/.alan/bin/rune-tools', 'recorder: no internal failures', and two openrouter free models recorded retired (pre-existing model rot, not this build)."
+      "note": "The advisory Lane L added (G7), quoted verbatim, against the founder's real ~/.rune/rune.db. At 3c075b9 it said 552 rows / 136 MB while the prune command it names offered 428 / 106 \u2014 the report counted every row with ANY newer version, the prune keeps the newest two. Fixed in b1b1262; the two now agree. Also in the same report: 'build: current \u2014 gear/phase-0-stabilize@b1b1262+dirty', 'rune-tools: ~/.alan/bin/rune-tools', 'recorder: no internal failures', and two openrouter free models recorded retired (pre-existing model rot, not this build)."
     },
     {
       "name": "rune doctor prune-checkpoints (DRY RUN)",
       "exit": 0,
-      "output": "\u00a7 CHECKPOINTS /Users/ritikyadav890/.rune/rune.db\n\n  747 rows across 195 runs, 184 MB\n\n  ! would remove 428 rows, 106 MB \u2014 nothing was deleted. rune doctor prune-checkpoints --apply",
+      "output": "\u00a7 CHECKPOINTS ~/.rune/rune.db\n\n  747 rows across 195 runs, 184 MB\n\n  ! would remove 428 rows, 106 MB \u2014 nothing was deleted. rune doctor prune-checkpoints --apply",
       "note": "DRY RUN ONLY. `--apply` was never passed and the founder's database was not modified: the final ledger snapshot shows events 26632 -> 26632 and sessions 683 -> 683. The doctor advisory and this command now report the same 428 rows / 106 MB (they did not at 3c075b9 \u2014 see the doctor entry)."
     },
     {
       "name": "rune tools-smoke",
       "exit": 0,
-      "output": "native tools round-trip: write \u00b7 read \u00b7 edit \u00b7 bash (/Users/ritikyadav890/.alan/bin/rune-tools)"
+      "output": "native tools round-trip: write \u00b7 read \u00b7 edit \u00b7 bash (~/.alan/bin/rune-tools)"
     },
     {
       "name": "S-1 orphan proof on the INSTALLED binary",
       "exit": 0,
       "output": "Before the kill: `77070 77069 node long.mjs INSTALLED-ORPHAN-PROOF-77021 30` under `77069 77039 ~/.rune/bin/rune-tools --workspace <fixture> bash`. SIGKILL of engine pid 77039 -> exit 137. Polled ps for 0.33s: no marker process and no rune-tools for that workspace. RESULT: PASS.",
       "note": "The installed `rune` (not `bun rune-cli.ts`) driven through the scenario's own fixture, scratch RUNE_HOME and loopback mock, by .codex/audit-20260910/handoff/installed-phase2/orphan-proof-installed.ts. Zero model calls: the only configured route is `custom` at 127.0.0.1, the child environment is BUILT not inherited (curatedEnv + assertNoLiveCredentials), and no -p/--provider or -m/--model is passed. The same probe against the PREVIOUS installed binary left both processes alive past 6s (gates-phase2/probe-old-binary.sh).",
-      "framesOrLogs": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/installed-phase2/orphan-proof-installed.txt"
+      "framesOrLogs": "~/Project/Alan/.codex/audit-20260910/handoff/installed-phase2/orphan-proof-installed.txt"
     },
     {
       "name": "installed hashes AFTER",
@@ -476,7 +476,7 @@
       "exit": 0,
       "output": "IDENTICAL. ~/.rune/rune.db cost rows 2891 -> 2891 (max created_at 2026-09-10T14:01:18.585Z -> unchanged, still Phase 1's unintended call); events 26632 -> 26632 (max id 26632); sessions 683 -> 683; ~/.rune/blackbox.db incidents 3279 -> 3279; config.toml, model.json, theme.json, prefs.json, .env, secrets.json and credentials.index.json all hash the same. TWO deliberate differences: rune-compiled's sha256 (the two installs) and ~/.rune/audit.jsonl 2897 -> 2978 lines.",
       "note": "The 81 appended audit.jsonl lines are rune-tools sandbox receipts for `bash` calls \u2014 {timestamp, session_id, tool_name, args_hash, result_hash, duration_ms, exit_code, sandboxed, prev_hash, entry_hash}, all exit_code 0 \u2014 written by the two installers' own smokes, `rune tools-smoke` and `rune doctor` running against the founder's home. They carry hashes, not content, and no model call. The zero-spend claim rests on the `cost` rows, which did not move.",
-      "framesOrLogs": "/Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/installed-phase2/ledger-before.txt, /Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/installed-phase2/ledger-after.txt and /Users/ritikyadav890/Project/Alan/.codex/audit-20260910/handoff/installed-phase2/ledger-final.txt"
+      "framesOrLogs": "~/Project/Alan/.codex/audit-20260910/handoff/installed-phase2/ledger-before.txt, ~/Project/Alan/.codex/audit-20260910/handoff/installed-phase2/ledger-after.txt and ~/Project/Alan/.codex/audit-20260910/handoff/installed-phase2/ledger-final.txt"
     }
   ],
   "notProven": [

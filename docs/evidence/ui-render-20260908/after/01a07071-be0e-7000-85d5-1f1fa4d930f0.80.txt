@@ -81,7 +81,7 @@
     first — directory, files, what actually lives here — so the dashboard
     plots real numbers, not guesses.
 
-    │   list  /Users/ritikyadav890/Project/evolab7/  7401 entries
+    │   list  ~/Project/evolab7/  7401 entries
     │   read  .../ritikyadav890/Project/evolab7/README.md  43 lines
 
   ◇ Got the layout. Now I'll get the real numbers — file counts per area, line
@@ -116,8 +116,8 @@
     plan, then build.
 
     │   plan  updated  4 steps
-    │ ✗ read  /Users/ritikyadav890/.rune/RUNE.md  0ms
-    │ │ Error: Path escape: /Users/ritikyadav890/.rune/RUNE.md is outside wor…
+    │ ✗ read  ~/.rune/RUNE.md  0ms
+    │ │ Error: Path escape: ~/.rune/RUNE.md is outside wor…
     │   read  .../Project/evolab7/.rune/mission.md  27 lines
     │   read  .../Project/evolab7/.gear/mission.md  13 lines
 
@@ -183,21 +183,21 @@
     │ │ Error: Validation failed: criterion must be the 0-based index of a do…
     │ │ same failure repeated 4 more times
     │   plan  updated  4 steps
-    │   run   ls -lh /Users/ritikyadav890/Project/evolab7/ritik-operator…  0ms
+    │   run   ls -lh ~/Project/evolab7/ritik-operator…  0ms
     │ -rw-r--r--@ 1 ritikyadav890  staff   257K  5 Sep 12:55 /Users/ritikyada…
-    │   run   ls -lh /Users/ritikyadav890/Project/evolab7/ritik-operator…  0ms
+    │   run   ls -lh ~/Project/evolab7/ritik-operator…  0ms
     │ -rw-r--r--@ 1 ritikyadav890  staff   257K  5 Sep 12:55 /Users/ritikyada…
     │ ---
-    │      995 /Users/ritikyadav890/Project/evolab7/ritik-operator-profile.ht…
+    │      995 ~/Project/evolab7/ritik-operator-profile.ht…
     │ ---
     │ <!doctype html>
 
   ◇ The 995-line, 257 KB HTML export exists on disk and the dashboard is live
     in the browser. Recording the actual evidence.
 
-    │   run   ls -lh /Users/ritikyadav890/Project/evolab7/ritik-operator…  0ms
+    │   run   ls -lh ~/Project/evolab7/ritik-operator…  0ms
     │ -rw-r--r--@ 1 ritikyadav890  staff   257K  5 Sep 12:55 /Users/ritikyada…
-    │ 995 /Users/ritikyadav890/Project/evolab7/ritik-operator-profile.html
+    │ 995 ~/Project/evolab7/ritik-operator-profile.html
 
   ◇ Plan was honest. Three steps were marked done but had no in-flight
     evidence. Re-running the actions so each step closes against something
@@ -205,13 +205,13 @@
 
     │ › read 1 file, ran 2 commands  5 lines
   ◇ Closing the three unproven steps with the evidence I just collected.
-    │   evidence  ls -lh /Users/ritikyadav890/Project/evolab7/ritik-operator-…
+    │   evidence  ls -lh ~/Project/evolab7/ritik-operator-…
     │ │ Error: Validation failed: criterion must be the 0-based index of a do…
     │ │ same failure repeated 1 more time
     │   run   echo "=== file evidence ==="  0ms
     │ === file evidence ===
     │ -rw-r--r--@ 1 ritikyadav890  staff   257K  5 Sep 12:55 /Users/ritikyada…
-    │      995 /Users/ritikyadav890/Project/evolab7/ritik-operator-profile.ht…
+    │      995 ~/Project/evolab7/ritik-operator-profile.ht…
     │ === title + accent present ===
     │ … 12 more lines
     │ HTTP 200  size 53753 bytes
@@ -227,7 +227,7 @@
     │ │ No brief in play. Call read_back first — criteria have to exist befor…
     │   evidence  criterion 3 · curl -sS -o /dev/null -w "HTTP %{http_code}  …
     │ │ No brief in play. Call read_back first — criteria have to exist befor…
-    │   evidence  criterion 4 · ls -lh /Users/ritikyadav890/Project/evolab7/r…
+    │   evidence  criterion 4 · ls -lh ~/Project/evolab7/r…
     │ │ No brief in play. Call read_back first — criteria have to exist befor…
 
   ! The same result keeps coming back — nudged the agent to change approach.
@@ -236,9 +236,9 @@
     URL is up — that's the report. Closing the three unproven steps against
     the live evidence instead of polling.
 
-    │   run   ls -lh /Users/ritikyadav890/Project/evolab7/ritik-operator…  0ms
+    │   run   ls -lh ~/Project/evolab7/ritik-operator…  0ms
     │ -rw-r--r--@ 1 ritikyadav890  staff   257K  5 Sep 12:55 /Users/ritikyada…
-    │      995 /Users/ritikyadav890/Project/evolab7/ritik-operator-profile.ht…
+    │      995 ~/Project/evolab7/ritik-operator-profile.ht…
     │ 2
     │ 2
     │ HTTP 200  size 53753 bytes
@@ -248,9 +248,9 @@
     the live URL — closing each step against that evidence now.
 
     │   plan  updated  3 steps
-    │   run   ls -lh /Users/ritikyadav890/Project/evolab7/ritik-operator…  0ms
+    │   run   ls -lh ~/Project/evolab7/ritik-operator…  0ms
     │ -rw-r--r--@ 1 ritikyadav890  staff   257K  5 Sep 12:55 /Users/ritikyada…
-    │      995 /Users/ritikyadav890/Project/evolab7/ritik-operator-profile.ht…
+    │      995 ~/Project/evolab7/ritik-operator-profile.ht…
     │ 2
     │ 2
     │ … 1 more line
@@ -279,7 +279,7 @@
       http://127.0.0.1:62418/t/69c427e5b7017b90ea779b00e58df040/d/43f52574 —
       left running.
     · Standalone HTML:
-      /Users/ritikyadav890/Project/evolab7/ritik-operator-profile.html —
+      ~/Project/evolab7/ritik-operator-profile.html —
       shareable, open it in any browser.
     · The dashboard's Export menu also offers PDF / JSON / CSV.
 
@@ -313,9 +313,9 @@
     │ <meta charset="utf-8">
     │ … 94 more lines
     │ if (C.defaults.plugin
-    │   run   ls -lh /Users/ritikyadav890/Project/evolab7/ritik-operator…  0ms
+    │   run   ls -lh ~/Project/evolab7/ritik-operator…  0ms
     │ -rw-r--r--@ 1 ritikyadav890  staff   257K  5 Sep 12:55 /Users/ritikyada…
-    │      995 /Users/ritikyadav890/Project/evolab7/ritik-operator-profile.ht…
+    │      995 ~/Project/evolab7/ritik-operator-profile.ht…
     │ ---
     │ <!doctype html>
     │ … 4 more lines
@@ -400,15 +400,15 @@
   ◇ Static HTML is written. Now verifying it actually renders — open it, look
     at the page, fix the worst thing found.
 
-    │   run   ls -lh /Users/ritikyadav890/Project/evolab7/profile.html  0ms
+    │   run   ls -lh ~/Project/evolab7/profile.html  0ms
     │ -rw-------@ 1 ritikyadav890  staff    24K  5 Sep 13:01 /Users/ritikyada…
-    │      662 /Users/ritikyadav890/Project/evolab7/profile.html
+    │      662 ~/Project/evolab7/profile.html
     │ --- section anchors present ---
     │ 12
     │ … 10 more lines
     │ <h2>Voice</h2>
 
-    │   run   open /Users/ritikyadav890/Project/evolab7/profile.html 2>&1  0ms
+    │   run   open ~/Project/evolab7/profile.html 2>&1  0ms
     │ _LSOpenURLsWithCompletionHandler() failed with error -54 for the file /…
     │ open exit: 1
     │ 
@@ -419,7 +419,7 @@
     verify the artifact by serving it and curl-ing the rendered content, then
     close out.
 
-    │   run   cd /Users/ritikyadav890/Project/evolab7  0ms
+    │   run   cd ~/Project/evolab7  0ms
     │ server pid: 32170
     │ --- HTTP head ---
     │ HTTP 200  size 24516 bytes  type text/html
@@ -430,18 +430,18 @@
   ◇ Static HTML is shipped, served, content visible. Closing the two open
     steps with the evidence.
 
-    │   run   ls -lh /Users/ritikyadav890/Project/evolab7/profile.html  0ms
+    │   run   ls -lh ~/Project/evolab7/profile.html  0ms
     │ -rw-------@ 1 ritikyadav890  staff    24K  5 Sep 13:01 /Users/ritikyada…
-    │      662 /Users/ritikyadav890/Project/evolab7/profile.html
+    │      662 ~/Project/evolab7/profile.html
     │ ---
     │ 1
     │ … 16 more lines
     │ open command blocked, file path is the fallback
 
   ◇ Static HTML is shipped. Closing the remaining step.
-    │ ✗ run   ls -lh /Users/ritikyadav890/Project/evolab7/profile.html  0ms
+    │ ✗ run   ls -lh ~/Project/evolab7/profile.html  0ms
     │ -rw-------@ 1 ritikyadav890  staff    24K  5 Sep 13:01 /Users/ritikyada…
-    │      662 /Users/ritikyadav890/Project/evolab7/profile.html
+    │      662 ~/Project/evolab7/profile.html
     │ --- title ---
     │ 1
     │ --- inline <style> blocks (not external stylesheets) ---
@@ -456,9 +456,9 @@
     external script dependencies. Closing them.
 
     │   plan  updated  2 steps
-    │   run   ls -lh /Users/ritikyadav890/Project/evolab7/profile.html  0ms
+    │   run   ls -lh ~/Project/evolab7/profile.html  0ms
     │ -rw-------@ 1 ritikyadav890  staff    24K  5 Sep 13:01 /Users/ritikyada…
-    │      662 /Users/ritikyadav890/Project/evolab7/profile.html
+    │      662 ~/Project/evolab7/profile.html
     │ --- title + sections + tables + bars + no externals ---
     │ 1
     │ … 15 more lines
@@ -467,7 +467,7 @@
   ◇ Plan is closed. Final report:
 
     What I built A self-contained, no-runtime operator profile at
-    /Users/ritikyadav890/Project/evolab7/profile.html — 24 KB, 662 lines. Pure
+    ~/Project/evolab7/profile.html — 24 KB, 662 lines. Pure
     HTML + inline CSS, no external scripts, no CDN, no web fonts, no JS. Opens
     straight from file:// in any browser. Editorial Savoir-style: cream paper
     ground, orange focal, mono uppercase labels, asymmetric grid, 8 numbered
@@ -487,7 +487,7 @@
       markup.
 
     How you use it Double-click the file, or open
-    /Users/ritikyadav890/Project/evolab7/profile.html in your terminal. It
+    ~/Project/evolab7/profile.html in your terminal. It
     works offline, no server, no build.
 
     Cuts I made under budget pressure
@@ -528,7 +528,7 @@
     │ Brave Browser.app
     │ Firefox.app
     │ Safari.app
-    │ /Users/ritikyadav890/Library/Python/3.14/lib/python/site-packages/playw…
+    │ ~/Library/Python/3.14/lib/python/site-packages/playw…
 
   ◇ Playwright is installed. Rendering the file and screenshotting it.
     │   new   .../ritikyadav890/Project/evolab7/render_profil…  +29 | new file
@@ -536,8 +536,8 @@
     │    2 + from pathlib import Path                                        
     │    3 + from playwright.async_api import async_playwright               
     │    4 +                                                                 
-    │    5 + HTML = Path("/Users/ritikyadav890/Project/evolab7/profile.html"…
-    │    6 + OUT = Path("/Users/ritikyadav890/Project/evolab7/profile_review…
+    │    5 + HTML = Path("~/Project/evolab7/profile.html"…
+    │    6 + OUT = Path("~/Project/evolab7/profile_review…
     │    7 +                                                                 
     │    8 + async def main():                                               
     │    9 +     async with async_playwright() as p:                         
@@ -545,7 +545,7 @@
     │   11 +         context = await browser.new_context(viewport={"width": …
     │   12 +         page = await context.new_page()                         
     │    … 17 more lines
-    │   run   python3 /Users/ritikyadav890/Project/evolab7/render_profil…  0ms
+    │   run   python3 ~/Project/evolab7/render_profil…  0ms
     │   - [pid=32338][err] Received signal 11 SEGV_ACCERR 000000000010
     │   - [pid=32338][err]  [0x0001030963b4]
     │   - [pid=32338][err]  [0x000105a64784]
@@ -589,7 +589,7 @@
     1. What I was doing and why You reported the earlier dashboard was
     "nothing visible" and asked me to fix it properly. I shipped a
     self-contained static HTML at
-    /Users/ritikyadav890/Project/evolab7/profile.html (24 KB, 662 lines,
+    ~/Project/evolab7/profile.html (24 KB, 662 lines,
     inline CSS, no runtime) and then, on your follow-up instruction to "open
     what you built and read it back before finishing," I was attempting to
     render it through a real browser engine and screenshot it so I could
@@ -610,7 +610,7 @@
 
     Finished and verified:
     · profile.html exists at
-      /Users/ritikyadav890/Project/evolab7/profile.html, 24 KB, 662 lines,
+      ~/Project/evolab7/profile.html, 24 KB, 662 lines,
       served HTTP 200, 24516 bytes, text/html via local python http.server.
       Title, all 8 numbered sections, KPI strip, 8 bar chart rows, 5 table
       rows, 1 inline <style> block, 0 external stylesheets, 0 <script> tags, 0
@@ -632,7 +632,7 @@
     unreviewed — the cream/orange/mono aesthetic, the doughnut conic-gradient,
     the table layout, and any clipping or overflow defects are unconfirmed by
     visual inspection. To review it yourself: open
-    /Users/ritikyadav890/Project/evolab7/profile.html. If anything looks off,
+    ~/Project/evolab7/profile.html. If anything looks off,
     that's the defect I should have caught and didn't.
 
     │ ! paused before finishing
@@ -646,8 +646,8 @@
         screenshot
       · Read the screenshot and identify the worst visible defect
       · Fix the worst defect once, re-screenshot, verify
-    Files touched: /Users/ritikyadav890/Project/evolab7/profile.html,
-    /Users/ritikyadav890/Project/evolab7/render_profile.py
+    Files touched: ~/Project/evolab7/profile.html,
+    ~/Project/evolab7/render_profile.py
     Verification: passed
     Next step: Render profile.html through a real browser engine and capture a
     screenshot
@@ -665,13 +665,13 @@
     Trying again with a safer path — UDD inside the workspace, no rm -rf
     afterwards.
 
-    │   run   UDD="/Users/ritikyadav890/Project/evolab7/.brave_udd"  0ms
-    │ UDD: /Users/ritikyadav890/Project/evolab7/.brave_udd
+    │   run   UDD="~/Project/evolab7/.brave_udd"  0ms
+    │ UDD: ~/Project/evolab7/.brave_udd
     │ [0905/133243.362438:ERROR:third_party/crashpad/crashpad/util/mach/boots…
     │ [0905/133243.363101:ERROR:third_party/crashpad/crashpad/util/file/file_…
     │ [0905/133243.363660:ERROR:third_party/crashpad/crashpad/util/file/file_…
     │ … 6 more lines
-    │ /Users/ritikyadav890/Project/evolab7/profile_review.png: cannot open `/…
+    │ ~/Project/evolab7/profile_review.png: cannot open `/…
 
   ◇ The previous Brave attempt failed because crashpad and the
     process-singleton couldn't write to macOS-protected paths even with a
@@ -680,7 +680,7 @@
     --no-crashpad, --disable-features=ProcessSingleton and a workspace-local
     data dir, then falling back to a different engine if that fails.
 
-    │ ✗ run   UDD="/Users/ritikyadav890/Project/evolab7/.brave_udd"  0ms
+    │ ✗ run   UDD="~/Project/evolab7/.brave_udd"  0ms
     │ [0905/133247.718672:ERROR:third_party/crashpad/crashpad/util/mach/boots…
     │ [0905/133247.719163:ERROR:third_party/crashpad/crashpad/util/file/file_…
     │ [0905/133247.719572:ERROR:third_party/crashpad/crashpad/util/file/file_…
@@ -688,7 +688,7 @@
     │ [33533:12349245:0905/133247.729169:ERROR:chrome/browser/process_singlet…
     │ [33533:12349245:0905/133247.729360:ERROR:chrome/app/chrome_main_delegat…
     │ exit: 0
-    │ ls: /Users/ritikyadav890/Project/evolab7/profile_review.png: No such fi…
+    │ ls: ~/Project/evolab7/profile_review.png: No such fi…
 
   ◇ Picking up from the next open step: render profile.html through a real
     browser engine and capture a screenshot.
@@ -698,21 +698,21 @@
     directly with a private temp dir inside the workspace, and if that fails
     too, fall back to a different engine.
 
-    │   run   CH="/Users/ritikyadav890/Library/Caches/ms-playwright/chro…  0ms
+    │   run   CH="~/Library/Caches/ms-playwright/chro…  0ms
     │ total 0
     │ drwxr-xr-x@  5 ritikyadav890  staff  160 23 Aug 16:03 .
     │ drwxr-xr-x@ 10 ritikyadav890  staff  320  4 Sep 16:08 ..
     │ drwxr-xr-x@ 17 ritikyadav890  staff  544 23 Aug 16:03 chrome-headless-s…
     │ … 5 more lines
-    │ /Users/ritikyadav890/Library/Caches/ms-playwright/chromium_headless_she…
+    │ ~/Library/Caches/ms-playwright/chromium_headless_she…
 
   ◇ Resuming on the open step: render through a real browser engine and
     capture a screenshot. Playwright chromium segfaulted, Brave aborts on the
     process-singleton. Trying the headless shell directly — same engine, no
     singleton, no crashpad, no remote-debugging port collision.
 
-    │   run   find /Users/ritikyadav890/Library/Caches/ms-playwright/chr…  0ms
-    │ /Users/ritikyadav890/Library/Caches/ms-playwright/chromium_headless_she…
+    │   run   find ~/Library/Caches/ms-playwright/chr…  0ms
+    │ ~/Library/Caches/ms-playwright/chromium_headless_she…
     │ ---
     │ chrome-mac-arm64
     │ DEPENDENCIES_VALIDATED
@@ -723,13 +723,13 @@
     I just found. Trying it directly with no crashpad, no singleton, no shared
     user data dir.
 
-    │   run   SHELL_BIN="/Users/ritikyadav890/Library/Caches/ms-playwrig…  0ms
+    │   run   SHELL_BIN="~/Library/Caches/ms-playwrig…  0ms
     │ Received signal 11 SEGV_ACCERR 000000000010
     │  [0x000106fe63b4]
     │  [0x0001099b4784]
     │  [0x000185219740]
     │ … 10 more lines
-    │ /Users/ritikyadav890/Project/evolab7/profile_review.png: cannot open `/…
+    │ ~/Project/evolab7/profile_review.png: cannot open `/…
 
   ◇ Resuming on the open step. Playwright's chromium and headless shell both
     segfault under the sandbox, and Brave aborts on the process-singleton. Two
@@ -737,7 +737,7 @@
     sometimes sidesteps the SEGV_ACCERR, and wkhtmltopdf / weasyprint as a
     totally different rendering path. Trying the full chromium first.
 
-    │   run   find /Users/ritikyadav890/Library/Caches/ms-playwright/chr…  0ms
+    │   run   find ~/Library/Caches/ms-playwright/chr…  0ms
     │ ---
     │ ---
     │ Traceback (most recent call last):
@@ -749,7 +749,7 @@
     Playwright Chromium (not the headless shell), and the local Firefox via
     Playwright if available.
 
-    │ ✗ run   find /Users/ritikyadav890/Library/Caches/ms-playwright/chr…  0ms
+    │ ✗ run   find ~/Library/Caches/ms-playwright/chr…  0ms
     │ ---
     │ __dirlock
     │ b
@@ -796,7 +796,7 @@
     variant), and parallel-install weasyprint via pip for an entirely
     different rendering engine as a backup.
 
-    │   run   find /Users/ritikyadav890/Library/Caches/ms-playwright/chr…  0ms
+    │   run   find ~/Library/Caches/ms-playwright/chr…  0ms
     │ ---
     │ ABOUT
     │ Google Chrome for Testing.app
@@ -809,13 +809,13 @@
     Chrome for Testing binary directly — different from the headless shell
     that was segfaulting.
 
-    │   run   CFT="/Users/ritikyadav890/Library/Caches/ms-playwright/chr…  0ms
+    │   run   CFT="~/Library/Caches/ms-playwright/chr…  0ms
     │ -rwxr-xr-x@ 1 ritikyadav890  staff    51K 23 Aug 16:03 /Users/ritikyada…
     │ [0905/133326.634128:ERROR:third_party/crashpad/crashpad/util/mach/boots…
     │ [0905/133326.635867:ERROR:third_party/crashpad/crashpad/util/file/file_…
     │ [0905/133326.637048:ERROR:third_party/crashpad/crashpad/util/mach/boots…
     │ … 7 more lines
-    │ /Users/ritikyadav890/Project/evolab7/profile_review.png: cannot open `/…
+    │ ~/Project/evolab7/profile_review.png: cannot open `/…
 
   ◇ Picking up the open step. Three browser engines blocked — playwright
     chromium and headless shell segfault, Brave and Chrome for Testing abort
@@ -823,26 +823,26 @@
     /var/folders/.... The fix is to point the singleton at a workspace-local
     path.
 
-    │   run   CFT="/Users/ritikyadav890/Library/Caches/ms-playwright/chr…  0ms
+    │   run   CFT="~/Library/Caches/ms-playwright/chr…  0ms
     │ [0905/133331.921036:ERROR:third_party/crashpad/crashpad/util/mach/boots…
     │ [0905/133331.921763:ERROR:third_party/crashpad/crashpad/util/file/file_…
     │ [0905/133331.922445:ERROR:third_party/crashpad/crashpad/util/mach/boots…
     │ [0905/133331.922672:ERROR:third_party/crashpad/crashpad/util/file/file_…
     │ … 6 more lines
-    │ /Users/ritikyadav890/Project/evolab7/profile_review.png: cannot open `/…
+    │ ~/Project/evolab7/profile_review.png: cannot open `/…
 
   ◇ Continuing the open step. The TMPDIR override didn't take — Chrome still
     resolves the singleton path through ~/Library/... and ignores the env var.
     Switching to --remote-debugging-port + a tiny CDP client, which sidesteps
     the process-singleton entirely.
 
-    │   run   CFT="/Users/ritikyadav890/Library/Caches/ms-playwright/chr…  0ms
+    │   run   CFT="~/Library/Caches/ms-playwright/chr…  0ms
     │ pid=34279
     │ {
     │    "Browser": "Chrome/151.0.7922.34",
     │    "Protocol-Version": "1.3",
     │ … 18 more lines
-    │ 34279 ttys000    0:00.93 /Users/ritikyadav890/Library/Caches/ms-playwri…
+    │ 34279 ttys000    0:00.93 ~/Library/Caches/ms-playwri…
 
   ◇ Resuming on the open step. The CDP approach worked — Chrome is up,
     profile.html is loaded, the page is alive. Now driving a screenshot
@@ -856,7 +856,7 @@
     │    5 + import base64                                                   
     │    6 + from pathlib import Path                                        
     │    7 +                                                                 
-    │    8 + OUT = Path("/Users/ritikyadav890/Project/evolab7/profile_review…
+    │    8 + OUT = Path("~/Project/evolab7/profile_review…
     │    9 +                                                                 
     │   10 + # Find the active page target                                   
     │   11 + targets = json.loads(urllib.request.urlopen("http://127.0.0.1:9…
@@ -867,9 +867,9 @@
     │ ERROR: Could not find a version that satisfies the requirement websocke…
     │ ERROR: No matching distribution found for websocket-client
     │ websocket-client not installed
-    │ target: Ritik — Operator Profile  url=file:///Users/ritikyadav890/Proje…
+    │ target: Ritik — Operator Profile  url=file://~/Proje…
     │ ---
-    │ ls: /Users/ritikyadav890/Project/evolab7/profile_review.png: No such fi…
+    │ ls: ~/Project/evolab7/profile_review.png: No such fi…
 
   ◇ Resuming on the next open step: render the page and capture the
     screenshot. CDP is up, the page is loaded, but I need a websocket client
@@ -893,10 +893,10 @@
     │   run   # Confirm the browser is still alive, otherwise relaunch  0ms
     │ browser HTTP 200
     │ ---
-    │ target: Ritik — Operator Profile  url=file:///Users/ritikyadav890/Proje…
+    │ target: Ritik — Operator Profile  url=file://~/Proje…
     │ Traceback (most recent call last):
     │ … 11 more lines
-    │ /Users/ritikyadav890/Project/evolab7/profile_review.png: cannot open `/…
+    │ ~/Project/evolab7/profile_review.png: cannot open `/…
 
   ◇ Picking up the open step. CDP 403'd because Chrome validates the Origin
     header against --remote-allow-origins (default: localhost-only) and a 403
@@ -921,10 +921,10 @@
     │   run   curl -sS -o /dev/null -w "browser HTTP %{http_code}\n" htt…  0ms
     │ browser HTTP 200
     │ ---
-    │ target: Ritik — Operator Profile  url=file:///Users/ritikyadav890/Proje…
+    │ target: Ritik — Operator Profile  url=file://~/Proje…
     │ Traceback (most recent call last):
     │ … 11 more lines
-    │ /Users/ritikyadav890/Project/evolab7/profile_review.png: cannot open `/…
+    │ ~/Project/evolab7/profile_review.png: cannot open `/…
 
   ◇ Picking up from the open step. The 403 is the modern Chrome
     --remote-allow-origins check. The Host header in my handshake is wrong — I
@@ -953,10 +953,10 @@
     │   run   curl -sS -o /dev/null -w "browser HTTP %{http_code}\n" htt…  0ms
     │ browser HTTP 200
     │ ---
-    │ target: Ritik — Operator Profile  url=file:///Users/ritikyadav890/Proje…
+    │ target: Ritik — Operator Profile  url=file://~/Proje…
     │ title='Ritik — Operator Profile'  h2_count=8  body_height=3783
     │ … 3 more lines
-    │ /Users/ritikyadav890/Project/evolab7/profile_review.png: PNG image data…
+    │ ~/Project/evolab7/profile_review.png: PNG image data…
 
     │ ! re-planning -- repeated edits to the same file
 
@@ -1017,9 +1017,9 @@
     Here's where I actually am, what I verified, and what's left unverified.
 
     │   plan  updated  2 steps
-    │   run   ls -lh /Users/ritikyadav890/Project/evolab7/profile_review…  0ms
+    │   run   ls -lh ~/Project/evolab7/profile_review…  0ms
     │ -rw-r--r--@ 1 ritikyadav890  staff   458K  5 Sep 13:34 /Users/ritikyada…
-    │ /Users/ritikyadav890/Project/evolab7/profile_review.png: PNG image data…
+    │ ~/Project/evolab7/profile_review.png: PNG image data…
     │ ---
     │       24
     │ tiles on disk
@@ -1030,9 +1030,9 @@
     myself. But you can: opening the PNG in Preview is one command, and that's
     the verification I need.
 
-    │   run   ls -lh /Users/ritikyadav890/Project/evolab7/profile_review…  0ms
+    │   run   ls -lh ~/Project/evolab7/profile_review…  0ms
     │ -rw-r--r--@ 1 ritikyadav890  staff   458K  5 Sep 13:34 /Users/ritikyada…
-    │ /Users/ritikyadav890/Project/evolab7/profile_review.png: PNG image data…
+    │ ~/Project/evolab7/profile_review.png: PNG image data…
     │ ---
     │ _LSOpenURLsWithCompletionHandler() failed with error -54 for the file /…
     │ open exit: 1
@@ -1046,9 +1046,9 @@
     a never-ending tile-loop.
 
     │   plan  updated  2 steps
-    │   run   ls -lh /Users/ritikyadav890/Project/evolab7/profile_review…  0ms
+    │   run   ls -lh ~/Project/evolab7/profile_review…  0ms
     │ -rw-r--r--@ 1 ritikyadav890  staff   458K  5 Sep 13:34 /Users/ritikyada…
-    │ /Users/ritikyadav890/Project/evolab7/profile_review.png: PNG image data…
+    │ ~/Project/evolab7/profile_review.png: PNG image data…
 
   ◇ Both todos are closed, browser is still up, handoff is ready. The model on
     this transport doesn't accept images — same blocker that hit your original
@@ -1057,7 +1057,7 @@
 
     The preview is ready for you to open:
 
-    open /Users/ritikyadav890/Project/evolab7/profile_review.png
+    open ~/Project/evolab7/profile_review.png
 
     Or in Finder: ~/Project/evolab7/profile_review.png — 458 KB, 1400 × 3823,
     full-page render of profile.html through real Chrome 151 (headless,
@@ -1069,7 +1069,7 @@
       body_height=3783px — so the static HTML actually rendered, the title is
       set, all 8 numbered sections are in the DOM, and the page is the size I
       designed for.
-    · Source: /Users/ritikyadav890/Project/evolab7/profile.html (24 KB, 662
+    · Source: ~/Project/evolab7/profile.html (24 KB, 662
       lines, 0 external scripts/stylesheets/CDNs).
     · The earlier live dashboard URL is also still up at the port I exposed
       earlier, but it's unrelated to the static file and uses a different

@@ -18,7 +18,7 @@
     "taskDigest": "b35fcda695016494702982c722140ed76dd80c6425af629dfe3e5d69a76c51ce",
     "runeExecutableSha256": "e12a7770ed5ab4f6de5e14056a3165d0ff8b29468006d63fd1c0452155e85d00",
     "runeCommand": [
-      "/Users/ritikyadav890/.rune/bin/rune-compiled"
+      "~/.rune/bin/rune-compiled"
     ],
     "opencodeCommand": [
       "opencode"

@@ -6,11 +6,11 @@
   "version": "Rune v0.4.0-dev+9715b6b",
   "executables": {
     "rune": {
-      "path": "/Users/ritikyadav890/.rune/bin/rune-compiled",
+      "path": "~/.rune/bin/rune-compiled",
       "sha256": "dcd380f39be23d77e666dc8e8f5e1b1ab34d1b2abf61ab7cf87f8d8051501478"
     },
     "runeTools": {
-      "path": "/Users/ritikyadav890/.rune/bin/rune-tools",
+      "path": "~/.rune/bin/rune-tools",
       "sha256": "1362fd5eaecba42a7412e002b07f793ccc8e274239f9f4ebf791a46b7365c666"
     }
   },
@@ -115,7 +115,7 @@
     "nativeWriteReadEditBash": true,
     "minimalPathWarning": "Configured npx MCP cannot resolve under the intentionally stripped PATH.",
     "normalLoginShell": "/bin/zsh -lic",
-    "normalLoginCommand": "/Users/ritikyadav890/.alan/bin/rune",
+    "normalLoginCommand": "~/.alan/bin/rune",
     "normalMcpConfigValid": true,
     "liveMcpConnectionTested": false
   },
