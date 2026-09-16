@@ -732,3 +732,108 @@ describe("R8 — permissions, and the calls that ask about them, are identical",
     expect(on.requests).toEqual(off.requests);
   });
 });
+
+// ─── V9 finding 9: whole-line equality is not redaction ───
+//
+// `normalizeCriterionEcho(line) === text` is an equality test, so ten of
+// fifteen realistic runner lines printed the criterion verbatim — including
+// `(fail) <suite> > <name>`, which is the format every check in this repo
+// prints. Under `[controller] authority = acceptance` the re-prompt is the only
+// thing between a failing model and the oracle's own words, so this is what
+// "the acceptance the model never sees" actually costs.
+describe("acceptance — the criterion is withheld however the runner prints it", () => {
+  const CRITERION = "the total column is present in the export";
+  const body = (rows: ReadonlyArray<{ id: string; outputTail: string; text?: string }>): string =>
+    (
+      Object.create(AgentLoop.prototype) as never as {
+        acceptanceRepromptBody(f: typeof rows): string;
+      }
+    ).acceptanceRepromptBody(rows);
+
+  const LEAKING_SHAPES: readonly string[] = [
+    `AssertionError: expected ${CRITERION}`,
+    `  ✗ ${CRITERION} (12 ms)`,
+    `1) ${CRITERION}`,
+    `${CRITERION} — got 3 columns, wanted 4`,
+    `criterion a1: "${CRITERION}"`,
+    `(fail) the export suite > ${CRITERION}`,
+    `FAIL tests/x.test.ts > ${CRITERION}`,
+    `  ${CRITERION}: expected 4, got 3`,
+    `assert: ${CRITERION}`,
+    `[FAIL] ${CRITERION}`,
+    `${CRITERION} (fail)`,
+  ];
+  for (const echo of LEAKING_SHAPES) {
+    test(`withheld: ${echo.slice(0, 44)}`, () => {
+      const out = body([{ id: "a1", outputTail: echo, text: CRITERION }]);
+      expect(out.toLowerCase()).not.toContain("total column is present");
+      expect(out).toContain("withheld");
+    });
+  }
+
+  test("an echo split over two lines is withheld whole", () => {
+    const out = body([
+      { id: "a1", outputTail: "the total column is\npresent in the export", text: CRITERION },
+    ]);
+    expect(out).not.toContain("present in the export");
+    expect(out).not.toContain("the total column is\n");
+  });
+
+  test("a long criterion wrapped over three lines, no half of it near the whole", () => {
+    // Each line on its own carries well under half the criterion's words, so
+    // only reading the window as one sentence finds it. This is what a runner
+    // does to a long criterion in an 80-column terminal.
+    const long = "the exported csv keeps every column from the source table in its original order";
+    const out = body([
+      {
+        id: "a1",
+        outputTail:
+          "the exported csv keeps every\ncolumn from the source table\nin its original order",
+        text: long,
+      },
+    ]);
+    expect(out).not.toContain("column from the source table");
+    expect(out).not.toContain("in its original order");
+    expect(out).toContain("withheld");
+  });
+
+  test("a reflowed or truncated echo is withheld by its words", () => {
+    const out = body([
+      {
+        id: "a1",
+        outputTail: "expected the total column present in export, got nothing",
+        text: CRITERION,
+      },
+    ]);
+    expect(out).toContain("withheld");
+  });
+
+  test("the evidence survives beside the criterion it was printed with", () => {
+    const out = body([
+      {
+        id: "a1",
+        outputTail: `(fail) ${CRITERION}\nAssertionError: expected 3 rows, got 0\n  at import.test.ts:41`,
+        text: CRITERION,
+      },
+    ]);
+    expect(out.toLowerCase()).not.toContain("total column is present");
+    expect(out).toContain("expected 3 rows, got 0");
+    expect(out).toContain("at import.test.ts:41");
+  });
+
+  test("a short criterion is never redacted at all", () => {
+    const tiny = "exit code 0";
+    const out = body([{ id: "a1", outputTail: tiny, text: tiny }]);
+    expect(out).toContain("exit code 0");
+    expect(out).not.toContain("withheld");
+  });
+
+  test("one criterion's text is withheld from another criterion's tail", () => {
+    const out = body([
+      { id: "a1", outputTail: "unrelated failure", text: CRITERION },
+      { id: "a2", outputTail: CRITERION, text: "something else entirely here" },
+    ]);
+    expect(out).toContain("withheld");
+    expect(out).toContain("unrelated failure");
+  });
+});

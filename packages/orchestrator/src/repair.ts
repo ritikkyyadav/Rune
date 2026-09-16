@@ -211,6 +211,24 @@ const MEASURED = new RegExp(
     "^\\s*(?:ok|not ok) \\d+\\b",
     "^\\s*#\\s*(?:pass|fail|asserts)\\s+\\d+",
     "^\\s*(?:FAIL|PASS)\\s+\\S+\\.(?:[cm]?[jt]sx?|py|rb|go|rs)\\b",
+    // ── V9 finding 17: one repo's runner is not every runner ──
+    //
+    // The list above is bun, tap, jest and vitest — i.e. the runners this repo
+    // uses. A 127 from rspec, junit, python's unittest, go, cargo or mocha
+    // printed a complete measurement and was still read as a missing runner, so
+    // those checks bought no repair turn and the run reported that a runner
+    // which ran and found the bug was absent. Each line below is a RUNTIME's
+    // own summary and none of them is a phrase a test name or a diff produces.
+    "^\\s*Ran \\d+ (?:specs?|tests?|examples?)\\b", // rspec, unittest
+    "^\\s*\\d+ examples?, \\d+ failures?", // rspec
+    "^\\s*Tests run:\\s*\\d+", // junit / maven / testng
+    "^\\s*(?:OK|FAILED)\\s*\\((?:failures|errors|skipped)=\\d+", // python unittest
+    "^\\s*---\\s*(?:FAIL|PASS|SKIP):\\s", // go
+    "^\\s*(?:ok|FAIL)\\s+\\S+\\s+\\d+\\.\\d+s\\b", // go package line
+    "^\\s*test result:\\s*(?:ok|FAILED)\\.", // cargo
+    "^\\s*\\d+ (?:failing|passing|pending)\\b", // mocha
+    "^\\s*Failures:\\s*\\d+", // rspec summary, phpunit
+    "^\\s*(?:Assertions|Errors|Warnings):\\s*\\d+", // phpunit
   ].join("|"),
   "im",
 );

@@ -357,3 +357,42 @@ describe("the classifier itself", () => {
     expect(rendered).not.toContain("example.test");
   });
 });
+
+// ─── V9 finding 17: one repo's runner is not every runner ───
+//
+// The `MEASURED` list that overturns a 127 was bun, tap, jest and vitest — the
+// runners this repo happens to use. Six other runtimes print a complete
+// measurement and were still read as a missing runner, so a check that ran and
+// found the bug bought no repair turn and the run reported it absent. Each line
+// here is a RUNTIME's own summary, and the negative cases below are what keeps
+// the widening honest.
+describe("exit 127 is overturned by any runner's measurement, not only ours", () => {
+  const MEASURED_ELSEWHERE: ReadonlyArray<[string, string]> = [
+    ["rspec", "Ran 12 specs, 2 failures\n"],
+    ["rspec summary", "12 examples, 2 failures\n"],
+    ["junit", "Tests run: 12, Failures: 2\n"],
+    ["python unittest", "FAILED (failures=2)\n"],
+    ["go", "--- FAIL: TestThing (0.00s)\n"],
+    ["go package", "FAIL\tgithub.com/x/y\t0.42s\n"],
+    ["cargo", "test result: FAILED. 3 passed; 2 failed\n"],
+    ["mocha", "2 failing\n  1) the total column\n"],
+    ["phpunit", "Assertions: 40, Failures: 2\n"],
+  ];
+  for (const [runner, output] of MEASURED_ELSEWHERE) {
+    test(`a 127 that printed ${runner}'s summary measured something`, () => {
+      expect(missingDependency(127, output)).toBe(false);
+    });
+  }
+
+  test("a 127 with nothing measured is still the shell's word for it", () => {
+    expect(missingDependency(127, "")).toBe(true);
+    expect(missingDependency(127, "bun: command not found")).toBe(true);
+    // A test NAME that contains a runner's vocabulary is not a measurement.
+    expect(missingDependency(127, "running the failing examples check\n")).toBe(true);
+    expect(missingDependency(127, "+ 2 failing lines removed from the diff\n")).toBe(true);
+  });
+
+  test("`command not found` still wins over a measurement", () => {
+    expect(missingDependency(127, "3 pass\n2 fail\nbash: rspec: command not found\n")).toBe(true);
+  });
+});

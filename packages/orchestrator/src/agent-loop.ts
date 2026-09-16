@@ -1243,6 +1243,21 @@ function normalizeCriterionEcho(line: string): string {
     .toLowerCase();
 }
 
+/**
+ * The three readings of a line the acceptance re-prompt compares against:
+ * `flat` with runner decoration stripped, `loose` with only case and
+ * whitespace levelled (so an EMBEDDED echo is found), and the word list (so a
+ * reflowed or truncated echo is found).
+ */
+function criterionEcho(text: string): { flat: string; loose: string; words: string[] } {
+  const loose = text.replace(/\s+/g, " ").trim().toLowerCase();
+  return {
+    flat: normalizeCriterionEcho(text),
+    loose,
+    words: loose.split(/[^a-z0-9]+/).filter((w) => w.length > 2),
+  };
+}
+
 export class AgentLoop {
   private config: AgentLoopConfig;
   private gateway: LlmGateway;
@@ -1775,13 +1790,55 @@ export class AgentLoop {
     // stripped of case, punctuation and runner decoration, because a check
     // prints `(fail) the total column is missing` for `the total column is
     // missing` and that is the same sentence.
+    // ── V9 finding 9: whole-line equality is not redaction ──
+    //
+    // `normalizeCriterionEcho(line) === text` is an EQUALITY test, so ten of
+    // fifteen realistic runner lines printed the criterion verbatim — including
+    // `(fail) <suite> > <name>`, which is the format every check in this repo
+    // prints. Three readings are asked now, in order of how much they claim:
+    // the line IS the criterion; the line CONTAINS it once case and whitespace
+    // are levelled; or the line carries 60% of its words, which is what a
+    // runner does when it reflows or truncates. And because a criterion that
+    // wraps is two lines neither of which carries it, a sliding window of up to
+    // three consecutive lines is read as one — if the criterion is in the
+    // window, every line of the window is withheld.
     const spoken = failed
-      .map((row) => normalizeCriterionEcho(row.text ?? ""))
-      .filter((text) => text.length >= 12);
-    const redact = (line: string): string | null =>
-      spoken.some((text) => normalizeCriterionEcho(line) === text)
-        ? "    [a line stating the criterion itself — withheld]"
-        : null;
+      .map((row) => criterionEcho(row.text ?? ""))
+      .filter((c) => c.flat.length >= 12);
+    const WITHHELD = "    [a line stating the criterion itself — withheld]";
+    const carries = (text: string): boolean => {
+      const said = criterionEcho(text);
+      return spoken.some((c) => {
+        if (said.flat === c.flat) return true;
+        if (c.flat.length >= 12 && said.loose.includes(c.loose)) return true;
+        if (c.words.length < 4) return false;
+        const here = new Set(said.words);
+        const shared = c.words.filter((w) => here.has(w)).length;
+        return shared / c.words.length >= 0.6;
+      });
+    };
+    const withheldLines = (all: readonly string[]): boolean[] => {
+      // A line that states the criterion ON ITS OWN is the "criterion line
+      // followed by the evidence" case; the windows below step over it, so the
+      // evidence beside it is never swept up with it.
+      const single = all.map((line) => carries(line));
+      const out = [...single];
+      // The wrapped case, and ONLY that case: a criterion split over two or
+      // three lines, none of which carries it on its own. A window whose lines
+      // are already withheld is not this case — it is a line that stated the
+      // criterion followed by the evidence, and the evidence is what the repair
+      // turn is for, so joining them must not take it away.
+      for (let i = 0; i < all.length; i++) {
+        for (let span = 2; span <= 3 && i + span <= all.length; span++) {
+          const window = all.slice(i, i + span);
+          if (window.some((_, k) => single[i + k])) continue;
+          if (carries(window.join(" "))) {
+            for (let k = i; k < i + span; k++) out[k] = true;
+          }
+        }
+      }
+      return out;
+    };
     const lines = [
       "Stop — the acceptance stated for this task does not pass on your changes.",
       "This is the person's own statement of what done means; it was not inferred, and it is",
@@ -1795,8 +1852,10 @@ export class AgentLoop {
       const tail = outputTail.trim();
       if (tail) {
         lines.push("  what it printed (last lines):");
-        for (const line of tail.slice(-ACCEPTANCE_TAIL_CHARS).split("\n").slice(-12)) {
-          lines.push(redact(line) ?? `    ${line}`);
+        const printed = tail.slice(-ACCEPTANCE_TAIL_CHARS).split("\n").slice(-12);
+        const withheld = withheldLines(printed);
+        for (let i = 0; i < printed.length; i++) {
+          lines.push(withheld[i] ? WITHHELD : `    ${printed[i]}`);
         }
       }
       lines.push("");
