@@ -1862,3 +1862,50 @@ scratch-home smoke (it had written one line per install before). Pushed: `414ac8
 This binary carries every fix from the third pass and the UI mediums; the fourth adversarial
 pass was launched on it, and its recommendation — whether memory in `auto` is safe for the
 founder's first real session, and which authority keys may be switched on — is the next entry.
+
+### Addendum 33 — the fourth adversarial pass: the key is readable, quoting defeats the guard, and the verdict on memory and the keys
+
+`.codex/audit-20260910/handoff/m0/verify-batch-4-report.md`, on the tree as it stood: **the
+subject had moved** — the founder's own session committed `fa32871` (457 lines across four UI
+files) and installed it from a dirty tree at 00:29 IST, one minute after Addendum 32 asserted
+`13ebcd1` was installed. Every non-UI file the pass tested is byte-identical between the two,
+so its findings transfer; the UI lines were ungated until the supervisor ran typecheck (clean)
+and the UI suites (**824 / 0**) on `fa32871` this morning. **And memory in `auto` is already
+running on the founder's machine**: `~/.rune/memory` did not exist at 23:14 and at 00:29 held
+a key and one `working` / `user-said` entry.
+
+**Four critical.** (1) The installed binary is not the one any document names — above. (2)
+**The memory signing key is readable by any sandboxed `bash`** (`wc -c < $HOME/.rune/memory/.key`
+returns it through the real native binary): writes to `.key` are guardrail changes, reads are
+nothing, and the Rust sandbox's `credential_deny_paths` never named it; with the key a forged
+pinned entry verifies — the third pass's critical one restored with one extra step. (3)
+**Quoting a path defeats every control-path check**: `namedPaths()` cannot start a match after a
+quote and never expands `$HOME`, so `cp x "$HOME/.rune/memory/entries/a.json"` and even
+`rm -rf "/Users/<user>"` trip nothing; every control surface added by the earlier fix lanes is
+reachable in quotes. (4) **The founder's live provider keys are readable from inside the
+sandbox**: `~/.rune/.env` is not a credential deny path, and the verifier read the OpenRouter
+and Google key prefixes through it. **High:** the structural guard rules are distance-bounded
+and literal (21 of 22 fresh weakenings walk through); a tampered sidecar mode fails open to
+`auto`; the profile is guarded on read only; the git witness fires only on `rune:` commit
+subjects this repo never uses; the re-prompt's line redaction leaks the criterion in bun's own
+`(fail)` format; `a28ccf7`'s paint clock is inert in the measured scenario (the improvement
+belongs to the founder's `928bee0`); five record claims refuted (the install block, "ran" vs
+"pass" denominators, an overstated commit range, a dropped doctor line).
+
+**What held:** the launcher's `.env` precedence in four shapes with markers; the cargo test
+home (111 passed, the log byte-identical); symlink staging; runner-argument authorship; the
+installer's smoke. **Authority is the strongest thing here**: all seven keys on, four
+SIGKILLs, four resumes — three applied rows at counts 1, 2, 3, abandoned at three, never
+reset.
+
+**Verdict:** **not safe for `auto` yet** — four named fixes, two of them a few characters of
+regex; **`E4`, `transport`, `denied` and `no_progress` may be switched on; hold
+`check_failed`, `missing_dependency` and `acceptance`.** The supervisor's advice to the founder,
+given at once: `rune memory off` until the fixes land, and rotate the two provider keys whose
+prefixes were read. Two fix lanes are running (F1: sandbox read denials for the key, `.env`,
+the index and the vault on both platforms, quoting and `$HOME` in the path matcher, the
+recursive-delete breaker, the probe's positive control; F2: the key into the OS credential
+store with quarantine instead of erasure on a lost key, a clause-level guard, fail-closed
+sidecar, the profile guarded on write, a tree-based git witness, substring redaction).
+**Movement against the verifier, reported by it:** two audit lines from the two sandboxed
+calls that proved critical two against the real home.
