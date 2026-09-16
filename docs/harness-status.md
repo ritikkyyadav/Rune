@@ -2041,3 +2041,34 @@ TypeScript layer resolves both forms to the real home and classifies them secret
 Installed **Rune v0.1.0-dev+812c0fe** (CLI `80a5ce6c…`, native `c6bce8ef…`), audit bracket
 7,170 → 7,170. Not verified: the keychain half live, Linux for the tilde case, and the guard's
 porosity, which is now a stated limit rather than a claim.
+
+### Addendum 39 — v0.1.0 is published, installed from the web, and served from `main`
+
+The tag `v0.1.0` was cut at `5ef32d4` (docs above the gated code `e75e9f3`) and pushed; the
+release workflow (run 35079714655) built every native target (Linux x64 and arm64, macOS
+x64 and arm64, Windows x64), cross-compiled the CLI, notarized the macOS binaries, signed
+the Windows ones, wrote `SHA256SUMS`, passed the Linux smoke, published with the notes
+file, and installed on fresh Ubuntu, macOS and Windows machines — every job green. The
+release is **Latest**, not pre-release, eleven assets:
+https://github.com/ritikkyyadav/Rune/releases/tag/v0.1.0. Independent demonstration: the
+web installer, run from the branch copy into a scratch home, exited 0, the installed
+binary answered `Rune v0.1.0`, and the installed `rune` and `rune-tools` digests
+(`5d0d6c12…`, `60d3051f…`) equal the darwin-arm64 lines of the published `SHA256SUMS`;
+the founder's audit log stayed at 7,170. Then the branch's own containment workflow
+failed twice, and both failures were the same honest consequence of lane G: the Linux
+audit's home-store probe and the layered toolchain-root symlink probe expected each
+credential read to reach the bubblewrap namespace and fail with "No such file or
+directory", and Rune now refuses those reads by name before anything spawns. No marker
+leaked in either run. Both were reproduced in the same Docker rig locally and both suites
+now accept the by-name refusal and then repeat the read through a shell variable the
+name check does not expand, so the namespace evidence is still collected for every
+assertion (`a827ba9`, `7902024`; local logs `containment-docker-local-after-lane-g.log`,
+`containment-probe-docker-local-after-lane-g.log`; seven probes repeated). Hosted run
+35081121202 on `7902024`: **green** (Linux audit, clean installs on Ubuntu and macOS).
+`origin/main` fast-forwarded `99a22f8 → 7902024`, so the website's
+`curl … /main/scripts/web-install.sh | bash` serves the first public version; the raw
+`main` script's digest equals the branch copy. Left for the founder, needing GitHub
+authentication: mark the older `v0.2.0`–`v0.4.1` releases as pre-release so the product's
+public history starts at 0.1.0; and rotate the memory signing key that lane G exposed
+(Addendum 38). The installed development build on this machine is `v0.1.0-dev+812c0fe`;
+the two commits above it change only the containment suites and docs.

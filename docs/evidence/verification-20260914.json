@@ -481,7 +481,17 @@
       "live comparison series",
       "§2.8 leftovers",
       "two credential stores"
-    ]
+    ],
+    "tag": {
+      "tag": "v0.1.0",
+      "commit": "5ef32d4 (docs above code e75e9f3)",
+      "releaseRun": "35079714655 success — rune-tools linux-x64/arm64, darwin-x64/arm64, windows-x64; CLI cross-compile; macOS notarize; Windows Authenticode; checksum+smoke+publish; fresh-machine install ubuntu/macos/windows",
+      "release": "https://github.com/ritikkyyadav/Rune/releases/tag/v0.1.0 — Latest, not prerelease, 11 assets incl. SHA256SUMS",
+      "webInstallProof": "scripts/web-install.sh (branch copy) into a scratch HOME: exit 0, `rune --version` → `Rune v0.1.0`; installed rune / rune-tools sha256 5d0d6c12… / 60d3051f… equal the darwin-arm64 lines of SHA256SUMS; founder's audit log 7,170 before and after",
+      "olderReleases": "v0.2.0–v0.4.1 still listed as full releases — founder to mark pre-release (needs GitHub auth)",
+      "branchCiAfterTag": "containment.yml on 5ef32d4 FAILED (Linux audit: the by-name refusal pre-empted the home-store probe's expected 'No such file' text) and on a827ba9 FAILED (the layered toolchain-root symlink probe, same shape, seven reads); both reproduced in the same Docker rig locally, both suites taught the by-name refusal and given an indirected re-run so the namespace evidence is still collected (a827ba9, 7902024); local rig ALL STEPS PASSED / ALL PROBES PASSED (seven repeated); hosted run 35081121202 on 7902024: success (Linux audit + clean installs ubuntu/macos)",
+      "mainFastForward": "origin/main 99a22f8 → 7902024 (fast-forward); raw main scripts/web-install.sh sha256 1095c71c… equals the branch copy"
+    }
   },
   "afterFixG": {
     "date": "2026-09-16",
