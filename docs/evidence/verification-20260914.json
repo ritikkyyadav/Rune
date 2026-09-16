@@ -458,5 +458,29 @@
     },
     "pushed": "414ac89..13ebcd1",
     "fourthVerifierPass": "launched on 13ebcd1; report verify-batch-4-report.md"
+  },
+  "release010": {
+    "date": "2026-09-16",
+    "versionReset": "1d988e2 (0.4.1 \u2192 0.1.0 everywhere); ae3bff8 example plugins >=0.1.0; 534ae2a plugin index digests + pins",
+    "fixLanes": "F1 785a9f2..e3b997e (sandbox deny paths, quoting, probe control); F2 fc4fcad..2461f7c (key in credential store, clause guard, tree witness, redaction)",
+    "gatesAt": "534ae2a",
+    "gateLogs": ".codex/audit-20260910/handoff/m0/gates/534ae2a-20260916T081414Z/",
+    "gates": "all thirteen green",
+    "installed": {
+      "version": "Rune v0.1.0-dev+534ae2a",
+      "cliSha256": "62a1ff715a8a3d2088bb1e948b2b6d71b9883c14cae8a968f414c33956b75763",
+      "nativeSha256Prefix": "084302c8be0f7e5d",
+      "auditBracket": "7,170 \u2192 7,170"
+    },
+    "pushed": "13ebcd1..534ae2a",
+    "releaseNotes": "docs/releases/v0.1.0.md",
+    "scopedVerifier": "launched (Sonnet) \u2192 verify-batch-5-report.md; the tag waits on it",
+    "onHold": [
+      "M6/Phase 6",
+      "Windows",
+      "live comparison series",
+      "\u00a72.8 leftovers",
+      "two credential stores"
+    ]
   }
 }

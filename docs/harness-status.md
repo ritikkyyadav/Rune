@@ -1957,3 +1957,23 @@ mutations, every one caught. Supervisor rerun: memory suites **364 / 0**. Lane's
 5,941 / 0, integration 395 / 0, lifecycle 47 / 0, eval 63 / 63 at 0.27, `~/.rune` byte-identical
 start to end. Open for the TUI: `/memory` does not yet print the key line, the quarantine
 count or the tamper notice (`rune memory` does; the engine accessors exist).
+
+### Addendum 36 — Rune is 0.1.0: gated, installed, pushed, and the scoped release check launched
+
+The version reset the founder asked for: every package and the Cargo workspace carry
+`0.1.0` (`1d988e2`); the internal 0.2–0.4 numbers were development builds and are not the
+product's history. The reset found two things the numbers had been holding up: the example
+plugins required Rune `>=0.2.0` and refused to load (eight integration tests red; `ae3bff8`),
+and the plugin index carried the same pin plus tree digests that moved with the manifests
+(`534ae2a`). The handoff's full gate list on `534ae2a`, logs in
+`gates/534ae2a-20260916T081414Z/`: **all thirteen green**, `tests/verification/` empty.
+Installed without an override: **Rune v0.1.0-dev+534ae2a**, CLI
+`62a1ff715a8a3d2088bb1e948b2b6d71b9883c14cae8a968f414c33956b75763`, native `084302c8…`
+(moved again with F1's crate change); **the founder's audit log held at 7,170 through the
+install**; pushed `13ebcd1..534ae2a`. The release notes for the first public version are in
+`docs/releases/v0.1.0.md` — verified, experimental, platform limits, unresolved, no internal
+numbers — and the publish step uses them and pins Latest (`583701b`). A scoped verifier on
+Sonnet is checking the fourth pass's critical fixes and the release readiness on this binary;
+its recommendation decides the tag. Everything outside the first public version — M6 and
+Phase 6, Windows, the live comparison series, the §2.8 leftovers, the two credential stores —
+is on hold by the founder's decision of 2026-09-16.
