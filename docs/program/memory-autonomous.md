@@ -19,6 +19,13 @@ unless a person said it or a machine proved it.
 
 ---
 
+> **Key location, corrected 2026-09-16 (Fix lane F2):** the HMAC key that signs entries lives in
+> the OS credential store (macOS Keychain / Linux Secret Service, service `rune`, account
+> `memory-key:<digest of the store path>`), not in a file; `<store>/.key` is only a migration
+> source, imported and deleted on the next read, or the last-resort 0600 fallback that the
+> sandbox denies to tool calls. A lost or rotated key quarantines entries (kept, counted,
+> re-signed only by the person through `rune memory resign`); it never erases them.
+
 ## 0. The control: three modes, and no clock
 
 The founder, 2026-09-15, withdrawing the cadence:
