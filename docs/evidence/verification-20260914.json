@@ -548,6 +548,21 @@
       "19 smaller OpenAI-compatible hosts' seeds (live discovery governs)",
       "prices for new ids (estimated)",
       "Ollama Cloud lineup unchanged since 2026-08-26"
-    ]
+    ],
+    "headerFix": {
+      "founderAsk": "header must read v0.1.1, not v0.1.1-dev+<sha>; show a short session id findable later in sessions; republish under 0.1.1, not a new number (not live yet)",
+      "commits": "f0f812c (displayVersion strips the dev marker in versionTag; header carries the session's last-8 tail; /sessions, rune list, resumed banner show the same tail; matchSessionIdish resolves exact/head/tail), 4ca9f06 (release.yml: an existing release is updated in place — upload --clobber + edit --latest; notes)",
+      "tests": "tests/unit/orchestrator/ui-header-version-session.test.ts (5); gates typecheck/lint/prettier/unit 6,077 / 0/integration 0 fail/lifecycle 47 / 0 green",
+      "installed": {
+        "version": "Rune v0.1.1 (tag at HEAD)",
+        "cliSha256Prefix": "a56f0faedf3949b4",
+        "nativeSha256Prefix": "43e7bb4661d4175c",
+        "auditBracket": "7,170 → 7,170"
+      },
+      "retag": "v0.1.1 moved 6b9afcf → 4ca9f06 (force-pushed); release run 35092267743 success on every job incl. fresh installs; the existing release updated in place (11 assets, updated 2026-09-16T11:50:33Z)",
+      "mainFastForward": "6b9afcf → 4ca9f06",
+      "branchCi": "containment.yml on 4ca9f06: completed success",
+      "notDone": "a pty capture of the installed header was declined by the founder; the header row is proven by unit test and by the installed --version"
+    }
   }
 }

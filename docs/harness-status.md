@@ -2111,3 +2111,23 @@ same commit; `origin/main` fast-forwarded `7902024 → 6b9afcf`. Not verified: G
 accepted effort values on Codex (passed through unclamped), Opus 5 / Sonnet 5 / Fable 5.1 on
 Bedrock (not routed by this build), the smaller OpenAI-compatible hosts' seeds, the estimated
 prices, and Ollama Cloud's lineup.
+
+### Addendum 41 — the header names the product and the session; 0.1.1 re-cut in place
+
+The founder saw `v0.1.1-dev+6b9afcf` in the pinned header and asked for the product
+version alone, a short session id a person can find again in `/sessions`, and no new
+version number because nothing had gone live. Done on source (`f0f812c`): the header's
+version tag strips the build marker (`--version`, `rune doctor` and the install guard keep
+the full string, because they compare builds); beside it the header shows the last eight
+characters of the session id — the random part of a UUIDv7, since the first eight are a
+timestamp that sessions opened in the same minute share — and `/sessions`, `rune list` and
+the resumed banner now show that same tail, which `rune resume` and `/resume` accept
+(exact, head or tail). Five tests. The release workflow now updates an existing release in
+place when a tag is re-cut (`4ca9f06`). Gates on the change: typecheck, lint, prettier,
+unit 6,077 / 0, integration 0 fail, lifecycle 47 / 0. Installed **Rune v0.1.1** (the tag is at
+HEAD, so the build reports the bare number; CLI `a56f0fae…`), audit bracket 7,170 → 7,170.
+The `v0.1.1` tag moved `6b9afcf → 4ca9f06`; release run 35092267743 green on every job
+including the fresh-machine installs, and the existing release's eleven assets and notes
+were replaced in place. `origin/main` fast-forwarded `6b9afcf → 4ca9f06`; branch
+containment on `4ca9f06`: completed success. Not done: a pseudo-terminal capture
+of the installed header, which the founder declined; the row is proven by its unit test.
