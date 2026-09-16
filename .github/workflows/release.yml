@@ -523,11 +523,21 @@ jobs:
           TAG: ${{ github.event_name == 'push' && github.ref_name || format('v{0}', needs.version.outputs.version) }}
           PRERELEASE: ${{ inputs.prerelease == true && '--prerelease' || '' }}
         run: |
+          # Hand-written notes win when they exist (docs/releases/<tag>.md):
+          # the first public version is written for its readers, not
+          # assembled from commit titles that carry internal build numbers.
+          # `--latest` pins the badge: older tags remain but this is the one
+          # the web installer's "latest" resolves to.
+          NOTES=(--generate-notes)
+          if [ -f "docs/releases/$TAG.md" ]; then
+            NOTES=(--notes-file "docs/releases/$TAG.md")
+          fi
           gh release create "$TAG" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --title "Rune $TAG" \
+            --latest \
             $PRERELEASE \
-            --generate-notes
+            "${NOTES[@]}"
       - name: Dry run — built, checksummed and smoked, nothing published
         if: ${{ needs.version.outputs.publish != 'true' }}
         run: |
