@@ -40,7 +40,9 @@ case "${1:-}" in
     git filter-branch -f \
       --msg-filter 'sed -E "/^[Cc]o-[Aa]uthored-[Bb]y:.*([Cc]laude|anthropic\.com)/d"' \
       --tag-name-filter cat -- --all
-    left="$(git log --format=%B --all | grep -ci '^co-authored-by: claude' || true)"
+    # Count the REWRITTEN refs only: `--all` would include the refs/original
+    # backups filter-branch keeps, which still carry every trailer by design.
+    left="$(git log --format=%B HEAD main $(git tag -l) | grep -ci '^co-authored-by: claude' || true)"
     echo "after:  $left commits carry the trailer"
     [ "$left" = "0" ] || { echo "trailers remain — stopping"; exit 1; }
     while read -r kind name sha; do
