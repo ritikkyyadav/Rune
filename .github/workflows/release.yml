@@ -532,12 +532,23 @@ jobs:
           if [ -f "docs/releases/$TAG.md" ]; then
             NOTES=(--notes-file "docs/releases/$TAG.md")
           fi
-          gh release create "$TAG" dist/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Rune $TAG" \
-            --latest \
-            $PRERELEASE \
-            "${NOTES[@]}"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # The tag was re-cut (a version that had not gone live yet, fixed
+            # in place): replace the assets and the notes on the existing
+            # release rather than refusing, so the same number keeps serving.
+            gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+            EDIT_NOTES=()
+            if [ -f "docs/releases/$TAG.md" ]; then EDIT_NOTES=(--notes-file "docs/releases/$TAG.md"); fi
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "Rune $TAG" --latest $PRERELEASE "${EDIT_NOTES[@]}"
+          else
+            gh release create "$TAG" dist/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Rune $TAG" \
+              --latest \
+              $PRERELEASE \
+              "${NOTES[@]}"
+          fi
       - name: Dry run — built, checksummed and smoked, nothing published
         if: ${{ needs.version.outputs.publish != 'true' }}
         run: |
