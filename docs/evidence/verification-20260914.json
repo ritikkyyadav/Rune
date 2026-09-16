@@ -5,9 +5,7 @@
   "sourceCommit": "a22866b86ef01896506307cc0596e5bfc68cd206",
   "workingTree": {
     "tracked": "M docs/CLAUDE_CODE_HANDOFF.md\n M docs/harness-status.md\n M docs/program/backlog.md",
-    "untracked": [
-      "scripts/tui-capture/first-run-frame.ts"
-    ]
+    "untracked": ["scripts/tui-capture/first-run-frame.ts"]
   },
   "commits": [
     "a22866b harness: the provider you saved is the provider you get back",
@@ -115,10 +113,7 @@
     "kind": "installed-walkthrough",
     "binary": "/Users/ritikyadav890/.rune/bin/rune",
     "rig": ".codex/audit-20260910/handoff/m0/walkthrough-installed.py (capture-p4.py's walk with ARGV swapped to the installed launcher)",
-    "sizes": [
-      "120x40",
-      "80x24"
-    ],
+    "sizes": ["120x40", "80x24"],
     "frames": [
       "120x40-idle.txt",
       "120x40-setup-esc.txt",
@@ -206,13 +201,7 @@
     "`rune tools-smoke` names ~/.alan/bin/rune-tools: the legacy shim still resolves first on the founder's PATH (tracked in the backlog since Phase 1)."
   ],
   "afterM2": {
-    "commits": [
-      "564ef36",
-      "3ae51ee",
-      "48caa0c",
-      "a9a9f37",
-      "b5632fb"
-    ],
+    "commits": ["564ef36", "3ae51ee", "48caa0c", "a9a9f37", "b5632fb"],
     "gatesAt": "b5632fb",
     "gates": {
       "unit": "5,068 pass / 1 skip / 0 fail (386 files, 58.3 s)",
@@ -281,10 +270,7 @@
       "high": 7,
       "medium": 11,
       "low": 8,
-      "closedBy": [
-        "Fix lane A f85b263..d9c524e",
-        "Fix lane B 0424906..edd96ef"
-      ],
+      "closedBy": ["Fix lane A f85b263..d9c524e", "Fix lane B 0424906..edd96ef"],
       "verificationDirEmpty": true
     },
     "corpusOffline": {
@@ -457,10 +443,7 @@
         "Clean-machine install (macos-latest)": "success"
       }
     },
-    "notHosted": [
-      "ci.yml (runs on pull_request only for this branch)",
-      "Windows"
-    ]
+    "notHosted": ["ci.yml (runs on pull_request only for this branch)", "Windows"]
   },
   "afterUiMediums": {
     "date": "2026-09-15 night",
