@@ -106,6 +106,34 @@ export function provenanceNote(e: MemoryEntry): string {
   }
 }
 
+/**
+ * A remembered line, quoted as DATA.
+ *
+ * V10 high 6/7: the guard that tries to catch a weakening sentence before it is
+ * promoted is porous — 11 of 14 ordinary paraphrases walked through it — and
+ * a tighter regex is not a property, it is a longer list of the phrasings
+ * somebody thought of. The property is the framing: a remembered line arrives
+ * inside typographic quotes, on one line, as a thing that was SAID rather than
+ * a sentence in Rune's own voice. It cannot close its own quote (a straight
+ * quote inside is left straight, and the delimiters are curly) and it cannot
+ * break out of its bullet (newlines collapse to spaces), so it cannot forge the
+ * surrounding structure and read as policy.
+ *
+ * The framing is not the boundary either. The boundary is that nothing in this
+ * block reaches a runtime decision at all — see `tests/unit/orchestrator/
+ * memory-boundary.test.ts`, which asserts it rather than asking for it.
+ */
+function asData(text: string): string {
+  const flat = text
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/[\r\n\u2028\u2029]+/g, " ")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return `\u201c${flat}\u201d`;
+}
+
 /** The guide body — sections, bullets, provenance. Empty string when there is
  *  nothing promoted, so callers can test it with a truthiness check. */
 export function renderMemoryGuide(entries: readonly MemoryEntry[], opts: RenderOptions): string {
@@ -118,7 +146,7 @@ export function renderMemoryGuide(entries: readonly MemoryEntry[], opts: RenderO
     parts.push(heading);
     for (const e of rows) {
       const note = provenanceNote(e);
-      parts.push(`- ${e.text}${note ? `   (${note})` : ""}`);
+      parts.push(`- ${asData(e.text)}${note ? `   (${note})` : ""}`);
     }
     parts.push("");
   }

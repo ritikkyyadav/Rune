@@ -127,7 +127,10 @@ describe("#3 a user correction is promoted, quoted verbatim, and injected next s
     const block = memoryBlockFor(next, { workspace: "/repo", maxTokens: 1500 });
     expect(block).toContain(typed);
     expect(block).toContain("you corrected this");
-    expect(block).toContain("The current request outranks all of it.");
+    expect(block).toContain("the current request outranks all of it.");
+    // …and the block names the runtime, not the prose, as what holds the
+    // boundaries (V10 highs 6/7 — see memory-boundary.test.ts).
+    expect(block).toContain("enforced by the runtime");
   });
 });
 
