@@ -489,7 +489,7 @@
     "incident": "lane G's mutation probe printed the founder's real ~/.rune/memory/.key into its own transcript (not written, committed or sent); rotation advised: rm the legacy .key, then `rune memory resign --all`",
     "gatesAt": "e75e9f3",
     "gateLogs": ".codex/audit-20260910/handoff/m0/gates/e75e9f3-20260916T091154Z/",
-    "gates": "twelve green; integration 385 / 3 / 7 skip under the full run's load (lifecycle-durability driver did not complete; background-sandbox descendant test timed out) — the two files rerun in isolation 51 / 0; integration gate rerun alone at 812c0fe: PENDING",
+    "gates": "twelve green at e75e9f3; integration 385 / 3 / 7 skip under the full run's load (lifecycle-durability driver did not complete; background-sandbox descendant test timed out) — the two files rerun in isolation 51 / 0, and the integration gate rerun alone at 812c0fe: 388 / 0 / 7 skip in 212 s (gates/812c0fe-20260916T092530Z/)",
     "cargoTests": "114 / 0 (tilde_user_home new); ~/.rune/audit.jsonl 7,170 before and after",
     "supervisorProbes": {
       "installedNative": "from a scratch HOME/RUNE_HOME: `wc -c ~<user>/.rune/memory/.key`, `test -e ~<user>/.rune/.env`, the quoted form and `~/.rune/...` refused by name at the real path; indirected `V=memory/.key; wc -c ~<user>/.rune/$V` denied by Seatbelt (Operation not permitted) at the real path; ordinary command runs sandboxed",
@@ -505,6 +505,7 @@
       "keychain-vs-forged-file live (mocked runner tests only)",
       "Linux/bubblewrap tilde-user refusal (shared deny list, reasoned not measured)",
       "guard porosity unchanged by design"
-    ]
+    ],
+    "tag": "v0.1.0 to be cut from the docs commit above e75e9f3 after the push; release.yml builds from the tag"
   }
 }

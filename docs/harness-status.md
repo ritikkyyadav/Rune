@@ -2032,7 +2032,8 @@ anywhere; the founder was told to rotate it (remove the legacy `.key`; the next 
 mints one in the credential store; `rune memory resign --all`). Gates on `e75e9f3`: twelve
 green; integration **385 / 3** under the full run's load (the lifecycle-durability driver did
 not complete; the background-sandbox descendant test hit its 30 s limit) and the same two
-files **51 / 0** in isolation; cargo 114 / 0 with the audit log at 7,170 before and after.
+files **51 / 0** in isolation, and the integration gate rerun alone **388 / 0** in 212 s
+(`gates/812c0fe-20260916T092530Z/`); cargo 114 / 0 with the audit log at 7,170 before and after.
 Supervisor's own probes on the installed native binary from a scratch home: the
 tilde-username key and `.env` reads refused by name at the real path, the quoted form too,
 an indirected form denied by Seatbelt at the real path, ordinary work untouched; the
