@@ -233,6 +233,28 @@ pub fn sha256_hash(data: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
+/// Write a refused command to the audit log.
+///
+/// A refusal is the most interesting thing a sandbox does, and until now it was
+/// the one thing it never wrote down: `validate_command` returned `Err` before
+/// any executor reached its `audit.append`, so a blocked command left no trace
+/// at all (V10 critical 5 — "not merely unblocked, unlogged", and the same was
+/// true of everything the guard DID block). `exit_code` is `-1` and `sandboxed`
+/// is false, because nothing ran.
+pub(crate) fn record_refusal(path: &std::path::Path, command: &str, reason: &str) {
+    if let Ok(mut audit) = AuditLog::new(path.to_path_buf()) {
+        let _ = audit.append(
+            "default",
+            "bash",
+            &sha256_hash(command),
+            &sha256_hash(reason),
+            0,
+            -1,
+            false,
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

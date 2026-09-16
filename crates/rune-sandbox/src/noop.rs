@@ -39,7 +39,14 @@ impl Sandbox for NoopSandbox {
         timeout_ms: Option<u64>,
     ) -> SandboxFuture<'a> {
         Box::pin(async move {
-            self.path_guard.validate_command(command)?;
+            if let Err(err) = self.path_guard.validate_command(command) {
+                crate::audit::record_refusal(
+                    &self.config.audit_log_path,
+                    command,
+                    &err.to_string(),
+                );
+                return Err(err);
+            }
 
             let working_dir = cwd.unwrap_or(&self.config.workspace_root);
             let timeout = timeout_ms.unwrap_or(self.config.timeout_ms);

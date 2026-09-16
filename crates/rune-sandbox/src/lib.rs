@@ -90,6 +90,131 @@ pub fn rune_home() -> PathBuf {
         .join(".rune")
 }
 
+/// The home directory the OS's user database records — `$HOME` does not enter
+/// into it.
+///
+/// V10 critical 5: every rig, test, eval and CI job in this repo establishes
+/// isolation by pointing `$HOME`/`RUNE_HOME` at a scratch directory, and that
+/// is the entire isolation mechanism. But `~<username>` is a completely
+/// ordinary piece of shell syntax that does not consult `$HOME` at all — the
+/// shell resolves it through `getpwnam`. So with `$HOME` pointed at a scratch
+/// profile, `cat ~ritikyadav890/.rune/memory/.key` reached the real signing
+/// key: the deny list that is supposed to make the question moot was built
+/// entirely from `dirs::home_dir()`, which honours the override, and therefore
+/// did not name the path the shell actually opened.
+///
+/// `dirs::home_dir()` stays — a scratch profile must protect its own home too.
+/// The passwd home is added beside it, so BOTH are denied and neither
+/// override can uncover the other.
+#[cfg(unix)]
+pub fn passwd_home() -> Option<PathBuf> {
+    passwd_dir(None)
+}
+
+/// The account name the user database records for the effective uid.
+///
+/// `$USER` is not consulted: it is as overridable as `$HOME`, and the point of
+/// this lookup is to be the one answer an environment cannot move.
+#[cfg(unix)]
+pub fn passwd_user() -> Option<String> {
+    use std::ffi::CStr;
+
+    let mut buf = vec![0 as libc::c_char; 4096];
+    let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut result: *mut libc::passwd = std::ptr::null_mut();
+    // SAFETY: every pointer handed to `getpwuid_r` is live for the call.
+    let rc = unsafe {
+        libc::getpwuid_r(
+            libc::geteuid(),
+            &mut pwd,
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    if rc != 0 || result.is_null() || pwd.pw_name.is_null() {
+        return None;
+    }
+    // SAFETY: `result` is non-null, so `pw_name` points into `buf`.
+    let name = unsafe { CStr::from_ptr(pwd.pw_name) };
+    name.to_str()
+        .ok()
+        .map(str::to_string)
+        .filter(|n| !n.is_empty())
+}
+
+/// The passwd home of `name`, or of the effective uid when `name` is `None`.
+#[cfg(unix)]
+fn passwd_dir(name: Option<&str>) -> Option<PathBuf> {
+    use std::ffi::{CStr, CString, OsStr};
+    use std::os::unix::ffi::OsStrExt;
+
+    let mut buf = vec![0 as libc::c_char; 4096];
+    let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut result: *mut libc::passwd = std::ptr::null_mut();
+    let rc = match name {
+        Some(name) => {
+            let c_name = CString::new(name).ok()?;
+            // SAFETY: `pwd`, `buf` and `result` are live for the call; `c_name`
+            // is a valid NUL-terminated string. `getpwnam_r` writes only into
+            // the buffers it is handed.
+            unsafe {
+                libc::getpwnam_r(
+                    c_name.as_ptr(),
+                    &mut pwd,
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    &mut result,
+                )
+            }
+        }
+        // SAFETY: as above, for the effective uid.
+        None => unsafe {
+            libc::getpwuid_r(
+                libc::geteuid(),
+                &mut pwd,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut result,
+            )
+        },
+    };
+    if rc != 0 || result.is_null() || pwd.pw_dir.is_null() {
+        return None;
+    }
+    // SAFETY: `result` is non-null, so `pwd` was filled in and `pw_dir` points
+    // into `buf`, which is still alive here.
+    let dir = unsafe { CStr::from_ptr(pwd.pw_dir) };
+    let path = PathBuf::from(OsStr::from_bytes(dir.to_bytes()));
+    if path.as_os_str().is_empty() {
+        None
+    } else {
+        Some(path)
+    }
+}
+
+/// Every directory that is a home on this machine: the environment's, then the
+/// user database's. Deny lists are built from all of them.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) fn home_roots() -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Some(home) = dirs::home_dir()
+        && !home.as_os_str().is_empty()
+    {
+        roots.push(home);
+    }
+    #[cfg(unix)]
+    if let Some(home) = passwd_home()
+        && !roots.contains(&home)
+    {
+        roots.push(home);
+    }
+    if roots.is_empty() {
+        roots.push(PathBuf::new());
+    }
+    roots
+}
+
 /// Credential and secret stores that stay unreadable under every profile, even
 /// where reads are otherwise broad. One list, because two lists become one
 /// list plus an omission.
@@ -115,21 +240,28 @@ pub fn rune_home() -> PathBuf {
 /// default homes under `$HOME` so a command that names `~/.rune` directly is
 /// refused even when the process runs under a scratch profile.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-pub(crate) fn credential_deny_paths() -> Vec<PathBuf> {
-    let home = dirs::home_dir().unwrap_or_default();
-    let mut out = vec![
-        home.join(".ssh"),
-        home.join(".aws"),
-        home.join(".gnupg"),
-        home.join(".config").join("gh"),
-        home.join(".config").join("gcloud"),
-        home.join(".kube"),
-        home.join(".docker"),
-        home.join(".npmrc"),
-        home.join(".netrc"),
-        home.join(".bash_history"),
-        home.join(".zsh_history"),
-    ];
+pub fn credential_deny_paths() -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    for home in home_roots() {
+        for leaf in [
+            ".ssh",
+            ".aws",
+            ".gnupg",
+            ".config/gh",
+            ".config/gcloud",
+            ".kube",
+            ".docker",
+            ".npmrc",
+            ".netrc",
+            ".bash_history",
+            ".zsh_history",
+        ] {
+            let entry = home.join(leaf);
+            if !out.contains(&entry) {
+                out.push(entry);
+            }
+        }
+    }
     for root in rune_home_roots() {
         for leaf in RUNE_HOME_SECRET_LEAVES {
             let entry = root.join(leaf);
@@ -161,15 +293,117 @@ pub(crate) const RUNE_HOME_SECRET_LEAVES: &[&str] = &[
 /// first, then the three default spellings under `$HOME`.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) fn rune_home_roots() -> Vec<PathBuf> {
-    let home = dirs::home_dir().unwrap_or_default();
     let mut roots = vec![rune_home()];
-    for name in [".rune", ".gear", ".alan"] {
-        let candidate = home.join(name);
-        if !roots.contains(&candidate) {
-            roots.push(candidate);
+    for home in home_roots() {
+        for name in [".rune", ".gear", ".alan"] {
+            let candidate = home.join(name);
+            if !roots.contains(&candidate) {
+                roots.push(candidate);
+            }
         }
     }
     roots
+}
+
+/// The credential store a command NAMES, if any — with `~<name>` expanded the
+/// way the shell expands it.
+///
+/// The OS profile is the primary boundary, but it is not always there: when
+/// Seatbelt or bubblewrap is unavailable (a nested sandbox, an unprivileged
+/// container) the executor falls back to `PathGuard` alone, and a fallback that
+/// only knows about destructive verbs lets every credential READ through. This
+/// is the same policy as [`credential_deny_paths`], applied one layer earlier
+/// so the refusal exists on every executor — and so it is a refusal Rune makes,
+/// and therefore one Rune can write to its audit log, rather than an
+/// `Operation not permitted` the kernel returns and nobody records.
+///
+/// Relative paths are not considered: they land in the workspace, which is
+/// ordinary project territory.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub fn credential_path_named(cmd: &str) -> Option<PathBuf> {
+    let deny = credential_deny_paths();
+    let unquoted = cmd.replace(['\'', '"', '`'], " ");
+    for token in unquoted.split(|c: char| {
+        c.is_whitespace() || matches!(c, ';' | '|' | '&' | '<' | '>' | '(' | ')' | '=' | ',')
+    }) {
+        let Some(path) = expand_home_token(token) else {
+            continue;
+        };
+        for entry in &deny {
+            if entry.as_os_str().is_empty() {
+                continue;
+            }
+            if path == *entry || path.starts_with(entry) {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+/// Expand the home spellings a shell expands, and keep absolute paths as they
+/// are. `None` for anything that is not a path this layer judges.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn expand_home_token(token: &str) -> Option<PathBuf> {
+    let token = token.trim();
+    if token.is_empty() {
+        return None;
+    }
+    if let Some(rest) = token.strip_prefix('~') {
+        // `~` and `~/…` follow `$HOME`, exactly as the shell does. `~name` and
+        // `~name/…` do not — they go to the user database, which is the whole
+        // of this finding.
+        let (user, rest) = match rest.find('/') {
+            Some(i) => (&rest[..i], &rest[i + 1..]),
+            None => (rest, ""),
+        };
+        let root = if user.is_empty() {
+            dirs::home_dir().unwrap_or_default()
+        } else {
+            #[cfg(unix)]
+            {
+                passwd_dir(Some(user))?
+            }
+            #[cfg(not(unix))]
+            {
+                return None;
+            }
+        };
+        return Some(if rest.is_empty() {
+            root
+        } else {
+            root.join(rest)
+        });
+    }
+    for (var, fallback) in [
+        ("HOME", None),
+        ("RUNE_HOME", Some(())),
+        ("GEAR_HOME", Some(())),
+        ("ALAN_HOME", Some(())),
+    ] {
+        for spelling in [format!("${var}"), format!("${{{var}}}")] {
+            if let Some(rest) = token.strip_prefix(&spelling) {
+                if !rest.is_empty() && !rest.starts_with('/') {
+                    continue;
+                }
+                let root = match std::env::var(var) {
+                    Ok(value) if !value.trim().is_empty() => PathBuf::from(value),
+                    _ if fallback.is_some() => rune_home(),
+                    _ => dirs::home_dir().unwrap_or_default(),
+                };
+                let rest = rest.trim_start_matches('/');
+                return Some(if rest.is_empty() {
+                    root
+                } else {
+                    root.join(rest)
+                });
+            }
+        }
+    }
+    if token.starts_with('/') {
+        return Some(PathBuf::from(token));
+    }
+    None
 }
 
 /// Seatbelt regexes for the credential shapes a fixed path list cannot name.
@@ -190,12 +424,14 @@ pub(crate) fn credential_deny_regexes() -> Vec<String> {
     // path, so `/tmp/...` written unresolved matches nothing on a machine where
     // `/tmp` is a symlink to `/private/tmp` — which is every macOS machine, and
     // is exactly how the first cut of this rule silently denied nothing.
-    let home = escape_regex(
-        &real_path(&dirs::home_dir().unwrap_or_default())
-            .display()
-            .to_string(),
-    );
-    let mut out = vec![format!(r"^{home}/.*\.(key|pem)$")];
+    let mut out: Vec<String> = Vec::new();
+    for home in home_roots() {
+        let home = escape_regex(&real_path(&home).display().to_string());
+        let rule = format!(r"^{home}/.*\.(key|pem)$");
+        if !out.contains(&rule) {
+            out.push(rule);
+        }
+    }
     for root in rune_home_roots() {
         let root = escape_regex(&real_path(&root).display().to_string());
         // `.env`, `.env.local`, `.env.production` — a subpath entry can only

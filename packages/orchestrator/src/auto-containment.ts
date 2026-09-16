@@ -45,8 +45,9 @@
 // and it cost 22 minutes of a build sitting on a dead classifier. It now fails
 // CONTAINED instead, which is available by construction.
 
+import { existsSync } from "fs";
 import { homedir } from "os";
-import { isAbsolute, relative, resolve, sep } from "path";
+import { dirname, isAbsolute, relative, resolve, sep } from "path";
 import type { AutoModeAction } from "./auto-mode";
 
 export type ContainmentKind = "extend" | "contain" | "redirect" | "defer" | "halt";
@@ -1105,7 +1106,7 @@ const PATH_CANDIDATE_RE = new RegExp(
     "`" +
     String.raw`=(,;|&<>])` +
     // A home spelling, alone or with a path after it …
-    String.raw`((?:~|\$\{?(?:HOME|RUNE_HOME|GEAR_HOME|ALAN_HOME)\}?)(?:/[^\s"'` +
+    String.raw`((?:~[\w.-]*|\$\{?(?:HOME|RUNE_HOME|GEAR_HOME|ALAN_HOME)\}?)(?:/[^\s"'` +
     "`" +
     String.raw`;|&()<>]*)?` +
     // … or an ordinary absolute, relative or bare-directory path.
@@ -1115,7 +1116,7 @@ const PATH_CANDIDATE_RE = new RegExp(
   "g",
 );
 
-const HOME_TOKEN_RE = /^(?:~|\$\{?(?:HOME|RUNE_HOME|GEAR_HOME|ALAN_HOME)\}?)/;
+const HOME_TOKEN_RE = /^(?:~[\w.-]*|\$\{?(?:HOME|RUNE_HOME|GEAR_HOME|ALAN_HOME)\}?)/;
 
 function namedPaths(command: string): string[] {
   const out: string[] = [];
@@ -1129,6 +1130,44 @@ function namedPaths(command: string): string[] {
 /** The same list, exported for the guardrail check in auto-mode.ts. */
 export function commandPaths(command: string): string[] {
   return namedPaths(command);
+}
+
+/**
+ * The home directory a `~<name>` spelling names — resolved WITHOUT `$HOME`.
+ *
+ * V10 critical 5: every rig, test and CI job in this repo establishes isolation
+ * by pointing `$HOME`/`RUNE_HOME` at a scratch directory, and `~<username>` is
+ * a completely ordinary shell idiom that does not consult `$HOME` at all — it
+ * resolves through `getpwnam`. So `~ritikyadav890/.rune/memory/.key` reached
+ * the real signing key from a session that believed itself confined to a
+ * scratch profile, and the old matcher made it worse: it read the token as the
+ * bare `~`, threw the `ritikyadav890/.rune/memory/.key` suffix away, and every
+ * control-path check downstream was asked about the scratch home instead.
+ *
+ * The passwd database is not reachable from here — Bun's `os.userInfo()`
+ * answers from the environment, so it is exactly as overridable as `$HOME` and
+ * cannot be the source of truth (Node's reads `getpwuid`; the CLI runs on Bun).
+ * The home PARENT is a platform constant instead — `/Users` on macOS, `/home`
+ * on Linux — with the environment home's parent as a fallback candidate for
+ * any other layout, preferring whichever directory actually exists. The
+ * authoritative refusal lives one layer down, in `rune-sandbox`, where
+ * `getpwuid` is available; this layer only has to know that `~<name>/...` is
+ * somebody's home and classify what sits under it.
+ */
+const HOME_PARENTS: string[] =
+  process.platform === "darwin" ? ["/Users"] : process.platform === "win32" ? [] : ["/home"];
+
+const homeOfUserCache = new Map<string, string>();
+
+function homeOfUser(name: string): string {
+  const cached = homeOfUserCache.get(name);
+  if (cached) return cached;
+  const candidates = [...HOME_PARENTS, dirname(resolve(homedir()))].map((parent) =>
+    resolve(parent, name),
+  );
+  const answer = candidates.find((c) => existsSync(c)) ?? candidates[0] ?? resolve(homedir());
+  homeOfUserCache.set(name, answer);
+  return answer;
 }
 
 /** Every directory that is a Rune home: the configured one, then the defaults. */
@@ -1157,7 +1196,17 @@ function expandHomeTokens(target: string): string {
   const token = target.match(HOME_TOKEN_RE)?.[0];
   if (!token) return target;
   const rest = target.slice(token.length).replace(/^[\\/]+/, "");
-  const name = token === "~" ? "HOME" : token.replace(/^\$\{?/, "").replace(/\}$/, "");
+  // `~<name>` is not `$HOME`: the shell resolves it through the user database,
+  // so it survives every scratch-home override this repo isolates with. The
+  // old matcher read `~ritikyadav890/.rune/memory/.key` as the bare `~` and
+  // threw the rest of the path away — `commandPaths` returned the scratch home
+  // and nothing else, and every control-path check downstream said no.
+  if (token.startsWith("~")) {
+    const user = token.slice(1);
+    const root = user ? homeOfUser(user) : homedir();
+    return rest ? resolve(root, rest) : resolve(root);
+  }
+  const name = token.replace(/^\$\{?/, "").replace(/\}$/, "");
   const root =
     name === "HOME"
       ? homedir()

@@ -3,7 +3,9 @@ import { describe, expect, test } from "bun:test";
 import { homedir } from "node:os";
 
 import {
+  commandPaths,
   escapesSandbox,
+  isSecretControlPath,
   mechanicalBreaker,
   isSelfProtectionPath,
   routeContainment,
@@ -776,5 +778,80 @@ describe("the shapes the corpus found beyond the five", () => {
     });
     expect(route(action).kind).toBe("defer");
     expect(route(action, { injectionSuspected: true }).kind).toBe("halt");
+  });
+});
+
+/**
+ * V10 critical 5. Every rig, test, eval and CI job in this repo establishes
+ * isolation by pointing `$HOME`/`RUNE_HOME` at a scratch directory — that is
+ * the whole isolation mechanism. `~<username>` does not consult `$HOME`: the
+ * shell resolves it through the user database, so it walks straight past the
+ * override. The matcher made it worse than a miss — it read the token as the
+ * bare `~`, threw the rest of the path away, and every control-path check
+ * downstream was asked about the scratch home instead of the key.
+ *
+ * These tests run under whatever `$HOME` the suite sets (`bunfig.toml` points
+ * it at a scratch profile), and the point of each is that the answer does NOT
+ * come from there.
+ */
+describe("~<username> walks past $HOME", () => {
+  const user = "someotheraccount";
+  const homeParent = process.platform === "darwin" ? "/Users" : "/home";
+  const theirHome = `${homeParent}/${user}`;
+
+  test("the whole path survives, not just the tilde", () => {
+    expect(commandPaths(`cat ~${user}/.rune/memory/.key`)).toEqual([
+      `${theirHome}/.rune/memory/.key`,
+    ]);
+    // Quoting is not a way around it either (V9 critical 3's shape).
+    expect(commandPaths(`cat "~${user}/.rune/memory/.key"`)).toEqual([
+      `${theirHome}/.rune/memory/.key`,
+    ]);
+    // …and it never resolves under the scratch home the session runs in.
+    for (const p of commandPaths(`cat ~${user}/.rune/memory/.key`)) {
+      expect(p.startsWith(homedir())).toBe(false);
+    }
+  });
+
+  test("a credential under somebody else's home is still a credential", () => {
+    for (const command of [
+      `cat ~${user}/.rune/memory/.key`,
+      `wc -c ~${user}/.rune/.env`,
+      `shasum ~${user}/.rune/secrets.json`,
+      `cat ~${user}/.rune/credentials.index.json`,
+    ]) {
+      expect(shellGuardrailChange(bash(command))).toMatch(/credential store/);
+    }
+    // An inline program is scanned by the same matcher as the shell around it.
+    // (`open(...)` reads as a mutation to the matcher, and the mutation branch
+    // keeps its own, more specific reason — either way it is a guardrail event
+    // where before there was none.)
+    expect(
+      shellGuardrailChange(bash(`python3 -c "print(open('~${user}/.rune/memory/.key').read())"`)),
+    ).toMatch(/Rune's own/);
+  });
+
+  test("the control surface under somebody else's home is still the control surface", () => {
+    expect(isSelfProtectionPath(ROOT, `~${user}/.rune/hooks/pre.sh`)).toBe(true);
+    expect(isSecretControlPath(ROOT, `~${user}/.rune/memory/.key`)).toBe(true);
+    expect(shellGuardrailChange(bash(`cp evil.json ~${user}/.rune/memory/entries/a.json`))).toMatch(
+      /Rune's own/,
+    );
+  });
+
+  test("it is somebody's home for the recursive-delete breaker too", () => {
+    expect(breaker(bash(`rm -rf ~${user}/`))).toBe("recursive-delete-outside-workspace");
+    expect(breaker(bash(`rm -rf ~${user}/Documents`))).toBe("recursive-delete-outside-workspace");
+  });
+
+  test("the bare ~ and the $HOME family still follow the environment", () => {
+    expect(commandPaths("cat ~/.rune/memory/.key")).toEqual([`${homedir()}/.rune/memory/.key`]);
+    expect(commandPaths("cat $HOME/.rune/memory/.key")).toEqual([`${homedir()}/.rune/memory/.key`]);
+  });
+
+  test("ordinary work is not swept up", () => {
+    expect(shellGuardrailChange(bash("cat src/index.ts"))).toBeUndefined();
+    expect(shellGuardrailChange(bash("bun test tests/unit"))).toBeUndefined();
+    expect(breaker(bash("echo ~ | cat"))).toBe(null);
   });
 });

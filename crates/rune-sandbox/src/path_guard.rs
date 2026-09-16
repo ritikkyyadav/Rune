@@ -40,7 +40,7 @@ impl PathGuard {
             PathBuf::from("/private/tmp"),
         ];
 
-        let blocked_paths = vec![
+        let mut blocked_paths = vec![
             PathBuf::from("/"),
             home.clone(),
             PathBuf::from("/etc"),
@@ -65,6 +65,31 @@ impl PathGuard {
             PathBuf::from("/private/etc"),
             #[cfg(target_os = "macos")]
             PathBuf::from("/private/var"),
+        ];
+
+        // Every home, not just `$HOME`: `~<username>` resolves through the user
+        // database and ignores the override every rig in this repo isolates
+        // with (V10 critical 5), so the real home's stores are blocked from a
+        // scratch profile exactly as the scratch home's are.
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        for home in crate::home_roots() {
+            for leaf in [
+                ".ssh",
+                ".gnupg",
+                ".aws",
+                ".config",
+                ".local",
+                ".bash_history",
+                ".zsh_history",
+            ] {
+                let entry = home.join(leaf);
+                if !blocked_paths.contains(&entry) {
+                    blocked_paths.push(entry);
+                }
+            }
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        blocked_paths.extend([
             home.join(".ssh"),
             home.join(".gnupg"),
             home.join(".aws"),
@@ -72,7 +97,7 @@ impl PathGuard {
             home.join(".local"),
             home.join(".bash_history"),
             home.join(".zsh_history"),
-        ];
+        ]);
 
         Self {
             workspace_root,
@@ -309,6 +334,25 @@ impl PathGuard {
                     )));
                 }
             }
+        }
+
+        // The credential stores, named through any spelling the shell expands —
+        // including `~<username>`, which ignores `$HOME` entirely. The OS
+        // profile denies these too; this check exists so the refusal also holds
+        // on the PathGuard-only fallback (where there is no profile at all) and
+        // so it is Rune's refusal, recorded in Rune's audit log, rather than a
+        // kernel `Operation not permitted` that nothing writes down.
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        if let Some(path) = crate::credential_path_named(cmd) {
+            warn!(
+                command = cmd,
+                path = %path.display(),
+                "credential store named by a sandboxed command"
+            );
+            return Err(SandboxError::Violation(format!(
+                "command blocked: names a credential store the sandbox may not reach ({})",
+                path.display()
+            )));
         }
 
         Ok(())
