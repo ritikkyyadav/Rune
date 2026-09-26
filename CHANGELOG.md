@@ -11,7 +11,58 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-26
+
+**Auto mode stops asking.** Every Auto prompt recorded since the 2026-08-28 redesign was a shell
+command with no OS sandbox under it — and none of them was dangerous (`cargo test`,
+`make dev-web`, `ps | head`, `test -f` checks). Three causes, all fixed. Full notes:
+[`docs/releases/v1.2.0.md`](docs/releases/v1.2.0.md).
+
 ### Fixed
+
+- **The macOS sandbox works again on macOS 27.** `MacOsSandbox::is_available()` probed with the
+  named `no-network` profile; on macOS 27 `sandbox-exec -n no-network` is SIGKILLed while an inline
+  `-p` profile still applies. The probe reported `mechanism: none`, every command ran on the host
+  whatever `/sandbox` said, and the live Seatbelt tests — which return early when the probe says
+  no — stayed green while testing nothing. The probe now uses the `-p` form `execute` uses, and a
+  test fails whenever the probe disagrees with it.
+- **A session that starts in Auto gets the sandbox.** Only Shift+Tab into Auto turned the sandbox
+  on; a session that opened in Auto (a remembered gear, `--gear auto`, `gear = "auto"`) kept a
+  saved `off`, so every writable command paid an in-path reviewer call. `ensureAutoBoundary` now
+  runs at startup and on the shift. The saved `/sandbox` setting is not rewritten, and an `off`
+  given for the run itself (`--no-sandbox`, `RUNE_SANDBOX_MODE=off`) still stands.
+- **A reviewer outage is never a prompt.** With no sandbox under a command and no reviewer
+  reachable, Auto used to put a yes/no card in front of the user — the last modal prompt in default
+  Auto, and the source of every recorded one. Now ordinary development work runs, recorded as
+  unreviewed, while nothing in the run is under suspicion and the command is low or medium risk on
+  its own; background processes, fallback retries and everything else wait in the end-of-turn list
+  with a plain reason. An outage no longer counts toward the two-refusal halt, so a timeout followed
+  by one genuine refusal cannot end a session. A property test runs every sandbox mode, isolation
+  backend and reviewer behaviour over a 28-action stream and fails on any prompt.
+
+### Changed
+
+- **Windows portability for CI.** `cfg` gates for code only Linux and macOS call (the Windows
+  clippy job runs `-D warnings`), OS-separator handling in tool-row paths and verification globs,
+  LF line endings for every checkout (`.gitattributes`), a capture script that imports its POSIX
+  modules lazily, and the eval-baseline test moved to the integration suite, which builds the
+  native binary it needs. No behaviour change on macOS or Linux.
+
+## [0.1.1] - 2026-09-16
+
+The provider rosters brought current, the GPT-6 family recognised by the Codex and OpenAI
+transports, GitHub Models removed, the header showing the product version and the session tail.
+Full notes: [`docs/releases/v0.1.1.md`](docs/releases/v0.1.1.md).
+
+## [0.1.0] - 2026-09-16
+
+**The first public version.** Contract and verdict at intake and close, acceptance decided by the
+runtime, recovery of a run killed mid-tool, OS sandboxing on macOS and Linux, budgeted sub-agents,
+signed memory, the one-column interface, and Apache-2.0 as the licence. Full notes, with what is
+verified, experimental, platform-limited and unresolved:
+[`docs/releases/v0.1.0.md`](docs/releases/v0.1.0.md).
+
+### Fixed (recorded late — these shipped in 0.1.0 but sat under Unreleased)
 
 - **`todo_write` accepts the shapes models actually send.** Thirteen of the last twenty-one recorded
   tool failures were plan-ledger calls the validator refused: bare strings with a markdown checkbox,
@@ -27,20 +78,6 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
   non-zero with empty stderr, which was read as "no issues". It now reads as inconclusive, the same
   as a missing interpreter. Found by the v0.4.1 release commit's Windows CI run, where a cold
   `python3` start alone outlasted the budget.
-
-## [0.1.1] - 2026-09-16
-
-The provider rosters brought current, the GPT-6 family recognised by the Codex and OpenAI
-transports, GitHub Models removed, the header showing the product version and the session tail.
-Full notes: [`docs/releases/v0.1.1.md`](docs/releases/v0.1.1.md).
-
-## [0.1.0] - 2026-09-16
-
-**The first public version.** Contract and verdict at intake and close, acceptance decided by the
-runtime, recovery of a run killed mid-tool, OS sandboxing on macOS and Linux, budgeted sub-agents,
-signed memory, the one-column interface, and Apache-2.0 as the licence. Full notes, with what is
-verified, experimental, platform-limited and unresolved:
-[`docs/releases/v0.1.0.md`](docs/releases/v0.1.0.md).
 
 ---
 
