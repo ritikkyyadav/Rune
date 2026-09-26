@@ -232,6 +232,7 @@ export {
   clampToBudget,
 } from "./system-memory.js";
 export { type UiLayout, DEFAULT_UI_LAYOUT, parseUiLayout, resolveUiLayout } from "./ui-layout.js";
+export { type UiFinish, DEFAULT_UI_FINISH, parseUiFinish, resolveUiFinish } from "./ui-finish.js";
 export { CALLSIGN_MAX, cleanCallsign, getCallsign, setCallsign } from "./ui-callsign.js";
 export * from "./session.js";
 export {
@@ -263,7 +264,13 @@ export {
   RUNE_ACCENT_NAMES,
   RUNE_ACCENT_LABELS,
   RUNE_BASE_CSS,
-  RUNE_ACCENT_CSS,
+  runeBaseCss,
+  type RuneFinish,
+  RUNE_FINISHES,
+  DEFAULT_RUNE_FINISH,
+  MATTE_CONTRAST,
+  MATTE_STATUS_SATURATION,
+  desaturate,
   runeTerminalPalette,
   runeAccentHex,
   runeTerminalRoles,

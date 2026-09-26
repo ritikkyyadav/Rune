@@ -9,7 +9,15 @@
 // Themes are authored as hex; the ANSI-256 fallback is derived automatically
 // (nearestAnsi256). The `atlas` (brand) theme keeps its original hand-tuned pigments.
 
-import { RUNE_ACCENT_LABELS, runeTerminalPalette, runeAccentHex } from "@rune/shared";
+import {
+  DEFAULT_RUNE_FINISH,
+  MATTE_CONTRAST,
+  MATTE_STATUS_SATURATION,
+  parseUiFinish,
+  runeTerminalPalette,
+  runeAccentHex,
+  type RuneFinish,
+} from "@rune/shared";
 
 export interface Pigment {
   /** Brand-exact 24-bit RGB. */
@@ -71,6 +79,10 @@ export interface Theme {
   /** No trustworthy background was detected, so emitting our own foreground
    *  colors could make text unreadable. Use the terminal's native colors. */
   useNativeColors?: boolean;
+  /** How hard this theme's inks press against its ground. Present on the
+   *  product's own modes and on Auto; absent on the legacy palettes, which
+   *  have one reading only. */
+  finish?: RuneFinish;
 }
 
 // One accent (P3.3). The union keeps a single member rather than disappearing,
@@ -298,14 +310,38 @@ function rgbPigment(rgb: Rgb): Pigment {
   return { rgb, ansi: nearestAnsi256(rgb) };
 }
 
+/** The ink on the line from `ground` toward `pole` that first reaches `target`
+ *  contrast -- the same walk design-tokens.ts takes for the product's modes. */
+function inkAt(ground: Rgb, pole: Rgb, target: number): Rgb {
+  for (let step = 0; step <= 200; step++) {
+    const candidate = mix(ground, pole, step * 0.005);
+    if (contrastRatio(candidate, ground) >= target) return candidate;
+  }
+  return pole;
+}
+
+/** The same hue at `factor` of its saturation. */
+function desaturated(rgb: Rgb, factor: number): Rgb {
+  const [h, s, l] = toHsl(rgb);
+  return fromHsl(h, Math.max(0, Math.min(1, s * factor)), l);
+}
+
 /** Build Follow-terminal mode from the terminal's reported colors.
  *
  * The background is the one piece of information required to choose safe
  * foreground colors. If it is unknown, every semantic token passes through
  * uncolored so the terminal's own foreground/background pair remains intact.
  * With a known background, saturated custom surfaces (red, blue, etc.) keep
- * their identity while semantic colors move toward a high-contrast pole. */
-export function adaptiveTheme(colors: { background?: Rgb; foreground?: Rgb } = {}): Theme {
+ * their identity while semantic colors move toward a high-contrast pole.
+ *
+ * Monochrome like the product's own modes (2026-09-26): the accent is the
+ * host's own ink, not a blue. Matte walks that ink back toward the host's
+ * ground until it reaches the same 13:1 the product's modes use -- never
+ * brighter than the ink the host itself chose -- and softens the status hues. */
+export function adaptiveTheme(
+  colors: { background?: Rgb; foreground?: Rgb } = {},
+  finish: RuneFinish = DEFAULT_RUNE_FINISH,
+): Theme {
   // Use the true contrast poles here, not the warmer explicit-theme neutrals:
   // Follow terminal must remain readable even on saturated custom surfaces.
   const white: Rgb = [255, 255, 255];
@@ -321,6 +357,7 @@ export function adaptiveTheme(colors: { background?: Rgb; foreground?: Rgb } = {
       appearance: "dark",
       preserveTerminal: true,
       useNativeColors: true,
+      finish,
       bg: rgbPigment(black),
       brand: rgbPigment(white),
       slots: {
@@ -339,11 +376,23 @@ export function adaptiveTheme(colors: { background?: Rgb; foreground?: Rgb } = {
   const contrastPole =
     contrastRatio(white, background) >= contrastRatio(black, background) ? white : black;
   const foreground = colors.foreground;
-  const textColor =
+  const hostText =
     foreground && contrastRatio(foreground, background) >= PRIMARY_TEXT_CONTRAST
       ? foreground
       : contrastPole;
+  const matte = finish === "matte";
+  const textColor =
+    matte && contrastRatio(hostText, background) > MATTE_CONTRAST.ink
+      ? inkAt(background, hostText, MATTE_CONTRAST.ink)
+      : hostText;
   const appearance = relativeLuminance(background) < 0.42 ? "dark" : "light";
+  const status = (rgb: Rgb): Rgb =>
+    readable(
+      matte ? desaturated(rgb, MATTE_STATUS_SATURATION) : rgb,
+      background,
+      contrastPole,
+      SECONDARY_TEXT_CONTRAST,
+    );
 
   return {
     name: "auto",
@@ -351,8 +400,9 @@ export function adaptiveTheme(colors: { background?: Rgb; foreground?: Rgb } = {
     appearance,
     preserveTerminal: true,
     useNativeColors: false,
+    finish,
     bg: rgbPigment(background),
-    brand: rgbPigment(readable([77, 112, 255], background, contrastPole, SECONDARY_TEXT_CONTRAST)),
+    brand: rgbPigment(textColor),
     slots: {
       text: rgbPigment(textColor),
       muted: rgbPigment(
@@ -361,12 +411,14 @@ export function adaptiveTheme(colors: { background?: Rgb; foreground?: Rgb } = {
       faint: rgbPigment(
         readable(mix(textColor, background, 0.45), background, textColor, SECONDARY_TEXT_CONTRAST),
       ),
-      accent: rgbPigment(
-        readable([77, 112, 255], background, contrastPole, SECONDARY_TEXT_CONTRAST),
-      ),
-      info: rgbPigment(readable([67, 156, 232], background, contrastPole, SECONDARY_TEXT_CONTRAST)),
-      warn: rgbPigment(readable([211, 154, 62], background, contrastPole, SECONDARY_TEXT_CONTRAST)),
-      ok: rgbPigment(readable([64, 166, 112], background, contrastPole, SECONDARY_TEXT_CONTRAST)),
+      // The `accent` SLOT is the danger role (see ROLE_SLOT). It was a blue
+      // here, so an error in Auto mode printed in the brand colour; it is the
+      // product's own red now, made readable on the host's ground.
+      accent: rgbPigment(status([210, 69, 59])),
+      // The `info` slot is the accent ROLE: the ink itself.
+      info: rgbPigment(textColor),
+      warn: rgbPigment(status([211, 154, 62])),
+      ok: rgbPigment(status([64, 166, 112])),
       line: rgbPigment(
         readable(mix(textColor, background, 0.68), background, textColor, DECORATIVE_CONTRAST),
       ),
@@ -402,51 +454,161 @@ const ATLAS: Theme = {
 // and the three status colours are the SAME values the app paints with and a
 // brand change propagates from one edit instead of three hand-synced copies.
 //
-// The console's `accent` slot is the semantic negative, not the identity blue:
-// it is what the prompt chevron and an error use, and the brand accent arrives
-// as `info` and as `brand`. Those names are the console's, and they read from
-// what each slot MEANS rather than from what colour it happens to be.
-
-const RUNE_ACCENT_LABEL: Record<RuneAccent, string> = RUNE_ACCENT_LABELS;
+// The console's `accent` slot is the semantic negative, not the identity: it is
+// what an error uses, and the accent ROLE arrives as `info` and as `brand`.
+// Those names are the console's, and they read from what each slot MEANS rather
+// than from what colour it happens to be. Since 2026-09-26 the accent role is
+// the ground's own ink -- white on dark, black on light -- so `info` and `text`
+// carry the same pigment and the hierarchy between them is weight, not hue.
 
 /** Stable persisted id for one base. `rune` and `rune-dark` are the ids every
  *  existing install already has recorded, so a rebrand does not reset anyone's
- *  theme; only the pigments behind them moved. */
+ *  theme; only the pigments behind them moved. The finish is NOT part of the
+ *  id: it is its own axis, saved beside the theme (theme-store.ts). */
 export function runeThemeName(appearance: "light" | "dark", _accent: RuneAccent = "rune"): string {
   return appearance === "light" ? "rune" : "rune-dark";
 }
 
-function runeTheme(appearance: "light" | "dark", accentName: RuneAccent = "rune"): Theme {
-  // Derived from the shared token source, including its distinction between
-  // semantic text and the cosmetic accent. Translucent values arrive here
+const runeThemeCache = new Map<string, Theme>();
+
+/**
+ * One of the product's two modes, at one finish. Exported because the finish
+ * is chosen at runtime (theme.ts `setFinish`) and the active theme has to be
+ * rebuilt at it; memoised because a theme is pure data and a picker's live
+ * preview asks for the same one on every arrow key.
+ */
+export function runeTheme(
+  appearance: "light" | "dark",
+  finish: RuneFinish = DEFAULT_RUNE_FINISH,
+): Theme {
+  const key = `${appearance}:${finish}`;
+  const cached = runeThemeCache.get(key);
+  if (cached) return cached;
+  // Derived from the shared token source. Translucent values arrive here
   // already composited to solid terminal colours, because a terminal has no
   // alpha channel and a guess made at render time is a different guess each
   // time.
-  const palette = runeTerminalPalette(appearance);
-  const brand = runeAccentHex(appearance, accentName);
+  const palette = runeTerminalPalette(appearance, finish);
+  const brand = runeAccentHex(appearance, "rune", finish);
   const label = appearance === "light" ? "Light" : "Dark";
-  return theme(
-    runeThemeName(appearance, accentName),
-    label,
-    appearance,
-    {
-      bg: palette.bg,
-      text: palette.text,
-      muted: palette.muted,
-      faint: palette.faint,
-      accent: palette.red,
-      info: brand,
-      warn: palette.ochre,
-      ok: palette.green,
-      line: palette.line,
-    },
-    {
-      brand,
-      runeAccent: accentName,
-      canvas: palette.canvas,
-      surfaces: palette.surfaces,
-    },
+  const built: Theme = {
+    ...theme(
+      runeThemeName(appearance),
+      label,
+      appearance,
+      {
+        bg: palette.bg,
+        text: palette.text,
+        muted: palette.muted,
+        faint: palette.faint,
+        accent: palette.red,
+        info: brand,
+        warn: palette.ochre,
+        ok: palette.green,
+        line: palette.line,
+      },
+      {
+        brand,
+        runeAccent: "rune",
+        canvas: palette.canvas,
+        surfaces: palette.surfaces,
+      },
+    ),
+    finish,
+  };
+  runeThemeCache.set(key, built);
+  return built;
+}
+
+/** Human name of a finish, for pickers and receipts. */
+export function finishLabel(finish: RuneFinish): string {
+  return finish === "matte" ? "matte" : "crisp";
+}
+
+/** One row of `/theme`: an appearance and, for the product's modes, a finish. */
+export interface ThemeChoice {
+  /** The theme id `setTheme` takes. */
+  theme: string;
+  /** Absent for Terminal, which keeps whatever finish is current. */
+  finish?: RuneFinish;
+  /** What the row is called. */
+  label: string;
+  /** The short word beside the label: the finish, or what Terminal does. */
+  note: string;
+  /** One plain-English clause -- what choosing it feels like, not how it works. */
+  hint: string;
+}
+
+/**
+ * The whole of `/theme`, in the order a person weighs it: the mode they are
+ * probably in first, the softer reading of each mode before the sharper one,
+ * and the host escape hatch last. Five rows, both surfaces (the TUI picker and
+ * the classic readline one) read this list, so they cannot disagree.
+ */
+export const THEME_CHOICES: readonly ThemeChoice[] = [
+  {
+    theme: "rune-dark",
+    finish: "matte",
+    label: "Dark",
+    note: "matte",
+    hint: "soft white on black, easy on the eyes",
+  },
+  {
+    theme: "rune-dark",
+    finish: "crisp",
+    label: "Dark",
+    note: "crisp",
+    hint: "pure white on black, full contrast",
+  },
+  {
+    theme: "rune",
+    finish: "matte",
+    label: "Light",
+    note: "matte",
+    hint: "soft black on white, easy on the eyes",
+  },
+  {
+    theme: "rune",
+    finish: "crisp",
+    label: "Light",
+    note: "crisp",
+    hint: "pure black on white, full contrast",
+  },
+  {
+    theme: "auto",
+    label: "Terminal",
+    note: "follows",
+    hint: "your terminal's own colours",
+  },
+];
+
+/** The row of THEME_CHOICES the given state is standing on (Terminal matches
+ *  at any finish). -1 when a legacy palette is active. */
+export function themeChoiceIndex(themeName: string, finish: RuneFinish): number {
+  return THEME_CHOICES.findIndex(
+    (choice) =>
+      choice.theme === themeName && (choice.finish === undefined || choice.finish === finish),
   );
+}
+
+/**
+ * A written theme choice split into its two axes. `dark-matte`, `light crisp`,
+ * `rune-dark-matte` and a bare `matte` all fold here; the theme half goes on to
+ * `findTheme`, the finish half to `parseUiFinish`. Either half may be absent.
+ */
+export function parseThemeChoice(value: string): { theme?: string; finish?: RuneFinish } {
+  const normalized = value.trim().toLowerCase().replace(/\s+/g, "-");
+  if (normalized === "") return {};
+  // A real theme name always wins: `high-contrast` is a legacy palette, not
+  // "high" at the contrast finish.
+  if (findTheme(normalized)) return { theme: normalized };
+  const bareFinish = parseUiFinish(normalized);
+  if (bareFinish) return { finish: bareFinish };
+  const match = /^(.*?)[-_.](matte|crisp|soft|calm|glossy|gloss|sharp)$/.exec(normalized);
+  if (match && match[1] && findTheme(match[1])) {
+    return { theme: match[1], finish: parseUiFinish(match[2]) };
+  }
+  return { theme: normalized };
 }
 
 // ─── The bundled themes (display order) ───

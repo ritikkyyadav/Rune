@@ -13,10 +13,12 @@
 
 import { glyph } from "./glyphs";
 import {
+  DEFAULT_RUNE_FINISH,
   diffBands,
   hexToRgbTuple,
   syntaxPalette,
   type RuneBaseName,
+  type RuneFinish,
   type SyntaxRole,
 } from "@rune/shared";
 import { terminalText } from "./glyphs";
@@ -36,6 +38,7 @@ import {
   nearestAnsi256,
   productionThemes,
   relativeLuminance,
+  runeTheme,
 } from "./themes";
 
 const RESET = "\x1b[0m";
@@ -89,10 +92,16 @@ function detectDepth(env: NodeJS.ProcessEnv = process.env): ColorDepth {
 
 const DEPTH: ColorDepth = detectDepth();
 
-/** The floor, used only when a terminal admits to nothing better. */
+/**
+ * The floor, used only when a terminal admits to nothing better. The accent is
+ * BOLD in the host's own foreground: ANSI-16 cannot name a white or a black
+ * that is certain to be the ink of the host's ground, and the old `36` asked
+ * for "whatever this terminal calls cyan" -- a blue, in a product that no
+ * longer has one.
+ */
 const ANSI16: Readonly<Record<Exclude<ColorRole, "body">, number>> = {
   dim: 90,
-  accent: 36,
+  accent: 1,
   ok: 32,
   warn: 33,
   danger: 31,
@@ -100,6 +109,20 @@ const ANSI16: Readonly<Record<Exclude<ColorRole, "body">, number>> = {
 
 let autoTheme = AUTO_THEME;
 let active: Theme = findTheme(DEFAULT_THEME)!;
+
+/** How hard the inks press (design-tokens.ts). Matte unless something says otherwise. */
+let finish: RuneFinish = DEFAULT_RUNE_FINISH;
+
+/** What the host terminal reported about itself at launch, if anything. */
+let hostColors: { background?: [number, number, number]; foreground?: [number, number, number] } =
+  {};
+
+/**
+ * Whether the appearance was CHOSEN -- saved, set in the environment or the
+ * config, or picked in `/theme` -- rather than defaulted. A chosen appearance
+ * is a statement about the terminal it runs in; the built-in default is not.
+ */
+let appearanceChosen = false;
 
 /** One pigment, in the richest form this terminal will understand. */
 function sgr(pigment: Pigment, role: Exclude<ColorRole, "body">): string {
@@ -115,18 +138,54 @@ function pigmentFor(slot: SlotName, theme: Theme = active): Pigment {
   return theme.slots[slot];
 }
 
+/**
+ * Whether body text is PAINTED at the theme's ink rather than inherited.
+ *
+ * Body inherited the host's foreground with no exceptions until the matte
+ * finish, and that rule is still the default: asserting a foreground fights
+ * whatever scheme the person is running, and on a mismatched ground it can
+ * make prose unreadable. Matte is the one reason to bend it -- the brightest,
+ * most numerous glyphs on the screen are the prose, so a finish that softens
+ * everything BUT the prose softens nothing that matters.
+ *
+ * So it bends only where it is safe to, and only under matte:
+ *   (a) the host told us its ground, and that ground agrees with the theme's
+ *       appearance -- dark ink on a dark ground, light on light; or
+ *   (b) the host told us nothing, but the appearance was CHOSEN (saved, env,
+ *       config or `/theme`), which is the person saying what their terminal is.
+ * The built-in default on a silent host keeps inheriting, so a light terminal
+ * running the dark default is never handed light-grey prose. ANSI-16 cannot
+ * name a soft ink at all and always inherits.
+ */
+export function bodyPainted(theme: Theme = active): boolean {
+  if (!COLOR_CAPABLE || theme.useNativeColors || DEPTH === "ansi16") return false;
+  if (theme.finish !== "matte") return false;
+  const ground = hostColors.background;
+  if (ground) return (relativeLuminance(ground) < 0.42 ? "dark" : "light") === theme.appearance;
+  return appearanceChosen;
+}
+
+/** The ink sequence for painted body text (truecolor / 256 only; see bodyPainted). */
+function bodySeq(theme: Theme): string {
+  const p = pigmentFor("text", theme);
+  if (DEPTH === "truecolor") return `\x1b[38;2;${p.rgb[0]};${p.rgb[1]};${p.rgb[2]}m`;
+  return `\x1b[38;5;${p.ansi}m`;
+}
+
 function fmt(role: ColorRole, value: string, theme: Theme = active): string {
   const safe = terminalText(value);
-  // Body inherits the user's foreground. Asserting over it fights every scheme
-  // they might be running, and it is the one rule here with no exceptions.
-  if (role === "body" || !COLOR_CAPABLE || theme.useNativeColors) return safe;
+  if (!COLOR_CAPABLE || theme.useNativeColors) return safe;
+  // Body inherits the user's foreground -- except under matte, where the
+  // conditions in bodyPainted() say it is safe to paint it at the soft ink.
+  if (role === "body") return bodyPainted(theme) ? `${bodySeq(theme)}${safe}${RESET}` : safe;
   return `${sgr(pigmentFor(ROLE_SLOT[role], theme), role)}${safe}${RESET}`;
 }
 
 /** Paint by the older eight-slot vocabulary, for callers that still speak it. */
 function fmtSlot(slot: SlotName, value: string, theme: Theme = active): string {
   const safe = terminalText(value);
-  if (slot === "text" || !COLOR_CAPABLE || theme.useNativeColors) return safe;
+  if (!COLOR_CAPABLE || theme.useNativeColors) return safe;
+  if (slot === "text") return bodyPainted(theme) ? `${bodySeq(theme)}${safe}${RESET}` : safe;
   return `${sgr(pigmentFor(slot, theme), roleFor(slot) as Exclude<ColorRole, "body">)}${safe}${RESET}`;
 }
 
@@ -157,8 +216,17 @@ export function configureAutoTheme(colors: {
   background?: [number, number, number];
   foreground?: [number, number, number];
 }): void {
-  autoTheme = adaptiveTheme(colors);
+  hostColors = { background: colors.background, foreground: colors.foreground };
+  autoTheme = adaptiveTheme(colors, finish);
   if (active.name === "auto") active = autoTheme;
+}
+
+/** A theme at the current finish. The product's modes and Auto are rebuilt at
+ *  it; the legacy palettes have one reading and pass through. */
+function atFinish(theme: Theme): Theme {
+  if (theme.name === "auto") return autoTheme;
+  if (theme.runeAccent) return runeTheme(theme.appearance, finish);
+  return theme;
 }
 
 export function setTheme(name: string): boolean {
@@ -167,12 +235,29 @@ export function setTheme(name: string): boolean {
       ? autoTheme
       : findTheme(name);
   if (!next) return false;
-  active = next.name === "auto" ? autoTheme : next;
+  active = atFinish(next);
   return true;
 }
 
 export function getTheme(): Theme {
   return active;
+}
+
+/** Switch the finish and rebuild the active theme at it. */
+export function setFinish(next: RuneFinish): void {
+  finish = next;
+  autoTheme = adaptiveTheme(hostColors, finish);
+  active = atFinish(active);
+}
+
+export function getFinish(): RuneFinish {
+  return finish;
+}
+
+/** Record whether the current appearance was chosen rather than defaulted
+ *  (see bodyPainted). Startup sets it from the theme's source; `/theme` sets it. */
+export function setAppearanceChosen(chosen: boolean): void {
+  appearanceChosen = chosen;
 }
 
 export function listThemes(): Theme[] {
@@ -337,9 +422,12 @@ export function bandsEnabled(): boolean {
  */
 function bandRgb(role: "ok" | "danger"): Rgb {
   const kind = role === "ok" ? "added" : "removed";
-  // The product's two themes are "rune-dark" and "rune" (the light one).
+  // The product's two themes are "rune-dark" and "rune" (the light one). The
+  // finish reaches only the ink-side white band; paper's blue is a literal.
   if (active.name === "rune-dark" || active.name === "rune") {
-    return hexToRgbTuple(diffBands(active.appearance === "light" ? "light" : "dark")[kind]);
+    return hexToRgbTuple(
+      diffBands(active.appearance === "light" ? "light" : "dark", active.finish ?? finish)[kind],
+    );
   }
   const ground = active.bg.rgb as Rgb;
   const tone = pigmentFor(role === "ok" ? ROLE_SLOT.accent : ROLE_SLOT[role]).rgb as Rgb;
@@ -600,8 +688,9 @@ export function between(from: SlotName, to: SlotName, amount: number): (value: s
  * ANSI-16, a follow-terminal theme -- it is `between`, honestly stepped.
  *
  * The ends are the slots' own painters, not a mix that happens to land on
- * them: `text` at 1.0 still inherits the user's foreground, which is the one
- * rule in this file with no exceptions.
+ * them: `text` at 1.0 is exactly what body text is -- the user's foreground,
+ * or the soft ink where bodyPainted() says matte may paint it -- so a breath
+ * that peaks lands on the prose's own colour and never beyond it.
  */
 export function blendPaint(
   from: SlotName,
@@ -619,30 +708,38 @@ export function blendPaint(
 }
 
 /**
+ * How far the pill's ground is lifted off the terminal's toward the ink: far
+ * enough to read as a raised grey chip (≈`#2B2B2B` on dark matte, ≈`#E6E6E6`
+ * on light matte), not so far that the chip becomes the brightest thing on the
+ * screen. The founder's pick, 2026-09-26: "soft grey pill".
+ */
+const PILL_LIFT = 0.12;
+
+/**
  * The wordmark's pill: the letters set in the theme's own text pigment, bold,
- * on a ground that is the terminal's background pulled a third of the way
- * toward the identity pigment.
+ * on a ground that is the terminal's background lifted a little toward the ink
+ * -- a raised grey chip, in black and white like everything else.
  *
  * `heavy` (above) is the full-strength version -- the accent as the ground,
  * ink chosen for contrast -- and at the top of every frame, for hours, it is
- * too much ink: a saturated block is the brightest thing on the screen and the
- * eye keeps returning to it. A TINTED ground gives the letters the same thing
+ * too much ink: a solid block is the brightest thing on the screen and the
+ * eye keeps returning to it. A LIFTED ground gives the letters the same thing
  * a chip gives them -- a cell that is ink rather than paper, the only genuine
  * weight a terminal sells -- while staying a shade the eye can rest on. The
- * founder's brief, 2026-09-15: "much more appealing and attractive, but easy
- * on the eyes."
+ * founder's briefs: "much more appealing and attractive, but easy on the eyes"
+ * (2026-09-15), and the blue gone from it (2026-09-26).
  *
  * Contrast is measured, not assumed: if the text pigment cannot read on the
- * mixed ground (a theme whose text and accent are close), the pill falls back
- * to `heavy`, whose ink is chosen by contrast. Follow-terminal themes and
- * ANSI-16 hosts know no background to mix from and take reverse video.
+ * lifted ground, the pill falls back to `heavy`, whose ink is chosen by
+ * contrast. Follow-terminal themes and ANSI-16 hosts know no background to mix
+ * from and take reverse video.
  */
 export const lockupChip = (value: string): string => {
   const safe = terminalText(value);
   if (!COLOR_CAPABLE) return safe;
   if (active.useNativeColors || DEPTH === "ansi16") return `\x1b[7m\x1b[1m${safe}${RESET}`;
   const accentRgb = pigmentFor(ROLE_SLOT.accent).rgb;
-  const ground = mixRgb(active.bg.rgb, accentRgb, active.appearance === "dark" ? 0.34 : 0.2);
+  const ground = mixRgb(active.bg.rgb, accentRgb, PILL_LIFT);
   const ink = pigmentFor("text").rgb;
   if (contrastRatio(ink, ground) < 3) return heavy(value);
   const fill =

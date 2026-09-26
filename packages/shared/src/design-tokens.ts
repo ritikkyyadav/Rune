@@ -10,21 +10,31 @@
 //   • Guardrail: tests/unit/shared/design-tokens-parity.test.ts pins these
 //                values and the rules they encode.
 //
-// The identity (2026-09-05): Savoir blue, `#0B37E0` — the blue of the Rune
-// mark — on a clean black-and-white ground: near-white paper (`#FAFAFA`) with
-// black ink when the terminal is light, near-black (`#0B0C0D`) with white ink
-// when it is dark. Values taken from the redesigned Savoir brand (savoir.new).
+// The identity (2026-09-26, "Rune Mono"): black and white, and nothing else in
+// the chrome. White ink on a near-black ground when the terminal is dark, black
+// ink on near-white paper when it is light. The founder's words, set beside
+// Claude Code: "remove the blue colour from the rune ui components and use the
+// combo of white and black only" -- and keep blue in exactly one place, the
+// light-mode code output (the added-line band below), which this file leaves
+// alone.
+//
 // The rules that make a surface read as it does, in the order they bite: the
-// chrome is monochrome; ONE accent — the blue — carries the mark and the few
-// critical signals and nothing else, under 5% of any screen and never running
-// text; three status colours for state (and the diff/syntax palette its own,
+// chrome is monochrome, so hierarchy is carried by weight and by grey STEP,
+// never by hue; the accent IS the ink -- the mark, the caret, the selection
+// bar, the focused thing -- so there is nothing chromatic left to decorate
+// with; three status colours for state only (and code keeps its own palette,
 // because code is meant to be read in colour); every variant DERIVED from a
 // published value by one rule rather than hand-picked twice.
 //
-// Blue is a DARK accent, the opposite of the violet it replaced: it is exact
-// on paper (11:1) and must be LIFTED on ink, where `#0B37E0` on near-black is
-// under 2:1. The lift is Savoir's own dark-ground blue, `#3E63FF`, not a value
-// invented here — so the two grounds show one blue with two legible readings.
+// Two FINISHES of the same palette, a second axis beside light/dark. CRISP is
+// the published poles: pure white or pure black ink, the status colours at full
+// chroma. MATTE -- the default -- is the founder's other ask: "colours are too
+// chunky, they create irritation on eyes due to glossy contrast". A terminal
+// cannot soften its ground (the ground belongs to the user and is never
+// painted), so matte softens the INK instead: every ink is the ground mixed
+// toward the pole until it reaches a target contrast (13:1 for text instead of
+// ~20:1, the way Material's dark theme sets text at 87% white), and the status
+// colours lose 40% of their saturation before the same AA floor is applied.
 //
 // Everything else is a function of these literals — so a change to the brand is
 // a change to a few lines, and the relationships cannot drift.
@@ -90,52 +100,44 @@ export function mixToward(from: string, toward: string, amount: number): string 
   ]);
 }
 
-// ─── The eleven literals ───
+// ─── The literals ───
 //
-// The accent is the founder's swatch; the grounds and inks are what it sits on.
-// Every other colour in the product is one of these or `mixToward` of two of
-// them.
+// Grounds, inks and three status colours. There is no accent literal any more:
+// the accent is the ink of whichever ground it sits on (see `accentFor`). Every
+// other colour in the product is one of these or `mixToward` of two of them.
+//
+// The greys are NEUTRAL. The previous identity tinted every one of them a few
+// steps toward its blue (`#9BA0A5`, `#6A6F74`, `#0B0C0D`), which is invisible
+// beside a blue accent and reads as a cold cast once the blue is gone. Each was
+// replaced by the true grey of the same luminance, so no contrast moved.
 
 export const RUNE_PALETTE = {
-  /**
-   * THE accent: Savoir blue, the blue of the mark. Exact on paper, where it
-   * clears 11:1 against the ground. `accentFor` returns `accentLift` on ink,
-   * because this value on near-black is under 2:1.
-   */
-  accent: "#0B37E0",
-  /**
-   * The same blue, one published step brighter, for the near-black ground.
-   * Savoir's own dark-surface blue — white text on it clears 4.5:1 and the
-   * mark reads unmistakably as blue rather than as a dark smudge.
-   */
-  accentLift: "#3E63FF",
-
-  /** Light ground, surface, sunk — near-white paper, from savoir.new. */
+  /** Light ground, surface, sunk — near-white paper. */
   ground: "#FAFAFA",
   surface: "#FFFFFF",
-  sunk: "#F2F2F1",
-  /** Light ink, black in three steps. The chrome is monochrome now, so the
-   *  primary reads as true black on paper. */
+  sunk: "#F2F2F2",
+  /** Light ink, black in three steps: the crisp reading. Matte derives its
+   *  own steps from the ground (see `runeBaseCss`). */
   ink: "#000000",
-  ink2: "#5A5F64",
-  ink3: "#868B90",
+  ink2: "#5E5E5E",
+  ink3: "#8A8A8A",
   /** The one border colour on paper. */
-  hairline: "#E3E3E2",
+  hairline: "#E3E3E3",
 
-  /** Dark ground, surface, sunk — near-black, from savoir.new. */
-  groundDark: "#0B0C0D",
-  surfaceDark: "#131416",
-  sunkDark: "#060607",
-  /** Dark ink, white in three steps. */
+  /** Dark ground, surface, sunk — near-black. */
+  groundDark: "#0C0C0C",
+  surfaceDark: "#141414",
+  sunkDark: "#060606",
+  /** Dark ink, white in three steps: the crisp reading. */
   inkDark: "#FFFFFF",
-  ink2Dark: "#9BA0A5",
-  ink3Dark: "#6A6F74",
+  ink2Dark: "#9F9F9F",
+  ink3Dark: "#6E6E6E",
   /** The one border colour on ink. */
-  hairlineDark: "#212325",
+  hairlineDark: "#232323",
 
-  /** Status. State only, never decoration, never the accent — and the one
-   *  place chromatic colour outside the blue survives, because a failed check
-   *  and a diff's removals have to read as themselves. */
+  /** Status. State only, never decoration — and the only chromatic colour the
+   *  chrome has left, because a failed check and a diff's removals have to read
+   *  as themselves. */
   ok: "#1F9D55",
   caution: "#C98A1A",
   danger: "#D2453B",
@@ -208,20 +210,94 @@ export function readableOn(
   return ink;
 }
 
-// ─── The two grounds ───
+// ─── The two grounds, and the two finishes ───
 
 export type RuneBaseName = "light" | "dark";
 
 /**
- * The accent for one ground. Blue is a DARK accent, so the exact/derived split
- * is the mirror of the violet it replaced: exact on paper, where `#0B37E0`
- * clears the non-text floor with room to spare, and the published lift on ink,
- * where the same blue would read as a dark smudge. Two legible readings of one
- * blue, both taken from savoir.new rather than derived at render time.
+ * How hard the ink presses against the ground. A second axis beside
+ * light/dark, not a third theme: every screen exists in both.
+ *
+ *   matte  the default. Inks derived to target contrasts (below) and the status
+ *          colours desaturated -- the founder's "easy on the eyes".
+ *   crisp  the published poles: pure white or pure black ink, full-chroma status.
  */
-export function accentFor(base: RuneBaseName): string {
-  const p = RUNE_PALETTE;
-  return base === "dark" ? p.accentLift : p.accent;
+export type RuneFinish = "matte" | "crisp";
+
+export const RUNE_FINISHES: readonly RuneFinish[] = ["matte", "crisp"] as const;
+
+/** The founder's call, 2026-09-26: the softer reading is the one Rune opens in. */
+export const DEFAULT_RUNE_FINISH: RuneFinish = "matte";
+
+/**
+ * Matte's contrast targets, against the ground. Text at 13:1 is where a
+ * two-hour session stops aching and still reads as unmistakably primary; the
+ * secondary step keeps AAA (7:1); meta keeps AA-large (4:1, it never carries a
+ * sentence); rules sit just above the point a hairline stops being seen.
+ */
+export const MATTE_CONTRAST = { ink: 13, ink2: 7, ink3: 4, line: 2.2 } as const;
+
+/** How much of a status colour's saturation matte keeps. */
+export const MATTE_STATUS_SATURATION = 0.6;
+
+/**
+ * The ink on the line from `ground` to `pole` that first reaches `target`
+ * contrast against the ground. Half-percent steps, so the answer is stable to
+ * the byte and a change to a target moves the ink by the least it can.
+ */
+function inkAt(ground: string, pole: string, target: number): string {
+  for (let step = 0; step <= 200; step++) {
+    const candidate = mixToward(ground, pole, step * 0.005);
+    if (contrastRatio(candidate, ground) >= target) return candidate;
+  }
+  return pole.toUpperCase();
+}
+
+function toHsl([r, g, b]: Rgb): [number, number, number] {
+  const [rn, gn, bn] = [r / 255, g / 255, b / 255];
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const l = (max + min) / 2;
+  const d = max - min;
+  if (d === 0) return [0, 0, l];
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  const h =
+    max === rn
+      ? ((gn - bn) / d + (gn < bn ? 6 : 0)) / 6
+      : max === gn
+        ? ((bn - rn) / d + 2) / 6
+        : ((rn - gn) / d + 4) / 6;
+  return [h, s, l];
+}
+
+function fromHsl(h: number, s: number, l: number): Rgb {
+  if (s === 0) return [l * 255, l * 255, l * 255];
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const channel = (t: number): number => {
+    const x = t < 0 ? t + 1 : t > 1 ? t - 1 : t;
+    if (x < 1 / 6) return p + (q - p) * 6 * x;
+    if (x < 1 / 2) return q;
+    if (x < 2 / 3) return p + (q - p) * (2 / 3 - x) * 6;
+    return p;
+  };
+  return [channel(h + 1 / 3) * 255, channel(h) * 255, channel(h - 1 / 3) * 255];
+}
+
+/** The same hue at `factor` of its saturation — lightness untouched. */
+export function desaturate(hex: string, factor: number): string {
+  const [h, s, l] = toHsl(hexToRgbTuple(hex));
+  return rgbTupleToHex(fromHsl(h, Math.max(0, Math.min(1, s * factor)), l));
+}
+
+/**
+ * The accent for one ground: its own ink. There is no chromatic accent in the
+ * chrome any more -- the mark, the caret and the selection bar are drawn in the
+ * ink of the ground they sit on (white on dark, black on light), at the
+ * finish's strength.
+ */
+export function accentFor(base: RuneBaseName, finish: RuneFinish = DEFAULT_RUNE_FINISH): string {
+  return runeBaseCss(base, finish).accent;
 }
 
 /**
@@ -237,7 +313,7 @@ export type RuneAccentName = "rune";
 export const RUNE_ACCENT_NAMES: readonly RuneAccentName[] = ["rune"] as const;
 
 export const RUNE_ACCENT_LABELS: Record<RuneAccentName, string> = {
-  rune: "Rune blue",
+  rune: "Rune mono",
 };
 
 /** Raw CSS custom-property values for one ground. */
@@ -262,25 +338,34 @@ export interface RuneBaseCss {
   hairline: string;
   /** The same rule, one step firmer, where a card edge meets a filled header. */
   hairlineStrong: string;
+  /** The ink itself: the mark, the caret, the selection bar, the focused row. */
   accent: string;
   /** One step darker on paper, one step lighter on ink. */
   accentHover: string;
-  /** Text and glyphs ON the accent. */
+  /** Text and glyphs ON the accent -- the ground, knocked out of the bar. */
   onAccent: string;
   ok: string;
   caution: string;
   danger: string;
 }
 
-function baseFor(base: RuneBaseName): RuneBaseCss {
+function baseFor(base: RuneBaseName, finish: RuneFinish): RuneBaseCss {
   const p = RUNE_PALETTE;
   const dark = base === "dark";
   const ground = dark ? p.groundDark : p.ground;
-  const ink = dark ? p.inkDark : p.ink;
-  const ink3 = dark ? p.ink3Dark : p.ink3;
-  const accent = accentFor(base);
+  const pole = dark ? p.inkDark : p.ink;
+  const matte = finish === "matte";
+  // Crisp is the published steps; matte walks each one back from the pole
+  // toward the ground until it lands on its target contrast.
+  const ink = matte ? inkAt(ground, pole, MATTE_CONTRAST.ink) : pole;
+  const ink2 = matte ? inkAt(ground, pole, MATTE_CONTRAST.ink2) : dark ? p.ink2Dark : p.ink2;
+  const ink3 = matte ? inkAt(ground, pole, MATTE_CONTRAST.ink3) : dark ? p.ink3Dark : p.ink3;
+  const hairline = dark ? p.hairlineDark : p.hairline;
   const surface = dark ? p.surfaceDark : p.surface;
-  const status = (hex: string) => readableOn(hex, surface, ink);
+  // Matte softens chroma BEFORE the floor is applied, so a status colour is
+  // quieter but still clears 4.5:1 as a word on its surface.
+  const status = (hex: string) =>
+    readableOn(matte ? desaturate(hex, MATTE_STATUS_SATURATION) : hex, surface, ink);
   return {
     ground,
     surface,
@@ -290,34 +375,37 @@ function baseFor(base: RuneBaseName): RuneBaseCss {
     // largest that still reads as "the same row".
     raised: mixToward(surface, ink, 0.06),
     ink,
-    ink2: dark ? p.ink2Dark : p.ink2,
+    ink2,
     ink3,
     inkFaint: mixToward(ink3, ground, dark ? 0.4 : 0.45),
-    hairline: dark ? p.hairlineDark : p.hairline,
-    hairlineStrong: mixToward(dark ? p.hairlineDark : p.hairline, ink, 0.35),
-    accent,
-    accentHover: mixToward(accent, dark ? "#FFFFFF" : "#000000", 0.16),
-    // Blue carries WHITE, both grounds: white clears 5:1 on the lifted blue and
-    // 11:1 on the paper blue, while black on `#0B37E0` is ~2:1. The accent never
-    // carries running text; a glyph, a label, or the person's own words sit on it.
-    onAccent: "#FFFFFF",
+    hairline,
+    hairlineStrong: matte
+      ? inkAt(ground, pole, MATTE_CONTRAST.line)
+      : mixToward(hairline, pole, 0.35),
+    accent: ink,
+    accentHover: mixToward(ink, dark ? "#FFFFFF" : "#000000", 0.16),
+    // What sits ON the accent is the ground itself: a bar of ink with the
+    // letters knocked out of it, legible by construction at every finish.
+    onAccent: ground,
     ok: status(p.ok),
     caution: status(p.caution),
     danger: status(p.danger),
   };
 }
 
-/** `:root` and `:root[data-theme="dark"]`. */
-export const RUNE_BASE_CSS: Record<RuneBaseName, RuneBaseCss> = {
-  light: baseFor("light"),
-  dark: baseFor("dark"),
+/** Every ground at every finish, derived once. `RUNE_BASE_CSS[finish][base]`. */
+export const RUNE_BASE_CSS: Record<RuneFinish, Record<RuneBaseName, RuneBaseCss>> = {
+  matte: { light: baseFor("light", "matte"), dark: baseFor("dark", "matte") },
+  crisp: { light: baseFor("light", "crisp"), dark: baseFor("dark", "crisp") },
 };
 
-/** The accent per ground. */
-export const RUNE_ACCENT_CSS: Record<RuneBaseName, Record<RuneAccentName, string>> = {
-  light: { rune: accentFor("light") },
-  dark: { rune: accentFor("dark") },
-};
+/** One ground at one finish. */
+export function runeBaseCss(
+  base: RuneBaseName,
+  finish: RuneFinish = DEFAULT_RUNE_FINISH,
+): RuneBaseCss {
+  return RUNE_BASE_CSS[finish][base];
+}
 
 // ─── Terminal derivation ───
 
@@ -351,8 +439,11 @@ export interface RuneTerminalPalette {
  * alpha channel and a guess made at render time is a guess made differently
  * every time.
  */
-export function runeTerminalPalette(base: RuneBaseName): RuneTerminalPalette {
-  const css = RUNE_BASE_CSS[base];
+export function runeTerminalPalette(
+  base: RuneBaseName,
+  finish: RuneFinish = DEFAULT_RUNE_FINISH,
+): RuneTerminalPalette {
+  const css = runeBaseCss(base, finish);
   const over = (value: string) => solidOver(value, css.surface);
   return {
     bg: over(css.surface),
@@ -377,9 +468,13 @@ export function runeTerminalPalette(base: RuneBaseName): RuneTerminalPalette {
   };
 }
 
-/** Accent hex for one ground (always solid). */
-export function runeAccentHex(base: RuneBaseName, accent: RuneAccentName = "rune"): string {
-  return RUNE_ACCENT_CSS[base][accent].toUpperCase();
+/** Accent hex for one ground at one finish (always solid): the ground's ink. */
+export function runeAccentHex(
+  base: RuneBaseName,
+  _accent: RuneAccentName = "rune",
+  finish: RuneFinish = DEFAULT_RUNE_FINISH,
+): string {
+  return runeBaseCss(base, finish).accent.toUpperCase();
 }
 
 /**
@@ -391,15 +486,18 @@ export function runeAccentHex(base: RuneBaseName, accent: RuneAccentName = "rune
  * what it resolves to so a change is reviewable as a table rather than as a
  * diff of hex strings.
  */
-export function runeTerminalRoles(base: RuneBaseName): Record<string, string> {
-  const p = runeTerminalPalette(base);
+export function runeTerminalRoles(
+  base: RuneBaseName,
+  finish: RuneFinish = DEFAULT_RUNE_FINISH,
+): Record<string, string> {
+  const p = runeTerminalPalette(base, finish);
   return {
     // The six closed roles the console paints with. The names read from what
     // they MEAN, which is why they do not line up one-to-one with the slot
     // vocabulary they resolve through.
     body: p.text,
     dim: p.faint,
-    accent: runeAccentHex(base),
+    accent: runeAccentHex(base, "rune", finish),
     ok: p.green,
     warn: p.ochre,
     danger: p.red,
@@ -492,10 +590,18 @@ export function syntaxPalette(base: RuneBaseName): Record<SyntaxRole, string> {
 // sampled from the Claude Code diff they pointed at, and a derived pink on
 // paper. Green-for-added was the convention; the founder wanted the change
 // itself to carry the identity.
+//
+// The paper-side blue is the ONE blue the monochrome identity keeps (founder,
+// 2026-09-26: "the only place I want blue colour is in light mode when the code
+// outputs gets produced in blue ... do not change it"). It is a literal here,
+// not derived from anything, so no palette or finish change can reach it. The
+// ink-side white band is the ink itself and so follows the finish: pure white
+// when crisp, the matte ink when matte -- the same bar, without the glare.
 export interface DiffBands {
   added: string;
   removed: string;
 }
+/** The published bands: crisp on ink, and paper at every finish. */
 export const RUNE_DIFF_BANDS: Record<RuneBaseName, DiffBands> = {
   dark: { added: RUNE_PALETTE.inkDark, removed: "#370603" },
   light: {
@@ -503,6 +609,7 @@ export const RUNE_DIFF_BANDS: Record<RuneBaseName, DiffBands> = {
     removed: mixToward(RUNE_PALETTE.ground, RUNE_PALETTE.danger, 0.13),
   },
 };
-export function diffBands(base: RuneBaseName): DiffBands {
-  return RUNE_DIFF_BANDS[base];
+export function diffBands(base: RuneBaseName, finish: RuneFinish = DEFAULT_RUNE_FINISH): DiffBands {
+  if (base === "light") return RUNE_DIFF_BANDS.light;
+  return { ...RUNE_DIFF_BANDS.dark, added: runeBaseCss("dark", finish).ink };
 }

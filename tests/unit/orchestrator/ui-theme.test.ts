@@ -336,3 +336,168 @@ describe("the caret is painted, not requested", () => {
     expect(cursorCell("d")).toContain("\x1b[7m");
   });
 });
+
+// ─── The finish (2026-09-26) ───
+//
+// A second axis beside light/dark: matte (the default) and crisp. The chrome is
+// monochrome at both -- the accent IS the ink -- and matte is the one reason
+// body text may be painted instead of inherited, under the conditions pinned
+// below in a real colour process.
+describe("the finish", () => {
+  const themes = require("../../../packages/orchestrator/src/bin/ui/themes");
+  const theme = require("../../../packages/orchestrator/src/bin/ui/theme");
+  const store = require("../../../packages/orchestrator/src/bin/ui/theme-store");
+
+  afterEach(() => {
+    theme.setFinish("matte");
+    theme.setAppearanceChosen(false);
+  });
+
+  const neutral = ([r, g, b]: number[]) => r === g && g === b;
+
+  it("the accent is the ink: no hue on either ground, at either finish", () => {
+    for (const finish of ["matte", "crisp"] as const) {
+      for (const appearance of ["dark", "light"] as const) {
+        const t = themes.runeTheme(appearance, finish);
+        expect(t.finish).toBe(finish);
+        expect(t.slots.info.rgb, `${appearance}.${finish}`).toEqual(t.slots.text.rgb);
+        expect(t.brand.rgb).toEqual(t.slots.text.rgb);
+        for (const slot of ["text", "muted", "faint", "info", "line"] as const) {
+          expect(neutral(t.slots[slot].rgb), `${appearance}.${finish}.${slot}`).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("setFinish rebuilds the active theme; the id does not change", () => {
+    setTheme("rune-dark");
+    theme.setFinish("crisp");
+    expect(getTheme().name).toBe("rune-dark");
+    expect(getTheme().finish).toBe("crisp");
+    expect(getTheme().slots.text.rgb).toEqual([255, 255, 255]);
+    theme.setFinish("matte");
+    expect(getTheme().name).toBe("rune-dark");
+    expect(getTheme().finish).toBe("matte");
+    expect(getTheme().slots.text.rgb).toEqual(hexToRgbTuple("#D3D3D3"));
+    // A later theme switch keeps the finish.
+    setTheme("rune");
+    expect(getTheme().finish).toBe("matte");
+  });
+
+  it("Auto is monochrome too, and its errors are red again", () => {
+    // The `accent` SLOT is the danger role. Auto used to fill it with a blue,
+    // so an error in Auto printed in the brand colour.
+    for (const finish of ["matte", "crisp"] as const) {
+      const t = adaptiveTheme({ background: [0, 0, 0], foreground: [255, 255, 255] }, finish);
+      expect(t.slots.info.rgb).toEqual(t.slots.text.rgb);
+      const [r, g, b] = t.slots.accent.rgb;
+      expect(r, `${finish} danger is red-dominant`).toBeGreaterThan(Math.max(g, b));
+    }
+    const matte = adaptiveTheme({ background: [0, 0, 0], foreground: [255, 255, 255] }, "matte");
+    const crisp = adaptiveTheme({ background: [0, 0, 0], foreground: [255, 255, 255] }, "crisp");
+    expect(crisp.slots.text.rgb).toEqual([255, 255, 255]);
+    expect(matte.slots.text.rgb[0]).toBeLessThan(255); // the host's white, walked back
+  });
+
+  it("reads a typed /theme argument as either axis, or both", () => {
+    expect(themes.parseThemeChoice("dark-matte")).toEqual({ theme: "dark", finish: "matte" });
+    expect(themes.parseThemeChoice("light crisp")).toEqual({ theme: "light", finish: "crisp" });
+    expect(themes.parseThemeChoice("rune-dark-crisp")).toEqual({
+      theme: "rune-dark",
+      finish: "crisp",
+    });
+    expect(themes.parseThemeChoice("matte")).toEqual({ finish: "matte" });
+    expect(themes.parseThemeChoice("glossy")).toEqual({ finish: "crisp" });
+    expect(themes.parseThemeChoice("light")).toEqual({ theme: "light" });
+    // A real theme name always wins over a finish alias.
+    expect(themes.parseThemeChoice("high-contrast")).toEqual({ theme: "high-contrast" });
+    expect(themes.parseThemeChoice("")).toEqual({});
+  });
+
+  it("offers five rows, both surfaces, Terminal last", () => {
+    const rows = themes.THEME_CHOICES.map(
+      (c: { label: string; note: string }) => `${c.label} ${c.note}`,
+    );
+    expect(rows).toEqual([
+      "Dark matte",
+      "Dark crisp",
+      "Light matte",
+      "Light crisp",
+      "Terminal follows",
+    ]);
+    expect(themes.themeChoiceIndex("rune-dark", "matte")).toBe(0);
+    expect(themes.themeChoiceIndex("rune", "crisp")).toBe(3);
+    expect(themes.themeChoiceIndex("auto", "crisp")).toBe(4);
+    expect(themes.themeChoiceIndex("dracula", "matte")).toBe(-1);
+  });
+
+  it("saves the finish beside the theme, and a theme-only save keeps it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "rune-finish-"));
+    try {
+      expect(store.loadSavedFinish(dir)).toBeNull();
+      store.saveTheme("rune", dir, "crisp");
+      expect(store.loadSavedTheme(dir)).toBe("rune");
+      expect(store.loadSavedFinish(dir)).toBe("crisp");
+      store.saveTheme("rune-dark", dir);
+      expect(store.loadSavedTheme(dir)).toBe("rune-dark");
+      expect(store.loadSavedFinish(dir)).toBe("crisp");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("names which source chose the startup theme", () => {
+    expect(store.initialThemeSource({ env: "rune", saved: "auto" })).toBe("env");
+    expect(store.initialThemeSource({ env: "bogus", saved: "auto" })).toBe("saved");
+    expect(store.initialThemeSource({ configured: "light" })).toBe("configured");
+    expect(store.initialThemeSource({ configured: "dracula" })).toBe("default");
+    expect(store.initialThemeSource({})).toBe("default");
+  });
+
+  it("matte paints body text only where it is safe to", () => {
+    // In a real colour process: isTTY forced before the module loads, 24-bit
+    // declared. Each case is one fresh process, because colour capability is
+    // resolved once at module load.
+    const root = join(import.meta.dir, "../../..");
+    const themeUrl = pathToFileURL(join(root, "packages/orchestrator/src/bin/ui/theme.ts")).href;
+    const render = (setup: string): string => {
+      const script = `
+        Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+        const theme = await import(${JSON.stringify(themeUrl)});
+        ${setup}
+        process.stdout.write(JSON.stringify(theme.body("prose")));
+      `;
+      const run = Bun.spawnSync([process.execPath, "-e", script], {
+        cwd: root,
+        env: { ...process.env, NO_COLOR: "", TERM: "xterm-256color", COLORTERM: "truecolor" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(run.exitCode, run.stderr.toString()).toBe(0);
+      return JSON.parse(run.stdout.toString()) as string;
+    };
+    const soft = "\x1b[38;2;211;211;211m";
+    // The built-in default on a silent host: inherit, as it always has.
+    expect(render(`theme.setTheme("rune-dark");`)).toBe("prose");
+    // (a) the host reported a dark ground and the theme is dark: paint.
+    expect(
+      render(`theme.configureAutoTheme({ background: [0, 0, 0] }); theme.setTheme("rune-dark");`),
+    ).toBe(`${soft}prose\x1b[0m`);
+    // (a) a LIGHT ground under the dark theme: never grey prose on white.
+    expect(
+      render(
+        `theme.configureAutoTheme({ background: [255, 255, 255] }); theme.setTheme("rune-dark");`,
+      ),
+    ).toBe("prose");
+    // (b) a silent host, but the appearance was chosen: paint.
+    expect(render(`theme.setTheme("rune-dark"); theme.setAppearanceChosen(true);`)).toBe(
+      `${soft}prose\x1b[0m`,
+    );
+    // Crisp never paints body, whatever the host says.
+    expect(
+      render(
+        `theme.configureAutoTheme({ background: [0, 0, 0] }); theme.setTheme("rune-dark"); theme.setFinish("crisp"); theme.setAppearanceChosen(true);`,
+      ),
+    ).toBe("prose");
+  });
+});

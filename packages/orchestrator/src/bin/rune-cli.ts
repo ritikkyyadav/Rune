@@ -58,6 +58,8 @@ import {
   openCredentialStore,
   apiKeyAccount,
   resolveSearchCredentials,
+  resolveUiFinish,
+  type RuneFinish,
 } from "@rune/shared";
 import type { ProviderName, ResolvedCredential } from "@rune/llm-gateway";
 import { configModeToPermissionMode, resolveStartupPermissionFlags } from "../permissions";
@@ -838,14 +840,22 @@ import {
   accent,
   ok,
   setTheme,
+  setFinish,
+  getFinish,
+  setAppearanceChosen,
   configureAutoTheme,
   getTheme,
-  listThemes,
-  swatch,
   terminalThemeSeq,
   TERMINAL_THEME_RESET,
 } from "./colors";
-import { loadSavedTheme, resolveInitialTheme, saveTheme } from "./ui/theme-store";
+import { THEME_CHOICES, finishLabel, parseThemeChoice, themeChoiceIndex } from "./ui/themes";
+import {
+  initialThemeSource,
+  loadSavedFinish,
+  loadSavedTheme,
+  resolveInitialTheme,
+  saveTheme,
+} from "./ui/theme-store";
 import { resolveUiLayout, setUiLayout } from "./ui/layout";
 import { setVoiceCallsign } from "./ui/voice";
 import { detectTerminalColors } from "./ui/terminal-colors";
@@ -1053,14 +1063,24 @@ async function main() {
   if (!oneShotCommand) void refreshUpdateCheck();
 
   // Apply the persisted / configured color mode before anything renders.
-  // RUNE_THEME (legacy ALAN_THEME is adopted at startup).
-  setTheme(
-    resolveInitialTheme({
-      env: process.env.RUNE_THEME,
-      saved: loadSavedTheme(),
-      configured: config.ui?.theme,
+  // RUNE_THEME (legacy ALAN_THEME is adopted at startup). The finish first, so
+  // the theme is built at it once rather than rebuilt; then whether the theme
+  // was CHOSEN or defaulted, which decides whether matte may paint body text on
+  // a host that did not report its ground (ui/theme.ts bodyPainted).
+  setFinish(
+    resolveUiFinish({
+      env: process.env.RUNE_FINISH,
+      saved: loadSavedFinish(),
+      configured: config.ui?.finish,
     }),
   );
+  const themeSources = {
+    env: process.env.RUNE_THEME,
+    saved: loadSavedTheme(),
+    configured: config.ui?.theme,
+  };
+  setTheme(resolveInitialTheme(themeSources));
+  setAppearanceChosen(initialThemeSource(themeSources) !== "default");
   // And the SHAPE of the frame, read once for the same reason the theme is:
   // `contentCols()` is the measure every transcript row is rendered at, and
   // rows are stored rendered. Default `single` -- one column (see ui/layout.ts).
@@ -2681,57 +2701,49 @@ async function main() {
       }
 
       if (input === "/theme" || input.startsWith("/theme ")) {
-        const themes = listThemes();
+        // The same five rows the TUI offers (ui/themes.ts THEME_CHOICES): an
+        // appearance and a finish. A typed argument may name either half.
         const arg = input.slice("/theme".length).trim().toLowerCase();
+        const receipt = (): string => {
+          const t = getTheme();
+          const mode = t.name === "auto" ? "Terminal" : t.label;
+          return `  ${green(glyph("verified"))} theme ${brass(mode)} ${dim(glyph("observed"))} ${brass(finishLabel(getFinish()))}\n\n`;
+        };
+        const commit = (themeName: string | undefined, finish: RuneFinish | undefined): boolean => {
+          if (themeName && !setTheme(themeName)) return false;
+          if (finish) setFinish(finish);
+          setAppearanceChosen(true);
+          saveTheme(getTheme().name, undefined, getFinish());
+          applyTerminalTheme();
+          return true;
+        };
         if (arg) {
-          // Every retired accent name still resolves (findTheme migrates it to
-          // the ground it was saved on); the active choices are light, dark and
-          // terminal-native.
-          const labelMatch = themes.find((t) => t.label.toLowerCase() === arg);
-          const applied = setTheme(arg) || (labelMatch ? setTheme(labelMatch.name) : false);
-          if (applied) {
-            saveTheme(getTheme().name);
-            applyTerminalTheme();
-            process.stdout.write(
-              `  ${green(glyph("verified"))} theme set to ${brass(getTheme().label)}\n\n`,
-            );
-          } else {
-            process.stdout.write(`  ${vermillion(glyph("failure"))} unknown theme: ${arg}\n\n`);
-          }
+          const choice = parseThemeChoice(arg);
+          if (commit(choice.theme, choice.finish)) process.stdout.write(receipt());
+          else process.stdout.write(`  ${vermillion(glyph("failure"))} unknown theme: ${arg}\n\n`);
           showPrompt();
           return;
         }
-        const current = getTheme().name;
-        process.stdout.write(`  ${bold(text("Appearance"))}\n\n`);
-        themes.forEach((t, i) => {
-          const isCurrent = t.name === current;
-          const marker = isCurrent ? ` ${info(`${glyph("selection")} current`)}` : "";
-          const description =
-            t.name === "auto"
-              ? "follow the host terminal"
-              : t.name === "rune"
-                ? "drafting paper"
-                : "ink";
+        const here = themeChoiceIndex(getTheme().name, getFinish());
+        process.stdout.write(`  ${bold(text("Theme"))}\n\n`);
+        THEME_CHOICES.forEach((choice, i) => {
+          const isCurrent = i === here;
+          const marker = isCurrent ? `  ${text("current")}` : "";
           process.stdout.write(
-            `    ${warn(`[${String(i + 1).padStart(2)}]`)} ${(isCurrent ? text : muted)(t.label.padEnd(18))} ${swatch(t.name)}  ${faint(description)}${marker}\n`,
+            `    ${faint(`${i + 1}.`)} ${(isCurrent ? text : muted)(`${choice.label.padEnd(9)}${choice.note.padEnd(9)}`)} ${faint(choice.hint)}${marker}\n`,
           );
         });
         process.stdout.write("\n");
-        rl.question(`  ${info(glyph("selection"))} `, (answer) => {
+        rl.question(`  ${muted(glyph("selection"))} `, (answer) => {
           const a = answer.trim().toLowerCase();
-          const pick =
-            themes.find((_, i) => String(i + 1) === a) ??
-            themes.find((t) => t.name === a || t.label.toLowerCase() === a);
-          if (pick) {
-            setTheme(pick.name);
-            saveTheme(pick.name);
-            applyTerminalTheme();
-            process.stdout.write(
-              `  ${green(glyph("verified"))} theme set to ${brass(getTheme().label)}\n\n`,
-            );
-          } else {
-            process.stdout.write(`  ${dim("no change")}\n\n`);
-          }
+          const byNumber = THEME_CHOICES.find((_, i) => String(i + 1) === a);
+          const typed = byNumber ? undefined : parseThemeChoice(a);
+          const ok = byNumber
+            ? commit(byNumber.theme, byNumber.finish)
+            : typed && (typed.theme || typed.finish)
+              ? commit(typed.theme, typed.finish)
+              : false;
+          process.stdout.write(ok ? receipt() : `  ${dim("no change")}\n\n`);
           showPrompt();
         });
         return;

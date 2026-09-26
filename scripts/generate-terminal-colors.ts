@@ -12,10 +12,15 @@
 // read in a pull request, instead of a diff of hex strings whose consequences
 // nobody can see.
 //
-//   bun run scripts/generate-terminal-colors.ts          # both grounds
+//   bun run scripts/generate-terminal-colors.ts          # both grounds, both finishes
 //   bun run scripts/generate-terminal-colors.ts --json   # machine-readable
 
-import { runeTerminalRoles, type RuneBaseName } from "../packages/shared/src/design-tokens";
+import {
+  RUNE_FINISHES,
+  runeTerminalRoles,
+  type RuneBaseName,
+  type RuneFinish,
+} from "../packages/shared/src/design-tokens";
 import { nearestAnsi256 } from "../packages/orchestrator/src/bin/ui/themes";
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -31,8 +36,8 @@ export interface TerminalRole {
   ansi: number;
 }
 
-export function terminalTable(base: RuneBaseName): TerminalRole[] {
-  return Object.entries(runeTerminalRoles(base)).map(([role, hex]) => {
+export function terminalTable(base: RuneBaseName, finish?: RuneFinish): TerminalRole[] {
+  return Object.entries(runeTerminalRoles(base, finish)).map(([role, hex]) => {
     const rgb = hexToRgb(hex);
     return { role, hex, rgb, ansi: nearestAnsi256(rgb) };
   });
@@ -43,21 +48,31 @@ if (import.meta.main) {
   const bases: RuneBaseName[] = ["light", "dark"];
   if (json) {
     console.log(
-      JSON.stringify(Object.fromEntries(bases.map((b) => [b, terminalTable(b)])), null, 2),
+      JSON.stringify(
+        Object.fromEntries(
+          RUNE_FINISHES.map((f) => [
+            f,
+            Object.fromEntries(bases.map((b) => [b, terminalTable(b, f)])),
+          ]),
+        ),
+        null,
+        2,
+      ),
     );
   } else {
-    for (const base of bases) {
-      console.log(`\n  ${base.toUpperCase()}`);
-      console.log(`  ${"role".padEnd(10)}${"hex".padEnd(10)}${"rgb".padEnd(18)}ansi256`);
-      for (const r of terminalTable(base)) {
-        // The swatch is the point: a hex column nobody can see is why palette
-        // changes used to ship unreviewed.
-        const swatch = `\x1b[38;2;${r.rgb.join(";")}m███\x1b[0m`;
-        console.log(
-          `  ${r.role.padEnd(10)}${r.hex.padEnd(10)}${r.rgb.join(",").padEnd(18)}${String(r.ansi).padEnd(6)}${swatch}`,
-        );
+    for (const finish of RUNE_FINISHES)
+      for (const base of bases) {
+        console.log(`\n  ${base.toUpperCase()} ${finish.toUpperCase()}`);
+        console.log(`  ${"role".padEnd(10)}${"hex".padEnd(10)}${"rgb".padEnd(18)}ansi256`);
+        for (const r of terminalTable(base, finish)) {
+          // The swatch is the point: a hex column nobody can see is why palette
+          // changes used to ship unreviewed.
+          const swatch = `\x1b[38;2;${r.rgb.join(";")}m███\x1b[0m`;
+          console.log(
+            `  ${r.role.padEnd(10)}${r.hex.padEnd(10)}${r.rgb.join(",").padEnd(18)}${String(r.ansi).padEnd(6)}${swatch}`,
+          );
+        }
       }
-    }
     console.log("");
   }
 }

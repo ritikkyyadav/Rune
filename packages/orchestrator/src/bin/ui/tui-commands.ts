@@ -84,10 +84,12 @@ import {
   warn,
   setTheme,
   getTheme,
-  listThemes,
-  paintBrandWith,
+  getFinish,
+  setFinish,
+  setAppearanceChosen,
   stripAnsi,
 } from "./theme";
+import { THEME_CHOICES, finishLabel, parseThemeChoice, themeChoiceIndex } from "./themes";
 import { formatCostReport, formatRunEconomics } from "../../cost-report";
 import { glyph } from "./glyphs";
 import { mcpPanel } from "./mcp-panel";
@@ -169,7 +171,7 @@ export const COMMAND_METHODS = {
       },
       { name: "/browser", desc: "Agent web browser -- on | off" },
       { name: "/compress", desc: "Summarize & shrink context" },
-      { name: "/theme", desc: "Switch accent colors and light / dark mode", tag: "cosmetic" },
+      { name: "/theme", desc: "Dark or light, matte or crisp", tag: "cosmetic" },
       { name: "/bug", desc: "Flag a problem -- records the flight trail" },
       { name: "/clear", desc: "Clear the screen" },
       { name: "/help", desc: "Show commands" },
@@ -698,51 +700,54 @@ export const COMMAND_METHODS = {
         return true;
       }
       case "theme": {
-        const themes = listThemes();
+        // Two axes, one list: the appearance (dark | light | terminal) and the
+        // finish (matte | crisp). A typed argument may name either half or
+        // both -- `/theme light`, `/theme crisp`, `/theme dark-matte`.
+        const receipt = (): string => {
+          const t = getTheme();
+          const mode = t.name === "auto" ? "Terminal" : t.label;
+          return `  ${ok(glyph("verified"))} ${muted("theme")} ${text(mode)} ${faint(glyph("observed"))} ${text(finishLabel(getFinish()))}`;
+        };
         if (arg) {
-          if (setTheme(arg)) {
-            this.refreshThemeSurface();
-            saveTheme(getTheme().name);
-            this.print(
-              `  ${ok(glyph("verified"))} ${muted("theme set to")} ${warn(getTheme().label)}`,
-            );
-          } else
+          const choice = parseThemeChoice(arg);
+          const themeOk = choice.theme ? setTheme(choice.theme) : true;
+          if (!themeOk) {
             this.print(`  ${danger(glyph("failure"))} ${muted("unknown theme:")} ${faint(arg)}`);
+            return true;
+          }
+          if (choice.finish) setFinish(choice.finish);
+          setAppearanceChosen(true);
+          this.refreshThemeSurface();
+          saveTheme(getTheme().name, undefined, getFinish());
+          this.print(receipt());
           return true;
         }
-        // Live-preview keeps compatibility with the existing picker flow; the
-        // choices only select Flow foreground roles or the terminal-native rung.
-        const original = getTheme().name;
-        const items: PickerItem[] = themes.map((t) => ({
-          label: t.label,
-          hint: t.name === "auto" ? "follows the host terminal" : "six ANSI16 foreground roles",
-          prefix: paintBrandWith(t.name, glyph("live")),
-          current: t.name === original,
-          tags: [t.name],
-        }));
-        const start = Math.max(
-          0,
-          themes.findIndex((t) => t.name === original),
-        );
-        const i = await this.pick(
-          "Color mode",
-          items,
-          start,
-          (idx) => {
-            setTheme(themes[idx]!.name);
-            this.refreshThemeSurface();
-          },
-          "Flow or terminal native | persisted to ~/.rune/theme.json",
-        );
-        if (i != null) {
-          setTheme(themes[i]!.name);
+        // Live preview: every arrow key repaints the whole frame in the row's
+        // theme; esc puts back exactly what was there.
+        const originalTheme = getTheme().name;
+        const originalFinish = getFinish();
+        const apply = (idx: number): void => {
+          const choice = THEME_CHOICES[idx]!;
+          setTheme(choice.theme);
+          setFinish(choice.finish ?? originalFinish);
           this.refreshThemeSurface();
-          saveTheme(themes[i]!.name);
-          this.print(
-            `  ${ok(glyph("verified"))} ${muted("theme set to")} ${warn(getTheme().label)}`,
-          );
+        };
+        const items: PickerItem[] = THEME_CHOICES.map((choice) => ({
+          label: `${choice.label.padEnd(9)}${choice.note}`,
+          hint: choice.hint,
+          current:
+            themeChoiceIndex(originalTheme, originalFinish) === THEME_CHOICES.indexOf(choice),
+        }));
+        const start = Math.max(0, themeChoiceIndex(originalTheme, originalFinish));
+        const i = await this.pick("Theme", items, start, apply, "saved for your next session");
+        if (i != null) {
+          apply(i);
+          setAppearanceChosen(true);
+          saveTheme(getTheme().name, undefined, getFinish());
+          this.print(receipt());
         } else {
-          setTheme(original); // revert the live preview on cancel
+          setTheme(originalTheme); // revert the live preview on cancel
+          setFinish(originalFinish);
           this.refreshThemeSurface();
         }
         return true;

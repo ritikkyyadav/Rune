@@ -559,6 +559,13 @@ export interface RuneConfig {
      */
     theme?: string;
     /**
+     * How hard the ink presses against the ground: `matte` (default) softens
+     * every ink to a target contrast and desaturates the status colours;
+     * `crisp` paints the published poles. Overridden by `RUNE_FINISH` and by a
+     * `/theme` choice (saved beside the theme in ~/.rune/theme.json).
+     */
+    finish?: "matte" | "crisp";
+    /**
      * The shape of the terminal frame.
      *
      * `single` (default) is one column: the header band, the transcript at the
