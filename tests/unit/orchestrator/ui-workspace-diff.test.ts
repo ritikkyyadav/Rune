@@ -29,7 +29,7 @@ describe("ui/workspace-diff", () => {
     expect(output).toContain("2 files");
     expect(output).toContain("+2");
     expect(output).toContain("-2");
-    expect(output).toContain("src/a.ts | src/b.ts");
+    expect(output).toContain("src/a.ts \u00b7 src/b.ts");
     expect(output).toContain("Staged changes");
     expect(output).toContain("Working tree changes");
     expect(output).toContain("-const oldValue = 1;");

@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { renderStatus } from "../../../packages/orchestrator/src/bin/ui/status";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
 import * as F from "../../../packages/orchestrator/src/bin/ui/flow";
+import { glyph } from "../../../packages/orchestrator/src/bin/ui/glyphs";
 
 // /status is the header expanded — these pin that it renders the live facts
 // and reads gear labels from the one modeInfo table instead of a drifted copy.
@@ -37,7 +38,9 @@ describe("ui/status renderStatus", () => {
 
   it("renders the gear row from the shared table", () => {
     const out = stripAnsi(renderStatus({ ...base, permissionMode: "gear-2" as const }));
-    expect(out).toContain(">> 2nd gear | workspace edits proceed");
+    expect(out).toContain(
+      `${glyph("selection").repeat(2)} 2nd gear \u00b7 workspace edits proceed`,
+    );
     const auto = stripAnsi(renderStatus({ ...base, permissionMode: "auto" as const }));
     // Auto mode carries no clause -- the name is the whole statement.
     expect(auto).toContain("* Auto mode");

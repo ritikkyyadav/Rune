@@ -771,10 +771,10 @@ export function renderAgentsStrip(
     running.length > 0 ? `${running.length} running` : "",
     finished.length > 0 ? `${finished.length} done` : "",
   ]);
-  const right = faint("ctrl+f open");
+  const right = faint("ctrl+f agents");
   const names: string[] = [];
   // Budget: the head, the key hint, and the separators between the names.
-  let room = width - visLen(head) - visLen("ctrl+f open") - 6;
+  let room = width - visLen(head) - visLen("ctrl+f agents") - 6;
   for (const card of [...running, ...finished]) {
     const beat =
       card.state === "running"

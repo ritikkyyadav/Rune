@@ -55,7 +55,8 @@ describe("ui/banner", () => {
     // doubled border. The composer's rule is the divider.
     expect(lines).toHaveLength(2);
     // Indented to the content column: a rule begins where the row above it does.
-    expect(lines[1]).toMatch(/^ {2}━+─+$/);
+    // One weight since 2026-09-26: a quiet hairline, no heavy lead under the mark.
+    expect(lines[1]).toMatch(/^ {2}─+$/);
     // Still no artwork. The name is SET as a mark, never drawn as one.
     expect(output).not.toContain("⚙");
     expect(output).not.toContain("⣴");
@@ -121,7 +122,7 @@ describe("ui/banner", () => {
     expect(line).not.toContain("worktree");
   });
 
-  it("the rule changes tone under the last cell of the wordmark", () => {
+  it("the rule under the mark is the same quiet hairline end to end", () => {
     // The mark sits on something instead of merely starting a line. Colour is
     // unreachable in a test process (no tty, so every role paints to plain
     // text), so what is pinned here is the column the tone change lands on —
@@ -167,7 +168,7 @@ describe("ui/banner", () => {
         .split("\n")
         .filter((line) => line.trim());
       const hair = lines.at(-1)!;
-      expect(hair).toMatch(/^ {2}━+─+$/);
+      expect(hair).toMatch(/^ {2}─+$/);
       expect(hair.length).toBe(Math.max(20, columns));
       // …and it is exactly as wide as the identity row it closes.
       expect(hair.length).toBe(lines[0]!.length);

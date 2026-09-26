@@ -126,7 +126,7 @@ describe("queued-input strip", () => {
 
   test("states the contract and numbers each message in order", () => {
     const lines = renderQueueStrip(["first message", "second message"], 100).map(stripAnsi);
-    expect(lines[0]).toContain("queued | sends when this turn completes");
+    expect(lines[0]).toContain("queued \u00b7 sends when this turn completes");
     expect(lines[1]).toMatch(/^\s+1\s+first message/);
     expect(lines[2]).toMatch(/^\s+2\s+second message/);
     expect(lines[2]).toContain("removes the last"); // the undo hint rides the last row

@@ -146,10 +146,10 @@ export const COMMAND_METHODS = {
       },
       { name: "/login", desc: "Connect a subscription, an API key, a local model, or web search" },
       { name: "/setup", desc: "Configure provider, model, key, search, spend, and sandbox" },
-      { name: "/sessions", desc: "Browse, resume, rename, archive & delete", tag: "history" },
+      { name: "/sessions", desc: "Browse, resume, rename, archive and delete", tag: "history" },
       {
         name: "/gear",
-        desc: "Shift gears -- 1 | 2 | 3 | 4 | auto (empty shifts up)",
+        desc: "Shift gears: 1, 2, 3, 4 or auto (empty shifts up)",
         tag: "shift+tab",
       },
       { name: "/diff", desc: "Inspect staged and uncommitted workspace changes", tag: "git" },
@@ -159,20 +159,20 @@ export const COMMAND_METHODS = {
       { name: "/status", desc: "Session status" },
       { name: "/loop", desc: "Repeat a prompt while this session stays open" },
       { name: "/loops", desc: "List and manage this session's loops" },
-      { name: "/team", desc: "Other Rune instances here -- status | send | claim | intent" },
-      { name: "/mcp", desc: "MCP connectors -- health, tool count | reconnect <server>" },
+      { name: "/team", desc: "Other Rune instances here: status, send, claim, intent" },
+      { name: "/mcp", desc: "MCP connectors: health and tools, or reconnect <server>" },
       { name: "/skills", desc: "Browse or search available skills" },
-      { name: "/memory", desc: "System memory -- your evergreen profile" },
+      { name: "/memory", desc: "System memory: your evergreen profile" },
       { name: "/notebook", desc: "Learned tactics for this workspace" },
-      { name: "/interactive", desc: "Live dashboard -- [focus] | auto on|off | open" },
+      { name: "/interactive", desc: "Live dashboard: [focus], auto on or off, open" },
       {
         name: "/sandbox",
-        desc: "OS sandbox for commands -- mode | override | exclude | config",
+        desc: "OS sandbox for commands: mode, override, exclude, config",
       },
-      { name: "/browser", desc: "Agent web browser -- on | off" },
-      { name: "/compress", desc: "Summarize & shrink context" },
+      { name: "/browser", desc: "Agent web browser: on or off" },
+      { name: "/compress", desc: "Summarize and shrink the context" },
       { name: "/theme", desc: "Dark or light, matte or crisp", tag: "cosmetic" },
-      { name: "/bug", desc: "Flag a problem -- records the flight trail" },
+      { name: "/bug", desc: "Flag a problem and record the flight trail" },
       { name: "/clear", desc: "Clear the screen" },
       { name: "/help", desc: "Show commands" },
       { name: "/quit", desc: "Exit Rune" },
@@ -502,7 +502,7 @@ export const COMMAND_METHODS = {
           [
             `  ${bold(text("Providers"))}`,
             ...rows,
-            `  ${faint("toggle /providers on|off <id> | keys /keys | switch /model")}`,
+            `  ${faint("toggle /providers on|off <id> \u00b7 keys /keys \u00b7 switch /model")}`,
           ].join("\n"),
         );
         return true;
@@ -581,7 +581,7 @@ export const COMMAND_METHODS = {
               : [
                   `    ${muted("None found. Add one with ")}${info("rune skill add <path>")}${muted(".")}`,
                 ]),
-            `  ${faint("Skills load automatically when a request matches | run one with /<name> | search with /skills <keywords>")}`,
+            `  ${faint("Skills load automatically when a request matches \u00b7 run one with /<name> \u00b7 search with /skills <keywords>")}`,
           ].join("\n"),
         );
         return true;
@@ -956,7 +956,7 @@ export const COMMAND_METHODS = {
               [
                 `  ${bold(text("Kept copies of the profile"))}`,
                 ...backups.map((b) => `  ${faint(b.stamp)} ${muted(`${b.bytes} bytes`)}`),
-                `  ${faint("restore the newest: /memory restore | a specific one: /memory restore <stamp>")}`,
+                `  ${faint("restore the newest: /memory restore \u00b7 a specific one: /memory restore <stamp>")}`,
               ].join("\n"),
             );
             return true;
@@ -964,7 +964,7 @@ export const COMMAND_METHODS = {
           const r = engine.restoreSystemMemory(subArg || undefined);
           this.print(
             r.restored
-              ? `  ${ok(glyph("verified"))} ${muted(`profile restored | ${r.bytes} bytes from`)} ${faint(r.from ?? "")}`
+              ? `  ${ok(glyph("verified"))} ${muted(`profile restored \u00b7 ${r.bytes} bytes from`)} ${faint(r.from ?? "")}`
               : `  ${danger(glyph("failure"))} ${muted(`nothing restored -- ${r.reason}`)}`,
           );
           return true;
@@ -1013,7 +1013,7 @@ export const COMMAND_METHODS = {
         // quietly reinterpreted: the user asked for a clock and there isn't one.
         if (isWithdrawnCadence(sub === "every" ? arg : sub)) {
           this.print(`  ${warn(glyph("failure"))} ${muted(MEMORY_CADENCE_REFUSAL)}`);
-          this.print(`  ${faint("/memory auto | /memory manual | /memory off")}`);
+          this.print(`  ${faint("/memory auto \u00b7 /memory manual \u00b7 /memory off")}`);
           return true;
         }
         if (sub === "off" || sub === "auto" || sub === "manual" || sub === "on") {
@@ -1035,7 +1035,7 @@ export const COMMAND_METHODS = {
             [
               `  ${bold(text("Memory"))} ${info("off")}`,
               `  ${muted("Nothing is read, written or remembered between sessions.")}`,
-              `  ${faint("turn it on: /memory auto (Rune decides when to update) | /memory manual (only /memory update)")}`,
+              `  ${faint("turn it on: /memory auto (Rune decides when to update) \u00b7 /memory manual (only /memory update)")}`,
             ].join("\n"),
           );
           return true;
@@ -1048,7 +1048,7 @@ export const COMMAND_METHODS = {
             : "never";
         const head = [
           `  ${bold(text("Memory"))} ${info(mem.mode)} ${faint(mem.modeDescription)}`,
-          `  ${faint(`~${fmtTok(mem.tokens)}/${fmtTok(mem.maxTokens)} tokens | updated ${last} | refreshed ${refreshed}`)}`,
+          `  ${faint(`~${fmtTok(mem.tokens)}/${fmtTok(mem.maxTokens)} tokens \u00b7 updated ${last} \u00b7 refreshed ${refreshed}`)}`,
         ];
         // A withdrawn cadence, said out loud once: the user chose `daily` at
         // some point and should hear that it no longer exists.
@@ -1066,7 +1066,7 @@ export const COMMAND_METHODS = {
         const kept = engine.systemMemoryBackups();
         if (kept.length) {
           head.push(
-            `  ${faint(`${kept.length} kept cop${kept.length === 1 ? "y" : "ies"} | restore: /memory restore [stamp] | list: /memory restore list`)}`,
+            `  ${faint(`${kept.length} kept cop${kept.length === 1 ? "y" : "ies"} \u00b7 restore: /memory restore [stamp] \u00b7 list: /memory restore list`)}`,
           );
         }
         // ── what the run learned on its own ──
@@ -1094,7 +1094,10 @@ export const COMMAND_METHODS = {
           learned.push(`  ${muted(`${store.refusals.length} refused by the guard (${rules})`)}`);
         }
         if (learned.length) {
-          learned.push("", `  ${faint("forget: /memory forget <id> | pin: /memory pin <id>")}`);
+          learned.push(
+            "",
+            `  ${faint("forget: /memory forget <id> \u00b7 pin: /memory pin <id>")}`,
+          );
         }
         if (!store.learning) {
           learned.push(
@@ -1112,7 +1115,7 @@ export const COMMAND_METHODS = {
                     `  ${muted("Empty -- Rune hasn't learned anything about you yet.")}`,
                     `  ${faint("It learns from what you say and what checks prove, at the end of each run.")}`,
                   ]),
-              `  ${faint("Seed it: /memory update | note: /memory add <...> | mode: /memory off|auto|manual")}`,
+              `  ${faint("Seed it: /memory update \u00b7 note: /memory add <...> \u00b7 mode: /memory off|auto|manual")}`,
             ].join("\n"),
           );
           return true;
@@ -1124,7 +1127,7 @@ export const COMMAND_METHODS = {
             ...mem.content.split("\n").map((l) => `  ${text(l)}`),
             ...learned,
             "",
-            `  ${faint("update: /memory update | note: /memory add <...> | mode: /memory off|auto|manual")}`,
+            `  ${faint("update: /memory update \u00b7 note: /memory add <...> \u00b7 mode: /memory off|auto|manual")}`,
           ].join("\n"),
         );
         return true;
@@ -1167,7 +1170,7 @@ export const COMMAND_METHODS = {
             (task) =>
               `    ${warn(glyph("retry"))} ${info(task.id)} ${text(task.cadence === "fixed" ? `every ${formatLoopInterval(task.intervalMs)}` : `adaptive ${formatLoopInterval(task.intervalMs)}`)} ${faint(`| ${formatLoopDue(task.nextRunAt)} | ${loopPromptPreview(task.prompt, 54)}`)}`,
           ),
-          `  ${faint("/loop cancel <id> | /loop clear | Esc stops the newest loop")}`,
+          `  ${faint("/loop cancel <id> \u00b7 /loop clear \u00b7 Esc stops the newest loop")}`,
         ].join("\n"),
       );
       return;
@@ -1205,7 +1208,7 @@ export const COMMAND_METHODS = {
           `    ${info("/loop check CI and review comments")} ${faint("adaptive 1-60m cadence")}`,
           `    ${info("/loop")} ${faint("built-in maintenance prompt, or .rune/loop.md")}`,
           `    ${info("/loops")} ${faint("list active tasks")}`,
-          `    ${info("/loop cancel <id>")} ${faint("stop one | /loop clear stops all")}`,
+          `    ${info("/loop cancel <id>")} ${faint("stop one \u00b7 /loop clear stops all")}`,
         ].join("\n"),
       );
       return;
@@ -1217,7 +1220,7 @@ export const COMMAND_METHODS = {
       const cadence =
         task.cadence === "fixed"
           ? `every ${formatLoopInterval(task.intervalMs)}`
-          : `adaptive | first check ${formatLoopDue(task.nextRunAt)}`;
+          : `adaptive \u00b7 first check ${formatLoopDue(task.nextRunAt)}`;
       this.print(
         [
           `  ${ok(glyph("verified"))} ${text("loop scheduled")} ${info(task.id)} ${faint(`| ${cadence} | expires in 7d`)}`,
@@ -1292,7 +1295,7 @@ export const COMMAND_METHODS = {
     const customEp = engine.getCustomEndpoint();
     const current = { provider: String(engine.getProvider()), model: engine.getModel() };
     const def = loadLastModel();
-    const defNote = def ? ` | default ${def.provider}/${def.model}` : "";
+    const defNote = def ? ` \u00b7 default ${def.provider}/${def.model}` : "";
 
     // -- Level 1: providers --
     const provs = providerChoices(rows, customEp, process.env, getPreset);
@@ -1311,12 +1314,12 @@ export const COMMAND_METHODS = {
       provs.findIndex((p) => p.id === current.provider),
     );
     const a1 = await this.pick(
-      `Model | current ${current.provider}/${current.model}${defNote}`,
+      `Model \u00b7 current ${current.provider}/${current.model}${defNote}`,
       l1,
       l1start,
       undefined,
       provs.length
-        ? "subscriptions (Claude Pro/Max | ChatGPT): rune login | keys: /keys"
+        ? "subscriptions (Claude Pro/Max or ChatGPT): rune login \u00b7 keys: /keys"
         : "no providers configured yet -- add a key with /keys or sign in with rune login",
     );
     if (a1 == null) return;
@@ -1348,7 +1351,7 @@ export const COMMAND_METHODS = {
         { label: "Back", hint: "choose another provider" },
       ];
       const a2 = await this.pick(
-        `Model | ${chosen.label} | account`,
+        `Model \u00b7 ${chosen.label} \u00b7 account`,
         l2,
         Math.max(
           0,
@@ -1412,8 +1415,8 @@ export const COMMAND_METHODS = {
     ];
     const crumb =
       accounts.length > 1 && account
-        ? `Model | ${chosen.label} | ${account.label.replace("API key | ", "key ")}`
-        : `Model | ${chosen.label}`;
+        ? `Model \u00b7 ${chosen.label} \u00b7 ${account.label.replace("API key \u00b7 ", "key ")}`
+        : `Model \u00b7 ${chosen.label}`;
     if (chosen.local && !live) {
       this.print(
         `  ${faint(`endpoint ${row.endpoint ?? ""} not reachable -- showing suggestions`)}`,
@@ -1426,7 +1429,7 @@ export const COMMAND_METHODS = {
         0,
         models.findIndex((m) => m.current),
       ),
-      "enter use now (this session) | d = use now and make it the startup default | esc back",
+      "enter use now (this session) \u00b7 d = use now and make it the startup default \u00b7 esc back",
       "d",
     );
     if (a3 == null) return;
@@ -1471,14 +1474,14 @@ export const COMMAND_METHODS = {
       current: e.current,
     }));
     const picked = await this.pick(
-      `Thinking depth | ${label}`,
+      `Thinking depth \u00b7 ${label}`,
       items,
       Math.max(
         0,
         efforts.findIndex((e) => e.current),
       ),
       undefined,
-      "enter set depth | esc keep " + current,
+      "enter set depth \u00b7 esc keep " + current,
     );
     if (picked == null) return;
     const chosenEffort = efforts[picked]!.id;
@@ -1494,7 +1497,7 @@ export const COMMAND_METHODS = {
       { label: "Model and reasoning", hint: "choose intelligence", command: "model" },
       {
         label: "API keys and internet search",
-        hint: "manage keys | /login to connect",
+        hint: "manage keys \u00b7 /login to connect",
         command: "keys",
       },
       { label: "Browser", hint: engine.isBrowserEnabled() ? "on" : "off", command: "browser" },
@@ -1644,11 +1647,11 @@ export const COMMAND_METHODS = {
     );
 
     const r = await this.pick(
-      "Connect | what do you want to connect?",
+      "Connect \u00b7 what do you want to connect?",
       routes.map((c) => ({ label: c.label, hint: c.hint })),
       0,
       undefined,
-      "enter choose | esc cancel",
+      "enter choose \u00b7 esc cancel",
     );
     if (r == null) return;
     const route = routes[r]!;
@@ -1666,7 +1669,7 @@ export const COMMAND_METHODS = {
       return;
     }
     const t = await this.pick(
-      `Connect | ${route.label}`,
+      `Connect \u00b7 ${route.label}`,
       targets.map((x) => ({
         label: x.label,
         hint: x.hint,
@@ -1675,8 +1678,8 @@ export const COMMAND_METHODS = {
       0,
       undefined,
       targets.length > 9
-        ? "enter connect | type a letter to jump | esc back"
-        : "enter connect | esc back",
+        ? "enter connect \u00b7 type a letter to jump \u00b7 esc back"
+        : "enter connect \u00b7 esc back",
     );
     if (t == null) return;
     const target = targets[t]!;
@@ -1846,11 +1849,11 @@ export const COMMAND_METHODS = {
     let model: string | undefined;
     if (live && live.length > 0) {
       const picked = await this.pick(
-        `Model | ${baseUrl}`,
+        `Model \u00b7 ${baseUrl}`,
         live.map((id) => ({ label: id, current: id === existing?.model })),
         Math.max(0, live.indexOf(existing?.model ?? "")),
         undefined,
-        "enter choose | esc back",
+        "enter choose \u00b7 esc back",
       );
       if (picked == null) return;
       model = live[picked];

@@ -264,7 +264,9 @@ export function flowRow(left: string, receipt = "", budgetWidth = measure()): st
  * table. One definition, used by both.
  */
 export function keyHint(key: string, word: string): string {
-  return `${muted(key)} ${faint(word)}`;
+  // The key a step brighter than what it does: `muted` and `faint` are the same
+  // grey (both `dim`), so this pair used to be one flat run of text.
+  return `${quiet(key)} ${faint(word)}`;
 }
 
 export function keyLegend(pairs: Array<[string, string]>): string {
@@ -391,6 +393,19 @@ export function sessionTag(id: string): string {
   return quiet(`${glyph("elision")}${sessionTail(id)}`);
 }
 
+/**
+ * The last line a session prints: goodbye, and -- when the session was kept --
+ * the command that brings it back, by the same eight-character tail
+ * `rune resume` accepts. This is where the tail went when it left the header:
+ * the moment you leave is the moment you need it.
+ */
+export function farewell(sessionId?: string): string {
+  const back = sessionId
+    ? `  ${faint("resume with")} ${quiet(`rune resume ${sessionTail(sessionId)}`)}`
+    : "";
+  return `${MARK}${muted("Goodbye.")}${back}`;
+}
+
 /** The gap that does the dividing. A vertical bar sat here while the row still
  *  carried four fields and needed a seam drawn for it; with one field left, the
  *  wordmark's own tracking already separates it and the bar was one mark more
@@ -453,11 +468,12 @@ export function header(opts: FlowHeader): string {
   const budget = surface - gutter.length;
 
   const mark = lockup(opts.name);
-  // The right end of the row: the session tail, then the version. Both are
-  // quiet; both are things you go looking for rather than read.
-  const version = opts.session
-    ? `${sessionTag(opts.session)}${LOCKUP_GAP}${versionTag(opts.version)}`
-    : versionTag(opts.version);
+  // The right end of the row: the version, and only the version. The session
+  // tail sat beside it (2026-09-16) so a chat could be found again; it moved to
+  // where that question is actually asked -- the exit line (`farewell`),
+  // `/status` and the `/sessions` footer -- when the founder asked for a
+  // header with nothing on it that is not needed at a glance (2026-09-26).
+  const version = versionTag(opts.version);
 
   // What is left after the two fixed ends have taken their columns: the
   // wordmark and its gap on the left, the version and the two-space minimum
@@ -500,7 +516,9 @@ export function header(opts: FlowHeader): string {
   const path = opts.workspace
     ? pathTail(opts.workspace, room - (clause ? clause.length + SEP.length : 0))
     : "";
-  const location = [path && text(path), clause && quiet(clause)].filter(Boolean).join(faint(SEP));
+  // Where you are in the secondary ink, what it is checked out as in the meta
+  // grey: the wordmark is the brightest thing on the row, as a mark should be.
+  const location = [path && quiet(path), clause && faint(clause)].filter(Boolean).join(faint(SEP));
 
   return [
     "",
@@ -556,11 +574,13 @@ function tailSegment(p: string): string {
  * a chip sitting on a hairline floats, and the bar under it is what makes the
  * two read as one lockup rather than as a label with a line beneath it.
  */
-export function seamRule(width = surfaceWidth(), lead = 0): string {
-  const inner = Math.max(1, width - MARK.length);
-  const identity = Math.max(0, Math.min(inner, lead));
-  const rest = inner - identity;
-  return `${MARK}${info(glyph("ruleHeavy").repeat(identity))}${faint(glyph("rule").repeat(rest))}`;
+export function seamRule(width = surfaceWidth(), _lead = 0): string {
+  // One weight, one tone, since 2026-09-26. The heavy segment in the identity
+  // colour under the wordmark was the rule the pill stood on while the pill
+  // was blue; a grey pill on a blue bar read as two marks, and the founder's
+  // brief was one quiet hairline. `_lead` stays so callers that know where
+  // their seam is keep compiling.
+  return `${MARK}${faint(glyph("rule").repeat(Math.max(1, width - MARK.length)))}`;
 }
 
 /**

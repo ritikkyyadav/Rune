@@ -705,7 +705,7 @@ describe("the collapsed strip, below 100 columns", () => {
     const strip = h.strip(76);
     expect(strip).toContain("planner");
     expect(strip).toContain("builder");
-    expect(strip).toContain("ctrl+f open");
+    expect(strip).toContain("ctrl+f agents");
     // One row, always: the strip exists because the column is not worth its
     // cells at this width, not so it can become two.
     expect(strip.split("\n")).toHaveLength(1);

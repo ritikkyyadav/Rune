@@ -4,7 +4,12 @@
 
 import { describe, expect, test } from "bun:test";
 import { displayVersion } from "../../../packages/orchestrator/src/bin/ui/brand";
-import { header, sessionTail, versionTag } from "../../../packages/orchestrator/src/bin/ui/flow";
+import {
+  farewell,
+  header,
+  sessionTail,
+  versionTag,
+} from "../../../packages/orchestrator/src/bin/ui/flow";
 import { matchSessionIdish } from "../../../packages/orchestrator/src/session-idish";
 
 const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -26,16 +31,25 @@ describe("the header's version is the product number, not the build marker", () 
   });
 });
 
-describe("the header carries the session's tail", () => {
+describe("the session's tail: off the header, on the way out", () => {
   const id = "0192a7b3-4c5d-7e6f-8a9b-0c1d2e3f4a5b";
 
-  test("the last eight characters, elided, sit beside the version", () => {
-    const row = strip(header({ name: "Rune", version: "0.1.1", workspace: "~/x", session: id }));
+  test("the header carries the version and nothing after it (2026-09-26)", () => {
+    const block = strip(header({ name: "Rune", version: "0.1.1", workspace: "~/x", session: id }));
+    const row = block.split("\n").filter((line) => line.trim())[0]!;
     expect(sessionTail(id)).toBe("2e3f4a5b");
-    expect(row).toContain("2e3f4a5b");
-    expect(row.indexOf("2e3f4a5b")).toBeLessThan(row.indexOf("v0.1.1"));
+    expect(block).not.toContain("2e3f4a5b");
+    expect(row.trimEnd().endsWith("v0.1.1")).toBe(true);
+  });
+
+  test("the exit line offers the session back by its tail, never the head", () => {
+    const line = strip(farewell(id));
+    expect(line).toContain("Goodbye.");
+    expect(line).toContain("rune resume 2e3f4a5b");
     // Never the head: two sessions opened in the same minute share it.
-    expect(row).not.toContain("0192a7b3");
+    expect(line).not.toContain("0192a7b3");
+    // A discarded session is not offered back.
+    expect(strip(farewell()).trim()).toBe("Goodbye.");
   });
 
   test("that tail resolves the session, as does the head or the whole id", () => {

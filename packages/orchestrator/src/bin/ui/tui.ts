@@ -678,8 +678,17 @@ export class Tui {
         clearTitle(); // and its name -- see ./title.ts
         if (stdin.isTTY) stdin.setRawMode(false);
         setTermWidthOverride(null);
-        process.stdout.write(`  ${muted("Goodbye.")}\n`);
-        this.discardSessionIfEmpty(this.ctx.sessionId);
+        // An empty session is discarded, and a discarded (or missing) one cannot
+        // be resumed, so only a kept session is offered back.
+        let resumable = false;
+        try {
+          resumable =
+            !this.discardSessionIfEmpty(this.ctx.sessionId) &&
+            engine.getSessionInfo(this.ctx.sessionId) != null;
+        } catch {
+          resumable = false;
+        }
+        process.stdout.write(`${F.farewell(resumable ? this.ctx.sessionId : undefined)}\n`);
         engine.close();
         resolve();
         process.exit(code);
@@ -758,7 +767,7 @@ export class Tui {
         theme: getTheme().name === "auto" ? "auto" : getTheme().appearance,
         loop:
           loop.count > 0 && loop.nextRunAt !== null
-            ? `${loop.count === 1 ? "loop" : `${loop.count} loops`} | ${formatLoopDue(loop.nextRunAt)}`
+            ? `${loop.count === 1 ? "loop" : `${loop.count} loops`} \u00b7 ${formatLoopDue(loop.nextRunAt)}`
             : undefined,
       },
       width,
@@ -1090,21 +1099,15 @@ export class Tui {
   openFreshSession(): void {
     this.printMastheadOnce();
     const { engine } = this.ctx;
-    // The empty start screen said nothing but a memory tip. A person's first
-    // question is what to type and which keys matter; answer both in the
-    // transcript's own grammar.
+    // A person's first question is what to type. One quiet line answers it,
+    // until the first message. The keys used to have a second line here, and
+    // it said what the placeholder (`/ for commands`) and the status line
+    // (`? keys`) already say -- the founder's "no unnecessary information".
     if (engine.getTranscript(this.ctx.sessionId).length === 0) {
       this.print(
-        [
-          `  ${muted("try")}  ${[
-            '"fix the failing test"',
-            '"explain how this repo is wired"',
-            ...(cols() >= 100 ? ['"add a --dry-run flag"'] : []),
-          ]
-            .map((example) => faint(example))
-            .join(` ${faint(glyph("observed"))} `)}`,
-          `  ${muted("keys")} ${faint("?")} ${faint("shortcuts")} ${faint(glyph("observed"))} ${faint("/")} ${faint("commands")} ${faint(glyph("observed"))} ${faint("shift+tab")} ${faint("shifts gear")}`,
-        ].join("\n"),
+        `  ${faint("try")}  ${['"fix the failing test"', '"explain how this repo is wired"']
+          .map((example) => faint(example))
+          .join(` ${faint(glyph("observed"))} `)}`,
       );
     }
     const mem = engine.getSystemMemory();
@@ -1235,8 +1238,8 @@ export class Tui {
     const secs = Math.floor(elapsed / 1000);
     const t = secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m${secs % 60}s`;
     // The hint adapts: idle composer -> how to stop; a typed-ahead draft -> how to queue/clear it.
-    const hint = this.input.length > 0 ? "enter queues | esc clears" : "esc to interrupt";
-    return faint(`${t} | ${hint}`);
+    const hint = this.input.length > 0 ? "enter queues \u00b7 esc clears" : "esc to interrupt";
+    return faint(`${t} \u00b7 ${hint}`);
   }
 
   /** The v2 status ladder rung directly above the composer: the TurnRenderer's
@@ -1322,7 +1325,7 @@ export class Tui {
     // shell (quiet echo); anything else is the user's message -- the loud block.
     if (scheduledLoop) {
       this.print(
-        `  ${warn(glyph("retry"))} ${bold(text("Loop"))} ${info(scheduledLoop.id)} ${faint(`| iteration ${scheduledLoop.runCount + 1} | ${scheduledLoop.cadence}`)}`,
+        `  ${warn(glyph("retry"))} ${bold(text("Loop"))} ${info(scheduledLoop.id)} ${faint(`\u00b7 iteration ${scheduledLoop.runCount + 1} \u00b7 ${scheduledLoop.cadence}`)}`,
       );
       this.print(userBlock(raw), undefined, () => userBlock(raw));
     } else if (raw.startsWith("/")) this.print(`  ${info(glyph("selection"))} ${text(raw)}`);
@@ -1536,13 +1539,16 @@ export class Tui {
   }
 
   /** Permanently discard only untouched, unnamed launch placeholders. */
-  discardSessionIfEmpty(id: string): void {
+  /** Purge a session nobody said anything in. True when it was purged. */
+  discardSessionIfEmpty(id: string): boolean {
     const session = this.ctx.engine.getSessionInfo(id);
-    if (!session || session.eventCount > 0 || session.title?.trim()) return;
+    if (!session || session.eventCount > 0 || session.title?.trim()) return false;
     try {
       this.ctx.engine.purgeSession(id);
+      return true;
     } catch {
       // Cleanup is best-effort; it must never prevent exit or resume.
+      return false;
     }
   }
 
@@ -1554,7 +1560,7 @@ export class Tui {
     return {
       id: s.id,
       title,
-      meta: parts.filter(Boolean).join(" | "),
+      meta: parts.filter(Boolean).join(" \u00b7 "),
       model: s.model,
       events: s.eventCount,
       tokens: s.lastTokens ?? undefined,
@@ -1988,7 +1994,7 @@ export class Tui {
       this.memoryBusy = false;
     }
     this.memoryNote = res.updated
-      ? `refreshed | ~${res.tokensAfter} tokens`
+      ? `refreshed \u00b7 ~${res.tokensAfter} tokens`
       : `unchanged -- ${res.reason}`;
     this.scheduleDraw();
   }
@@ -2079,7 +2085,7 @@ export class Tui {
       try {
         const { readFileSync } = require("fs");
         const res = engine.setSystemMemoryContent(readFileSync(path, "utf-8"));
-        this.memoryNote = `saved | ~${res.tokens} tokens`;
+        this.memoryNote = `saved \u00b7 ~${res.tokens} tokens`;
       } catch {
         this.memoryNote = "no changes";
       }
@@ -2201,7 +2207,9 @@ export class Tui {
       mode: "add",
       pending: {},
       title: `Add API key -- ${mgr.label}`,
-      subtitle: preset?.docsUrl ? `paste a key from any account | ${preset.docsUrl}` : undefined,
+      subtitle: preset?.docsUrl
+        ? `paste a key from any account \u00b7 ${preset.docsUrl}`
+        : undefined,
     };
     this.scheduleDraw();
   }
@@ -2271,7 +2279,7 @@ export class Tui {
         masked: false,
         pending: {},
         title: `${row.label} -- base URL`,
-        subtitle: "local server URL | no API key needed | empty resets to default",
+        subtitle: "local server URL \u00b7 no API key needed \u00b7 empty resets to default",
       };
     } else {
       const preset = getPreset(row.id);
@@ -2368,7 +2376,7 @@ export class Tui {
         e.caret = 0;
         e.masked = false;
         e.title = `Label this key -- ${e.label}`;
-        e.subtitle = "optional | name the account (e.g. work, personal) | enter to skip";
+        e.subtitle = "optional \u00b7 name the account (e.g. work, personal) \u00b7 enter to skip";
         this.scheduleDraw();
         return;
       }
@@ -2386,7 +2394,7 @@ export class Tui {
       const count = this.keysRows.find((r) => r.id === e.id)?.savedKeys?.length ?? 0;
       if (this.keysManage?.id === e.id) this.keysManage.sel = Math.max(0, count - 1);
       this.print(
-        `  ${ok(glyph("verified"))} ${muted("added key for")} ${info(e.label)}${val ? faint(` | ${val}`) : ""} ${faint(`| ${count} configured`)}`,
+        `  ${ok(glyph("verified"))} ${muted("added key for")} ${info(e.label)}${val ? faint(` \u00b7 ${val}`) : ""} ${faint(`\u00b7 ${count} configured`)}`,
       );
       this.scheduleDraw();
       return;
@@ -2687,7 +2695,7 @@ export class Tui {
     this.mode = "turn"; // return to the in-flight turn
     const label =
       decision.kind === "deny"
-        ? muted(`${glyph("observed")} declined | no action taken`)
+        ? muted(`${glyph("observed")} declined \u00b7 no action taken`)
         : ok(
             `${glyph("verified")} ${
               decision.kind === "allow_session" ? "approved for session" : "approved once"

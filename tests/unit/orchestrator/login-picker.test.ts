@@ -232,9 +232,9 @@ describe("the list doubles as a status readout", () => {
 
   test("the summary answers both halves: can it think, and can it look things up", () => {
     expect(connectedSummary(["codex"], ["tavily"])).toBe(
-      "connected: ChatGPT Plus / Pro | search: Tavily",
+      "connected: ChatGPT Plus / Pro \u00b7 search: Tavily",
     );
     expect(connectedSummary(["mistral"], [])).toBe("connected: Mistral AI");
-    expect(connectedSummary([], ["exa"])).toBe("no model connected yet | search: Exa");
+    expect(connectedSummary([], ["exa"])).toBe("no model connected yet \u00b7 search: Exa");
   });
 });

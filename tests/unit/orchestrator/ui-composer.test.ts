@@ -318,7 +318,7 @@ describe("ui/composer statusLine + permission mode", () => {
   it("keeps the safe default and every gear visible", () => {
     const base = { model: "gemini-2.5-flash", workspace: "/tmp/ws" };
     const confirm = stripAnsi(statusLine({ ...base, mode: "confirm" }, 120));
-    expect(confirm).toContain("> 1st gear");
+    expect(confirm).toContain(`${glyph("selection")} 1st gear`);
     expect(confirm).toContain("every action asks first");
     expect(confirm).toContain("gemini-2.5-flash"); // live state, not the header's
     expect(confirm).toContain("? keys");
@@ -334,12 +334,16 @@ describe("ui/composer statusLine + permission mode", () => {
     expect(wide).toContain("every action asks first");
     setTermWidthOverride(null);
 
-    expect(stripAnsi(statusLine({ ...base, mode: "autonomy-i" }, 120))).toContain(">> 2nd gear");
+    expect(stripAnsi(statusLine({ ...base, mode: "autonomy-i" }, 120))).toContain(
+      `${glyph("selection").repeat(2)} 2nd gear`,
+    );
     // The model rides here now, so the gear label is still present but the
     // description may yield to it at narrower widths.
-    expect(stripAnsi(statusLine({ ...base, mode: "autonomy-ii" }, 120))).toContain(">>> 3rd gear");
+    expect(stripAnsi(statusLine({ ...base, mode: "autonomy-ii" }, 120))).toContain(
+      `${glyph("selection").repeat(3)} 3rd gear`,
+    );
     expect(stripAnsi(statusLine({ ...base, mode: "autonomy-iii" }, 120))).toContain(
-      ">>>> 4th gear",
+      `${glyph("selection").repeat(4)} 4th gear`,
     );
     expect(stripAnsi(statusLine({ ...base, mode: "auto" }, 120))).toContain("* Auto mode");
   });
@@ -436,7 +440,7 @@ describe("ui/composer renderPermissionCard", () => {
     expect(plain[0]).toBe(""); // a blank line separates it from the work above
     const joined = plain.join("\n");
     expect(joined).toContain(`${glyph("selection")} Run shell command?`);
-    expect(joined).toMatch(/bash \| (sandboxed|host)/); // the posture is stated, never assumed
+    expect(joined).toMatch(/bash \u00b7 (sandboxed|host)/); // the posture is stated, never assumed
     expect(joined).toContain("│ ls -R");
     expect(joined).not.toMatch(/bash: bash/); // no redundant "bash — bash:"
     expect(joined).toContain("1   yes, once");
@@ -597,10 +601,10 @@ describe("the gear ladder", () => {
   // look like a different product.
   it("is a counting sequence with no gaps", () => {
     const { modeInfo } = require("../../../packages/orchestrator/src/bin/ui/composer");
-    expect(modeInfo("gear-1").arrows).toBe(">");
-    expect(modeInfo("gear-2").arrows).toBe(">>");
-    expect(modeInfo("gear-3").arrows).toBe(">>>");
-    expect(modeInfo("gear-4").arrows).toBe(">>>>");
+    expect(modeInfo("gear-1").arrows).toBe(glyph("selection"));
+    expect(modeInfo("gear-2").arrows).toBe(glyph("selection").repeat(2));
+    expect(modeInfo("gear-3").arrows).toBe(glyph("selection").repeat(3));
+    expect(modeInfo("gear-4").arrows).toBe(glyph("selection").repeat(4));
     for (const [id, n] of [
       ["gear-1", 1],
       ["gear-2", 2],
@@ -1055,39 +1059,36 @@ describe("ui/composer — a collapsed paste keeps its newlines", () => {
 describe("ui/composer — the hint row", () => {
   const sep = ` ${glyph("observed")} `;
 
-  it("names the keys at rest, and yields ctrl+b first when the column is narrow", () => {
+  it("says nothing at rest: the keys are said once, elsewhere", () => {
+    // The resting legend restated the placeholder (`/ for commands`), the key
+    // sheet and the status line's `? keys` (founder, 2026-09-26: "there should
+    // not be unnecessary information"). The row now costs the frame nothing.
     const rest = { lines: 0, chars: 0 };
-    // 73 cells (the 80-column window): all four, as `80x24-idle.txt` draws it.
-    expect(composerHintRow({ streaming: false, counts: rest, max: 73 })).toBe(
-      ["enter send", "ctrl+b line", "ctrl+f agents", "? keys"].join(sep),
-    );
-    // 36 cells (the right column): three, as `120x40-idle.txt` draws it.
-    expect(composerHintRow({ streaming: false, counts: rest, max: 36 })).toBe(
-      ["enter send", "ctrl+f agents", "? keys"].join(sep),
-    );
-    for (const max of [10, 20, 30, 36, 50, 73]) {
-      expect(
-        stripAnsi(composerHintRow({ streaming: false, counts: rest, max })).length,
-      ).toBeLessThanOrEqual(max);
+    for (const max of [10, 20, 36, 73]) {
+      expect(composerHintRow({ streaming: false, counts: rest, max })).toBe("");
     }
+    expect(composerHintRow({ streaming: false, counts: { lines: 1, chars: 32 }, max: 36 })).toBe(
+      "",
+    );
   });
 
   it("switches to counts once the draft has WRAPPED, not on the first keystroke", () => {
-    // "1 line · 32 chars" is noise pretending to be data. It is the second row
-    // that makes how much you have written a thing you cannot see at a glance
-    // -- which is also why both working mocks show the resting hint over a
-    // one-row draft.
-    expect(composerHintRow({ streaming: false, counts: { lines: 1, chars: 32 }, max: 36 })).toBe(
-      ["enter send", "ctrl+f agents", "? keys"].join(sep),
-    );
     expect(composerHintRow({ streaming: false, counts: { lines: 12, chars: 318 }, max: 36 })).toBe(
       `12 lines${sep}318 chars   ctrl+b line`,
     );
+    for (const max of [10, 20, 30, 36, 50, 73]) {
+      expect(
+        stripAnsi(composerHintRow({ streaming: false, counts: { lines: 12, chars: 318 }, max }))
+          .length,
+      ).toBeLessThanOrEqual(Math.max(max, "12 lines".length));
+    }
   });
 
-  it("says what enter and esc do while a turn streams", () => {
-    expect(composerHintRow({ streaming: true, counts: { lines: 3, chars: 9 }, max: 36 })).toBe(
-      ["enter queues", "esc interrupts"].join(sep),
+  it("leaves a streaming turn's keys to the status line", () => {
+    expect(composerHintRow({ streaming: true, counts: { lines: 1, chars: 9 }, max: 36 })).toBe("");
+    // A wrapped draft typed during the turn still says how big it is.
+    expect(composerHintRow({ streaming: true, counts: { lines: 3, chars: 90 }, max: 36 })).toBe(
+      `3 lines${sep}90 chars   ctrl+b line`,
     );
   });
 });

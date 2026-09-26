@@ -152,9 +152,13 @@ describe("accountChoices (level 2)", () => {
     });
     const out = accountChoices(getPreset("ollama-turbo"), r, undefined, {});
     expect(out.map((a) => a.kind)).toEqual(["key", "key"]);
-    expect(out[0]).toMatchObject({ label: "API key | personal", entryId: "k1", active: false });
+    expect(out[0]).toMatchObject({
+      label: "API key \u00b7 personal",
+      entryId: "k1",
+      active: false,
+    });
     expect(out[0]!.detail).toContain("added 2026-07-01");
-    expect(out[1]).toMatchObject({ label: "API key | work", entryId: "k2", active: true });
+    expect(out[1]).toMatchObject({ label: "API key \u00b7 work", entryId: "k2", active: true });
   });
 
   it("a signed-in OAuth account leads the list and outranks stored keys", () => {
@@ -185,7 +189,7 @@ describe("accountChoices (level 2)", () => {
       authMethod: "device",
     });
     const out = accountChoices(getPreset("openrouter"), r, undefined, {});
-    expect(out[0]!.detail).toBe("signed in | device flow");
+    expect(out[0]!.detail).toBe("signed in \u00b7 device flow");
   });
 
   it("local runtimes yield their endpoint; custom yields the endpoint card", () => {
@@ -267,9 +271,9 @@ describe("line rendering", () => {
         model: "claude-sonnet-5",
       },
     ).map(stripAnsi);
-    expect(lines[0]).toContain("CURRENT");
+    expect(lines[0]).toContain("current");
     expect(lines[0]).toContain("openai/gpt-5");
-    expect(lines[1]).toContain("DEFAULT");
+    expect(lines[1]).toContain("default");
     expect(lines[1]).toContain("anthropic/claude-sonnet-5");
   });
 
@@ -317,6 +321,6 @@ describe("line rendering", () => {
       }),
     ];
     const out = providerChoices(rows, undefined, {}, getPreset);
-    expect(stripAnsi(out[0]!.hint)).toContain("oauth | signed in");
+    expect(stripAnsi(out[0]!.hint)).toContain("oauth \u00b7 signed in");
   });
 });

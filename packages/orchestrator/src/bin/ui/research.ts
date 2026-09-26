@@ -73,7 +73,7 @@ export function renderResearchPlan(plan: ResearchPlan): string {
   rows.push("");
   rows.push(
     `  ${faint(
-      `${plan.subQuestions.length} sub-question${plan.subQuestions.length === 1 ? "" : "s"} | sources: ${[...scopes].join(", ")}`,
+      `${plan.subQuestions.length} sub-question${plan.subQuestions.length === 1 ? "" : "s"} \u00b7 sources: ${[...scopes].join(", ")}`,
     )}`,
   );
   return rows.join("\n");
@@ -101,7 +101,7 @@ export function renderResearchComplete(report: ResearchReport): string {
   ];
   if (report.failed > 0) parts.push(danger(`${report.failed} failed`));
   const rows = [
-    `  ${muted(glyph("observed"))} ${bold(text("Report ready"))}  ${faint(parts.join(" | "))}`,
+    `  ${muted(glyph("observed"))} ${bold(text("Report ready"))}  ${faint(parts.join(" \u00b7 "))}`,
   ];
   for (const w of report.warnings) rows.push(`    ${warn("!")} ${muted(w)}`);
   return rows.join("\n");

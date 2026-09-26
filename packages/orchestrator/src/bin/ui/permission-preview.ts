@@ -331,13 +331,13 @@ async function assemblePreview(input: PermissionPreviewInput): Promise<Permissio
     const cropped = crop(diff.rows);
     return {
       question: `Apply this edit to ${target || "the file"}?`,
-      scope: "workspace | reversible",
+      scope: "workspace \u00b7 reversible",
       target,
       lines: cropped.lines,
       added: diff.added,
       removed: diff.removed,
       truncated: cropped.truncated,
-      guard: "Working tree unchanged | review before write",
+      guard: "Working tree unchanged \u00b7 review before write",
       risk: fileWriteRisk(),
       choices: [
         "Yes, apply this edit",
@@ -375,13 +375,13 @@ async function assemblePreview(input: PermissionPreviewInput): Promise<Permissio
     const cropped = crop(rows);
     return {
       question: `Apply ${edits.length || "these"} atomic edits to ${target || "the file"}?`,
-      scope: "workspace | all-or-nothing",
+      scope: "workspace \u00b7 all-or-nothing",
       target,
       lines: cropped.lines,
       added,
       removed,
       truncated: cropped.truncated,
-      guard: "Working tree unchanged | every edit must validate before write",
+      guard: "Working tree unchanged \u00b7 every edit must validate before write",
       risk: fileWriteRisk(),
       choices: [
         "Yes, apply these edits",
@@ -402,14 +402,14 @@ async function assemblePreview(input: PermissionPreviewInput): Promise<Permissio
     const existingNotPreviewed = snapshot.exists !== false && source == null;
     return {
       question: `${creating ? "Create" : "Replace the contents of"} ${target || "the file"}?`,
-      scope: `workspace | ${creating ? "new file" : "full rewrite"}`,
+      scope: `workspace \u00b7 ${creating ? "new file" : "full rewrite"}`,
       target,
       lines: cropped.lines,
       added: diff.added,
       removed: diff.removed,
       truncated: cropped.truncated,
-      summary: existingNotPreviewed ? "new contents | existing target not loaded" : undefined,
-      guard: "Working tree unchanged | review before write",
+      summary: existingNotPreviewed ? "new contents \u00b7 existing target not loaded" : undefined,
+      guard: "Working tree unchanged \u00b7 review before write",
       risk: fileWriteRisk(),
       choices: [
         creating ? "Yes, create this file" : "Yes, write this file",
@@ -442,13 +442,13 @@ async function assemblePreview(input: PermissionPreviewInput): Promise<Permissio
     ];
     return {
       question: "Run this command?",
-      scope: network ? "host command | network access" : "sandboxed command | workspace",
+      scope: network ? "host command \u00b7 network access" : "sandboxed command \u00b7 workspace",
       detail: command,
       lines: [],
       added: 0,
       removed: 0,
       truncated: false,
-      guard: "Command has not run | review before execute",
+      guard: "Command has not run \u00b7 review before execute",
       risk: bashRisk,
       choices: [
         "Yes, run this command",
@@ -469,13 +469,13 @@ async function assemblePreview(input: PermissionPreviewInput): Promise<Permissio
         input.toolName === "web_fetch"
           ? `Fetch content from ${label}?`
           : "Search the web with this query?",
-      scope: "network | read only",
+      scope: "network \u00b7 read only",
       detail,
       lines: [],
       added: 0,
       removed: 0,
       truncated: false,
-      guard: "No request sent | review before network access",
+      guard: "No request sent \u00b7 review before network access",
       risk: [
         { label: "writes outside workspace", value: "no", tone: "ok" },
         {

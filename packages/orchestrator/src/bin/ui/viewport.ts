@@ -105,8 +105,9 @@ export const PANEL_MIN_COLS = 100;
 export const PANEL_COLS = 40;
 /** Cells between the divider and the panel's content, and again at the edge. */
 export const PANEL_GUTTER = 1;
-/** The composer at rest: a rule, the field, a rule, one hint row. */
-export const COMPOSER_MIN_ROWS = 4;
+/** The composer at rest: a rule, the field, a rule. A hint row joins it only
+ *  when it has something situational to say (a wrapped draft, the panel's keys). */
+export const COMPOSER_MIN_ROWS = 3;
 /** The panel never yields past this, so a grown composer cannot erase it. */
 export const PANEL_MIN_ROWS = 8;
 /** Under this many workspace rows a split would be two unreadable slivers. */

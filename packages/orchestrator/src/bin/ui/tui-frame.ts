@@ -671,20 +671,24 @@ export const FRAME_METHODS = {
       return clampVisible(`  ${this.atWidth(w, () => renderAgentsStrip(view, inner))}`, w);
     }
     const live = this.mode === "turn" ? this.turnStateLines() : [];
+    if (live.length > 0) {
+      // The live rung, alone. The keys that act on the turn (esc, and enter
+      // once something is typed) live on the status line's right edge, the one
+      // place contextual keys are said in every layout.
+      const left = `${accent(glyph("phase"))} ${clampVisible(live[0]!.trimStart(), Math.max(8, inner - 2))}`;
+      return clampVisible(`  ${left}`, w);
+    }
     // At rest, after a turn: `▄ done · 1m 58s`, held still. The last frame is
     // the one worth keeping on screen -- how long the thing you just watched
     // actually took -- and it is the only row here that survives the turn it
-    // describes. Before the first turn there is nothing to report and the
-    // strip says what it has always said.
-    const settled =
-      this.lastTurnMs != null
-        ? workingRow({ kind: "done", elapsedMs: this.lastTurnMs })
-        : `${accent(glyph("phase"))} ${faint("no agents this session")}`;
-    const left =
-      live.length > 0
-        ? `${accent(glyph("phase"))} ${clampVisible(live[0]!.trimStart(), Math.max(8, w - 18))}`
-        : settled;
-    return clampVisible(`  ${F.row(left, faint("ctrl+f open"), inner)}`, w);
+    // describes. Before the first turn there is nothing to report, so the row
+    // is empty: it used to say "no agents this session", which is a sentence
+    // about an absence, on screen for the whole of every quiet session. The
+    // row itself stays, so nothing above it moves when a turn starts.
+    if (this.lastTurnMs != null) {
+      return clampVisible(`  ${workingRow({ kind: "done", elapsedMs: this.lastTurnMs })}`, w);
+    }
+    return "";
   },
 
   /**
@@ -740,9 +744,12 @@ export const FRAME_METHODS = {
         caretRow += palette.length;
       }
       // Counted with the field's own measure, inside the same width override,
-      // so the hint can never disagree with the rows above it.
+      // so the hint can never disagree with the rows above it. The row exists
+      // only when it has something situational to say -- a wrapped draft's
+      // size, the panel's keys -- and costs the frame nothing otherwise.
       const counts = composerCounts(this.input, composerTextWidth(width));
-      lines.push(`  ${faint(this.composerHint(counts, width - 2))}`);
+      const hint = this.composerHint(counts, width - 2);
+      if (hint) lines.push(`  ${faint(hint)}`);
       if (wide) {
         lines = lines.map(tighten);
       }

@@ -385,7 +385,7 @@ describe("§2.8: /keys is the workspace list and the composer's masked field", (
     // The workspace shows the pool -- the thing the key is being added TO --
     // where the footer panel would have replaced it with the editor.
     const all = workspaceBlock(t).lines.map(stripAnsi).join("\n");
-    expect(all).toContain("Anthropic | keys");
+    expect(all).toContain("Anthropic \u00b7 keys");
     expect(all).toContain("7f2a");
     expect(all).toContain("1c04");
     expect(all).not.toContain(SECRET);

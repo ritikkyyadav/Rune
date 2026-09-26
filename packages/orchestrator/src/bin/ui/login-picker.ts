@@ -213,7 +213,7 @@ export function loginTargets(route: LoginRoute, opts: LoginTargetOpts = {}): Log
         // The wider roster carries a one-line pitch; the frontier labs need
         // none, and for them the env var is the more useful thing to say.
         hint: preset.tagline
-          ? `${preset.tagline} | ${preset.envVar ?? "paste a key"}`
+          ? `${preset.tagline} \u00b7 ${preset.envVar ?? "paste a key"}`
           : preset.envVar
             ? `paste a key, or set ${preset.envVar}`
             : "paste a key",
@@ -291,7 +291,7 @@ export function connectedSummary(connected: string[], search: string[] = []): st
   const parts: string[] = [];
   parts.push(models.length ? `connected: ${models.join(", ")}` : "no model connected yet");
   if (engines.length) parts.push(`search: ${engines.join(", ")}`);
-  return parts.join(" | ");
+  return parts.join(" \u00b7 ");
 }
 
 /** The search engines that count as "connected" for the status line: keyed or URL ones, never the built-in. */

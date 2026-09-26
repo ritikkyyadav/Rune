@@ -123,7 +123,7 @@ export function formatCompaction(ev: {
   if (ev.failed === true) {
     return F.flowRow(
       `${F.BODY}${warn("!")} ${text("compaction failed")}  ${muted(ev.failureReason || "the summarizer did not answer")}`,
-      muted(`${pct(ev.beforeTokens)} | context unchanged`),
+      muted(`${pct(ev.beforeTokens)} \u00b7 context unchanged`),
     );
   }
   const scope =
@@ -139,14 +139,14 @@ export function formatCompaction(ev: {
     // left side first and keeps the receipt whole, and on this row the news is
     // why no summarizer ran, not how many tokens went.
     return F.flowRow(
-      `${F.BODY}${warn("!")} ${text("compacted without a summary")}  ${muted(`${pct(ev.beforeTokens)} -> ${pct(ev.afterTokens)} | -${fmtTokens(saved)} tokens`)}`,
+      `${F.BODY}${warn("!")} ${text("compacted without a summary")}  ${muted(`${pct(ev.beforeTokens)} -> ${pct(ev.afterTokens)} \u00b7 -${fmtTokens(saved)} tokens`)}`,
       muted(ev.failureReason),
     );
   }
   // One row, and only facts the engine actually measured.
   return F.flowRow(
     `${F.BODY}${faint(glyph("observed"))} ${text(label)}  ${muted(scope)}`,
-    muted(`${pct(ev.beforeTokens)} -> ${pct(ev.afterTokens)} | -${fmtTokens(saved)} tokens`),
+    muted(`${pct(ev.beforeTokens)} -> ${pct(ev.afterTokens)} \u00b7 -${fmtTokens(saved)} tokens`),
   );
 }
 

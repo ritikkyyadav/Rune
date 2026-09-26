@@ -60,28 +60,28 @@ export function providerChoices(
     const bits: string[] = [];
     if (r.active) bits.push(ok(`${glyph("live")} active`));
     if (r.id === CUSTOM_PROVIDER_ID && custom) {
-      bits.push(muted(`${hostOf(custom.baseUrl)} | ${custom.model}`));
+      bits.push(muted(`${hostOf(custom.baseUrl)} \u00b7 ${custom.model}`));
     } else if (r.local) {
       bits.push(muted(hostOf(r.endpoint ?? "")));
     } else if (r.source === "oauth") {
-      bits.push(ok("oauth | signed in") + (r.keyCount > 0 ? faint(" | +keys") : ""));
+      bits.push(ok("oauth \u00b7 signed in") + (r.keyCount > 0 ? faint(" \u00b7 +keys") : ""));
     } else if (r.source === "keychain") {
-      bits.push(muted(`key | keychain ${r.masked}`.trim()));
+      bits.push(muted(`key \u00b7 keychain ${r.masked}`.trim()));
     } else if (r.source === "saved") {
       const preset = presetFor(r.id);
       const envAlso = preset?.envVar && env[preset.envVar];
       bits.push(
         muted(`key saved ${r.masked}`) +
-          (r.keyCount > 1 ? faint(` | ${r.keyCount} keys`) : "") +
-          (envAlso ? faint(" | +env") : ""),
+          (r.keyCount > 1 ? faint(` \u00b7 ${r.keyCount} keys`) : "") +
+          (envAlso ? faint(" \u00b7 +env") : ""),
       );
     } else if (r.source === "env") {
       bits.push(muted(`key env ${presetFor(r.id)?.envVar ?? ""}`.trim()));
     } else if (r.source === "chain") {
       // No mask: the enterprise routes hold no secret Rune could show.
-      bits.push(muted(`cloud | ${r.credentialDetail ?? "credentials found"}`));
+      bits.push(muted(`cloud \u00b7 ${r.credentialDetail ?? "credentials found"}`));
     }
-    return bits.join(faint(" | "));
+    return bits.join(faint(" \u00b7 "));
   };
 
   const order = (r: ProviderStatusRow): number =>
@@ -128,7 +128,7 @@ export function accountChoices(
       {
         kind: "custom",
         label: custom.label ?? "Custom endpoint",
-        detail: `${custom.baseUrl} | ${custom.model}`,
+        detail: `${custom.baseUrl} \u00b7 ${custom.model}`,
         active: true,
       },
     ];
@@ -160,11 +160,11 @@ export function accountChoices(
   if (row.source === "oauth" || row.source === "keychain") {
     out.push({
       kind: row.source,
-      label: row.source === "oauth" ? "OAuth account" : "API key | keychain",
+      label: row.source === "oauth" ? "OAuth account" : "API key \u00b7 keychain",
       detail:
         row.source === "oauth"
           ? row.authMethod === "device"
-            ? "signed in | device flow"
+            ? "signed in \u00b7 device flow"
             : "signed in"
           : row.masked || "secure store",
       active: true,
@@ -176,21 +176,21 @@ export function accountChoices(
     for (const k of row.savedKeys) {
       out.push({
         kind: "key",
-        label: k.label ? `API key | ${k.label}` : "API key",
-        detail: `${k.masked}${k.addedAt ? ` | added ${k.addedAt.slice(0, 10)}` : ""}`,
+        label: k.label ? `API key \u00b7 ${k.label}` : "API key",
+        detail: `${k.masked}${k.addedAt ? ` \u00b7 added ${k.addedAt.slice(0, 10)}` : ""}`,
         entryId: k.id,
         active: row.source === "saved" && k.active,
       });
     }
   } else if (row.source === "saved") {
-    out.push({ kind: "key", label: "API key | saved", detail: row.masked, active: true });
+    out.push({ kind: "key", label: "API key \u00b7 saved", detail: row.masked, active: true });
   }
 
   const envKey = preset?.envVar ? env[preset.envVar] : undefined;
   if (envKey) {
     out.push({
       kind: "env",
-      label: "API key | env",
+      label: "API key \u00b7 env",
       detail: `${preset!.envVar} ${maskKey(envKey)}`,
       active: row.source === "env",
     });
@@ -327,18 +327,15 @@ function hostOf(url: string): string {
   return url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
 }
 
-/** `current |||||| openai/gpt-5` readout rows for the tree header. */
+/** `current  openai/gpt-5` readout rows for the tree header: a quiet word and
+ *  the value, aligned. (A run of bars sat between them, which read as a
+ *  rendering fault rather than as a separator.) */
 export function treeHeadline(
   current: { provider: string; model: string },
   def: LastModel | null,
 ): string[] {
-  const rows = [
-    `  ${muted("CURRENT")} ${faint("||||")} ${info(`${current.provider}/${current.model}`)}`,
-  ];
-  if (def)
-    rows.push(
-      `  ${muted("DEFAULT")} ${faint("||||")} ${text(`${def.provider}/${def.model}`)} ${accent(glyph("phase"))}`,
-    );
+  const rows = [`  ${muted("current")}  ${info(`${current.provider}/${current.model}`)}`];
+  if (def) rows.push(`  ${muted("default")}  ${text(`${def.provider}/${def.model}`)}`);
   return rows;
 }
 

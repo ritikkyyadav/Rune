@@ -137,7 +137,7 @@ describe("renderToolActivity — one call, one row", () => {
     ).split("\n");
     expect(out[0]).toContain("grep  ProviderName");
     expect(out[0]).toContain("2 files");
-    expect(out[1]).toBe("    │ │ src/a.ts:42 | 2 more");
+    expect(out[1]).toBe("    │ │ src/a.ts:42 · 2 more");
     expect(plain(out.join())).not.toContain("total_matches"); // parsed, not dumped
   });
 

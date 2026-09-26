@@ -118,7 +118,7 @@ export const INPUT_METHODS = {
       };
     }
     if (this.mode === "ask" && this.askState) {
-      const title = `  ${info("?")} ${text(this.askState.title)} ${faint("(Enter = ok | Esc = skip)")}`;
+      const title = `  ${info("?")} ${text(this.askState.title)} ${faint("(Enter = ok \u00b7 Esc = skip)")}`;
       const base = renderComposer({
         input: this.input,
         caret: this.caret,
@@ -130,6 +130,7 @@ export const INPUT_METHODS = {
         lines: [title, ...base.lines],
         caretRow: base.caretRow + 1,
         caretCol: base.caretCol,
+        anchorRow: base.caretRow + 1,
       };
     }
     if (this.mode === "question" && this.questionState) {
@@ -151,6 +152,7 @@ export const INPUT_METHODS = {
         // the thing that made this surface feel like it was guessing.
         caretRow: base.caretRow + head.length,
         caretCol: base.caretCol,
+        anchorRow: base.caretRow + head.length,
       };
     }
     if (this.mode === "keys") {
@@ -281,6 +283,7 @@ export const INPUT_METHODS = {
         lines: [...head, ...base.lines],
         caretRow: head.length + base.caretRow,
         caretCol: base.caretCol,
+        anchorRow: head.length + base.caretRow,
       };
     }
     if (this.mode === "sessions") {
@@ -343,6 +346,7 @@ export const INPUT_METHODS = {
         lines: [...head, ...base.lines],
         caretRow: base.caretRow + head.length,
         caretCol: base.caretCol,
+        anchorRow: base.caretRow + head.length,
       };
     }
     const base = renderComposer({
@@ -369,6 +373,11 @@ export const INPUT_METHODS = {
       lines: [...palette, ...base.lines],
       caretRow: base.caretRow + palette.length,
       caretCol: base.caretCol,
+      // The palette's own selected row -- the only palette row with a `›`.
+      anchorRow: Math.max(
+        0,
+        palette.findIndex((line) => line.includes(glyph("selection"))),
+      ),
     };
   },
 

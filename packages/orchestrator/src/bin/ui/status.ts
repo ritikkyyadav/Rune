@@ -63,8 +63,7 @@ function permissionsLabel(s: StatusView): string {
   // Read the one gear table (composer.modeInfo) -- /status once carried its own
   // hand-rolled copy of these labels, and copies drift.
   const m = modeInfo(mode);
-  const label = m.paint(`${m.arrows} ${m.label}${m.desc ? ` | ${m.desc}` : ""}`);
-  return m.loud ? bold(label) : label;
+  return m.paint(`${m.arrows} ${m.label}${m.desc ? ` \u00b7 ${m.desc}` : ""}`);
 }
 
 export function renderStatus(s: StatusView): string {
@@ -79,15 +78,15 @@ export function renderStatus(s: StatusView): string {
           [
             "sandbox",
             !s.sandboxEnabled
-              ? bold(warn("! off | full host access"))
+              ? bold(warn("! off \u00b7 full host access"))
               : s.sandboxDegraded
-                ? bold(warn("! on | NOT ISOLATED -- no OS backend, path-guard only"))
+                ? bold(warn("! on \u00b7 NOT ISOLATED -- no OS backend, path-guard only"))
                 : text(
-                    `${s.sandboxMode ?? "on"} | commands OS-sandboxed, no network` +
+                    `${s.sandboxMode ?? "on"} \u00b7 commands OS-sandboxed, no network` +
                       (s.sandboxMode === "regular" ? ", prompts apply" : "") +
-                      (s.sandboxFallback === false ? " | strict" : "") +
+                      (s.sandboxFallback === false ? " \u00b7 strict" : "") +
                       (s.sandboxExcluded?.length
-                        ? ` | excluded: ${s.sandboxExcluded.join(", ")}`
+                        ? ` \u00b7 excluded: ${s.sandboxExcluded.join(", ")}`
                         : ""),
                   ),
           ],
@@ -96,7 +95,7 @@ export function renderStatus(s: StatusView): string {
       ? ([
           [
             "org policy",
-            bold(warn(`# ${s.orgPolicy.org ?? "enforced"} | ${s.orgPolicy.fingerprint}`)),
+            bold(warn(`# ${s.orgPolicy.org ?? "enforced"} \u00b7 ${s.orgPolicy.fingerprint}`)),
           ],
         ] as [string, string][])
       : []),
@@ -106,18 +105,18 @@ export function renderStatus(s: StatusView): string {
             "auto reviewer",
             s.autoMode.reviewer
               ? text(
-                  `${s.autoMode.reviewer.provider}/${s.autoMode.reviewer.model} | isolated context | ${s.autoMode.failClosed ? "fail closed" : "FAIL OPEN"}${s.autoMode.reviewerFallback?.available ? " | fallback ready" : ""}`,
+                  `${s.autoMode.reviewer.provider}/${s.autoMode.reviewer.model} \u00b7 isolated context \u00b7 ${s.autoMode.failClosed ? "fail closed" : "FAIL OPEN"}${s.autoMode.reviewerFallback?.available ? " \u00b7 fallback ready" : ""}`,
                 )
-              : bold(warn("unavailable | risky actions ask")),
+              : bold(warn("unavailable \u00b7 risky actions ask")),
           ],
           [
             "auto escalation",
-            text("conversational | blocked actions ask you in chat; prompts only as backstop"),
+            text("conversational \u00b7 blocked actions ask you in chat; prompts only as backstop"),
           ],
           [
             "auto decisions",
             muted(
-              `${s.autoMode.stats.allowed} allow | ${s.autoMode.stats.denied} block | ${s.autoMode.stats.asked} ask | ${s.autoMode.stats.injectionsFlagged} injection warnings`,
+              `${s.autoMode.stats.allowed} allow \u00b7 ${s.autoMode.stats.denied} block \u00b7 ${s.autoMode.stats.asked} ask \u00b7 ${s.autoMode.stats.injectionsFlagged} injection warnings`,
             ),
           ],
         ] as [string, string][])
@@ -127,9 +126,9 @@ export function renderStatus(s: StatusView): string {
           [
             "context",
             (s.contextUsage.percent >= 90
-              ? bold(danger(`${s.contextUsage.percent}% | hot -- /compress recommended`))
+              ? bold(danger(`${s.contextUsage.percent}% \u00b7 hot -- /compress recommended`))
               : s.contextUsage.percent >= 70
-                ? warn(`${s.contextUsage.percent}% | compaction near`)
+                ? warn(`${s.contextUsage.percent}% \u00b7 compaction near`)
                 : text(`${s.contextUsage.percent}%`)) +
               muted(
                 ` (${Math.round(s.contextUsage.used / 1000)}k / ${Math.round(s.contextUsage.limit / 1000)}k tokens)`,
@@ -150,7 +149,7 @@ export function renderStatus(s: StatusView): string {
       const secs = Math.max(0, Math.ceil((c.untilMs - Date.now()) / 1000));
       bits.push(`${c.provider} cooling ${secs}s`);
     }
-    rows.push(["gateway", warn(bits.join(" | "))]);
+    rows.push(["gateway", warn(bits.join(" \u00b7 "))]);
   }
 
   // Values are already colored -- keep kv's value pass as identity.

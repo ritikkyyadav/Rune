@@ -65,8 +65,8 @@ export function formatWorkspaceDiff(snapshot: WorkspaceDiffSnapshot): string {
   );
   const fileList = [...files];
   const fileLine = fileList.length
-    ? `  ${info(fileList.slice(0, 4).join(" | "))}${
-        fileList.length > 4 ? faint(` | ${fileList.length - 4} more`) : ""
+    ? `  ${info(fileList.slice(0, 4).join(" \u00b7 "))}${
+        fileList.length > 4 ? faint(` \u00b7 ${fileList.length - 4} more`) : ""
       }`
     : "";
   return [summary, fileLine, ...sections].filter(Boolean).join("\n");

@@ -115,17 +115,27 @@ export interface ModeInfo {
   loud: boolean;
 }
 
+/**
+ * One mark per gear, from the closed alphabet: `››››` is 4th gear. The count
+ * IS the information (see gear-3's note), and the selection glyph is thinner
+ * and quieter than the ASCII `>>>>` it replaces -- which is still what a
+ * seven-bit terminal gets, as the glyph's own twin.
+ */
+function ladder(n: number): string {
+  return glyph("selection").repeat(n);
+}
+
 export function modeInfo(mode?: string): ModeInfo {
   switch (normalizeMode(mode)) {
     case "gear-2":
       return {
         id: "gear-2",
         label: "2nd gear",
-        arrows: ">>",
+        arrows: ladder(2),
         desc: "workspace edits proceed",
         detail:
           "confined workspace edits proceed; commands, delegation, network, and external access ask.",
-        paint: warn,
+        paint: quiet,
         loud: false,
       };
     case "gear-3":
@@ -138,18 +148,18 @@ export function modeInfo(mode?: string): ModeInfo {
         // read at a glance without parsing the label beside it. Breaking the
         // sequence in exactly one position made 3rd gear look like a different
         // product from 4th.
-        arrows: ">>>",
+        arrows: ladder(3),
         desc: "edits + sandboxed shell",
         detail:
           "workspace edits, sandboxed local commands, and confined delegation proceed; external access asks.",
-        paint: warn,
+        paint: quiet,
         loud: false,
       };
     case "gear-4":
       return {
         id: "gear-4",
         label: "4th gear",
-        arrows: ">>>>",
+        arrows: ladder(4),
         // "no prompts" was ambiguous in exactly the place it could least
         // afford to be. In a coding agent "prompt" means the system prompt at
         // least as often as it means a confirmation, so a status line reading
@@ -179,27 +189,33 @@ export function modeInfo(mode?: string): ModeInfo {
         // switch can spell it out on request.
         detail:
           "Rune acts without permission prompts inside the sandbox; a watcher above it stops work that did not come from you.",
-        paint: brand,
+        paint: warn,
         loud: false,
       };
     default:
       return {
         id: "gear-1",
         label: "1st gear",
-        arrows: ">",
+        arrows: ladder(1),
         desc: "every action asks first",
         detail: "Rune asks before writing or running.",
-        paint: muted,
+        paint: quiet,
         loud: false,
       };
   }
 }
 
-/** A compact, always-visible permission readout: `>> 2nd gear`. */
+/**
+ * A compact, always-visible permission readout: `›› 2nd gear`.
+ *
+ * Coloured only where the gear has stopped asking -- 4th gear and Auto, in the
+ * caution ink -- and never bold: on the status line, all day, a bold amber
+ * badge was the loudest thing on the screen (founder, 2026-09-26: "chunky").
+ * The Shift+Tab announcement still says 4th gear loudly, once, when it happens.
+ */
 export function permissionModeBadge(mode?: string): string {
   const m = modeInfo(mode);
-  const label = m.paint(`${m.arrows} ${m.label}`);
-  return m.loud ? bold(label) : label;
+  return m.paint(`${m.arrows} ${m.label}`);
 }
 
 /**
@@ -338,7 +354,7 @@ export function renderQueueStrip(queued: readonly string[], width: number): stri
   if (queued.length === 0) return [];
   const max = Math.max(12, F.measure(width - 1));
   const inner = Math.max(10, Math.min(100, max - 2));
-  const lines = [`  ${faint("queued | sends when this turn completes")}`];
+  const lines = [`  ${faint("queued \u00b7 sends when this turn completes")}`];
   const hint = "backspace removes the last";
   queued.forEach((message, index) => {
     const last = index === queued.length - 1;
@@ -478,7 +494,7 @@ export function waitingRung(seconds: number, toolName: string, mode?: string): s
           : toolName;
   return (
     `${F.MARK}${warn(glyph("selection"))} ${warn("waiting on you")}  ` +
-    `${faint(`${Math.max(0, seconds)}s | ${kind} needs a decision in ${modeInfo(mode).label}`)}`
+    `${faint(`${Math.max(0, seconds)}s \u00b7 ${kind} needs a decision in ${modeInfo(mode).label}`)}`
   );
 }
 
@@ -827,19 +843,13 @@ export function composerCounts(input: string, textW: number): { lines: number; c
  * fit, and the counts row names it the moment a draft needs it.
  */
 export function composerHintRow(opts: {
+  /** Kept for callers; a streaming turn's keys moved to the status line. */
   streaming: boolean;
   counts: { lines: number; chars: number };
   max: number;
 }): string {
   const sep = ` ${glyph("observed")} `;
   const fits = (s: string): boolean => visLen(s) <= opts.max;
-  if (opts.streaming) {
-    for (const tier of [["enter queues", "esc interrupts"], ["esc interrupts"]]) {
-      const row = tier.join(sep);
-      if (fits(row)) return row;
-    }
-    return "esc stops";
-  }
   const { lines, chars } = opts.counts;
   if (lines > 1) {
     const size = [`${lines} lines`, `${chars} chars`].join(sep);
@@ -848,12 +858,12 @@ export function composerHintRow(opts: {
     }
     return `${lines} lines`;
   }
-  const keys = ["enter send", "ctrl+b line", "ctrl+f agents", "? keys"];
-  for (const tier of [keys, [keys[0]!, ...keys.slice(2)], keys.slice(0, 2), [keys[0]!]]) {
-    const row = tier.join(sep);
-    if (fits(row)) return row;
-  }
-  return keys[0]!;
+  // Nothing at rest, and nothing while a turn streams. The resting legend
+  // (`enter send · ctrl+b line · ctrl+f agents · ? keys`) restated what the
+  // placeholder, the key sheet and the status line already say; the streaming
+  // one (`enter queues · esc interrupts`) now rides the status line's right
+  // edge, where contextual keys are said in every layout (2026-09-26).
+  return "";
 }
 
 /** The slice of a capped field's rows that is actually drawn, and what it costs. */
@@ -928,12 +938,14 @@ export function renderWorkReview(
   const start = Math.max(0, Math.min(top, maxTop));
   const view = source.slice(start, start + pageSize);
   const range =
-    source.length > pageSize ? ` | ${start + 1}-${start + view.length} of ${source.length}` : "";
+    source.length > pageSize
+      ? ` \u00b7 ${start + 1}-${start + view.length} of ${source.length}`
+      : "";
   const maxWidth = Math.max(8, F.measure(width - 1));
   const lines = [
     clampVisible(`${title}${faint(range)}`, maxWidth),
     ...view.map((line) => clampVisible(line, maxWidth)),
-    `  ${faint("up/down scroll | page up/down | ctrl+r or esc close")}`,
+    `  ${faint("up/down scroll \u00b7 page up/down \u00b7 ctrl+r or esc close")}`,
   ];
   return { lines, caretRow: 0, caretCol: 0 };
 }
@@ -966,6 +978,7 @@ export function renderComposer(state: ComposerState): RenderedBlock {
       lines: [`${PAD}${state.working}`, ...statusLines],
       caretRow: 0,
       caretCol: stripAnsi(`${PAD}${state.working}`).length,
+      anchorRow: 0,
     };
   }
 
@@ -1058,7 +1071,15 @@ export function renderComposer(state: ComposerState): RenderedBlock {
   // PAD(2) + chevron(1) + space(1) = 4 cols before the input text.
   const caretRow = 2 + (win.above > 0 ? 1 : 0) + Math.max(0, pos.row - win.top);
   const caretCol = 4 + (state.input.length === 0 ? 0 : pos.col);
-  return { lines: ["", edge, ...field, edge, ...statusLines], caretRow, caretCol };
+  // The anchor is stated, not found: the status line under the field carries
+  // the gear's `››››`, and a window that went looking for the last `›` on
+  // screen would anchor on the status line instead of on where you type.
+  return {
+    lines: ["", edge, ...field, edge, ...statusLines],
+    caretRow,
+    caretCol,
+    anchorRow: caretRow,
+  };
 }
 
 // --- Permission request card (TUI) ---
@@ -1139,12 +1160,14 @@ function permissionDiffLine(row: PermissionPreviewLine, width: number): string {
  *  live sandbox state -- never a reassuring default. */
 function permissionTag(toolName: string, preview: PermissionPreview): string {
   if (toolName === "bash") {
-    if (/host/.test(preview.scope)) return "bash | host";
-    if (/sandboxed/.test(preview.scope)) return "bash | sandboxed";
-    return isSandboxEnabled() && isOsIsolationAvailable() ? "bash | sandboxed" : "bash | host";
+    if (/host/.test(preview.scope)) return "bash \u00b7 host";
+    if (/sandboxed/.test(preview.scope)) return "bash \u00b7 sandboxed";
+    return isSandboxEnabled() && isOsIsolationAvailable()
+      ? "bash \u00b7 sandboxed"
+      : "bash \u00b7 host";
   }
-  const scope = preview.scope.split("|")[0]?.trim() ?? "";
-  return scope && scope !== "explicit approval" ? `${toolName} | ${scope}` : toolName;
+  const scope = preview.scope.split(/[|\u00b7]/)[0]?.trim() ?? "";
+  return scope && scope !== "explicit approval" ? `${toolName} \u00b7 ${scope}` : toolName;
 }
 
 /**
@@ -1193,7 +1216,7 @@ export function renderPermissionCard(
     ...(preview.risk ?? [])
       .filter((fact) => fact !== irreversible)
       .map((fact) => `${fact.label} ${fact.value}`),
-  ].join(" | ");
+  ].join(" \u00b7 ");
 
   const lines = F.ask({
     question: preview.question || `${permissionView(toolName, argsSummary).title}?`,
@@ -1221,7 +1244,7 @@ export function renderPermissionCard(
   const choiceCount = preview.choices?.length ? preview.choices.length : PERMISSION_LABELS.length;
   const firstOption = lines.length - choiceCount - F.ASK_TRAILING_ROWS;
 
-  const guard = `${preview.guard} | the decision is recorded in the audit trail`;
+  const guard = `${preview.guard} \u00b7 the decision is recorded in the audit trail`;
   lines.push("");
   for (const part of wrap(guard, body)) lines.push(`${F.BODY}${faint(part)}`);
 
@@ -1270,7 +1293,7 @@ function pickerTags(tags: readonly string[], current: boolean): string {
  */
 function fitHint(hint: string, budget: number): string {
   if (budget < 12) return "";
-  const sep = hint.includes(" | ") ? " | " : hint.includes(" \u00b7 ") ? " \u00b7 " : null;
+  const sep = hint.includes(" \u00b7 ") ? " \u00b7 " : hint.includes(" | ") ? " | " : null;
   const parts = sep ? hint.split(sep) : [hint];
   while (parts.length > 1 && visLen(parts.join(sep ?? "")) > budget) parts.pop();
   const fitted = parts.join(sep ?? "");
@@ -1527,7 +1550,7 @@ export function renderKeysPanel(
   });
 
   lines.push(
-    `${PAD}${faint("up/down move | enter manage keys | space on/off | d clear | /login connect | esc close")}`,
+    `${PAD}${faint("up/down move \u00b7 enter manage keys \u00b7 space on/off \u00b7 d clear \u00b7 /login connect \u00b7 esc close")}`,
   );
   return { lines, caretRow: sel - start + 1, caretCol: 0 };
 }
@@ -1548,7 +1571,7 @@ export function renderKeyManagerPanel(
   const sel = rows.length ? Math.max(0, Math.min(selected, rows.length - 1)) : 0;
   const count = rows.length;
   const lines: string[] = [
-    `${PAD}${bold(text(`${providerLabel} | keys`))}   ${faint(
+    `${PAD}${bold(text(`${providerLabel} \u00b7 keys`))}   ${faint(
       count === 0 ? "none configured" : `${count} key${count === 1 ? "" : "s"} configured`,
     )}`,
   ];
@@ -1574,7 +1597,9 @@ export function renderKeyManagerPanel(
   }
 
   lines.push("");
-  lines.push(`${PAD}${faint("a add key | enter/space set active | d remove | esc back")}`);
+  lines.push(
+    `${PAD}${faint("a add key \u00b7 enter/space set active \u00b7 d remove \u00b7 esc back")}`,
+  );
   const caretRow = count === 0 ? 2 : sel + 1;
   return { lines, caretRow, caretCol: 0 };
 }
@@ -1623,7 +1648,7 @@ export function renderMemoryPanel(
     `${PAD}${faint(
       empty
         ? `empty | auto-update ${v.scheduleLabel}`
-        : `~${v.tokens}/${v.maxTokens} tokens | auto-update ${v.scheduleLabel} | dreamed ${v.lastDreamed}`,
+        : `~${v.tokens}/${v.maxTokens} tokens \u00b7 auto-update ${v.scheduleLabel} \u00b7 dreamed ${v.lastDreamed}`,
     )}`,
   );
   lines.push("");
@@ -1652,7 +1677,11 @@ export function renderMemoryPanel(
     lines.push(on ? F.band(line, Math.max(8, F.measure(width - 1))) : line);
   };
   row(0, "Refresh now", v.busy ? "dreaming..." : "learn from your recent sessions");
-  row(1, `Auto-update: ${v.scheduleLabel}`, "enter cycles manual | daily | 3d | weekly");
+  row(
+    1,
+    `Auto-update: ${v.scheduleLabel}`,
+    "enter cycles manual \u00b7 daily \u00b7 3d \u00b7 weekly",
+  );
   row(2, "Add a note", "jot a quick fact about you");
   row(3, "Edit in your editor", "open the full profile in $EDITOR");
   row(
@@ -1667,7 +1696,7 @@ export function renderMemoryPanel(
     lines.push(`${PAD}${ok(glyph("verified"))} ${muted(v.note)}`);
   }
   lines.push(
-    `${PAD}${faint("up/down move | enter choose | r refresh | c cadence | a add | e edit | x clear | esc close")}`,
+    `${PAD}${faint("up/down move \u00b7 enter choose \u00b7 r refresh \u00b7 c cadence \u00b7 a add \u00b7 e edit \u00b7 x clear \u00b7 esc close")}`,
   );
 
   return { lines, caretRow: actionStart + sel, caretCol: 0 };
@@ -1693,8 +1722,8 @@ export function sessionGroupLabel(
   // The v2 timeline header names the day: "Today | Thu Aug 20".
   const date = () =>
     `${value.toLocaleDateString("en-US", { weekday: "short" })} ${value.toLocaleDateString("en-US", { month: "short" })} ${value.getDate()}`;
-  if (days === 0) return opts.withDate ? `Today | ${date()}` : "Today";
-  if (days === 1) return opts.withDate ? `Yesterday | ${date()}` : "Yesterday";
+  if (days === 0) return opts.withDate ? `Today \u00b7 ${date()}` : "Today";
+  if (days === 1) return opts.withDate ? `Yesterday \u00b7 ${date()}` : "Yesterday";
   if (days < 7) return "Past 7 days";
   return value.toLocaleDateString([], { month: "short", year: "numeric" });
 }
@@ -1779,7 +1808,9 @@ export function renderSessionsPanel(
         : "No sessions yet -- start chatting.";
     const emptyRow = lines.length;
     lines.push(`${PAD}${faint(empty)}`);
-    lines.push(`${PAD}${faint("/ search | tab active/archived | ctrl+n new | esc close")}`);
+    lines.push(
+      `${PAD}${faint("/ search \u00b7 tab active/archived \u00b7 ctrl+n new \u00b7 esc close")}`,
+    );
     return {
       lines,
       caretRow: opts.searching ? searchRow : emptyRow,
@@ -1969,7 +2000,7 @@ export function renderKeyEditor(s: KeyEditorState): RenderedBlock {
   const top = `${PAD}${line("+" + "-".repeat(boxW - 2) + "+")}`;
   const mid = `${PAD}${line("|")} ${info(glyph("selection"))} ${text(slice.padEnd(textW, " "))} ${line("|")}`;
   const bot = `${PAD}${line("+" + "-".repeat(boxW - 2) + "+")}`;
-  const hint = `${PAD}${faint("enter save | esc cancel | paste supported")}`;
+  const hint = `${PAD}${faint("enter save \u00b7 esc cancel \u00b7 paste supported")}`;
 
   const lines = sub ? [head, sub, top, mid, bot, hint] : [head, top, mid, bot, hint];
   const caretRow = sub ? 3 : 2;

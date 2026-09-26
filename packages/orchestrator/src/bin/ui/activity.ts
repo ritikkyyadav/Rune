@@ -643,7 +643,7 @@ export function renderToolActivity(v: ToolActivityView): string {
         rows.push(
           F.toolNote(
             `${listingPath(String(first.file ?? ""))}:${first.line_number ?? "?"}` +
-              (rest > 0 ? ` | ${rest} more` : ""),
+              (rest > 0 ? ` \u00b7 ${rest} more` : ""),
           ),
         );
       }
