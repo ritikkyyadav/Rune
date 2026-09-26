@@ -11,6 +11,9 @@
 //!
 //! One test function, deliberately: environment variables are process-global
 //! and the test harness runs a file's tests on parallel threads.
+// The functions under test only exist on the two platforms with a passwd
+// database, so on any other target this file compiles to nothing.
+#![cfg(any(target_os = "linux", target_os = "macos"))]
 
 use std::path::PathBuf;
 

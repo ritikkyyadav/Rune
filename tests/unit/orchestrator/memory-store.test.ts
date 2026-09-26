@@ -295,7 +295,8 @@ describe("memory/store — a hand-written file is not an entry", () => {
     expect(existsSync(key)).toBe(false);
     store.observe(cand());
     expect(existsSync(key)).toBe(true);
-    expect(statSync(key).mode & 0o777).toBe(0o600);
+    // Windows has no POSIX mode bits to read back; the profile ACL is the guard there.
+    if (process.platform !== "win32") expect(statSync(key).mode & 0o777).toBe(0o600);
     expect(readFileSync(key, "utf8").trim()).toMatch(/^[0-9a-f]{64}$/);
   });
 });

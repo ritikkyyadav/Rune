@@ -70,7 +70,7 @@ pub(crate) fn escape_sbpl(s: &str) -> String {
 /// the fingerprint everyone checks is the two bun suites, which is exactly why
 /// this went unmeasured. Every test config in this crate builds its audit path
 /// here instead, under the process's own temp directory.
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 pub(crate) fn test_audit_path() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("rune-sandbox-test-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);

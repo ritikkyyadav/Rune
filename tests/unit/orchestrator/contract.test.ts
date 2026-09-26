@@ -41,6 +41,7 @@ import {
   verdictLine,
   type TaskContract,
   type TaskShape,
+  shellQuote,
 } from "../../../packages/orchestrator/src/contract";
 import type { CheckRun } from "../../../packages/orchestrator/src/brief";
 
@@ -1103,8 +1104,10 @@ describe("staging the acceptance out of the workspace (V6 finding 1)", () => {
     try {
       expect(staged.root.startsWith(dir)).toBe(false);
       expect(staged.staged.map((r) => r.from)).toEqual([join(".rune-acceptance", "check.mjs")]);
+      // Quoted exactly as the runner will see it: bare on POSIX, quoted on
+      // Windows where the temp path carries "\\" and "~".
       expect(staged.specs[0]!.command).toBe(
-        `node ${join(staged.root, ".rune-acceptance", "check.mjs")}`,
+        `node ${shellQuote(join(staged.root, ".rune-acceptance", "check.mjs"))}`,
       );
       expect(Object.keys(staged.digests)).toHaveLength(1);
     } finally {

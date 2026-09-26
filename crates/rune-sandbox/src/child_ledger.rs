@@ -63,6 +63,10 @@ pub(crate) struct ProcessIdentity {
 
 /// Reduce a command name to characters that cannot need JSON escaping.
 /// Mirrored by `sanitizeCommand` in `process-identity.ts`.
+///
+/// Only the Linux and macOS probes call it; on any other target it would be
+/// dead code, and the Windows lint runs with `-D warnings`.
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 fn sanitize_command(raw: &str) -> String {
     raw.chars()
         .take(64)

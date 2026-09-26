@@ -537,27 +537,33 @@ describe("G13 — the startup reaper", () => {
     removeWorkerWorktree(repo, wt, false);
   });
 
-  test("when the work cannot be committed the directory stays and the reaper says why", () => {
-    const repo = makeRepo();
-    const wt = createWorkerWorktree(repo, "wstuck-1", { sessionId: "s", pid: 999_999 })!;
-    writeFileSync(join(wt.path, "src", "base.ts"), "export const base = 7;\n");
-    // A linked worktree keeps its git dir in the parent repo; making it
-    // read-only is the cheapest deterministic way to fail the commit.
-    const gitDir = join(repo, ".git", "worktrees", "wstuck-1");
-    chmodSync(gitDir, 0o555);
-    try {
-      const report = reapWorkerWorktrees(repo, { pidAlive: () => false });
-      expect(report).toHaveLength(1);
-      expect(report[0]!.outcome).toBe("kept");
-      expect(report[0]!.reason).toBeTruthy();
-      // The HARD RULE: uncommitted work is never destroyed to tidy a directory.
-      expect(existsSync(wt.path)).toBe(true);
-      expect(readFileSync(join(wt.path, "src", "base.ts"), "utf8")).toContain("base = 7");
-      expect(git(repo, ["branch", "--list", wt.branch])).toContain(wt.branch);
-    } finally {
-      chmodSync(gitDir, 0o755);
-    }
-  });
+  // The fault is injected with a read-only directory, and Windows ignores the
+  // write bit on directories: the commit succeeds there, the reap proceeds, and
+  // the test observes a path this case never meant to take.
+  test.skipIf(process.platform === "win32")(
+    "when the work cannot be committed the directory stays and the reaper says why",
+    () => {
+      const repo = makeRepo();
+      const wt = createWorkerWorktree(repo, "wstuck-1", { sessionId: "s", pid: 999_999 })!;
+      writeFileSync(join(wt.path, "src", "base.ts"), "export const base = 7;\n");
+      // A linked worktree keeps its git dir in the parent repo; making it
+      // read-only is the cheapest deterministic way to fail the commit.
+      const gitDir = join(repo, ".git", "worktrees", "wstuck-1");
+      chmodSync(gitDir, 0o555);
+      try {
+        const report = reapWorkerWorktrees(repo, { pidAlive: () => false });
+        expect(report).toHaveLength(1);
+        expect(report[0]!.outcome).toBe("kept");
+        expect(report[0]!.reason).toBeTruthy();
+        // The HARD RULE: uncommitted work is never destroyed to tidy a directory.
+        expect(existsSync(wt.path)).toBe(true);
+        expect(readFileSync(join(wt.path, "src", "base.ts"), "utf8")).toContain("base = 7");
+        expect(git(repo, ["branch", "--list", wt.branch])).toContain(wt.branch);
+      } finally {
+        chmodSync(gitDir, 0o755);
+      }
+    },
+  );
 
   test("a clean dead checkout is removed without a recovery commit, branch kept", () => {
     const repo = makeRepo();

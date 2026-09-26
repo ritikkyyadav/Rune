@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -27,6 +27,7 @@ import {
   type VisualCapture,
 } from "../../../packages/orchestrator/src/visual-review";
 import { criterionStatus } from "../../../packages/orchestrator/src/contract";
+import { rmTemp } from "../../helpers/tmp";
 
 const CAPTURES: VisualCapture[] = [
   { path: "/w/shots/wide.png", width: 1440, label: "wide" },
@@ -324,7 +325,7 @@ describe("preserving the record", () => {
       expect(page).toContain("three cards compete");
       expect(page).toContain("openai/gpt-5");
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      rmTemp(home);
     }
   });
 
@@ -419,7 +420,7 @@ describe("rune audit", () => {
     } finally {
       if (previous === undefined) delete process.env.RUNE_HOME;
       else process.env.RUNE_HOME = previous;
-      rmSync(home, { recursive: true, force: true });
+      rmTemp(home);
     }
   });
 
@@ -447,7 +448,7 @@ describe("rune audit", () => {
     } finally {
       if (previous === undefined) delete process.env.RUNE_HOME;
       else process.env.RUNE_HOME = previous;
-      rmSync(home, { recursive: true, force: true });
+      rmTemp(home);
     }
   });
 
@@ -461,7 +462,7 @@ describe("rune audit", () => {
     } finally {
       if (previous === undefined) delete process.env.RUNE_HOME;
       else process.env.RUNE_HOME = previous;
-      rmSync(home, { recursive: true, force: true });
+      rmTemp(home);
     }
   });
 });

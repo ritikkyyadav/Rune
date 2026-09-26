@@ -129,7 +129,7 @@ describe("the exact argv, cwd and environment", () => {
       "-C",
       "/evidence/csv-codex/workspace",
       "--output-last-message",
-      `/evidence/csv-codex/${CODEX_LAST_MESSAGE}`,
+      join("/evidence/csv-codex", CODEX_LAST_MESSAGE), // the arm join()s it: "\\" on Windows
       task.prompt,
     ]);
     expect(plan.cwd).toBe("/evidence/csv-codex/workspace");
@@ -354,97 +354,102 @@ describe("parsing the recorded captures — synthetic, credential-free", () => {
   });
 });
 
-describe("--dry-run prints the plan for all twelve tasks and executes nothing", () => {
-  /**
-   * A stand-in for a comparator: it appends its argv to a log and prints a
-   * version. The log path is baked into the script rather than read from the
-   * environment, because the environment is exactly what these arms scrub.
-   */
-  function fakeTool(dir: string, name: string, log: string): string {
-    const path = join(dir, name);
-    writeFileSync(
-      path,
-      `#!/bin/sh\necho "$@" >> ${JSON.stringify(log)}\necho "${name} 0.0.0-fake"\n`,
-    );
-    chmodSync(path, 0o755);
-    return path;
-  }
-
-  test("twenty-four planned runs, and the only child process is --version", () => {
-    const dir = mkdtempSync(join(tmpdir(), "arm-dry-run-"));
-    try {
-      const log = join(dir, "argv.log");
-      writeFileSync(log, "");
-      fakeTool(dir, "claude", log);
-      fakeTool(dir, "codex", log);
-      const result = spawnSync(
-        process.execPath,
-        [
-          join(import.meta.dir, "../../eval/comparison/arms/run-arms.ts"),
-          "--dry-run",
-          "--arms",
-          "claude-code,codex",
-          "--corpus",
-          CORPUS,
-          "--model",
-          "synthetic-model",
-          "--out",
-          join(dir, "out"),
-        ],
-        {
-          encoding: "utf8",
-          env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
-          timeout: 120_000,
-        },
+// The fake `claude` and `codex` on PATH are `#!/bin/sh` scripts: a POSIX rig for
+// a comparison the founder runs on macOS. Windows cannot execute them.
+describe.skipIf(process.platform === "win32")(
+  "--dry-run prints the plan for all twelve tasks and executes nothing",
+  () => {
+    /**
+     * A stand-in for a comparator: it appends its argv to a log and prints a
+     * version. The log path is baked into the script rather than read from the
+     * environment, because the environment is exactly what these arms scrub.
+     */
+    function fakeTool(dir: string, name: string, log: string): string {
+      const path = join(dir, name);
+      writeFileSync(
+        path,
+        `#!/bin/sh\necho "$@" >> ${JSON.stringify(log)}\necho "${name} 0.0.0-fake"\n`,
       );
-      expect(result.status).toBe(0);
-      const lines = result.stdout.split("\n");
-      // Every one of the twelve pinned tasks, twice — once per arm.
-      for (const task of corpusTasks(CORPUS))
-        expect(lines.filter((line) => line.includes(`${task.id} ·`))).toHaveLength(2);
-      expect(result.stdout).toContain("24 run(s) planned");
-      expect(result.stdout).toContain("claude-code: version claude 0.0.0-fake");
-      expect(result.stdout).toContain("codex: version codex 0.0.0-fake");
-      // The plan a reviewer reads is the plan the live path would run.
-      expect(result.stdout).toContain("--permission-prompts");
-      expect(result.stdout).toContain("sandbox_workspace_write.network_access=false");
-      // And the proof that nothing ran: the comparators were asked for their
-      // version and were never asked for a turn.
-      expect(readFileSync(log, "utf8").trim().split("\n")).toEqual(["--version", "--version"]);
-    } finally {
-      rmTemp(dir);
+      chmodSync(path, 0o755);
+      return path;
     }
-  });
 
-  test("planSeries names every task once per arm and spawns nothing but --version", () => {
-    const dir = mkdtempSync(join(tmpdir(), "arm-plan-"));
-    try {
-      const log = join(dir, "argv.log");
-      writeFileSync(log, "");
-      const claude = fakeTool(dir, "claude", log);
-      const codex = fakeTool(dir, "codex", log);
-      const plan = planSeries({
-        arms: ["claude-code", "codex"],
-        out: join(dir, "out"),
-        corpus: CORPUS,
-        model: "synthetic-model",
-        reasoningEffort: "high",
-        budgetUsd: 2,
-        timeoutMs: 600_000,
-        command: { "claude-code": [claude], codex: [codex] },
-      });
-      expect(plan.runs).toHaveLength(24);
-      expect(new Set(plan.runs.map((run) => run.task)).size).toBe(12);
-      expect(plan.versions).toEqual({
-        "claude-code": "claude 0.0.0-fake",
-        codex: "codex 0.0.0-fake",
-      });
-      // Two version probes for the plan header, and one more per arm for the
-      // parity block. Nothing else, and never a prompt.
-      const argv = readFileSync(log, "utf8").trim().split("\n");
-      expect(new Set(argv)).toEqual(new Set(["--version"]));
-    } finally {
-      rmTemp(dir);
-    }
-  });
-});
+    test("twenty-four planned runs, and the only child process is --version", () => {
+      const dir = mkdtempSync(join(tmpdir(), "arm-dry-run-"));
+      try {
+        const log = join(dir, "argv.log");
+        writeFileSync(log, "");
+        fakeTool(dir, "claude", log);
+        fakeTool(dir, "codex", log);
+        const result = spawnSync(
+          process.execPath,
+          [
+            join(import.meta.dir, "../../eval/comparison/arms/run-arms.ts"),
+            "--dry-run",
+            "--arms",
+            "claude-code,codex",
+            "--corpus",
+            CORPUS,
+            "--model",
+            "synthetic-model",
+            "--out",
+            join(dir, "out"),
+          ],
+          {
+            encoding: "utf8",
+            env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
+            timeout: 120_000,
+          },
+        );
+        expect(result.status).toBe(0);
+        const lines = result.stdout.split("\n");
+        // Every one of the twelve pinned tasks, twice — once per arm.
+        for (const task of corpusTasks(CORPUS))
+          expect(lines.filter((line) => line.includes(`${task.id} ·`))).toHaveLength(2);
+        expect(result.stdout).toContain("24 run(s) planned");
+        expect(result.stdout).toContain("claude-code: version claude 0.0.0-fake");
+        expect(result.stdout).toContain("codex: version codex 0.0.0-fake");
+        // The plan a reviewer reads is the plan the live path would run.
+        expect(result.stdout).toContain("--permission-prompts");
+        expect(result.stdout).toContain("sandbox_workspace_write.network_access=false");
+        // And the proof that nothing ran: the comparators were asked for their
+        // version and were never asked for a turn.
+        expect(readFileSync(log, "utf8").trim().split("\n")).toEqual(["--version", "--version"]);
+      } finally {
+        rmTemp(dir);
+      }
+    });
+
+    test("planSeries names every task once per arm and spawns nothing but --version", () => {
+      const dir = mkdtempSync(join(tmpdir(), "arm-plan-"));
+      try {
+        const log = join(dir, "argv.log");
+        writeFileSync(log, "");
+        const claude = fakeTool(dir, "claude", log);
+        const codex = fakeTool(dir, "codex", log);
+        const plan = planSeries({
+          arms: ["claude-code", "codex"],
+          out: join(dir, "out"),
+          corpus: CORPUS,
+          model: "synthetic-model",
+          reasoningEffort: "high",
+          budgetUsd: 2,
+          timeoutMs: 600_000,
+          command: { "claude-code": [claude], codex: [codex] },
+        });
+        expect(plan.runs).toHaveLength(24);
+        expect(new Set(plan.runs.map((run) => run.task)).size).toBe(12);
+        expect(plan.versions).toEqual({
+          "claude-code": "claude 0.0.0-fake",
+          codex: "codex 0.0.0-fake",
+        });
+        // Two version probes for the plan header, and one more per arm for the
+        // parity block. Nothing else, and never a prompt.
+        const argv = readFileSync(log, "utf8").trim().split("\n");
+        expect(new Set(argv)).toEqual(new Set(["--version"]));
+      } finally {
+        rmTemp(dir);
+      }
+    });
+  },
+);

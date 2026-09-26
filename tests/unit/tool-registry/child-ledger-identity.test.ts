@@ -62,9 +62,11 @@ function alive(pid: number): boolean {
  * for the exit AND reaps it, so the number is free by the time it returns.
  */
 function recentlyDeadPid(): number {
-  const doomed = spawnSync("/usr/bin/true", [], { stdio: "ignore" });
+  // The runtime's own binary is the one short-lived program every platform
+  // has; `/usr/bin/true` is not on Windows.
+  const doomed = spawnSync(process.execPath, ["--version"], { stdio: "ignore" });
   if (doomed.error || typeof doomed.pid !== "number" || doomed.pid <= 1) {
-    throw new Error(`could not spawn /usr/bin/true: ${doomed.error?.message ?? "no pid"}`);
+    throw new Error(`could not spawn ${process.execPath}: ${doomed.error?.message ?? "no pid"}`);
   }
   return doomed.pid;
 }

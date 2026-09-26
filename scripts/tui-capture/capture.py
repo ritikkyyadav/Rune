@@ -25,18 +25,25 @@ Zero model calls, by construction:
 
 import atexit
 import codecs
-import fcntl
 import os
-import pty
 import re
-import select
 import signal
 import struct
 import subprocess
 import sys
-import termios
 import time
 from pathlib import Path
+
+# The pty rig needs these four and they exist only on POSIX. `secret_names`
+# below is imported by a unit test on every platform, so their absence must
+# not stop the module from loading — it stops the rig, with a plain message.
+try:
+    import fcntl
+    import pty
+    import select
+    import termios
+except ImportError:  # Windows
+    fcntl = pty = select = termios = None
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
@@ -194,6 +201,8 @@ def fresh_profile():
 
 class Session:
     def __init__(self, rows=24, cols=80, **env_extra):
+        if pty is None:
+            sys.exit("capture.py drives a pty, which this platform does not have")
         self.rows, self.cols = rows, cols
         self.screen = Screen(rows, cols)
         self.stream = Stream(self.screen)

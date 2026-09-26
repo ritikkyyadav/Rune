@@ -436,10 +436,14 @@ describe("the box grammar — a frame closes, at every width", () => {
   it("draws the same box with + - | on the ASCII rung", async () => {
     // The rung is resolved once at module load, so this is the one case that
     // needs its own process rather than a parameter. Everything the founder
-    // would see on a seven-bit terminal is what comes back.
+    // would see on a seven-bit terminal is what comes back. The specifiers go
+    // through JSON.stringify: pasted raw, Windows' `D:\a\…` became escape
+    // sequences, the import failed, and the child printed nothing.
+    const ui = (m: string) =>
+      JSON.stringify(`${process.cwd()}/packages/orchestrator/src/bin/ui/${m}`);
     const script = `
-      import { setTermWidthOverride } from "${process.cwd()}/packages/orchestrator/src/bin/ui/render";
-      import * as F from "${process.cwd()}/packages/orchestrator/src/bin/ui/flow";
+      import { setTermWidthOverride } from ${ui("render")};
+      import * as F from ${ui("flow")};
       setTermWidthOverride(80);
       process.stdout.write(
         F.box({ verb: "run", arg: "bun test" }, ["17 pass  0 fail"], { status: "pass", parts: ["exit 0", "1.9s"] }).join("\\n") +

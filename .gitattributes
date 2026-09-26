@@ -1,0 +1,7 @@
+# Every text file is LF in the tree and LF on every checkout. A Windows runner
+# defaults to core.autocrlf=true, which turned scripts/install.sh into CRLF on
+# checkout and broke every test that searched it for an LF-delimited heredoc.
+* text=auto eol=lf
+
+# Terminal captures keep the exact bytes the pty produced, CR included.
+docs/evidence/** -text

@@ -10,10 +10,12 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
+
+import { rmTemp } from "../../helpers/tmp";
 
 import {
   DEFAULT_KEEP_VERSIONS,
@@ -33,7 +35,7 @@ afterEach(() => {
  */
 function synthetic(): Database {
   const dir = mkdtempSync(join(tmpdir(), "v2-prune-"));
-  cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
+  cleanup.push(() => rmTemp(dir));
   const db = new Database(join(dir, "synthetic.db"));
   cleanup.push(() => db.close());
   db.run(`CREATE TABLE sessions (

@@ -24,6 +24,7 @@
 // a run of reads into one row; the live stream cannot look ahead.
 
 import { homedir } from "node:os";
+import { isAbsolute, sep } from "node:path";
 import { danger, faint, info, muted } from "./theme";
 import { glyph } from "./glyphs";
 import { truncate } from "./render";
@@ -76,9 +77,12 @@ export function listingPath(p: string): string {
     p = p.slice(workspaceRoot.length + 1);
   } else if (workspaceRoot && p === workspaceRoot) {
     p = ".";
-  } else if (p.startsWith("/")) {
+  } else if (isAbsolute(p)) {
+    // `isAbsolute` and `sep` so a Windows home (`C:\Users\me`) is folded too;
+    // on POSIX both reduce to the `/` checks this always was.
     const home = homedir();
-    if (home && p.startsWith(home + "/")) p = "~/" + p.slice(home.length + 1);
+    if (home && (p.startsWith(home + "/") || p.startsWith(home + sep)))
+      p = "~/" + p.slice(home.length + 1);
   }
   const parts = p.split("/").filter(Boolean);
   if (!p.startsWith("/") && parts.length <= 6) return p;

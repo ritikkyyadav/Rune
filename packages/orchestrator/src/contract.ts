@@ -978,7 +978,7 @@ function realInside(root: string, full: string): boolean {
 }
 
 /** A shell word that survives the shell: quoted only when it has to be. */
-function shellQuote(path: string): string {
+export function shellQuote(path: string): string {
   return /^[A-Za-z0-9_@%+=:,./-]+$/.test(path) ? path : `'${path.replace(/'/g, `'\\''`)}'`;
 }
 

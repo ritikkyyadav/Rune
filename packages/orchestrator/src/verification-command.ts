@@ -818,7 +818,11 @@ function expandTarget(word: string, root?: string, declared = false): string[] {
   if (!root) return [bare];
   try {
     const matches = [...new Bun.Glob(bare.replace(/^\.\//, "")).scanSync({ cwd: root })];
-    return matches.length > 0 ? matches : [bare];
+    // The scan answers in the OS separator; every other target here is the
+    // `/` spelling the command was written in, and git reads that on Windows.
+    const posix =
+      process.platform === "win32" ? matches.map((m) => m.replaceAll("\\", "/")) : matches;
+    return posix.length > 0 ? posix : [bare];
   } catch {
     return [bare];
   }

@@ -1099,6 +1099,23 @@ function stripBypassFlags(command: string): string {
  * `$HOME/.rune/…` landed nowhere, resolving against the workspace as a
  * relative path named `$HOME`.
  */
+/**
+ * A Windows absolute path, as a regex source fragment (no capture groups).
+ *
+ * On Windows `HOME` is `C:\Users\<name>`, and the bash tool runs through Git
+ * Bash, whose `rm` deletes `"C:\Users\<name>\Documents"` exactly as written. The
+ * POSIX alternatives above cannot see that spelling — `C:` is not a directory
+ * segment and `\` is not a boundary — so on Windows a quoted home path named
+ * no paths at all, and `rm -rf "C:\Users\<name>"` tripped no breaker. There is
+ * no OS sandbox under Windows to catch what this layer misses.
+ *
+ * Only compiled into the matcher on win32: on POSIX `C:\x` is a relative
+ * filename, and the platforms whose behaviour is already proven stay
+ * byte-identical.
+ */
+// TODO(human)
+const WINDOWS_ABSOLUTE_PATH: string | null = null;
+
 const PATH_CANDIDATE_RE = new RegExp(
   // Boundary: start, whitespace, or a character a path can legitimately follow.
   // `:` is deliberately absent so `https://host/path` is not read as a path.
@@ -1109,10 +1126,13 @@ const PATH_CANDIDATE_RE = new RegExp(
     String.raw`((?:~[\w.-]*|\$\{?(?:HOME|RUNE_HOME|GEAR_HOME|ALAN_HOME)\}?)(?:/[^\s"'` +
     "`" +
     String.raw`;|&()<>]*)?` +
-    // … or an ordinary absolute, relative or bare-directory path.
+    // … or an ordinary absolute, relative or bare-directory path …
     String.raw`|(?:\.{0,2}/|[\w.@-]+/)[^\s"'` +
     "`" +
-    String.raw`;|&()<>]*)`,
+    String.raw`;|&()<>]*` +
+    // … or, on Windows only, a drive or UNC path.
+    (process.platform === "win32" && WINDOWS_ABSOLUTE_PATH ? `|${WINDOWS_ABSOLUTE_PATH}` : "") +
+    ")",
   "g",
 );
 

@@ -660,7 +660,8 @@ describe("shared/system-memory — the memory key is not a file a run can read",
     expect(hex).toMatch(/^[0-9a-f]{64}$/);
     const path = getMemoryKeyPath(dir);
     expect(existsSync(path)).toBe(true);
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    // Windows has no POSIX mode bits to read back; the profile ACL is the guard there.
+    if (process.platform !== "win32") expect(statSync(path).mode & 0o777).toBe(0o600);
     // …and it is named as a key still on disk, so `rune memory` can say so.
     expect(memoryKeyLocation(dir).legacyFile).toBe(path);
     expect(memoryKeyLocation(dir).where).toContain("legacy");

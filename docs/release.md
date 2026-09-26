@@ -118,13 +118,13 @@ Actions → Release → Run workflow
 
 ## Installing
 
-| Platform            | Command                                                          |
-| ------------------- | ---------------------------------------------------------------- |
-| macOS, Linux        | `curl -fsSL https://savoir.services/install.sh \| bash`                        |
-| Windows             | `irm https://savoir.services/install.ps1 \| iex`                              |
-| Homebrew            | `brew install savoir/tap/rune` (once the tap exists — see below)              |
-| Uninstall (POSIX)   | `curl -fsSL https://savoir.services/install.sh \| bash -s -- --uninstall`     |
-| Uninstall (Windows) | `.\install.ps1 -Uninstall`                                                   |
+| Platform            | Command                                                                   |
+| ------------------- | ------------------------------------------------------------------------- |
+| macOS, Linux        | `curl -fsSL https://savoir.services/install.sh \| bash`                   |
+| Windows             | `irm https://savoir.services/install.ps1 \| iex`                          |
+| Homebrew            | `brew install savoir/tap/rune` (once the tap exists — see below)          |
+| Uninstall (POSIX)   | `curl -fsSL https://savoir.services/install.sh \| bash -s -- --uninstall` |
+| Uninstall (Windows) | `.\install.ps1 -Uninstall`                                                |
 
 `savoir.services/install.sh` and `/install.ps1` are 307 redirects (declared in the website's
 `next.config.ts`) to `scripts/web-install.sh` and `scripts/install.ps1` on `main`. The binaries

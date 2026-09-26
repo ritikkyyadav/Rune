@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 
 import {
   commandPaths,
@@ -796,17 +797,20 @@ describe("the shapes the corpus found beyond the five", () => {
  */
 describe("~<username> walks past $HOME", () => {
   const user = "someotheraccount";
-  const homeParent = process.platform === "darwin" ? "/Users" : "/home";
-  const theirHome = `${homeParent}/${user}`;
+  // Windows has no platform constant for the parent; the module falls back to
+  // the environment home's parent (`C:\Users`), and answers in `\`.
+  const homeParent =
+    process.platform === "darwin"
+      ? "/Users"
+      : process.platform === "win32"
+        ? dirname(resolve(homedir()))
+        : "/home";
+  const theirKey = join(homeParent, user, ".rune", "memory", ".key");
 
   test("the whole path survives, not just the tilde", () => {
-    expect(commandPaths(`cat ~${user}/.rune/memory/.key`)).toEqual([
-      `${theirHome}/.rune/memory/.key`,
-    ]);
+    expect(commandPaths(`cat ~${user}/.rune/memory/.key`)).toEqual([theirKey]);
     // Quoting is not a way around it either (V9 critical 3's shape).
-    expect(commandPaths(`cat "~${user}/.rune/memory/.key"`)).toEqual([
-      `${theirHome}/.rune/memory/.key`,
-    ]);
+    expect(commandPaths(`cat "~${user}/.rune/memory/.key"`)).toEqual([theirKey]);
     // …and it never resolves under the scratch home the session runs in.
     for (const p of commandPaths(`cat ~${user}/.rune/memory/.key`)) {
       expect(p.startsWith(homedir())).toBe(false);
@@ -845,8 +849,9 @@ describe("~<username> walks past $HOME", () => {
   });
 
   test("the bare ~ and the $HOME family still follow the environment", () => {
-    expect(commandPaths("cat ~/.rune/memory/.key")).toEqual([`${homedir()}/.rune/memory/.key`]);
-    expect(commandPaths("cat $HOME/.rune/memory/.key")).toEqual([`${homedir()}/.rune/memory/.key`]);
+    const ownKey = join(homedir(), ".rune", "memory", ".key");
+    expect(commandPaths("cat ~/.rune/memory/.key")).toEqual([ownKey]);
+    expect(commandPaths("cat $HOME/.rune/memory/.key")).toEqual([ownKey]);
   });
 
   test("ordinary work is not swept up", () => {

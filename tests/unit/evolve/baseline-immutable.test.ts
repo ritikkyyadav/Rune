@@ -8,9 +8,11 @@
  * and the visible symptom was a dirty baseline file in every lane, reverted by
  * hand by every agent that ran the gate.
  *
- * These tests hold the two halves of the fix: the writer never promotes unless
- * asked, and the RUNNER — the thing CI actually invokes — leaves the committed
- * baseline byte-identical after a passing `--compare`.
+ * These tests hold the writer's half of the fix: it never promotes unless
+ * asked. The runner's half — a passing `--compare` leaves the committed baseline
+ * byte-identical — spawns the real eval runner, which drives the native tool
+ * binary, so it lives in `tests/integration/eval-baseline-immutable.test.ts`
+ * where that binary is built.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -21,10 +23,6 @@ import { join } from "node:path";
 import { writeBaseline, baselinePathFor } from "../../../tests/eval/report";
 import type { SuiteReport } from "../../../tests/eval/report";
 import type { TaskResult } from "../../../tests/eval/harness";
-
-const REPO_ROOT = join(import.meta.dir, "..", "..", "..");
-const RUNNER = join(REPO_ROOT, "tests", "eval", "runner.ts");
-const MOCK_BASELINE = join(REPO_ROOT, "tests", "eval", "baseline-mock.json");
 
 function report(overrides: Partial<SuiteReport> = {}): SuiteReport {
   const tasks: TaskResult[] = [
@@ -111,26 +109,4 @@ describe("writeBaseline", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
-});
-
-describe("the runner leaves the committed baseline untouched", () => {
-  it("a passing --compare run prints 'baseline unchanged' and writes nothing", async () => {
-    const before = readFileSync(MOCK_BASELINE);
-    const beforeMtime = statSync(MOCK_BASELINE).mtimeMs;
-
-    const proc = Bun.spawn(
-      ["bun", RUNNER, "--compare", "--tasks", "tool-discipline", "--max", "1"],
-      { cwd: REPO_ROOT, stdout: "pipe", stderr: "pipe", env: { ...process.env } },
-    );
-    const [stdout, stderr] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
-    await proc.exited;
-
-    const after = readFileSync(MOCK_BASELINE);
-    expect(after.equals(before)).toBe(true);
-    expect(statSync(MOCK_BASELINE).mtimeMs).toBe(beforeMtime);
-    expect(`${stdout}${stderr}`).toContain("baseline unchanged");
-  }, 180_000);
 });

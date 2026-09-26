@@ -20,8 +20,11 @@ import { test, expect, afterAll } from "bun:test";
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = new URL("../../../", import.meta.url).pathname;
+// `URL.pathname` of a file URL is "/D:/a/Rune/Rune/" on Windows — a leading
+// slash before the drive, which `join` turns into a path that does not exist.
+const root = fileURLToPath(new URL("../../../", import.meta.url));
 const HOST = join(root, "packages/orchestrator/src/bin/engine-host.ts");
 const CLI = join(root, "packages/orchestrator/src/bin/rune-cli.ts");
 const scratch = mkdtempSync(join(tmpdir(), "startup-boot-"));
