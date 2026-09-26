@@ -371,8 +371,20 @@ export function themeBgSeq(): string {
   return "";
 }
 
+/**
+ * The frame's own default ink, row by row -- every row the fixed frame and the
+ * inline surface put on screen passes through here (tui-frame.ts, tui.ts
+ * print). Under crisp, and wherever bodyPainted() says no, it is `body`: the
+ * host's foreground, untouched. Under matte it is the soft ink, RE-ARMED after
+ * every inner reset -- otherwise the words after a grey receipt or a bold name
+ * would snap back to the host's full-strength white, and a matte screen would
+ * be striped with glossy fragments of the same sentence.
+ */
 export function withThemeBg(value: string): string {
-  return body(value);
+  if (value === "" || !bodyPainted()) return body(value);
+  const seq = bodySeq(active);
+  const safe = terminalText(value);
+  return `${seq}${safe.split(RESET).join(RESET + seq)}${RESET}`;
 }
 
 export function panel(value: string): string {
@@ -486,7 +498,9 @@ export function negativeSurface(value: string): string {
 }
 
 /**
- * The person's own words, on a speaker band.
+ * The person's own words, on a speaker band -- and, since 2026-09-26, the
+ * selected row of every list (flow.ts `band`): the same bar, because "this one"
+ * and "you said this" are both a row the eye must find first.
  *
  * The one place besides a diff where a background earns its keep, and for the
  * same reason: it marks something true about a specific row rather than

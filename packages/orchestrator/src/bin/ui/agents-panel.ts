@@ -318,7 +318,7 @@ function rampAt(card: AgentCard, now: number): string {
 
 function headRow(card: AgentCard, index: number, view: PanelView, now: number, width: number) {
   const selected = view.focused && view.selectedId === card.id;
-  const mark = selected ? accent(glyph("selection")) : " ";
+  const mark = selected ? glyph("selection") : " ";
   const open = view.openId === card.id ? accent(glyph("phase")) : " ";
   const ordinal = index <= 9 ? String(index) : " ";
   const name = card.name.padEnd(NAME_COLS).slice(0, NAME_COLS);
@@ -343,7 +343,9 @@ function headRow(card: AgentCard, index: number, view: PanelView, now: number, w
   const openWord = view.openId === card.id ? "OPEN" : "";
   const tail = F.receiptOf([spanOf(card, now), quiet]);
   const left = `${mark}${open}${muted(ordinal)}  ${text(name)}${beat}  ${faint(tail)}`;
-  return clampVisible(openWord ? `${left}  ${accent(openWord)}` : left, width);
+  const row = clampVisible(openWord ? `${left}  ${accent(openWord)}` : left, width);
+  // The member the keys are on is the full-width bar, like every other list.
+  return selected ? F.band(row, width) : row;
 }
 
 /** Rows two to four, indented to the name column so the card reads as a block. */

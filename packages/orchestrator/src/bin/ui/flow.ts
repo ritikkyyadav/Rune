@@ -46,7 +46,7 @@ import {
 } from "./theme";
 import { glyph } from "./glyphs";
 import { paintCode, type CodeLang } from "./code-paint";
-import { termWidth, truncate, visLen, wrap } from "./render";
+import { clampVisible, termWidth, truncate, visLen, wrap } from "./render";
 // Type only, and deliberately: the rungs a surface may render are the rungs the
 // LEDGER awards, so the union is imported from where the ledger defines it
 // rather than re-typed here, where it could quietly grow a rung the ledger has
@@ -616,6 +616,55 @@ export function asked(body: string): string {
     return speakerSurface(` ${line}${pad}`);
   };
   return ["", ...wrapped.map((line) => `${MARK}${band(line)}`)].join("\n");
+}
+
+// --- The selection bar ---
+
+/** Every SGR sequence in a painted row, for `keepWeight`. */
+const SGR = /\x1b\[([0-9;]*)m/g;
+
+/**
+ * A painted row with its colours taken out and its weight left in: bold and
+ * resets survive, every foreground/background request goes. Extended colour
+ * parameters (`38;2;r;g;b`, `38;5;n`) are skipped whole, so a `1` inside an RGB
+ * triple is never mistaken for bold.
+ */
+function keepWeight(row: string): string {
+  return row.replace(SGR, (_all, params: string) => {
+    const parts = params === "" ? ["0"] : params.split(";");
+    let out = "";
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i];
+      if (p === "38" || p === "48" || p === "58") {
+        i += parts[i + 1] === "2" ? 4 : parts[i + 1] === "5" ? 2 : 0;
+        continue;
+      }
+      if (p === "0" || p === "") out += "\x1b[0m";
+      else if (p === "1") out += "\x1b[1m";
+    }
+    return out;
+  });
+}
+
+/**
+ * The selected row of a list, as a full-width bar -- the one selection idiom in
+ * the product (founder, 2026-09-26, pointing at `/sessions`: "use the proper
+ * full line border to highlight on which toggle we are right now ... just like
+ * this").
+ *
+ * The bar is the speaker band's (theme.speakerSurface): the ink as the fill and
+ * the ground knocked out of it -- light on dark, dark on light, softer under
+ * matte. Everything inside it is one colour, because a grey description on a
+ * light bar reads as a hole in it; weight survives, so the name can still be
+ * bold. The row keeps its `›`: where there is no colour at all (NO_COLOR, a
+ * pipe) the marker is the selection, and under reverse video it rides the bar.
+ *
+ * The bar spans the row's whole measure including its left pad, so its edge
+ * hangs in the gutter while the text stays on the one left edge.
+ */
+export function band(row: string, width: number): string {
+  const clamped = clampVisible(keepWeight(row), width);
+  return speakerSurface(clamped + " ".repeat(Math.max(0, width - visLen(clamped))));
 }
 
 /**
@@ -1495,11 +1544,13 @@ export function ask(block: AskBlock): string[] {
     // MARK + glyph + space is exactly BODY's four cells, so the number column
     // holds still as the selection travels. A list that shifts sideways under
     // the eye is the single cheapest way to make a picker feel unsteady.
-    const gutter = chosen ? `${MARK}${info(glyph("selection"))} ` : BODY;
+    const gutter = chosen ? `${MARK}${glyph("selection")} ` : BODY;
     const key = String(index + 1);
     const paint = chosen ? (v: string) => bold(text(v)) : answering ? faint : text;
     const number = chosen ? bold(info(key)) : answering ? faint(key) : info(key);
-    lines.push(`${gutter}${number}   ${truncate(paint(option), width - 8)}`);
+    const option_ = `${gutter}${number}   ${truncate(paint(option), width - 8)}`;
+    // The highlighted answer is the full-width bar, the same one every list uses.
+    lines.push(chosen ? band(option_, width) : option_);
   });
   // Truncated like every other row: a hint that wraps costs more than the
   // binding it failed to mention, because the wrap desyncs the pinned region.

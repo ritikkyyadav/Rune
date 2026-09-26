@@ -513,10 +513,12 @@ describe("ui/composer renderPicker", () => {
       80,
     );
     expect(stripAnsi(r.lines[0])).toContain("model"); // the overlay header
-    expect(stripAnsi(r.lines[0])).toContain("esc close");
     expect(stripAnsi(r.lines[2])).toContain("›"); // selected = index 1 → line 2
     expect(stripAnsi(r.lines[1])).not.toContain("›");
+    // The keys are said once, in the legend under the list.
     expect(stripAnsi(r.lines.at(-1)!)).toContain("enter select");
+    expect(stripAnsi(r.lines.at(-1)!)).toContain("esc close");
+    expect(stripAnsi(r.lines[0])).not.toContain("esc close");
     expect(r.caretRow).toBe(2);
   });
 
@@ -534,9 +536,11 @@ describe("ui/composer renderPicker", () => {
         setTermWidthOverride(null);
       }
     };
-    // 80 columns: the row has no room for a hint, so none -- not "gpt-oss…".
+    // 80 columns: room for the first segment whole, or for nothing -- never
+    // the fragment "gpt-oss…" this rule exists to prevent.
     expect(rowAt(80)).toContain(title);
-    expect(rowAt(80)).not.toContain("gpt-oss");
+    expect(rowAt(80)).not.toMatch(/gpt-oss(?!:120b)/);
+    expect(rowAt(80)).not.toContain("35 events");
     // 100 columns: the model and the count fit, the tokens do not, and the
     // cut is at a bar, never inside a word.
     expect(rowAt(100)).toContain("gpt-oss:120b | 35 events");

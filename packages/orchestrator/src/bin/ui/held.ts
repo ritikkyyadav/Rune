@@ -151,7 +151,8 @@ export function heldBlock(view: HeldView): HeldBlock {
     if (chosen) selectedRow = lines.length;
     // MARK + glyph + space is exactly BODY's four cells, so the number column
     // holds still as the selection travels (the ask() rule).
-    const gutter = chosen && !view.running ? `${F.MARK}${info(glyph("selection"))} ` : F.BODY;
+    const barred = chosen && !view.running;
+    const gutter = barred ? `${F.MARK}${glyph("selection")} ` : F.BODY;
     const keyCell =
       outcome !== null
         ? outcomeGlyph(outcome)
@@ -159,7 +160,9 @@ export function heldBlock(view: HeldView): HeldBlock {
           ? bold(info(String(index + 1)))
           : info(String(index + 1));
     const paint = outcome !== null ? faint : chosen ? (v: string) => bold(text(v)) : text;
-    lines.push(`${gutter}${keyCell}   ${truncate(paint(step.summary), width - 8)}`);
+    const row = `${gutter}${keyCell}   ${truncate(paint(step.summary), width - 8)}`;
+    // The step you are standing on is the full-width bar, like every list.
+    lines.push(barred ? F.band(row, width) : row);
     if (chosen) {
       const detailWidth = width - F.RAIL_IN.length;
       lines.push(`${F.RAIL_IN}${faint(truncate(`${step.reason} [${step.route}]`, detailWidth))}`);

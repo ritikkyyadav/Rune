@@ -191,8 +191,10 @@ describe("the selection is a claim about where the keys go", () => {
     );
     expect(focused.trimStart().startsWith(">") || focused.trimStart().startsWith("›")).toBe(true);
     expect(unfocused.startsWith(" ")).toBe(true);
-    // Both are the same width: the marker is a cell that was already there.
-    expect(visLen(unfocused)).toBe(visLen(focused));
+    // The same text width: the marker is a cell that was already there. (The
+    // focused row is also the full-width selection bar, so its padding runs to
+    // the panel edge; the words inside it do not move.)
+    expect(stripAnsi(unfocused).trimEnd().length).toBe(stripAnsi(focused).trimEnd().length);
   });
 
   it("names the keys that are actually live", () => {

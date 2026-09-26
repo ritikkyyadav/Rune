@@ -27,10 +27,10 @@ import {
   selection,
   speakerSurface,
   hairline,
-  popoverSurface,
   codeSurface,
   chip,
   cursorCell,
+  quiet,
 } from "./theme";
 import { fmtTokens } from "./events";
 import { glyph } from "./glyphs";
@@ -45,7 +45,6 @@ import {
   prefixByWidth,
 } from "./render";
 import * as F from "./flow";
-import { RUNE_MARK } from "./banner";
 import { pasteChipSpans } from "./paste";
 import type { PermissionPreview, PermissionPreviewLine } from "./permission-preview";
 
@@ -1251,20 +1250,17 @@ export interface PickerOptions {
   footnote?: string;
 }
 
-/** v2 `.oi-tag` chips: free = green, local = ochre, everything else quiet. */
-function pickerTag(tag: string): string {
-  if (tag === "free") return chip("ok", " free ");
-  if (tag === "local") return chip("warn", " local ");
-  if (tag === "default") return chip("brand", " * default ");
-  return chip("muted", ` ${tag} `);
+/**
+ * A row's tags, quiet. `free`, `local` and the provider were three colours of
+ * chip; they are facts about a model, not states, so they read in the meta
+ * grey like every other receipt. `current` is the one that says where you ARE,
+ * and gets the secondary ink.
+ */
+function pickerTags(tags: readonly string[], current: boolean): string {
+  const parts = [...tags.map((tag) => faint(tag)), ...(current ? [quiet("current")] : [])];
+  return parts.length > 0 ? "  " + parts.join(faint(` ${glyph("observed")} `)) : "";
 }
 
-/**
- * The v2 overlay list (`/model`, `/theme`): an uppercase header with `esc
- * close` at the right edge, numbered rows with the name, a secondary-tone
- * description, and chips (`free` | `local` | provider | `current`), the
- * selection on the bar surface, then an optional footnote and the key hints.
- */
 /**
  * A hint yields by whole segments, never mid-word. "gpt-oss:120b | 35 events |
  * 9.3k tokens" behind a long session title at 80 columns rendered as
@@ -1278,9 +1274,19 @@ function fitHint(hint: string, budget: number): string {
   const parts = sep ? hint.split(sep) : [hint];
   while (parts.length > 1 && visLen(parts.join(sep ?? "")) > budget) parts.pop();
   const fitted = parts.join(sep ?? "");
-  return "  " + muted(visLen(fitted) > budget ? truncate(fitted, budget) : fitted);
+  return "  " + quiet(visLen(fitted) > budget ? truncate(fitted, budget) : fitted);
 }
 
+/**
+ * The list overlay behind `/model`, `/login`, `/config`, `/theme`, `/sandbox`
+ * and resume: a quiet lowercase title, the rows, one legend line.
+ *
+ * The selected row is the full-width bar (flow.ts `band`) -- the founder's
+ * `/sessions` bar, now the only way any list in the product says "you are
+ * here". Numbers are shown only when every row can be reached by one: a list
+ * of seventeen settings that advertised "1-9 quick select" offered a shortcut
+ * to half of itself.
+ */
 export function renderPicker(
   title: string,
   items: PickerItem[],
@@ -1290,12 +1296,7 @@ export function renderPicker(
   options: PickerOptions = {},
 ): RenderedBlock {
   const maxWidth = Math.max(8, F.measure(width - 1));
-  const popoverRow = (row: string): string =>
-    popoverSurface(row + " ".repeat(Math.max(0, maxWidth - visLen(row))));
-  const heading = `${PAD}${muted(title.toLowerCase())}`;
-  const close = keyHint("esc", "close");
-  const headGap = " ".repeat(Math.max(1, maxWidth - visLen(heading) - visLen(close) - 1));
-  const lines: string[] = [clampVisible(popoverRow(`${heading}${headGap}${close}`), maxWidth)];
+  const lines: string[] = [clampVisible(`${PAD}${muted(title.toLowerCase())}`, maxWidth)];
   const sel = items.length ? Math.max(0, Math.min(selected, items.length - 1)) : 0;
   // The footnote occupies a row too. Keep the selected item visible even when
   // the caller can give a dialog only its header, one item and key hints.
@@ -1306,29 +1307,29 @@ export function renderPicker(
   if (items.length > maxItems) {
     start = Math.min(Math.max(0, sel - Math.floor(maxItems / 2)), items.length - maxItems);
   }
+  const numbered = items.length <= 9;
   const view = items.slice(start, start + maxItems);
   view.forEach((it, i) => {
     const on = start + i === sel;
-    const marker = on ? brand(glyph("selection")) : " ";
-    const number = faint(`${start + i + 1}.`.padStart(3));
+    const marker = on ? glyph("selection") : " ";
+    const number = numbered ? `${faint(`${start + i + 1}.`)} ` : "";
     const label = on ? bold(text(it.label)) : text(it.label);
     const prefix = it.prefix ? `${it.prefix} ` : "";
-    const chips = [
-      ...(it.tags ?? []).map((tag) => pickerTag(tag)),
-      ...(it.current ? [chip("brand", " current ")] : []),
-    ];
-    const tags = chips.length > 0 ? "  " + chips.join(" ") : "";
-    const fixed = visLen(`${PAD}${marker} ${number} ${prefix}`) + visLen(label) + visLen(tags);
-    const hint = it.hint ? fitHint(it.hint, Math.min(44, maxWidth - fixed - 2)) : "";
-    const row = clampVisible(`${PAD}${marker} ${number} ${prefix}${label}${hint}${tags}`, maxWidth);
-    lines.push(on ? popoverRow(selection(row)) : popoverRow(row));
+    const tags = pickerTags(it.tags ?? [], it.current === true);
+    const fixed = visLen(`${PAD}${marker} ${number}${prefix}`) + visLen(label) + visLen(tags);
+    const hint = it.hint ? fitHint(it.hint, Math.min(52, maxWidth - fixed - 2)) : "";
+    const row = clampVisible(`${PAD}${marker} ${number}${prefix}${label}${hint}${tags}`, maxWidth);
+    lines.push(on ? F.band(row, maxWidth) : row);
   });
   if (showFootnote) {
-    lines.push(popoverRow(`${PAD}${faint(truncate(options.footnote ?? "", maxWidth - 4))}`));
+    lines.push(`${PAD}${faint(truncate(options.footnote ?? "", maxWidth - 4))}`);
   }
-  lines.push(
-    popoverRow(`${PAD}${faint("up/down navigate | 1-9 quick select | enter select | esc close")}`),
-  );
+  const keys = [
+    "enter select",
+    ...(numbered && items.length > 1 ? [`1-${items.length} jump`] : []),
+    "esc close",
+  ];
+  lines.push(`${PAD}${faint(keys.join(` ${glyph("observed")} `))}`);
   return { lines, caretRow: sel - start + 1, caretCol: 0 };
 }
 
@@ -1339,16 +1340,19 @@ export interface SlashItem {
   name: string;
   /** One-line description. */
   desc: string;
-  /** Compact context badge, e.g. "cosmetic" or "history". */
+  /** Compact context badge, e.g. "cosmetic" or "history". No longer drawn in
+   *  the palette (a category ~130 columns from its row was read as noise);
+   *  kept on the item for callers that group by it. */
   tag?: string;
 }
 
 /**
- * The v2 slash-command palette (`#cmd-popover`) that floats above the composer
- * as you type `/`: an uppercase header with the live match count and the key
- * hints, then filtered rows -- command, secondary-tone description, a quiet
- * category chip -- with the selection on the bar surface. Windows around the
- * selection so a long list never overruns.
+ * The slash-command palette that opens above the composer as you type `/`: a
+ * quiet heading with the count, then two columns -- the command, and what it
+ * does. The selected row is the full-width bar (flow.ts `band`); nothing sits
+ * at the far right of a row any more, so at 186 columns the description is
+ * still beside the command it describes. Windows around the selection so a
+ * long list never overruns.
  */
 export function renderSlashPalette(
   items: SlashItem[],
@@ -1366,31 +1370,29 @@ export function renderSlashPalette(
   const view = items.slice(start, start + MAX);
   const nameW = Math.min(18, Math.max(...view.map((it) => it.name.length)));
   const maxWidth = Math.max(8, F.measure(width - 1));
-  const popoverRow = (row: string): string =>
-    popoverSurface(row + " ".repeat(Math.max(0, maxWidth - visLen(row))));
+  const sep = ` ${glyph("observed")} `;
 
   const rows = view.map((it, i) => {
     const on = start + i === sel;
-    const marker = on ? brand(glyph("selection")) : " ";
+    const marker = on ? glyph("selection") : " ";
     const name = on ? bold(text(it.name.padEnd(nameW))) : text(it.name.padEnd(nameW));
-    const tag = it.tag && width >= 64 ? chip("muted", ` ${it.tag} `) : "";
-    const descMax = Math.max(8, maxWidth - nameW - visLen(tag) - 9);
-    const desc = it.desc ? "  " + muted(truncate(it.desc, descMax)) : "";
-    const gap = tag
-      ? " ".repeat(Math.max(1, maxWidth - visLen(`${PAD}  ${name}${desc}`) - visLen(tag) - 1))
-      : "";
-    const row = clampVisible(`${PAD}${marker} ${name}${desc}${gap}${tag}`, maxWidth);
-    return on ? popoverRow(selection(row)) : popoverRow(row);
+    const descMax = Math.max(8, maxWidth - nameW - 7);
+    const desc = it.desc ? "  " + quiet(truncate(it.desc, descMax)) : "";
+    const row = clampVisible(`${PAD}${marker} ${name}${desc}`, maxWidth);
+    return on ? F.band(row, maxWidth) : row;
   });
   const count =
     total != null && total !== items.length ? `${items.length} of ${total}` : String(items.length);
-  const heading = `${PAD}${muted("commands")} ${faint(`| ${count}`)}`;
-  const hints =
-    width >= 64
-      ? faint("up/down navigate | tab complete | enter run | esc close")
-      : faint("enter run | esc close");
-  const headGap = " ".repeat(Math.max(1, maxWidth - visLen(heading) - visLen(hints) - 1));
-  return [clampVisible(popoverRow(`${heading}${headGap}${hints}`), maxWidth), ...rows];
+  const heading = `${PAD}${muted("commands")}${faint(`${sep}${count}`)}`;
+  // Arrows, enter and esc are what every list does; tab is the one key here a
+  // person would not guess, so it is the last to go.
+  const room = maxWidth - visLen(heading) - 3;
+  const legend =
+    [["tab complete", "enter run", "esc close"], ["tab complete", "esc close"], ["tab complete"]]
+      .map((tier) => tier.join(sep))
+      .find((tier) => visLen(tier) <= room) ?? "";
+  const headGap = " ".repeat(Math.max(1, maxWidth - visLen(heading) - visLen(legend) - 1));
+  return [clampVisible(`${heading}${legend ? headGap + faint(legend) : ""}`, maxWidth), ...rows];
 }
 
 // --- API keys panel (TUI: `/keys` BYOK) ---
@@ -1478,6 +1480,7 @@ export function renderKeysPanel(
   const windowed = rows.length > maxRows ? faint(`  ${sel + 1} of ${rows.length}`) : "";
   const labelW = Math.min(15, Math.max(8, ...rows.map((r) => r.label.length), 8));
   const keyW = Math.max(10, Math.min(22, width - labelW - 24));
+  const barWidth = Math.max(8, F.measure(width - 1));
 
   const lines: string[] = [
     `${PAD}${bold(text("API keys"))}   ${faint("bring your own -- applied live, saved to ~/.rune/secrets.json")}${windowed}`,
@@ -1487,7 +1490,7 @@ export function renderKeysPanel(
     const on = start + i === sel;
     // Local runtimes are usable without a key; treat a configured/active one as "ready".
     const ready = r.local ? !!r.hasKey : r.source !== "none";
-    const marker = on ? info(glyph("selection")) : " ";
+    const marker = on ? glyph("selection") : " ";
     const dot = r.disabled
       ? faint("o")
       : r.active
@@ -1519,7 +1522,8 @@ export function renderKeysPanel(
         ? faint(" ".repeat(6))
         : faint((srcLabel[r.source] ?? r.source).padEnd(6));
     const toggle = r.disabled ? warn("off") : ready ? ok("on") : faint("-");
-    lines.push(`${PAD}${marker} ${dot} ${name} ${keyCell} ${srcCell} ${toggle}`);
+    const row = `${PAD}${marker} ${dot} ${name} ${keyCell} ${srcCell} ${toggle}`;
+    lines.push(on ? F.band(row, barWidth) : row);
   });
 
   lines.push(
@@ -1558,13 +1562,14 @@ export function renderKeyManagerPanel(
     const labelW = Math.min(16, Math.max(0, ...rows.map((r) => (r.label ?? "").length)));
     rows.forEach((r, i) => {
       const on = i === sel;
-      const marker = on ? info(glyph("selection")) : " ";
+      const marker = on ? glyph("selection") : " ";
       const dot = r.active ? ok(glyph("live")) : faint("o");
       const mask = (on ? text : muted)(truncate(r.masked, maskW).padEnd(maskW));
       const label = labelW > 0 ? "  " + faint(truncate(r.label ?? "", labelW).padEnd(labelW)) : "";
       const date = "  " + faint(`added ${formatKeyDate(r.addedAt)}`);
       const activeTag = r.active ? "  " + ok("active") : "";
-      lines.push(`${PAD}${marker} ${dot} ${mask}${label}${date}${activeTag}`);
+      const row = `${PAD}${marker} ${dot} ${mask}${label}${date}${activeTag}`;
+      lines.push(on ? F.band(row, Math.max(8, F.measure(width - 1))) : row);
     });
   }
 
@@ -1641,9 +1646,10 @@ export function renderMemoryPanel(
   const actionStart = lines.length;
   const row = (i: number, label: string, hint: string) => {
     const on = i === sel;
-    const marker = on ? info(glyph("selection")) : " ";
-    const lab = on ? text(label) : muted(label);
-    lines.push(`${PAD}${marker} ${lab}${hint ? "   " + faint(hint) : ""}`);
+    const marker = on ? glyph("selection") : " ";
+    const lab = on ? bold(text(label)) : text(label);
+    const line = `${PAD}${marker} ${lab}${hint ? "   " + faint(hint) : ""}`;
+    lines.push(on ? F.band(line, Math.max(8, F.measure(width - 1))) : line);
   };
   row(0, "Refresh now", v.busy ? "dreaming..." : "learn from your recent sessions");
   row(1, `Auto-update: ${v.scheduleLabel}`, "enter cycles manual | daily | 3d | weekly");
@@ -1736,11 +1742,13 @@ export function renderSessionsPanel(
   // v2 top bar: mark + heading + Active/Archived tabs, the search field, and
   // `esc close` at the right edge. Wide terminals carry the search inline;
   // narrow ones give it its own row. A hairline closes the bar.
+  // The tab you are on is bold ink; the other is meta grey. Weight, not a
+  // coloured chip -- the chrome has no hue to spend on it.
   const tab = (label: string, on: boolean): string =>
-    on ? selection(bold(text(` ${label} `))) : muted(` ${label} `);
+    on ? bold(text(` ${label} `)) : faint(` ${label} `);
   const tabs = `${tab("Active", opts.view === "active")} ${tab("Archived", opts.view === "archived")}`;
   const count = query ? faint(`${rows.length} ${rows.length === 1 ? "match" : "matches"}`) : "";
-  const headLeft = `${PAD}${brand(RUNE_MARK)} ${bold(text("Sessions"))}  ${tabs}${count ? "  " + count : ""}`;
+  const headLeft = `${PAD}${bold(text("Sessions"))}  ${tabs}${count ? "  " + count : ""}`;
   const searchText = `${opts.searching ? brand(glyph("selection")) : faint("/")} ${
     query ? text(query) : faint("Search title, path, model...")
   }${opts.searching ? cursorCell(" ") : ""}`;
@@ -1894,14 +1902,9 @@ export function renderSessionsPanel(
     row += `${" ".repeat(gap)}${on ? tail : faint(tail)}`;
 
     if (on) caretRow = lines.length;
-    if (on) {
-      // Pad to the full measure first: the band is the row's whole width, not
-      // the width of its text.
-      const clamped = clampVisible(row, maxWidth);
-      lines.push(speakerSurface(clamped + " ".repeat(Math.max(0, maxWidth - visLen(clamped)))));
-    } else {
-      lines.push(clampVisible(row, maxWidth));
-    }
+    // The band is the row's whole width, not the width of its text -- and it
+    // is the same bar every other list now draws (flow.ts `band`).
+    lines.push(on ? F.band(row, maxWidth) : clampVisible(row, maxWidth));
   });
 
   if (rows.length > view.length) {
