@@ -90,6 +90,7 @@ import {
   loadLastModel,
   saveLastModel,
   loadSavedSandboxState,
+  isSandboxModeExplicit,
   resolveInitialSandboxPolicy,
   setConfigValue,
 } from "@rune/shared";
@@ -336,15 +337,17 @@ function buildEngine(): Engine {
     autoMode: config.permissions?.autoMode,
     // Same posture resolution as the CLI, minus CLI flags (desktop has none).
     ...(() => {
-      const sandboxPolicy = resolveInitialSandboxPolicy({
+      const sandboxInputs = {
         env: process.env.RUNE_SANDBOX_ENABLED ?? null,
         envMode: process.env.RUNE_SANDBOX_MODE ?? null,
         saved: loadSavedSandboxState(),
         configured: config.sandbox ?? null,
-      });
+      };
+      const sandboxPolicy = resolveInitialSandboxPolicy(sandboxInputs);
       return {
         sandboxEnabled: sandboxPolicy.mode !== "off",
         sandboxMode: sandboxPolicy.mode,
+        sandboxModeExplicit: isSandboxModeExplicit(sandboxInputs),
         sandboxPolicy,
       };
     })(),

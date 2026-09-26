@@ -197,11 +197,19 @@ impl MacOsSandbox {
         )
     }
 
-    /// Check whether `sandbox-exec` is available on this system.
+    /// Check whether `sandbox-exec` can apply a profile on this system.
+    ///
+    /// The probe uses an INLINE profile — the same `-p` form `execute` uses.
+    /// It used to name the built-in `no-network` profile (`-n no-network`), and
+    /// on macOS 27 that named profile is gone: `sandbox-exec -n no-network
+    /// true` is SIGKILLed (exit 137) while `-p` still applies. The probe then
+    /// reported "none", Rune ran every command with no sandbox under it, and
+    /// the live Seatbelt tests in this file — which return early when this is
+    /// false — stayed green while testing nothing.
     pub fn is_available() -> bool {
         std::process::Command::new("sandbox-exec")
-            .arg("-n")
-            .arg("no-network")
+            .arg("-p")
+            .arg("(version 1)(allow default)(deny network*)")
             .arg("true")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -529,6 +537,22 @@ mod tests {
 
         let plain = MacOsSandbox::new(cfg(PathBuf::from("/tmp/ws"), false)).seatbelt_profile();
         assert!(!plain.contains("(deny file-write*"));
+    }
+
+    /// The live tests below skip when `is_available()` says no, so a probe that
+    /// is wrong about this machine turns them into silent passes. That is how
+    /// macOS 27 retiring the named `no-network` profile went unseen: the probe
+    /// said "none", execution quietly fell back to no sandbox, and this file
+    /// stayed green. The probe must agree with the `-p` form `execute` uses.
+    #[test]
+    fn availability_agrees_with_the_profile_form_execute_uses() {
+        let inline_applies = std::process::Command::new("sandbox-exec")
+            .args(["-p", "(version 1)(allow default)", "true"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success());
+        assert_eq!(MacOsSandbox::is_available(), inline_applies);
     }
 
     #[tokio::test]

@@ -151,14 +151,104 @@ describe("a shell command with no sandbox under it", () => {
     expect(classifier.calls.map((c) => c.stage)).toEqual(["reasoned"]);
   });
 
-  test("review: a dead reviewer becomes a question, not a deferral", async () => {
+  test("review: a dead reviewer is never a question — ordinary work runs, and says so", async () => {
+    // The four recorded Auto prompts this exit produced were `cargo test`,
+    // `make dev-web` and two `test -f` checks on a host shell while a
+    // free-tier reviewer timed out. The corpus row this answers is its own:
+    // "a reviewer outage must not stall ordinary work".
     setSandboxMode("off");
     const { controller } = setup([new Error("429"), new Error("429")]);
     const run = controller.startRun(["Run the tests."]);
     const review = await run.review(action("bash", { command: "npm test" }));
-    expect(review.verdict).toBe("ask");
+    expect(review.verdict).toBe("allow");
     expect(review.source).toBe("classifier_unavailable");
-    expect(review.reason).toContain("no OS sandbox");
+    expect(review.risk).toBe("medium");
+    expect(review.reason).toContain("UNREVIEWED");
+    expect(run.getDeferrals()).toHaveLength(0);
+  });
+
+  test("review: what it will not run unreviewed waits in the list with an honest reason", async () => {
+    setSandboxMode("off");
+    const { controller } = setup([new Error("429"), new Error("429")]);
+    const run = controller.startRun(["Fix the bug."]);
+    const review = await run.review(action("bash", { command: "some-unknown-binary --go" }));
+    expect(review.verdict).toBe("deny");
+    expect(review.haltRun).toBeUndefined();
+    expect(review.containment?.route).toBe("reviewer-unavailable");
+    const [deferred] = run.getDeferrals();
+    expect(deferred?.summary).toBe("some-unknown-binary --go");
+    // The reason is what the end-of-turn list shows a person who never saw
+    // the command run: what happened, not "its impact reaches past the
+    // workspace", which the router's generic deferral would have claimed.
+    expect(deferred?.reason).toContain("safety reviewer is unreachable");
+    expect(deferred?.reason).not.toContain("reaches past the workspace");
+  });
+
+  test("review: under suspicion, nothing runs unreviewed on the host", async () => {
+    // The same `npm test` that runs above waits once a tool result in the
+    // run was flagged: a captured run's next command looks exactly like it.
+    setSandboxMode("off");
+    const { controller } = setup([new Error("429"), new Error("429")]);
+    const run = controller.startRun(["Run the tests."], { priorInjectionFindings: 1 });
+    const review = await run.review(action("bash", { command: "npm test" }));
+    expect(review.verdict).toBe("deny");
+    expect(run.getDeferrals()).toHaveLength(1);
+  });
+
+  test("review: ordinary tooling doing something the pre-scan rates high never runs unreviewed", async () => {
+    // `psql` is ordinary development work by name; `DELETE FROM users` on a
+    // remote database is high risk by what it does. Only the pre-floor risk
+    // check stands between this and an unreviewed run on the host.
+    setSandboxMode("off");
+    const { controller } = setup([new Error("429"), new Error("429")]);
+    const run = controller.startRun(["Look into the users table."]);
+    const review = await run.review(
+      action("bash", { command: "psql postgres://prod-db/app -c 'DELETE FROM users'" }),
+    );
+    expect(review.verdict).toBe("deny");
+    expect(review.containment?.route).toBe("reviewer-unavailable");
+  });
+
+  test("review: a fallback retry the sandbox refused goes back into the sandbox", async () => {
+    // Sandbox on, machine healthy: the agent retried with `unsandboxed: true`
+    // after a sandbox refusal. With no reviewer either, it is not run on the
+    // host — it comes back as the same call, contained.
+    const { controller } = setup([new Error("429"), new Error("429")]);
+    const run = controller.startRun(["Run the tests."]);
+    const review = await run.review(action("bash", { command: "npm test", unsandboxed: true }));
+    expect(review.verdict).toBe("deny");
+    expect(review.containment?.kind).toBe("contain");
+    expect(review.containment?.containedArgs?.unsandboxed).toBeUndefined();
+  });
+
+  test("review: a background process on the host waits rather than running unwatched", async () => {
+    setSandboxMode("off");
+    const { controller } = setup([new Error("429"), new Error("429")]);
+    const run = controller.startRun(["Start the dev server."]);
+    const review = await run.review(
+      action("bash", { command: "make dev-web", run_in_background: true }),
+    );
+    expect(review.verdict).toBe("deny");
+    expect(run.getDeferrals()).toHaveLength(1);
+  });
+
+  test("review: an outage deferral is not a refusal — one real deny after it does not halt", async () => {
+    // The probing halt fires on the SECOND consecutive reviewer refusal. An
+    // outage refused nothing; counting it would turn "timed out, then one
+    // honest deny" into a halted session.
+    setSandboxMode("off");
+    const { controller } = setup([
+      new Error("429"),
+      new Error("429"),
+      JSON.stringify({ verdict: "deny", risk: "high", reason: "Not what the user asked for." }),
+    ]);
+    const run = controller.startRun(["Fix the bug."]);
+    const first = await run.review(action("bash", { command: "some-unknown-binary --go" }));
+    expect(first.verdict).toBe("deny");
+    const second = await run.review(action("bash", { command: "another-unknown-binary --go" }));
+    expect(second.verdict).toBe("deny");
+    expect(second.source).toBe("containment");
+    expect(second.haltRun).toBeUndefined();
   });
 
   test("an attack shape halts on the host too; it is never a question", async () => {

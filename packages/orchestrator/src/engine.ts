@@ -926,6 +926,13 @@ export interface EngineConfig {
    */
   sandboxMode?: SandboxMode;
   /**
+   * True when THIS run named the sandbox mode (a flag or an environment
+   * variable) rather than inheriting the sidecar or config. A session that
+   * starts in Auto turns a saved `off` back on, and leaves an explicit one
+   * alone — see `isSandboxModeExplicit` and `ensureAutoBoundary`.
+   */
+  sandboxModeExplicit?: boolean;
+  /**
    * The Overrides and Config tabs: the unsandboxed-fallback override, the
    * excluded-command patterns, and the filesystem deny/allow lists.
    */
@@ -2112,10 +2119,12 @@ export class Engine {
     this.config.permissionMode = initialPermissionMode;
     this.config.yoloMode = initialPermissionMode === "gear-4";
     this.config.trustWorkspace = initialPermissionMode === "gear-3";
-    // NOTE: gears never touch the OS sandbox. 4th gear removes the permission
-    // prompts; whether commands run contained is the separate `/sandbox`
-    // switch (config, --sandbox/--no-sandbox). Coupling them silently widened
-    // the blast radius of every legacy hands-free user — never again.
+    // NOTE: the manual gears never touch the OS sandbox. 4th gear removes the
+    // permission prompts; whether commands run contained is the separate
+    // `/sandbox` switch (config, --sandbox/--no-sandbox). Coupling them silently
+    // widened the blast radius of every legacy hands-free user — never again.
+    // Auto is the one exception, and only in the narrowing direction: see
+    // ensureAutoBoundary below.
 
     // Independent Auto reviewer. It uses a separate inference request with a
     // stripped transcript (trusted user messages + tool calls only). The heavy
@@ -2127,6 +2136,13 @@ export class Engine {
       this.config.permissionMode = "gear-1";
       this.config.trustWorkspace = false;
     }
+    // A session that STARTS in Auto gets the same boundary as one that shifts
+    // into it. It used to keep whatever the /sandbox sidecar said, and with
+    // the sidecar at `off` Auto ran every command on the host: 421 of 421
+    // shell calls between 2026-09-08 and 09-16, each one that could write
+    // paying an in-path reviewer call, and each reviewer timeout becoming the
+    // prompt Auto exists to remove.
+    this.ensureAutoBoundary({ atStartup: true });
     const resolvePrimaryReviewer = (): ReviewerIdentity => {
       const heavy = this.resolveModelTier("heavy");
       // `[routing] helper` may answer safety questions ONLY when the user
@@ -4981,15 +4997,28 @@ export class Engine {
     this.config.permissionMode = canonical;
     this.config.yoloMode = canonical === "gear-4";
     this.config.trustWorkspace = canonical === "gear-3";
-    // Auto is 4th-gear autonomy INSIDE the sandbox: the agent may do anything
-    // it likes and the sandbox, not a person, is what bounds it. So the
-    // sandbox is not an independent knob here the way it is in gears 1-4 —
-    // switching it off would leave autonomy with nothing underneath it. Auto
-    // turns it on when you shift into it.
-    if (canonical === "auto" && !isSandboxEnabled()) {
-      setSandboxMode("on");
-    }
+    this.ensureAutoBoundary();
     return result;
+  }
+
+  /**
+   * Auto is 4th-gear autonomy INSIDE the sandbox: the agent may do anything
+   * it likes and the sandbox, not a person, is what bounds it. So the sandbox
+   * is not an independent knob here the way it is in gears 1-4 — leaving it
+   * off would leave autonomy with nothing underneath it but a reviewer call
+   * per command. Auto turns it on at every way in: the shift, and startup.
+   *
+   * Process-local on purpose: the /sandbox sidecar is not rewritten, and a
+   * `/sandbox off` typed after this is the user's to make — Auto then treats
+   * the shell as uncontained and the reviewer stands in.
+   */
+  private ensureAutoBoundary(opts: { atStartup?: boolean } = {}): void {
+    if (this.permissions.getMode() !== "auto" || isSandboxEnabled()) return;
+    // `--no-sandbox` or RUNE_SANDBOX_MODE=off said so for this run: that is an
+    // instruction, not a stale preference, and it stands. The reviewer then
+    // stands in for the sandbox — and an outage still never becomes a prompt.
+    if (opts.atStartup && this.config.sandboxModeExplicit) return;
+    setSandboxMode("on");
   }
 
   /**

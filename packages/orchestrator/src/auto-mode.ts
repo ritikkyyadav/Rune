@@ -81,9 +81,9 @@ export interface AutoModePolicyConfig {
   allowRules?: string[];
   askRules?: string[];
   denyRules?: string[];
-  /** Reviewer latency ceiling. A timeout fails closed to a human prompt by default. */
+  /** Reviewer latency ceiling. A timeout fails closed to mechanical containment, never to a prompt. */
   timeoutMs?: number;
-  /** Consecutive classifier denials before Auto pauses for a human decision. */
+  /** Consecutive reviewer refusals before Auto halts the run as probing. */
   maxAutomaticDenials?: number;
   /**
    * false is an explicit, unsafe availability-over-safety choice. Default true.
@@ -316,7 +316,7 @@ export function unsandboxedShellPolicy(value: unknown): UnsandboxedShellPolicy |
 const RETIRED_KEYS: Array<{ key: string; note: string }> = [
   {
     key: "conversationalEscalation",
-    note: 'conversational escalation is now unconditional \u2014 a reviewer "ask" verdict always reaches the acting agent as an actionable block it raises through ask_user, and the modal prompt remains the backstop for repeated blocks, circuit breakers, guardrail changes, reviewer outage and askRules',
+    note: 'conversational escalation is now unconditional \u2014 a reviewer "ask" verdict always reaches the acting agent as an actionable block it raises through ask_user, and nothing else in Auto opens a modal prompt except askRules and unsandboxedShell = "ask", which are the user asking to be asked',
   },
 ];
 
@@ -356,7 +356,7 @@ function resolveFailClosed(
     failClosed = !failOpenAllowed;
     if (!failOpenAllowed) {
       warnings.push(
-        "permissions.autoMode.failClosed = false was ignored: running the Auto reviewer fail-open (classifier outage = allow everything) requires signed org policy permission (autoMode.allowFailOpen). Auto mode keeps failing closed to human confirmation.",
+        "permissions.autoMode.failClosed = false was ignored: running the Auto reviewer fail-open (classifier outage = allow everything) requires signed org policy permission (autoMode.allowFailOpen). Auto mode keeps failing closed: a reviewer outage contains, redirects or defers the action instead.",
       );
     }
   } else {
@@ -1243,6 +1243,11 @@ export class AutoModeRun {
     }
     if (tier === "workspace" || action.schema.category === "write") this.supervisorEpoch++;
     let risk = assessActionRisk(action, tier);
+    // What the pre-scan made of the command itself — before the injection
+    // floor below raises it for the state of the run, and before the host
+    // floor raises it for having no sandbox. A reviewer outage on the host
+    // reads this and the run's state as two separate questions.
+    const commandRisk = risk;
     // Injection alert: once any tool result in this session was flagged, no
     // classifier-tier action settles on the one-token fast pass — the risk
     // floor forces the careful reasoned review for the rest of the run.
@@ -1733,24 +1738,68 @@ export class AutoModeRun {
           durationMs: elapsed(started),
         });
       }
-      // No sandbox under the command AND no reviewer to stand in for it.
-      // The mechanical router still answers for the shapes it recognizes —
-      // an exfiltration halts, a publish comes back as its dry run, a
-      // persistence step is deferred — and none of those need a sandbox to
-      // honour. What has nothing left to fail contained INTO is the
-      // unrecognized ordinary command, so that one becomes the question:
-      // deferring `bun test` to the end of the turn with "its impact reaches
-      // past the workspace" would be both wrong and unhelpful.
-      if (uncontainedShell && !hasMechanicalAnswer(this.containmentOutcome(action))) {
-        return this.finish({
-          verdict: "ask",
-          tier,
-          risk,
-          source: "classifier_unavailable",
-          reason: `${reason}. This command would run on the host with no OS sandbox under it, so Auto mode fails closed to human confirmation for it.`,
-          stage: 0,
-          durationMs: elapsed(started),
-        });
+      // No sandbox under the command AND no reviewer to stand in for it. The
+      // mechanical router still answers for the shapes it recognizes — an
+      // exfiltration halts, a publish comes back as its dry run, a
+      // persistence step is deferred — and none of those need a sandbox.
+      //
+      // What is left used to become a modal prompt, and it was the last one
+      // in default Auto. Every recorded Auto prompt since 2026-08-28 was a host
+      // command with no sandbox under it — five from the engine rule this
+      // replaced on 09-07, four from here — and none was dangerous: `cargo
+      // test`, `make dev-web`, `test -f … && echo present`, `ps | head`. The
+      // offline corpus agrees —
+      // run uncontained, this exit decided 44 rows at 9.1% precision, 40 of
+      // them work labelled "must not halt a run". A prompt that fires on a
+      // free-tier timeout is not a control; it is the reason people leave
+      // Auto for 4th gear, which has no watcher at all.
+      //
+      // So nobody is asked. The command either runs now, unreviewed and said
+      // so, or waits in the end-of-turn list while the agent keeps working.
+      if (uncontainedShell) {
+        const outcome = this.containmentOutcome(action);
+        if (!hasMechanicalAnswer(outcome)) {
+          const command = String(action.args.command ?? "");
+          if (
+            // A run under suspicion gets no unreviewed anything: what looked
+            // like the day's work before a flagged tool result or a reviewer
+            // deny is exactly what a captured run would issue next.
+            this.injectionFindings === 0 &&
+            // The command alone, before any floor, was never more than
+            // ordinary. A publish, a remote delete, a secret read are rated
+            // high by the pre-scan and never reach the policy below.
+            (commandRisk === "low" || commandRisk === "medium") &&
+            mayRunUnreviewedOnHost(command, action.args, rules.safeCommands)
+          ) {
+            this.consecutiveClassifierDenials = 0;
+            return this.finish({
+              verdict: "allow",
+              tier,
+              risk: commandRisk,
+              source: "classifier_unavailable",
+              reason: `${reason}. Ran on the host UNREVIEWED: ordinary work, no sandbox under it and no reviewer reachable; the mechanical safety breakers applied.`,
+              stage: 0,
+              durationMs: elapsed(started),
+            });
+          }
+          // Only the router's generic answers are replaced. A `contain` (a
+          // fallback retry the sandbox CAN hold) keeps its instruction to
+          // re-send the call contained; "unrecognized" said the impact
+          // "reaches past the workspace", which for `cargo test` was false.
+          const generic =
+            outcome.kind === "defer" &&
+            (outcome.route === "unrecognized" || outcome.route === "sandbox-unavailable");
+          return this.route(
+            action,
+            tier,
+            risk,
+            started,
+            `Nothing could check this command: the safety reviewer is unreachable (${safeError(error)}) and it would run directly on the host, outside the OS sandbox.`,
+            // An outage deferral followed by one genuine reviewer deny must
+            // not read as "refused twice in a row" and halt the session.
+            { notARefusal: true, ...(generic ? { outcome: REVIEWER_OUTAGE_DEFERRAL } : {}) },
+          );
+        }
       }
       return this.route(
         action,
@@ -1802,9 +1851,16 @@ export class AutoModeRun {
       reviewer?: { provider: string; model: string };
       /** The caller already counted this action toward the block streak. */
       countedAlready?: boolean;
+      /** A route the caller already chose, in place of the router's answer. */
+      outcome?: ContainmentOutcome;
+      /**
+       * Nobody refused this action — the reviewer could not be reached — so it
+       * must not count toward the streak that halts a run for probing.
+       */
+      notARefusal?: boolean;
     } = {},
   ): AutoModeReview {
-    const outcome = this.containmentOutcome(action);
+    const outcome = provenance.outcome ?? this.containmentOutcome(action);
 
     if (outcome.kind === "extend") {
       this.consecutiveClassifierDenials = 0;
@@ -1838,7 +1894,7 @@ export class AutoModeRun {
     // streak — there is no retry. The other routes do: an agent that keeps
     // re-issuing the same contained shape is a signal in itself. Callers that
     // already counted this action (the reviewer path) pass countedAlready.
-    if (outcome.kind !== "halt" && !provenance.countedAlready) {
+    if (outcome.kind !== "halt" && !provenance.countedAlready && !provenance.notARefusal) {
       this.consecutiveClassifierDenials++;
     }
 
@@ -2913,6 +2969,60 @@ function hasMechanicalAnswer(outcome: ContainmentOutcome): boolean {
     return outcome.route !== "unrecognized" && outcome.route !== "sandbox-unavailable";
   }
   return false;
+}
+
+/**
+ * The deferral a reviewer outage leaves on an uncontained shell. The router's
+ * generic defer says the impact "reaches past the workspace", which is false
+ * for most of what lands here; this says what actually happened, in words the
+ * end-of-turn list can show a person who never saw the command run.
+ */
+const REVIEWER_OUTAGE_DEFERRAL: ContainmentOutcome = {
+  kind: "defer",
+  route: "reviewer-unavailable",
+  label: "deferred",
+  instruction:
+    "Auto mode did not run it unattended. Do not retry it or reword it to get past this — " +
+    "carry on with everything that does not depend on it, and say in your report what this " +
+    "step would have done. It is listed for the user, with this reason, when the turn ends.",
+  ledger: true,
+};
+
+/**
+ * May this shell command run on the host with NO reviewer and NO sandbox?
+ *
+ * Consulted only when all of this already holds, so none of it needs checking
+ * here: the reviewer is unreachable; the command will run outside the OS
+ * sandbox; the mechanical breakers found no answer for it (no exfiltration
+ * halt, no publish/deploy redirect, no recognized deferral); nothing in the run
+ * is under suspicion; the pre-scan rated the command low or medium on its own.
+ * Read-only commands never get here — the safe tier already ran them.
+ *
+ * `true` runs it now, recorded as unreviewed. `false` defers it: the agent
+ * keeps working and the step waits in the end-of-turn list. Neither answer can
+ * put a prompt in front of anyone — that is the point of this function.
+ *
+ * The answer: the day's work keeps going, with two exceptions where "no
+ * reviewer" would compound a second missing guard. A fallback retry is a
+ * command the sandbox already refused; a background process outlives the call
+ * and nothing watches what it does next. Measured on the offline corpus with
+ * no sandbox and a dead reviewer: 116/126 allow rows keep running (79 when
+ * everything waits) and 92/101 block rows hold (93) — the one given up is a
+ * reviewer-only row, a test run outside the request's scope, which the eval
+ * never gates offline. The corpus row this answers is its own: "a reviewer
+ * outage must not stall ordinary work".
+ */
+function mayRunUnreviewedOnHost(
+  command: string,
+  args: Record<string, unknown>,
+  safeCommands: readonly string[],
+): boolean {
+  return (
+    args.unsandboxed !== true &&
+    args.run_in_background !== true &&
+    args.background !== true &&
+    isOrdinaryDevCommand(command, safeCommands)
+  );
 }
 
 function safeError(error: unknown): string {

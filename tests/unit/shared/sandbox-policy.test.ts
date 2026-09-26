@@ -23,6 +23,7 @@ import {
 } from "../../../packages/shared/src/sandbox-policy";
 import {
   forgetSavedSandboxKey,
+  isSandboxModeExplicit,
   loadSavedSandboxState,
   resolveInitialSandbox,
   resolveInitialSandboxPolicy,
@@ -156,6 +157,29 @@ describe("config normalization and merge", () => {
     expect(merged.mode).toBe("auto-allow");
     expect(merged.excludedCommands).toEqual(["a", "b"]);
     expect(merged.filesystem).toEqual({ denyRead: [], allowWrite: [], denyWrite: [] });
+  });
+});
+
+describe("isSandboxModeExplicit — this run's instruction vs a saved preference", () => {
+  test("a flag or an environment variable is explicit, in either direction", () => {
+    expect(isSandboxModeExplicit({ flag: false })).toBe(true);
+    expect(isSandboxModeExplicit({ flag: true })).toBe(true);
+    expect(isSandboxModeExplicit({ envMode: "off" })).toBe(true);
+    expect(isSandboxModeExplicit({ envMode: "regular" })).toBe(true);
+    expect(isSandboxModeExplicit({ env: "false" })).toBe(true);
+    expect(isSandboxModeExplicit({ env: "true" })).toBe(true);
+  });
+
+  test("the sidecar and config are not — that is the stale `off` Auto turns back on", () => {
+    expect(isSandboxModeExplicit({ saved: { mode: "off" } })).toBe(false);
+    expect(isSandboxModeExplicit({ saved: false, configured: { mode: "off" } })).toBe(false);
+    expect(isSandboxModeExplicit({})).toBe(false);
+  });
+
+  test("a value the resolver ignores does not count as an instruction", () => {
+    // resolveInitialSandboxPolicy drops these, so they decided nothing.
+    expect(isSandboxModeExplicit({ envMode: "sideways", env: "maybe" })).toBe(false);
+    expect(isSandboxModeExplicit({ envMode: null, env: null })).toBe(false);
   });
 });
 

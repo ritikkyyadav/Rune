@@ -128,6 +128,7 @@ export {
 } from "./prefs-store.js";
 export {
   loadSavedSandboxState,
+  isSandboxModeExplicit,
   resolveInitialSandbox,
   resolveInitialSandboxPolicy,
   saveSandboxState,

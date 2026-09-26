@@ -67,6 +67,82 @@ describe("Engine five-rune Shift+Tab cycle", () => {
     }
   });
 
+  test("Auto gets its sandbox at every way in — the shift AND startup", () => {
+    // The founder's sidecar said `mode: off` from 2026-09-07 to 09-18, and a
+    // session that OPENED in Auto (a remembered gear) kept it: 421 of 421
+    // shell calls ran on the host, every writable one paid an in-path reviewer
+    // call, and every reviewer timeout became a prompt. Only the shift used to
+    // turn the sandbox on.
+    const root = mkdtempSync(join(tmpdir(), "rune-auto-boundary-"));
+    roots.push(root);
+    const started = new Engine({
+      workspaceRoot: root,
+      dbPath: join(root, "rune.db"),
+      permissionMode: "auto",
+      sandboxEnabled: false,
+      enableMcp: false,
+      enableSkills: false,
+      enableVerification: false,
+    });
+    try {
+      expect(started.getPermissionMode()).toBe("auto");
+      expect(started.isSandboxEnabled()).toBe(true);
+    } finally {
+      started.close();
+    }
+
+    const root2 = mkdtempSync(join(tmpdir(), "rune-auto-boundary-shift-"));
+    roots.push(root2);
+    const shifted = new Engine({
+      workspaceRoot: root2,
+      dbPath: join(root2, "rune.db"),
+      sandboxEnabled: false,
+      enableMcp: false,
+      enableSkills: false,
+      enableVerification: false,
+    });
+    try {
+      expect(shifted.isSandboxEnabled()).toBe(false);
+      expect(shifted.setPermissionMode("auto").ok).toBe(true);
+      expect(shifted.isSandboxEnabled()).toBe(true);
+      // Leaving Auto does not take the boundary away mid-session, and a
+      // manual gear still never turns it on by itself (the test above).
+      expect(shifted.setPermissionMode("4").ok).toBe(true);
+      expect(shifted.isSandboxEnabled()).toBe(true);
+    } finally {
+      shifted.close();
+    }
+  });
+
+  test("an explicit off for THIS run (--no-sandbox, RUNE_SANDBOX_MODE) stands at startup", () => {
+    // A saved `off` is a preference from another session; a flag or an
+    // environment variable is this run's instruction. Auto overrides the first
+    // and honours the second — the reviewer then stands in for the sandbox.
+    const root = mkdtempSync(join(tmpdir(), "rune-auto-explicit-off-"));
+    roots.push(root);
+    const engine = new Engine({
+      workspaceRoot: root,
+      dbPath: join(root, "rune.db"),
+      permissionMode: "auto",
+      sandboxMode: "off",
+      sandboxModeExplicit: true,
+      enableMcp: false,
+      enableSkills: false,
+      enableVerification: false,
+    });
+    try {
+      expect(engine.getPermissionMode()).toBe("auto");
+      expect(engine.isSandboxEnabled()).toBe(false);
+      // Shifting into Auto later is a new instruction, and it turns it on as
+      // it always has.
+      expect(engine.setPermissionMode("4").ok).toBe(true);
+      expect(engine.setPermissionMode("auto").ok).toBe(true);
+      expect(engine.isSandboxEnabled()).toBe(true);
+    } finally {
+      engine.close();
+    }
+  });
+
   test("legacy spellings canonicalize: turing/hands-free/yolo/autonomy-iii → 4th gear, confirm → 1st", () => {
     const root = mkdtempSync(join(tmpdir(), "rune-alias-"));
     roots.push(root);

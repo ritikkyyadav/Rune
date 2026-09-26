@@ -34,7 +34,7 @@ also a config key, so it can be checked in with a project.
 /sandbox mode regular       # also: /sandbox on (= auto-allow) · /sandbox off
 ```
 
-Shifting into Auto turns the sandbox on if it was off; it does not change a `regular` choice.
+Entering Auto turns the sandbox on if it was off — by shifting into it, and also when a session starts in Auto (a remembered gear, `--gear auto`, `[permissions] gear = "auto"`); it does not change a `regular` choice, and it does not rewrite the saved `/sandbox` setting. An `off` given for the run itself — `--no-sandbox`, `RUNE_SANDBOX_MODE=off` — is an instruction and stands at startup; the reviewer then stands in for the sandbox. Before 2026-09-26 only the shift did this, so a session that opened in Auto with the sidecar at `off` ran every command on the host.
 
 ## Overrides
 
@@ -136,10 +136,14 @@ policy:
    in for it:
    - `review` (default) — one in-path reasoned reviewer call, the same review a high-risk action
      gets. When the sandbox is not the boundary, the reviewer is. A reviewer outage on such a
-     command becomes a question, not a deferral — for an _ordinary_ command. The mechanical
-     router still answers for the shapes it recognizes, with or without a sandbox and whatever
-     `unsandboxedShell` says: an exfiltration halts the run, a publish comes back as its dry run,
-     a persistence step is deferred. An attack shape is never put to you as a yes/no card.
+     command is **never a question**: the mechanical router answers for the shapes it
+     recognizes, with or without a sandbox and whatever `unsandboxedShell` says — an
+     exfiltration halts the run, a publish comes back as its dry run, a persistence step is
+     deferred — and what it does not recognize either runs unreviewed (ordinary work, only while
+     nothing in the run is under suspicion, and said so in the audit row) or waits in the
+     end-of-turn list while the agent carries on. Until 2026-09-26 that remainder became a
+     prompt; with the engine rule it replaced, it produced every recorded Auto prompt since the
+     2026-08-28 redesign, and none was dangerous (`cargo test`, `make dev-web`, `ps | head`).
    - `ask` — the modal prompt, for every command that is not read-only.
    - `allow` — the mechanical breakers alone, as in 4th gear.
 

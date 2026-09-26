@@ -35,6 +35,7 @@ import {
   loadPrefs,
   saveLastModel,
   loadSavedSandboxState,
+  isSandboxModeExplicit,
   resolveInitialSandboxPolicy,
   loadSavedBrowserState,
   resolveInitialBrowser,
@@ -1167,13 +1168,14 @@ async function main() {
   // Sandbox posture: flag > RUNE_SANDBOX_MODE / RUNE_SANDBOX_ENABLED env >
   // /sandbox sidecar > [sandbox] config > auto-allow. The mode comes from all
   // of those; the override and the lists come from the sidecar and config.
-  const sandboxPolicy = resolveInitialSandboxPolicy({
+  const sandboxInputs = {
     flag: values["no-sandbox"] === true ? false : values.sandbox === true ? true : undefined,
     env: process.env.RUNE_SANDBOX_ENABLED ?? null,
     envMode: process.env.RUNE_SANDBOX_MODE ?? null,
     saved: loadSavedSandboxState(),
     configured: config.sandbox ?? null,
-  });
+  };
+  const sandboxPolicy = resolveInitialSandboxPolicy(sandboxInputs);
   const sandboxEnabled = sandboxPolicy.mode !== "off";
   // Browser posture: flag > RUNE_BROWSER_ENABLED env > /browser sidecar > config > off.
   const browserEnabled = resolveInitialBrowser({
@@ -1258,6 +1260,7 @@ async function main() {
     helperRoute: config.routing?.helper,
     sandboxEnabled,
     sandboxMode: sandboxPolicy.mode,
+    sandboxModeExplicit: isSandboxModeExplicit(sandboxInputs),
     sandboxPolicy,
     sandboxRequireOs: config.sandbox?.requireOs === true,
     // Passed through UNSET on purpose: undefined means "decide from the

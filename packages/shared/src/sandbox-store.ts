@@ -151,6 +151,22 @@ export function resolveInitialSandboxPolicy(opts: ResolveSandboxOptions): Sandbo
   return policy;
 }
 
+/**
+ * Whether THIS run named its sandbox mode — `--sandbox`/`--no-sandbox`, or an
+ * environment variable — rather than inheriting the sidecar or config. The
+ * distinction is Auto's: starting over a SAVED `off` it turns the sandbox on,
+ * because a preference left over from another session is not a decision about
+ * this one; an instruction given for the run itself it leaves alone.
+ */
+export function isSandboxModeExplicit(opts: ResolveSandboxOptions): boolean {
+  return (
+    typeof opts.flag === "boolean" ||
+    normalizeSandboxMode(opts.envMode ?? undefined) !== undefined ||
+    opts.env === "true" ||
+    opts.env === "false"
+  );
+}
+
 /** Resolve just the on/off question — kept for every caller that only asks that. */
 export function resolveInitialSandbox(opts: ResolveSandboxOptions): boolean {
   return resolveInitialSandboxPolicy(opts).mode !== "off";
