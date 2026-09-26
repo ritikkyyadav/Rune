@@ -24,26 +24,12 @@ import {
   ok,
   brand,
   panel,
-  selection,
-  speakerSurface,
-  hairline,
-  codeSurface,
-  chip,
   cursorCell,
   quiet,
 } from "./theme";
 import { fmtTokens } from "./events";
 import { glyph } from "./glyphs";
-import {
-  clampVisible,
-  truncate,
-  rule,
-  visLen,
-  wrap,
-  railCard,
-  graphemeSpans,
-  prefixByWidth,
-} from "./render";
+import { clampVisible, truncate, visLen, wrap, graphemeSpans, prefixByWidth } from "./render";
 import * as F from "./flow";
 import { pasteChipSpans } from "./paste";
 import type { PermissionPreview, PermissionPreviewLine } from "./permission-preview";
@@ -83,6 +69,11 @@ export interface ComposerStatus {
   /** True when the transcript holds at least one openable fold -- shows the
    *  ctrl+o hint, so the affordance is discoverable exactly when it exists. */
   folds?: boolean;
+  /** A turn is running: the right edge says how to stop it. */
+  streaming?: boolean;
+  /** Something is typed in the field: `?` would type a `?`, not open the sheet,
+   *  and mid-turn enter/esc act on the draft. */
+  drafting?: boolean;
 }
 
 export type PermissionModeId = PermissionMode;
@@ -244,62 +235,67 @@ const keyHint = F.keyHint;
 export function statusLine(s: ComposerStatus, width = process.stdout.columns || 80): string {
   const max = Math.max(8, Math.min(F.surfaceWidth(), width - 1));
   const mode = modeInfo(s.mode);
-  const meter = contextMeter(s.contextPercent);
   const sep = ` ${faint(glyph("observed"))} `;
-  const extras: string[] = [];
-  if (s.filesEdited) {
-    extras.push(faint(`${s.filesEdited} file${s.filesEdited === 1 ? "" : "s"} edited`));
-  }
-  if (s.loop) extras.push(faint(`${glyph("retry")} ${s.loop}`));
-  if (s.sandboxOff) extras.push(warn("sandbox off"));
 
+  // ── The pieces. Each is "" when it has nothing to say, and an empty piece
+  //    costs a tier nothing: it is dropped before the row is joined. ──
+
+  // The gear. It never drops: a hidden permission state is the one thing this
+  // line exists to prevent.
   const badge = `  ${permissionModeBadge(s.mode)}`;
-  // The model belongs HERE, not in the header.
-  //
-  // The header is committed scrollback: written once at launch and never
-  // rewritten, which is the whole reason history in this UI cannot develop
-  // rendering bugs. It also means anything printed there is a record of how the
-  // session STARTED, not of what is true now — so a model named up there went
-  // stale the moment /model switched, and sat there naming the wrong model for
-  // the rest of the session. Under the old alt screen the banner repainted
-  // every frame and hid this; deleting that surface exposed it.
-  //
-  // The pinned region redraws on every frame, so live state put here is live by
-  // construction. It outranks the gear's description, which is static and
-  // learned once, and the model is the field a person actually re-checks.
-  const modelName = s.model ? info(s.model) : "";
-  // Depth rides with the model and is dropped one tier BEFORE it: when space is
-  // short the model's name matters more than its dial.
-  const modelWithEffort =
-    s.model && s.effort ? `${info(s.model)}${faint(` ${s.effort}`)}` : modelName;
-  const right = keyHint("?", "keys");
-  const fullHints = [
-    ...(s.folds ? [keyHint("ctrl+o", "open")] : []),
-    keyHint("shift+tab", "gear"),
-    keyHint("esc", "stop"),
-  ].join("  ");
+  // What the gear means, in its own words -- learned once, re-read rarely.
+  const clause = mode.desc ? faint(mode.desc) : "";
+  // Context use: silent under half, amber past 70%, red past 90%.
+  const meter = contextMeter(s.contextPercent) ?? "";
+  // A safety layer that is OFF. Loud, because it is not the default.
+  const sandbox = s.sandboxOff ? warn("sandbox off") : "";
+  // Facts about the session so far.
+  const edited = s.filesEdited
+    ? faint(`${s.filesEdited} file${s.filesEdited === 1 ? "" : "s"} edited`)
+    : "";
+  const loop = s.loop ? faint(`${glyph("retry")} ${s.loop}`) : "";
+  // The model belongs HERE, not in the header: the header was committed
+  // scrollback once, and a model named there went stale the moment /model
+  // switched. This row redraws every frame, so what it says is live. Depth
+  // rides with the name -- the same gpt-5.6-sol at "low" and at "max" are not
+  // the same collaborator -- and `model` alone is the narrower form.
+  const model = s.model ? quiet(s.model) : "";
+  const modelLine = s.model ? `${model}${s.effort ? ` ${faint(s.effort)}` : ""}` : "";
+  // The keys that act RIGHT NOW, said here and nowhere else on the frame:
+  // while a turn runs, how to stop it (or, over a typed draft, what enter and
+  // esc do to the draft -- tui.ts turnKey); at rest with an empty field, where
+  // the rest of the keys are (`?` opens the sheet only then, tui-input.ts).
+  const keys = s.streaming
+    ? faint(s.drafting ? `enter sends${sep}esc clears` : "esc stop")
+    : s.drafting
+      ? ""
+      : [s.folds ? keyHint("ctrl+o", "open") : "", keyHint("?", "keys")].filter(Boolean).join("  ");
 
-  // What is given up first, at each width. The key hints go before the gear's
-  // description does: a hint is discovery, useful once, and 80 columns is the
-  // width most people are actually at — losing "edits + sandboxed shell" there
-  // to buy back a hint would be the wrong trade for someone still learning what
-  // the gear means. The model survives to the last tier because it is the only
-  // field here that changes under the user.
-  const named = [badge, ...(modelWithEffort ? [modelWithEffort] : [])].join(sep);
-  const namedBare = [badge, ...(modelName ? [modelName] : [])].join(sep);
-  const desc = mode.desc ? [faint(mode.desc)] : [];
-  const tiers: Array<[string, string]> = [
-    [[named, ...desc, ...(meter ? [meter] : []), ...extras, fullHints].join(sep), right],
-    [[named, ...desc, ...(meter ? [meter] : []), ...extras].join(sep), right],
-    [[named, ...desc, ...extras].join(sep), right],
-    [[named, ...desc].join(sep), right],
-    [named, right],
-    [namedBare, right],
-    [badge, right],
+  // ── The ladder: widest first; the first tier that fits the window wins. ──
+  //
+  // What goes first is what is read least. Session facts (files edited, a
+  // loop's clock) are glanced at, not watched. The gear's clause is learned
+  // once, so it goes before the model's depth, and the depth before the name:
+  // the model is the one field here that changes under the user. The context
+  // meter and "sandbox off" are STATES -- silent until they matter -- so they
+  // outlast the model. The keys outlast everything but the gear: mid-turn they
+  // are `esc stop`, the only way out of a run, and at rest `? keys` is the one
+  // pointer to every other key.
+  const tiers: Array<{ left: string[]; right: string[] }> = [
+    { left: [badge, clause, meter, sandbox, edited, loop], right: [modelLine, keys] },
+    { left: [badge, clause, meter, sandbox], right: [modelLine, keys] },
+    { left: [badge, meter, sandbox], right: [modelLine, keys] },
+    { left: [badge, meter, sandbox], right: [model, keys] },
+    { left: [badge, meter, sandbox], right: [keys] },
+    { left: [badge, sandbox], right: [keys] },
+    { left: [badge], right: [] },
   ];
-  for (const [left, edge] of tiers) {
-    const gap = max - visLen(left) - visLen(edge);
-    if (gap >= 2) return `${left}${" ".repeat(gap)}${edge}`;
+
+  for (const tier of tiers) {
+    const left = tier.left.filter(Boolean).join(sep);
+    const right = tier.right.filter(Boolean).join("   ");
+    const gap = max - visLen(left) - visLen(right);
+    if (gap >= 2) return right ? `${left}${" ".repeat(gap)}${right}` : left;
   }
   return clampVisible(badge, max);
 }

@@ -324,15 +324,29 @@ describe("ui/composer statusLine + permission mode", () => {
     expect(confirm).toContain("? keys");
     expect(confirm).not.toMatch(/autonomy/i);
 
-    // The key hints are what yields first at a narrow width — a hint is
-    // discovery, useful once, while the gear's description is what someone
-    // still learning the gears is reading. They come back when there is room.
+    // The right edge carries the keys that act NOW, and only those (founder,
+    // 2026-09-26: no unnecessary information): `? keys` at rest with an empty
+    // field, `esc stop` while a turn runs, what enter and esc do to a draft
+    // typed mid-turn -- and nothing over a draft at rest, where `?` types a `?`.
     setTermWidthOverride(160);
-    const wide = stripAnsi(statusLine({ ...base, mode: "confirm" }, 160));
-    expect(wide).toContain("shift+tab gear");
-    expect(wide).toContain("esc stop");
-    expect(wide).toContain("every action asks first");
-    setTermWidthOverride(null);
+    try {
+      const wide = stripAnsi(statusLine({ ...base, mode: "confirm" }, 160));
+      expect(wide).toContain("every action asks first");
+      expect(wide).toContain("? keys");
+      expect(wide).not.toContain("shift+tab gear"); // the key sheet and the banner say it
+      const running = stripAnsi(statusLine({ ...base, mode: "confirm", streaming: true }, 160));
+      expect(running).toContain("esc stop");
+      expect(running).not.toContain("? keys");
+      const typing = stripAnsi(
+        statusLine({ ...base, mode: "confirm", streaming: true, drafting: true }, 160),
+      );
+      expect(typing).toContain(`enter sends ${glyph("observed")} esc clears`);
+      expect(
+        stripAnsi(statusLine({ ...base, mode: "confirm", drafting: true }, 160)),
+      ).not.toContain("? keys");
+    } finally {
+      setTermWidthOverride(null);
+    }
 
     expect(stripAnsi(statusLine({ ...base, mode: "autonomy-i" }, 120))).toContain(
       `${glyph("selection").repeat(2)} 2nd gear`,
@@ -380,7 +394,7 @@ describe("ui/composer statusLine + permission mode", () => {
       statusLine({ model: "m", workspace: "/w", mode: "confirm", theme: "dark" }, 100),
     );
     expect(line).not.toContain("◐ dark");
-    expect(line).toContain("esc stop");
+    expect(line).toContain("? keys");
   });
 
   it("permissionModeBanner names each gear, what it allows, and how to shift", () => {
@@ -582,16 +596,34 @@ describe("ui/composer renderPicker", () => {
 
 describe("ui/composer footer filesEdited readout", () => {
   it("shows the session's edited-file count once files change", () => {
+    // A window with room for everything: the count is a session fact, the
+    // first thing the ladder gives up, so it needs the width to be seen.
+    setTermWidthOverride(140);
+    try {
+      const line = stripAnsi(
+        statusLine(
+          { model: "m", workspace: "/w", mode: "gear-2", filesEdited: 3, contextPercent: 55 },
+          140,
+        ),
+      );
+      expect(line).toContain("3 files edited");
+      expect(
+        stripAnsi(statusLine({ model: "m", workspace: "/w", mode: "gear-2" }, 140)),
+      ).not.toContain("files edited");
+    } finally {
+      setTermWidthOverride(null);
+    }
+  });
+
+  it("gives the session facts up before the context meter, which is a state", () => {
     const line = stripAnsi(
       statusLine(
-        { model: "m", workspace: "/w", mode: "gear-2", filesEdited: 3, contextPercent: 55 },
-        140,
+        { model: "m", workspace: "/w", mode: "gear-2", filesEdited: 3, contextPercent: 93 },
+        80,
       ),
     );
-    expect(line).toContain("3 files edited");
-    expect(
-      stripAnsi(statusLine({ model: "m", workspace: "/w", mode: "gear-2" }, 140)),
-    ).not.toContain("files edited");
+    expect(line).toContain("93% context");
+    expect(line).not.toContain("files edited");
   });
 });
 

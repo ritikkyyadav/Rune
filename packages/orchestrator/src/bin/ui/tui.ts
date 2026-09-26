@@ -764,6 +764,8 @@ export class Tui {
         filesEdited: this.filesEdited.size || undefined,
         sandboxOff: !this.ctx.engine.isSandboxEnabled(),
         folds: !this.inline && this.folds.size > 0,
+        streaming: this.mode === "turn",
+        drafting: this.input.length > 0,
         theme: getTheme().name === "auto" ? "auto" : getTheme().appearance,
         loop:
           loop.count > 0 && loop.nextRunAt !== null
