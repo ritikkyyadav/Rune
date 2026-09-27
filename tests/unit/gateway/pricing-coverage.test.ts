@@ -164,7 +164,7 @@ describe("billing mode separates spend from worth", () => {
   test("a subscription seat costs nothing but still reports list value", () => {
     const t = new CostTracker();
     const entry = t.record(
-      "gpt-5.6-sol",
+      "gpt-6-sol",
       "codex",
       {
         inputTokens: 1_000_000,
@@ -174,10 +174,10 @@ describe("billing mode separates spend from worth", () => {
     );
     expect(entry.billing).toBe("subscription");
     expect(entry.costUsd).toBe(0);
-    // 1M * $1.25 + 0.01M * $10 = 1.35
-    expect(entry.listCostUsd).toBeCloseTo(1.35, 6);
+    // Published rates (2026-09-28): 1M * $2 + 0.01M * $10 = 2.10
+    expect(entry.listCostUsd).toBeCloseTo(2.1, 6);
     expect(t.getLedger().totalCostUsd).toBe(0);
-    expect(t.getLedger().totalListCostUsd).toBeCloseTo(1.35, 6);
+    expect(t.getLedger().totalListCostUsd).toBeCloseTo(2.1, 6);
   });
 
   test("a metered route charges what it is worth", () => {
@@ -208,7 +208,8 @@ describe("billing mode separates spend from worth", () => {
   test("estimated rates are carried through so readouts can mark them", () => {
     const t = new CostTracker();
     expect(
-      t.record("gpt-5.6-sol", "codex", { inputTokens: 1, outputTokens: 1 }, { role: "primary" })
+      // gpt-5.5 has no published rate; the GPT-6 and 5.6 lines now do.
+      t.record("gpt-5.5", "codex", { inputTokens: 1, outputTokens: 1 }, { role: "primary" })
         .estimated,
     ).toBe(true);
     expect(

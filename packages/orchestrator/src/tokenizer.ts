@@ -212,6 +212,7 @@ export class TokenCounter {
       ["llama3", 8192],
       // xAI publishes a different window per model rather than per line, so
       // each one is its own rule ahead of the generic floor.
+      ["grok-4.7", 500000],
       ["grok-4.6", 500000],
       ["grok-4.5", 500000],
       ["grok-4.3", 1000000],

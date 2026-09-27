@@ -3460,12 +3460,18 @@ async function main() {
             }
 
             // ── Level 3: models under that account ──
+            // Local runtimes replace the preset with what they serve; a cloud
+            // account's catalogue is merged into it (mergeDiscovered).
             let live: string[] | null = null;
+            let discovered: { id: string; label?: string }[] | null = null;
             if (preset && (chosen.local || account?.kind === "endpoint")) {
               live = await fetchLiveModels(preset.kind, row.endpoint ?? preset.baseUrl ?? "");
+            } else if (preset) {
+              discovered = await engine.discoverModels(chosen.id);
             }
             const models = modelChoices(preset, chosen.id, {
               live,
+              discovered,
               custom: customEp,
               current,
               def,

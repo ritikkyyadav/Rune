@@ -37,7 +37,7 @@ export type CliProvider =
  * drift again.
  */
 export const DEFAULT_MODELS: Record<CliProvider, string> = {
-  anthropic: "claude-opus-5",
+  anthropic: "claude-opus-5-5",
   openai: "gpt-6-astra",
   openrouter: "nvidia/nemotron-3-ultra-550b-a55b:free",
   google: "gemini-3.8-flash",

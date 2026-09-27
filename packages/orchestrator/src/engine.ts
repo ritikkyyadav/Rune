@@ -136,6 +136,8 @@ import type {
   MemoryModeMigration,
 } from "@rune/shared";
 import { buildGateway, providerStatus } from "./provider-registry";
+import { discoverModels } from "./model-discovery";
+import type { CachedModel } from "@rune/shared";
 import type { EnterpriseRouteConfig } from "./provider-registry";
 import type { ProviderStatusRow, BuildGatewayOpts } from "./provider-registry";
 import { AgentLoop, abortableSleep, isFixShaped, parseInterjection } from "./agent-loop";
@@ -8577,6 +8579,17 @@ export class Engine {
   /** The configured custom endpoint, if any (used to pre-fill the editor). */
   getCustomEndpoint(): CustomEndpoint | undefined {
     return this.customEndpoint;
+  }
+
+  /**
+   * What a signed-in provider's account serves right now, for the `/model`
+   * picker: the hour-fresh catalogue, else the provider's own listing, else
+   * null (show the seed list). Bounded and never throws — see model-discovery.
+   */
+  discoverModels(providerId: string, timeoutMs?: number): Promise<CachedModel[] | null> {
+    return discoverModels(providerId, this.gateway.getProvider(providerId as ProviderName), {
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    });
   }
 
   /**

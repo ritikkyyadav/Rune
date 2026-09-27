@@ -1391,11 +1391,23 @@ export const COMMAND_METHODS = {
     }
 
     // -- Level 3: models under that account --
+    // Local runtimes list what they serve and replace the preset; a cloud
+    // account's catalogue is merged INTO the preset, so a release newer than
+    // providers.ts still shows up here (mergeDiscovered).
     let live: string[] | null = null;
+    let discovered: { id: string; label?: string }[] | null = null;
     if (preset && (chosen.local || account?.kind === "endpoint")) {
       live = await fetchLiveModels(preset.kind, row.endpoint ?? preset.baseUrl ?? "");
+    } else if (preset) {
+      discovered = await engine.discoverModels(chosen.id);
     }
-    const models = modelChoices(preset, chosen.id, { live, custom: customEp, current, def });
+    const models = modelChoices(preset, chosen.id, {
+      live,
+      discovered,
+      custom: customEp,
+      current,
+      def,
+    });
     const l3: PickerItem[] = [
       ...models.map((m) => ({
         label: m.label,

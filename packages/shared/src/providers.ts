@@ -328,7 +328,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     label: "Anthropic",
     kind: "anthropic",
     envVar: "ANTHROPIC_API_KEY",
-    defaultModel: "claude-opus-5",
+    defaultModel: "claude-opus-5-5",
     docsUrl: "https://console.anthropic.com/settings/keys",
     keyHint: "sk-ant-…",
     // Two ways in: sign in with a Claude Pro/Max *subscription* (OAuth → a
@@ -336,24 +336,25 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     // OAuth is preferred in the picker; the API key stays the fallback and the
     // env/console path is byte-identical to before for existing key users.
     auth: ["oauth", "api_key"],
-    // Roster refreshed 2026-09-16 against Anthropic's model docs. Opus 5 is
-    // the documented starting point ("start with Opus 5 for most workloads")
-    // and stays the default. Fable 5.1 — the line for demanding reasoning and
-    // long-horizon agentic work — is listed but is NOT the default: the Fable
-    // line is unavailable under zero data retention, and Rune's
-    // compliance-sensitive users are exactly the ones who run ZDR. Opting in
-    // is a choice they should make knowingly. Fable 5 (superseded by 5.1) and
-    // Sonnet 4.5 are gone; 4.8/4.6 stay as the legacy rows people pin to.
-    // Haiku's dated id is claude-haiku-4-5-20251001; the alias is what ships.
+    // Roster refreshed 2026-09-28 against Anthropic's models overview. Opus 5.5
+    // is the documented starting point ("start with Claude Opus 5.5 for most
+    // workloads") and is the default; Opus 5 moved to the legacy list the same
+    // day and stays as a row people pin to. Fable 5.1 — the line for demanding
+    // reasoning and long-horizon agentic work — is listed but is NOT the
+    // default: the Fable line is unavailable under zero data retention, and
+    // Rune's compliance-sensitive users are exactly the ones who run ZDR.
+    // Opting in is a choice they should make knowingly. Haiku's dated id is
+    // claude-haiku-4-5-20251001; the alias is what ships.
     models: [
-      { id: "claude-opus-5", label: "Claude Opus 5" },
+      { id: "claude-opus-5-5", label: "Claude Opus 5.5" },
       { id: "claude-fable-5-1", label: "Claude Fable 5.1" },
       { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
       { id: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
+      { id: "claude-opus-5", label: "Claude Opus 5" },
       { id: "claude-opus-4-8", label: "Claude Opus 4.8" },
       { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
     ],
-    tiers: { heavy: "claude-opus-5", standard: "claude-sonnet-5", light: "claude-haiku-4-5" },
+    tiers: { heavy: "claude-opus-5-5", standard: "claude-sonnet-5", light: "claude-haiku-4-5" },
     // Deliberately NOT the default model: a fallback INTO Anthropic is a rescue
     // route, and the cheapest current-generation model that can carry a full
     // agentic transcript is the right thing to land on.
@@ -367,22 +368,26 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     defaultModel: "gpt-6-astra",
     docsUrl: "https://platform.openai.com/api-keys",
     keyHint: "sk-…",
-    // Roster refreshed 2026-09-16 from OpenAI's model docs: gpt-6-astra is the
-    // flagship (1.05M context / 128K output) and the gpt-5.6 line carries the
-    // same limits. gpt-5, gpt-5-mini, gpt-4o, gpt-4o-mini and o3 are gone —
-    // the picker had been offering a two-generation-old lineup as CURRENT.
+    // Roster refreshed 2026-09-28 from OpenAI's model docs. GPT-6 is now three
+    // weights — astra (flagship, $10/$50), sol (balanced, $2/$10) and luna
+    // (efficient, $0.10/$0.50), all 1.05M context / 128K output — released
+    // 2026-09-22. `gpt-6-astra-pro` is gone: no OpenAI page documents it. The
+    // gpt-5.6 line is not deprecated and stays for anyone pinned to it. This
+    // is the SEED list: `/model` merges in what the key's /v1/models serves,
+    // so the next release appears there before anyone edits this file.
     models: [
       { id: "gpt-6-astra", label: "GPT-6 Astra (flagship)" },
-      { id: "gpt-6-astra-pro", label: "GPT-6 Astra Pro" },
+      { id: "gpt-6-sol", label: "GPT-6 Sol (balanced)" },
+      { id: "gpt-6-luna", label: "GPT-6 Luna (fast)" },
       { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
-      { id: "gpt-5.6-terra", label: "GPT-5.6 Terra (balanced)" },
-      { id: "gpt-5.6-luna", label: "GPT-5.6 Luna (fast)" },
+      { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+      { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
       { id: "gpt-5.5", label: "GPT-5.5" },
       { id: "gpt-5.4-mini", label: "GPT-5.4 mini" },
       { id: "gpt-5.4-nano", label: "GPT-5.4 nano" },
     ],
-    tiers: { heavy: "gpt-6-astra", standard: "gpt-5.6-sol", light: "gpt-5.6-luna" },
-    fallbackModel: "gpt-5.6-terra",
+    tiers: { heavy: "gpt-6-astra", standard: "gpt-6-sol", light: "gpt-6-luna" },
+    fallbackModel: "gpt-6-sol",
   },
   {
     id: "openrouter",
@@ -408,9 +413,13 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     models: [
       { id: "nvidia/nemotron-3-ultra-550b-a55b:free", label: "Nemotron 3 Ultra (free)" },
       { id: "nvidia/nemotron-3-super-120b-a12b:free", label: "Nemotron 3 Super (free)" },
-      { id: "z-ai/glm-5.2:free", label: "GLM-5.2 (free)" },
-      { id: "anthropic/claude-opus-5", label: "Claude Opus 5" },
+      // glm-5.2:free left the free pool by 2026-09-28 (only the paid id is
+      // listed); Qwen3.8 27B is the free row that took its place, with tools.
+      { id: "qwen/qwen3.8-27b:free", label: "Qwen3.8 27B (free)" },
+      // OpenRouter spells Claude versions with a dot, unlike Anthropic's API.
+      { id: "anthropic/claude-opus-5.5", label: "Claude Opus 5.5" },
       { id: "openai/gpt-6-astra", label: "GPT-6 Astra" },
+      { id: "openai/gpt-6-sol", label: "GPT-6 Sol" },
       { id: "google/gemini-3.8-flash", label: "Gemini 3.8 Flash" },
       { id: "deepseek/deepseek-v4.1-flash", label: "DeepSeek V4.1 Flash" },
     ],
@@ -493,22 +502,24 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     kind: "openai-compat",
     envVar: "XAI_API_KEY",
     baseUrl: "https://api.x.ai/v1",
-    defaultModel: "grok-4.6",
+    defaultModel: "grok-4.7",
     docsUrl: "https://console.x.ai/",
     keyHint: "xai-…",
-    // Roster refreshed 2026-09-16 from xAI's model page. Windows differ across
-    // the line and that is the whole reason the light tier is 4.3 rather than
-    // a smaller model: 4.6/4.5 serve 500k, 4.3 and the reasoning build serve
-    // 1M, grok-build-0.1 serves 256k. grok-4, grok-4-fast and grok-code-fast-1
-    // are retired.
+    // Roster refreshed 2026-09-28 from xAI's model page: grok-4.7 is the
+    // latest (500k, same rates as 4.6) and takes the upper tiers. Windows
+    // differ across the line and that is the whole reason the light tier is
+    // 4.3 rather than a smaller model: 4.7/4.6/4.5 serve 500k, 4.3 and the
+    // reasoning build serve 1M, grok-build-0.1 serves 256k. grok-4, grok-4-fast
+    // and grok-code-fast-1 are retired.
     models: [
+      { id: "grok-4.7", label: "Grok 4.7" },
       { id: "grok-4.6", label: "Grok 4.6" },
       { id: "grok-4.5", label: "Grok 4.5" },
       { id: "grok-4.3", label: "Grok 4.3" },
       { id: "grok-build-0.1", label: "Grok Build 0.1 (code)" },
       { id: "grok-4.20-0309-reasoning", label: "Grok 4.20 Reasoning" },
     ],
-    tiers: { heavy: "grok-4.6", standard: "grok-4.6", light: "grok-4.3" },
+    tiers: { heavy: "grok-4.7", standard: "grok-4.7", light: "grok-4.3" },
   },
   {
     id: "deepseek",
@@ -538,36 +549,40 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     label: "ChatGPT (Codex)",
     kind: "codex",
     // A ChatGPT account (not an API key) can ONLY call the current Codex-for-
-    // ChatGPT allowlist. Refreshed 2026-09-16: gpt-6-astra is OpenAI's bundled
-    // default for Codex now, with the GPT-5.6 family beneath it. gpt-5.5
+    // ChatGPT allowlist. Refreshed 2026-09-28: OpenAI's Codex models page now
+    // recommends exactly gpt-6-astra, gpt-6-sol and gpt-6-luna (sol and luna
+    // shipped 2026-09-22), and astra stays the bundled default. gpt-5.5
     // retires 2026-10-14 and is deliberately NOT listed — a row that dies in
-    // four weeks is a support ticket, not a choice. The plain gpt-5 /
-    // gpt-5-codex / 5.2 / 5.3-codex slugs are API-key-only or deprecated here
-    // and 400 with "model is not supported when using Codex with a ChatGPT
-    // account". Ref: https://learn.chatgpt.com/docs/models
+    // weeks is a support ticket, not a choice. The plain gpt-5 / gpt-5-codex /
+    // 5.2 / 5.3-codex slugs are API-key-only or deprecated here and 400 with
+    // "model is not supported when using Codex with a ChatGPT account".
+    // Ref: https://learn.chatgpt.com/docs/models
     //
-    // This preset was the founder-visible rot: the product shipped without the
-    // model OpenAI had made the Codex default, so signing in with ChatGPT
-    // offered a lineup one generation behind the account's own entitlement.
+    // This preset was the founder-visible rot TWICE: first without astra, then
+    // without sol/luna. The list below is now only the seed — CodexProvider
+    // reads the account's live catalogue (GET …/codex/models), and `/model`
+    // shows whatever that catalogue lists, new releases included.
     defaultModel: "gpt-6-astra",
     docsUrl: "https://learn.chatgpt.com/docs/models",
     auth: ["oauth"],
     // Depth is a SEPARATE choice from the model (see effortChoices) —
-    // sol/terra/luna are model weights, not effort levels.
+    // astra/sol/luna are model weights, not effort levels.
     models: [
       { id: "gpt-6-astra", label: "GPT-6 Astra (flagship)" },
+      { id: "gpt-6-sol", label: "GPT-6 Sol (balanced)" },
+      { id: "gpt-6-luna", label: "GPT-6 Luna (fast)" },
       { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
-      { id: "gpt-5.6-terra", label: "GPT-5.6 Terra (balanced)" },
-      { id: "gpt-5.6-luna", label: "GPT-5.6 Luna (fast)" },
+      { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+      { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
     ],
-    // The gpt-5.6 line encodes reasoning weight in the model NAME (sol > terra
-    // > luna) rather than a reasoning.effort param, so the tier split is just
-    // the right variant per weight; gpt-6-astra takes the heavy slot above it.
-    // Codex had NO tier entry until 2026-08-28, which meant every "cheap scout"
-    // ran a 32-turn flagship against the plan quota; one audited session hit
-    // the usage limit nine minutes in.
-    tiers: { heavy: "gpt-6-astra", standard: "gpt-5.6-sol", light: "gpt-5.6-luna" },
-    fallbackModel: "gpt-5.6-terra",
+    // GPT-6 encodes weight in the model NAME (astra > sol > luna), so the tier
+    // split is just the right variant per weight. Codex had NO tier entry
+    // until 2026-08-28, which meant every "cheap scout" ran a 32-turn flagship
+    // against the plan quota; one audited session hit the usage limit nine
+    // minutes in. Luna is also the model OpenAI's own rate-limit prompt
+    // recommends, which is the job the light tier does here.
+    tiers: { heavy: "gpt-6-astra", standard: "gpt-6-sol", light: "gpt-6-luna" },
+    fallbackModel: "gpt-6-sol",
   },
   {
     // Ollama's hosted cloud ("Turbo"). Distinct id from local "ollama" so the
@@ -677,8 +692,12 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     // Refreshed 2026-09-16 to the ids Google Cloud documents. The current
     // Anthropic line is addressed by its plain id on Vertex; only the legacy
     // Haiku row still carries the `@<version>` suffix. Opus 4.1, Sonnet 4.5
-    // and the gemini-2.5-* rows are dropped.
+    // and the gemini-2.5-* rows are dropped. Opus 5.5 added 2026-09-28 (its
+    // Google Cloud id is the plain `claude-opus-5-5`); it is not a tier yet,
+    // because Model Garden enables each model per project and an unattended
+    // tier call that 404s is worse than one that runs on Opus 5.
     models: [
+      { id: "claude-opus-5-5", label: "Claude Opus 5.5" },
       { id: "claude-opus-5", label: "Claude Opus 5" },
       { id: "claude-fable-5-1", label: "Claude Fable 5.1" },
       { id: "claude-sonnet-5", label: "Claude Sonnet 5" },

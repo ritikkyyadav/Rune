@@ -149,9 +149,27 @@ describe("the depth dial follows the model, not the calendar", () => {
 
   test("the OpenAI API dial reaches the whole current line", () => {
     for (const model of ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.4-mini", "gpt-5"]) {
-      expect(reasoningEffortsFor("openai", model)).toEqual(["low", "medium", "high"]);
       expect(reasoningEffortsFor("azure-openai", model)).toEqual(["low", "medium", "high"]);
     }
+    for (const model of ["gpt-5.4-mini", "gpt-5"]) {
+      expect(reasoningEffortsFor("openai", model)).toEqual(["low", "medium", "high"]);
+    }
+  });
+
+  test("the API dial goes as deep as the model pages document, and no deeper", () => {
+    // gpt-6 astra/sol/luna and the gpt-5.6 line document low…max on the API
+    // (2026-09-28). Azure stays narrow: nothing has read a Foundry deployment's
+    // accepted values, and it can trail the first-party model.
+    for (const model of ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-luna"]) {
+      expect(reasoningEffortsFor("openai", model)).toEqual([
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+      ]);
+    }
+    expect(reasoningEffortsFor("azure-openai", "gpt-6-sol")).toEqual(["low", "medium", "high"]);
   });
 
   test("Anthropic and the 3.x Gemini line are unchanged by this refresh", () => {

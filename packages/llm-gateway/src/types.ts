@@ -169,12 +169,12 @@ export function reasoningEffortsFor(provider: string, model: string): ReasoningE
   const m = model.toLowerCase();
   if (provider === "codex") {
     if (/^gpt-5\.6/.test(m)) return ["low", "medium", "high", "xhigh", "max"];
-    // gpt-6 and later: INHERITED from the 5.6 line, not measured. OpenAI's
-    // changelog adds `max` and `ultra` for this generation; `ultra` has no
-    // ReasoningEffort value here and is deliberately not invented. Offering
-    // the 5.6 set is the conservative direction — it is a strict subset of
-    // what the changelog claims, so the picker cannot offer a value the
-    // backend has never accepted from an earlier model on the same route.
+    // gpt-6: the Codex models page documents Light–Max for astra, and the API
+    // pages document low…max for astra, sol and luna (2026-09-28). `ultra`
+    // (sub-agent delegation, not a depth) has no ReasoningEffort value here
+    // and is deliberately not invented. Later generations inherit the same
+    // set, which is the conservative direction: every value in it has been
+    // accepted from an earlier model on this route.
     if (/^(gpt-[6-9]|gpt-\d{2})/.test(m)) return ["low", "medium", "high", "xhigh", "max"];
     return ["low", "medium", "high"];
   }
@@ -182,6 +182,13 @@ export function reasoningEffortsFor(provider: string, model: string): ReasoningE
   // it carries the same dial. The model here is Rune's model id, which maps to
   // a deployment NAME on the way out — the dial follows the model, not the
   // deployment, which is why this tests the id and not the deployment string.
+  // The OpenAI API itself: gpt-5.6 and gpt-6 DOCUMENT low…max on their model
+  // pages (2026-09-28), so the API dial is as deep as the Codex one for them.
+  // Azure is left on the narrow set below: a Foundry deployment can trail the
+  // first-party model by weeks, and nothing here has read its accepted values.
+  if (provider === "openai" && /^gpt-(6|5\.6)(-|$)/.test(m)) {
+    return ["low", "medium", "high", "xhigh", "max"];
+  }
   if (
     (provider === "openai" || provider === "azure-openai") &&
     /^(gpt-[5-9]|gpt-\d{2}|o[134])(-|\.|:|$)/.test(m)
@@ -677,8 +684,11 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   // Cache reads at 10% and writes at 125% are the standard Anthropic terms,
   // so these take the defaults rather than restating them per row.
   "claude-fable-5": { inputPerMillion: 10, outputPerMillion: 50 },
-  "claude-fable-5-1": { inputPerMillion: 10, outputPerMillion: 50, estimated: true },
+  // Two exceptions to the 10% cache-read default, per Anthropic's models
+  // overview (2026-09-28): Fable 5.1 reads cache at 2.5% and Opus 5.5 at 5%.
+  "claude-fable-5-1": { inputPerMillion: 10, outputPerMillion: 50, cacheReadPerMillion: 0.25 },
   "claude-mythos-5": { inputPerMillion: 10, outputPerMillion: 50 },
+  "claude-opus-5-5": { inputPerMillion: 4, outputPerMillion: 20, cacheReadPerMillion: 0.2 },
   "claude-opus-5": { inputPerMillion: 5, outputPerMillion: 25 },
   "claude-opus-4-8": { inputPerMillion: 5, outputPerMillion: 25 },
   "claude-opus-4-7": { inputPerMillion: 5, outputPerMillion: 25 },
@@ -730,20 +740,27 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   "gpt-4o-mini": { inputPerMillion: 0.15, outputPerMillion: 0.6, cacheReadPerMillion: 0.075 },
   o3: { inputPerMillion: 2, outputPerMillion: 8 },
   "o4-mini": { inputPerMillion: 1.1, outputPerMillion: 4.4 },
-  // Codex-plan models. Reached through a ChatGPT subscription, so the marginal
-  // cost is zero — but they are priced at the GPT-5 line's rates so the "what
-  // would this have cost metered?" column is real. Estimated until published.
-  // The 2026 line. gpt-6-astra is the flagship and the bundled Codex default;
-  // rates are the GPT-5 line's until OpenAI publishes its own, so the
-  // metered-equivalent column is populated rather than silently zero.
-  "gpt-6-astra": { inputPerMillion: 1.25, outputPerMillion: 10, estimated: true },
+  // The 2026 line, from OpenAI's model pages (2026-09-28). Codex-plan use of
+  // the same ids costs nothing at the margin, but pricing them at API rates
+  // keeps the "what would this have cost metered?" column real. Cached input
+  // is 10% across the line, which is the default ratio, so no row states it.
+  // Prompts over 272K input tokens bill at 2x input; the meter prices the
+  // base tier, so a very long prompt under-reports rather than over-reports.
+  //
+  // Until 2026-09-28 astra carried the GPT-5 line's $1.25/$10 as an estimate.
+  // The published rate is $10/$50, so every astra session was metered at
+  // about an eighth of its real cost.
+  "gpt-6-astra": { inputPerMillion: 10, outputPerMillion: 50 },
+  "gpt-6-sol": { inputPerMillion: 2, outputPerMillion: 10 },
+  "gpt-6-luna": { inputPerMillion: 0.1, outputPerMillion: 0.5 },
+  // Kept only so old ledgers still price: no OpenAI page documents this id.
   "gpt-6-astra-pro": { inputPerMillion: 2.5, outputPerMillion: 20, estimated: true },
+  "gpt-5.6-sol": { inputPerMillion: 4, outputPerMillion: 20 },
+  "gpt-5.6-terra": { inputPerMillion: 2, outputPerMillion: 12 },
+  "gpt-5.6-luna": { inputPerMillion: 0.2, outputPerMillion: 1.2 },
   "gpt-5.5": { inputPerMillion: 1.25, outputPerMillion: 10, estimated: true },
   "gpt-5.4-mini": { inputPerMillion: 0.25, outputPerMillion: 2, estimated: true },
-  "gpt-5.4-nano": { inputPerMillion: 0.05, outputPerMillion: 0.4, estimated: true },
-  "gpt-5.6-sol": { inputPerMillion: 1.25, outputPerMillion: 10, estimated: true },
-  "gpt-5.6-terra": { inputPerMillion: 1.25, outputPerMillion: 10, estimated: true },
-  "gpt-5.6-luna": { inputPerMillion: 1.25, outputPerMillion: 10, estimated: true },
+  "gpt-5.4-nano": { inputPerMillion: 0.2, outputPerMillion: 1.25 },
 
   // ─── DeepSeek ───
   // The current pair (2026-09-16). Rates carried from the line they replace;
@@ -767,13 +784,20 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   deepseek: { inputPerMillion: 0.27, outputPerMillion: 1.1, estimated: true },
 
   // ─── xAI ───
-  // The 2026 line. Estimated from the grok-4 rates it replaces; the code build
-  // takes grok-code-fast-1's shape.
-  "grok-4.6": { inputPerMillion: 3, outputPerMillion: 15, estimated: true },
-  "grok-4.5": { inputPerMillion: 3, outputPerMillion: 15, estimated: true },
-  "grok-4.3": { inputPerMillion: 3, outputPerMillion: 15, estimated: true },
-  "grok-4.20-0309-reasoning": { inputPerMillion: 3, outputPerMillion: 15, estimated: true },
-  "grok-build-0.1": { inputPerMillion: 0.2, outputPerMillion: 1.5, estimated: true },
+  // The 2026 line, from xAI's model page (2026-09-28). xAI bills two tiers by
+  // prompt length; these are the under-200k rates, which is where an agent
+  // turn lives, so a very long prompt under-reports. They replace estimates
+  // carried over from grok-4 that overstated output cost by 2.5x.
+  "grok-4.7": { inputPerMillion: 2, outputPerMillion: 6, cacheReadPerMillion: 0.5 },
+  "grok-4.6": { inputPerMillion: 2, outputPerMillion: 6, cacheReadPerMillion: 0.5 },
+  "grok-4.5": { inputPerMillion: 2, outputPerMillion: 6, cacheReadPerMillion: 0.3 },
+  "grok-4.3": { inputPerMillion: 1.25, outputPerMillion: 2.5, cacheReadPerMillion: 0.2 },
+  "grok-4.20-0309-reasoning": {
+    inputPerMillion: 1.25,
+    outputPerMillion: 2.5,
+    cacheReadPerMillion: 0.2,
+  },
+  "grok-build-0.1": { inputPerMillion: 1, outputPerMillion: 2, cacheReadPerMillion: 0.2 },
   "grok-4": { inputPerMillion: 3, outputPerMillion: 15 },
   "grok-4-fast": { inputPerMillion: 0.2, outputPerMillion: 0.5 },
   "grok-code-fast-1": { inputPerMillion: 0.2, outputPerMillion: 1.5 },
@@ -988,6 +1012,12 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   "anthropic/claude-sonnet-4-6": { inputPerMillion: 3, outputPerMillion: 15 },
   "anthropic/claude-sonnet-4-20250514": { inputPerMillion: 3, outputPerMillion: 15 },
   "anthropic/claude-haiku-4-5-20251001": { inputPerMillion: 0.8, outputPerMillion: 4 },
+  // OpenRouter spells Opus 5.5 with a dot, so the bare-id fallback misses it.
+  "anthropic/claude-opus-5.5": {
+    inputPerMillion: 4,
+    outputPerMillion: 20,
+    cacheReadPerMillion: 0.2,
+  },
   "openai/gpt-4o": { inputPerMillion: 2.5, outputPerMillion: 10, cacheReadPerMillion: 1.25 },
   "qwen/qwen3-coder": { inputPerMillion: 0.3, outputPerMillion: 1.2, estimated: true },
 
@@ -1002,6 +1032,8 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   // Verified 2026-09-08: https://openrouter.ai/nvidia/nemotron-3-super-120b-a12b:free
   "nvidia/nemotron-3-super-120b-a12b:free": { inputPerMillion: 0, outputPerMillion: 0 },
   "nvidia/nemotron-3-ultra-550b-a55b:free": { inputPerMillion: 0, outputPerMillion: 0 },
+  // Listed free with tool support on 2026-09-28 (openrouter.ai/api/v1/models).
+  "qwen/qwen3.8-27b:free": { inputPerMillion: 0, outputPerMillion: 0 },
   "stealth/ox-alpha": { inputPerMillion: 0, outputPerMillion: 0 },
 };
 

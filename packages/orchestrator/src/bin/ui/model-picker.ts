@@ -210,6 +210,11 @@ export interface ModelChoice {
 export interface ModelChoiceOpts {
   /** Live-listed ids (local runtimes); null/undefined -> fall back to the preset list. */
   live?: string[] | null;
+  /**
+   * A cloud account's live catalogue (engine.discoverModels). Unlike `live`,
+   * this ADDS to the preset rather than replacing it — see mergeDiscovered.
+   */
+  discovered?: { id: string; label?: string }[] | null;
   custom?: CustomEndpoint;
   current: { provider: string; model: string };
   def: LastModel | null;
@@ -227,7 +232,7 @@ export function modelChoices(
   } else if (opts.live && opts.live.length > 0) {
     base = opts.live.map((id) => ({ id, label: id }));
   } else {
-    base = preset?.models ?? [];
+    base = mergeDiscovered(preset?.models ?? [], opts.discovered ?? []);
   }
   return base.map((m) => ({
     id: m.id,
@@ -235,6 +240,50 @@ export function modelChoices(
     current: opts.current.provider === providerId && opts.current.model === m.id,
     isDefault: opts.def?.provider === providerId && opts.def?.model === m.id,
   }));
+}
+
+/** Most live-only rows the picker adds beneath the seed list. */
+export const DISCOVERED_EXTRA_CAP = 30;
+
+/** Ids that name a model an agent cannot drive: speech, image, video, music, embeddings. */
+const NON_TEXT_MODEL =
+  /(^|[-_/.])(tts|image|imagen|embed|embedding|transcribe|audio|realtime|live|veo|lyria|whisper|moderation)([-_/.:]|$)/i;
+
+/** A dated snapshot's alias: `claude-haiku-4-5-20251001`, `gpt-6-sol-2026-09-22` -> the bare id. */
+function aliasOf(id: string): string {
+  return id.replace(/-(\d{8}|\d{4}-\d{2}-\d{2})$/, "");
+}
+
+/**
+ * The seed list with an account's live catalogue merged in.
+ *
+ * The seed rows come first, in their curated order and with their curated
+ * labels. Nothing is ever DROPPED for being absent from the listing, because
+ * listings speak snapshot ids and the seed speaks aliases: Anthropic lists
+ * `claude-haiku-4-5-20251001`, never the `claude-haiku-4-5` alias the preset
+ * ships, and a merge that dropped unlisted rows would hide a working model.
+ *
+ * Beneath them come the models the account serves that the seed does not
+ * name, in the provider's own order (Codex's priority, newest-first
+ * elsewhere): this is where a release newer than the preset appears. A dated
+ * snapshot of a seed alias is folded into that alias rather than shown twice,
+ * non-text models are skipped, and the extras are capped — OpenRouter lists
+ * some 400 models, and `rune models <provider>` is where the whole list lives.
+ */
+export function mergeDiscovered(
+  seed: { id: string; label: string }[],
+  discovered: { id: string; label?: string }[],
+  cap = DISCOVERED_EXTRA_CAP,
+): { id: string; label: string }[] {
+  const known = new Set(seed.map((m) => m.id));
+  const extras: { id: string; label: string }[] = [];
+  for (const m of discovered) {
+    if (extras.length >= cap) break;
+    if (!m.id || known.has(m.id) || known.has(aliasOf(m.id)) || NON_TEXT_MODEL.test(m.id)) continue;
+    known.add(m.id);
+    extras.push({ id: m.id, label: m.label?.trim() || m.id });
+  }
+  return [...seed, ...extras];
 }
 
 /**

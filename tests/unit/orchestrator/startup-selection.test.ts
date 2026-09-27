@@ -111,7 +111,7 @@ describe("resolveStartupSelection", () => {
     );
     expect(selection).toEqual({
       provider: "anthropic",
-      model: "claude-opus-5",
+      model: "claude-opus-5-5",
       source: "auto",
     });
   });
@@ -199,7 +199,7 @@ describe("resolveStartupSelection", () => {
     );
     expect(selection).toEqual({
       provider: "anthropic",
-      model: "claude-opus-5",
+      model: "claude-opus-5-5",
       source: "auto",
       unknownSaved: "github-models",
     });
@@ -223,7 +223,7 @@ describe("resolveStartupSelection", () => {
     // noise, and noise is how a real one gets missed.
     const selection = resolveStartupSelection(base({ env: { ANTHROPIC_API_KEY: "sk" } }));
     expect(selection.unknownSaved).toBeUndefined();
-    expect(selection).toEqual({ provider: "anthropic", model: "claude-opus-5", source: "auto" });
+    expect(selection).toEqual({ provider: "anthropic", model: "claude-opus-5-5", source: "auto" });
   });
 
   test("the custom endpoint is never reported as an unknown preset", () => {
@@ -371,7 +371,7 @@ describe("the rungs the mutation matrix found untested", () => {
           config: { llm: { defaultProvider: "anthropic", anthropic: { apiKey: "sk-config" } } },
         }),
       ),
-    ).toEqual({ provider: "anthropic", model: "claude-opus-5", source: "config" });
+    ).toEqual({ provider: "anthropic", model: "claude-opus-5-5", source: "config" });
   });
 
   test("config: a /keys secret is one of the four credential sources", () => {

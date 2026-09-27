@@ -39,7 +39,7 @@ describe("the readout distinguishes free from unmeasured", () => {
   test("a subscription route shows $0 spent AND what it was worth", () => {
     const t = new CostTracker();
     t.record(
-      "gpt-5.6-sol",
+      "gpt-5.5",
       "codex",
       { inputTokens: 1_000_000, outputTokens: 10_000 },
       { role: "primary" },
@@ -69,7 +69,7 @@ describe("the readout distinguishes free from unmeasured", () => {
 
   test("inferred rates are marked with a tilde and explained", () => {
     const t = new CostTracker();
-    t.record("gpt-5.6-sol", "codex", { inputTokens: 1_000, outputTokens: 10 }, { role: "primary" });
+    t.record("gpt-5.5", "codex", { inputTokens: 1_000, outputTokens: 10 }, { role: "primary" });
     const rows = rowsFor(t);
     expect(rows.get("Metered equivalent")?.value.startsWith("~")).toBe(true);
     expect(rows.get("Note")?.value).toContain("inferred");
@@ -150,7 +150,7 @@ describe("status-bar summary", () => {
   test("a subscription route leads with value, since spend is always zero", () => {
     const t = new CostTracker();
     t.record(
-      "gpt-5.6-sol",
+      "gpt-5.5",
       "codex",
       { inputTokens: 1_000_000, outputTokens: 10_000 },
       { role: "primary" },

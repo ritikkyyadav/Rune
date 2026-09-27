@@ -45,6 +45,26 @@ export const REASONING_FAMILY = /^(gpt-[5-9]|gpt-\d{2}|o[134])(-|\.|:|$)/;
 export const HIDDEN_REASONING_FAMILY = /(^|\/)(o[134]|gpt-[5-9]|gpt-\d{2})/;
 
 /**
+ * Whether an id from OpenAI's /v1/models is a model an agent can drive: text
+ * in, text and tool calls out, over Chat Completions.
+ *
+ * The listing returns every product on the account — embeddings, TTS,
+ * transcription, image, realtime voice — plus a dated snapshot beside every
+ * alias. Merged into `/model` raw, that is ~80 rows with the three that matter
+ * somewhere in the middle. The rule is a family PREFIX (gpt / o-series /
+ * chatgpt / codex) minus the modality words OpenAI puts in non-text ids, so
+ * a new text model is admitted by default and a new modality needs one word
+ * here. Dated snapshots are dropped: each duplicates an alias that is listed,
+ * and `/model openai/<id>` still reaches any of them.
+ */
+export function isOpenAIChatModel(id: string): boolean {
+  const m = id.toLowerCase();
+  if (!/^(gpt-|o[1-9]|chatgpt-|codex-)/.test(m)) return false;
+  if (/(image|realtime|audio|transcribe|tts|search|live|instruct|translate)/.test(m)) return false;
+  return !/-\d{4}-\d{2}-\d{2}$/.test(m);
+}
+
+/**
  * Attach a prompt-cache breakpoint to one chat message, promoting its string
  * content to the array-of-parts form that can carry the field. A message with
  * no text to hang it on (an assistant turn that is pure tool_calls) is left
@@ -165,11 +185,14 @@ export class OpenAIProvider implements LlmProvider {
     const m = model.toLowerCase();
     if (/^gpt-5(?:-mini|-nano|-chat)?(?:-|$)/.test(m) && !m.includes("codex")) return "minimal";
     if (/^gpt-5\.\d/.test(m) && !m.includes("codex")) return "none";
-    // gpt-6 and anything later: UNMEASURED. "none" is the family-consistent
-    // guess (5.1+ replaced "minimal" with it) but a guess that is wrong here
-    // 400s the whole request, and this is the path the Auto-mode classifier
-    // takes on every turn. "low" is accepted by every reasoning model there
-    // has ever been, so the floor falls through to it deliberately.
+    // gpt-6 sol and luna document `none`; astra documents low…max and NO
+    // `none` (model pages, 2026-09-28). So the family is split by weight, and
+    // astra takes the "low" fall-through below with everything unknown.
+    if (/^gpt-6-(sol|luna)(-|$)/.test(m)) return "none";
+    // Anything else: UNMEASURED. A wrong guess here 400s the whole request,
+    // and this is the path the Auto-mode classifier takes on every turn. "low"
+    // is accepted by every reasoning model there has ever been, so the floor
+    // falls through to it deliberately.
     return "low";
   }
 
@@ -435,10 +458,23 @@ export class OpenAIProvider implements LlmProvider {
     }
   }
 
-  /** Live model discovery via the OpenAI-compatible /v1/models endpoint. */
+  /**
+   * Live model discovery via the OpenAI-compatible /v1/models endpoint.
+   * First-party OpenAI is narrowed to the models an agent can drive (see
+   * isOpenAIChatModel) and ordered newest first, so a release the preset has
+   * not heard of lands at the top of the extras `/model` shows; other hosts on
+   * this adapter are returned as they list.
+   */
   async listModels(): Promise<ModelInfo[]> {
     const res = await this.client.models.list();
-    return (res.data ?? []).map((m) => ({ id: m.id, label: m.id, live: true }));
+    const data = [...(res.data ?? [])];
+    if (this.name === "openai") data.sort((a, b) => (b.created ?? 0) - (a.created ?? 0));
+    const ids = data.map((m) => m.id);
+    return (this.name === "openai" ? ids.filter(isOpenAIChatModel) : ids).map((id) => ({
+      id,
+      label: id,
+      live: true,
+    }));
   }
 
   // ─── Translation Helpers ───

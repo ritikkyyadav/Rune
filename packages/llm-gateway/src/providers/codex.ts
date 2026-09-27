@@ -416,6 +416,103 @@ export async function codexErrorMessage(res: {
   return `Codex request failed (${res.status}): ${oneLine || "(empty body)"}`;
 }
 
+// ─── Model catalogue ───
+//
+// The backend DOES list models: `GET …/codex/models?client_version=x.y.z`
+// returns `{ models: [...] }` (codex-rs `ModelsResponse`). Until 2026-09-28
+// this file said it had no listing endpoint and returned [], so the ChatGPT
+// route could only ever offer the hand-written preset — which is how GPT-6 Sol
+// and Luna shipped on 2026-09-22 and were still missing from `/model` a week
+// later.
+//
+// The catalogue is FILTERED BY `client_version`: a model appears only for
+// clients new enough to have been told about it. A pinned version therefore
+// rots in exactly the way the preset did (nanobot pinned 0.153.4 and lost Sol
+// and Luna on the same account that 0.158.0 saw them on). So the version asked
+// for tracks the published Codex CLI, and the pin below is only a floor.
+
+const MODELS_URL = "https://chatgpt.com/backend-api/codex/models";
+const CODEX_NPM_LATEST = "https://registry.npmjs.org/@openai/codex/latest";
+
+/** The newest Codex CLI release known to this build (2026-09-26). A floor, not the answer. */
+export const CODEX_CLIENT_VERSION_FLOOR = "0.157.1";
+
+/** The higher of two `x.y.z` versions, as a plain `x.y.z`. An unparseable `a` loses. */
+export function newerClientVersion(a: string, b: string): string {
+  const parse = (v: string) => /^(\d+)\.(\d+)\.(\d+)/.exec(v.trim())?.slice(1, 4).map(Number);
+  const pa = parse(a);
+  const pb = parse(b);
+  if (!pa) return pb ? pb.join(".") : b;
+  if (!pb) return pa.join(".");
+  for (let i = 0; i < 3; i++) {
+    if (pa[i]! !== pb[i]!) return (pa[i]! > pb[i]! ? pa : pb).join(".");
+  }
+  return pa.join(".");
+}
+
+let clientVersion: Promise<string> | undefined;
+
+/**
+ * The `client_version` to ask the catalogue as. `RUNE_CODEX_CLIENT_VERSION`
+ * wins outright (a lever for the day OpenAI changes the rule); otherwise the
+ * newer of npm's published `@openai/codex` and the floor, looked up once per
+ * process. An unreachable registry costs 1.5s once and falls to the floor.
+ */
+export function codexClientVersion(): Promise<string> {
+  const override = process.env.RUNE_CODEX_CLIENT_VERSION?.trim();
+  if (override) return Promise.resolve(override);
+  clientVersion ??= fetch(CODEX_NPM_LATEST, { signal: AbortSignal.timeout(1500) })
+    .then((res) => (res.ok ? (res.json() as Promise<{ version?: unknown }>) : null))
+    .then((body) =>
+      newerClientVersion(
+        typeof body?.version === "string" ? body.version : "",
+        CODEX_CLIENT_VERSION_FLOOR,
+      ),
+    )
+    .catch(() => CODEX_CLIENT_VERSION_FLOOR);
+  return clientVersion;
+}
+
+/** Test seam: forget the memoized version so each test starts cold. */
+export function resetCodexClientVersion(): void {
+  clientVersion = undefined;
+}
+
+/**
+ * The catalogue as Rune reads it: only `visibility: "list"` entries (the ones
+ * the Codex CLI's own picker shows; "hide" and "none" are internal or not for
+ * this account), in the backend's `priority` order, ascending, as codex-rs
+ * sorts it. Defensive about shape: a field that is missing or the wrong type
+ * drops that entry, never the whole list. Pure, exported for tests.
+ */
+export function parseCodexCatalog(body: unknown): ModelInfo[] {
+  const models = (body as { models?: unknown } | null)?.models;
+  if (!Array.isArray(models)) return [];
+  const rank = (p: unknown) => (typeof p === "number" && Number.isFinite(p) ? p : Infinity);
+  return models
+    .filter(
+      (m): m is Record<string, unknown> =>
+        !!m &&
+        typeof m === "object" &&
+        typeof (m as { slug?: unknown }).slug === "string" &&
+        (m as { slug: string }).slug.length > 0 &&
+        (m as { visibility?: unknown }).visibility === "list",
+    )
+    .sort((a, b) => rank(a.priority) - rank(b.priority))
+    .map((m) => {
+      const id = m.slug as string;
+      const label =
+        typeof m.display_name === "string" && m.display_name.trim() ? m.display_name.trim() : id;
+      const window = m.context_window;
+      return {
+        id,
+        label,
+        live: true,
+        ...(typeof window === "number" && window > 0 ? { contextLimit: window } : {}),
+      };
+    });
+}
+
 // ─── Provider ───
 
 export class CodexProvider implements LlmProvider {
@@ -517,23 +614,46 @@ export class CodexProvider implements LlmProvider {
     return this.accessToken.length > 0;
   }
 
+  /**
+   * What this ChatGPT account can run on Codex right now — the live catalogue
+   * (see "Model catalogue" above). Throws on a failed call so `rune models`
+   * can say WHY it fell back to the preset; callers that only want a list
+   * catch and use the seed.
+   */
   async listModels(): Promise<ModelInfo[]> {
-    // The Codex backend has no public model-listing endpoint; the preset's
-    // curated list is the source of truth (callers fall back to it).
-    return [];
+    const version = await codexClientVersion();
+    const res = await fetch(`${MODELS_URL}?client_version=${encodeURIComponent(version)}`, {
+      headers: { ...this.identityHeaders(), accept: "application/json" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) {
+      throw new ApiError({
+        status: res.status,
+        provider: "codex",
+        message: await codexErrorMessage(res),
+      });
+    }
+    return parseCodexCatalog(await res.json());
   }
 
-  private headers(): Record<string, string> {
+  /** Who is calling: the account bearer, presented as the Codex CLI. */
+  private identityHeaders(): Record<string, string> {
     const h: Record<string, string> = {
       authorization: `Bearer ${this.accessToken}`,
-      "content-type": "application/json",
-      accept: "text/event-stream",
-      "openai-beta": "responses=experimental",
       // Present as the Codex CLI — the backend keys subscription access off this.
       originator: "codex_cli_rs",
-      session_id: this.sessionId,
     };
     if (this.accountId) h["chatgpt-account-id"] = this.accountId;
     return h;
+  }
+
+  private headers(): Record<string, string> {
+    return {
+      ...this.identityHeaders(),
+      "content-type": "application/json",
+      accept: "text/event-stream",
+      "openai-beta": "responses=experimental",
+      session_id: this.sessionId,
+    };
   }
 }

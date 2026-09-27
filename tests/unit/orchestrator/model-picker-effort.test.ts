@@ -26,27 +26,50 @@ import { PROVIDER_PRESETS } from "../../../packages/shared/src/providers";
 const codexPreset = PROVIDER_PRESETS.find((p) => p.id === "codex");
 
 describe("the Codex model list", () => {
-  test("offers the four current models and nothing else", () => {
-    // Refreshed 2026-09-16: gpt-6-astra is OpenAI's bundled Codex default and
-    // was MISSING from this list, which is the rot the founder hit. gpt-5.5 is
-    // still absent on purpose — it retires 2026-10-14, and a row that dies in
-    // four weeks is clutter in the one list a person reads while deciding.
-    expect(codexPreset?.models.map((m) => m.id)).toEqual([
+  test("offers the GPT-6 line first, then the 5.6 line, and nothing else", () => {
+    // Refreshed 2026-09-28: gpt-6-sol and gpt-6-luna shipped 2026-09-22 and
+    // were MISSING — the same rot as astra on 2026-09-16. gpt-5.5 is still
+    // absent on purpose: it retires 2026-10-14, and a row that dies in weeks
+    // is clutter in the one list a person reads while deciding.
+    expect(codexPreset?.models?.map((m) => m.id)).toEqual([
       "gpt-6-astra",
+      "gpt-6-sol",
+      "gpt-6-luna",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
     ]);
   });
 
-  test("the picker surfaces exactly those four", () => {
+  test("with no live catalogue, the picker surfaces exactly the seed", () => {
     const models = modelChoices(codexPreset, "codex", {
-      current: { provider: "codex", model: "gpt-5.6-sol" },
+      current: { provider: "codex", model: "gpt-6-sol" },
       def: null,
     });
-    expect(models).toHaveLength(4);
-    expect(models.find((m) => m.id === "gpt-5.6-sol")?.current).toBe(true);
+    expect(models).toHaveLength(6);
+    expect(models.find((m) => m.id === "gpt-6-sol")?.current).toBe(true);
     expect(models.find((m) => m.id === "gpt-6-astra")).toBeDefined();
+  });
+
+  test("a model the account serves but the seed has never heard of still appears", () => {
+    // The failure this pins: a release newer than providers.ts. The live
+    // catalogue carries it, so it is offered — below the seed, with the
+    // display name the backend gave it.
+    const models = modelChoices(codexPreset, "codex", {
+      discovered: [
+        { id: "gpt-6-astra", label: "GPT-6 Astra" },
+        { id: "gpt-7-nova", label: "GPT-7 Nova" },
+      ],
+      current: { provider: "codex", model: "gpt-6-astra" },
+      def: null,
+    });
+    expect(models.map((m) => m.id)).toEqual([
+      ...(codexPreset?.models ?? []).map((m) => m.id),
+      "gpt-7-nova",
+    ]);
+    expect(models.at(-1)?.label).toBe("GPT-7 Nova");
+    // Seed rows keep their curated labels even when the catalogue lists them.
+    expect(models[0]?.label).toBe("GPT-6 Astra (flagship)");
   });
 });
 
