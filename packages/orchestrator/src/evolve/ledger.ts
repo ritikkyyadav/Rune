@@ -19,7 +19,12 @@ import { getRuneHome } from "@rune/shared";
 
 export const LEDGER_FILE = "evolve-ledger.jsonl";
 
-export type LedgerKind = "measurement" | "promotion" | "revert" | "halt";
+/**
+ * `lesson` rows record a person disabling or re-enabling a notebook lesson
+ * (`rune evolve lessons --disable/--enable`): the same "why does it believe
+ * this" history, for the other half of what the loop learns.
+ */
+export type LedgerKind = "measurement" | "promotion" | "revert" | "halt" | "lesson";
 
 export interface LedgerEntry {
   v: 1;
@@ -38,6 +43,22 @@ export interface LedgerEntry {
   mode?: "mock" | "real";
   /** Measurement rows only: did every gate pass? */
   win?: boolean;
+  /**
+   * Measurement rows: the run could not answer its question — nothing was
+   * comparable on both arms, most of the suite went unscored, or a cost was
+   * unknown. Not a win, and not a loss either: it closes nothing.
+   */
+  inconclusive?: boolean;
+  /**
+   * Measurement rows: what the experiment itself cost at list rates — both
+   * arms, excluded and interrupted rows included. Learning is not free, and a
+   * loop that hid its own spend could not be weighed against what it found.
+   */
+  learningCostUsd?: number | null;
+  /** The checkout's commit when measured, with `+dirty` when the tree had changes. */
+  revision?: string | null;
+  /** The Rune version of the process that measured. */
+  runeVersion?: string | null;
   rateDelta?: number;
   costDelta?: number | null;
   compared?: number;
@@ -98,27 +119,115 @@ export function activePromotions(entries: LedgerEntry[]): LedgerEntry[] {
   return active;
 }
 
+/** What a promotion's evidence must match. */
+export interface PromotionKey {
+  control: string;
+  treatment: string;
+  /** The doctrine in force now. Omitted = not checked. */
+  doctrineHash?: string | null;
+  /** The yardstick a human blessed. Omitted = not checked. */
+  yardstick?: string | null;
+}
+
 /**
- * The most recent PASSING measurement for a variant under the exact arm pair a
- * promotion would apply. Returns null when the variant was never measured, when
- * the last measurement lost, or when the configuration has moved since.
+ * The measurement a promotion may stand on — or why there is none.
  *
- * The hash pair is the whole guard: a measurement of `doctrine_full` taken
- * before someone widened the variant is evidence about a different change.
+ * One predefined comparison has one answer. The rows that can answer are the
+ * live (`real`) measurements of this exact arm pair taken under the doctrine
+ * in force now and against the blessed yardstick:
+ *
+ *   · the hash pair — a measurement of `doctrine_full` taken before someone
+ *     widened the variant is evidence about a different change;
+ *   · the doctrine and the yardstick — evidence about a prompt or a ruler
+ *     that is no longer in force is evidence about something else;
+ *   · real mode — the scripted provider replays a script rather than
+ *     reasoning, so mock can show harm, never lift;
+ *   · no conclusive loss among them — a win recorded after a loss is a
+ *     second look at an answered question, and a win the next run failed to
+ *     replicate was noise. Inconclusive rows close nothing.
  */
-export function passingMeasurement(
+export function promotionEvidence(
   entries: LedgerEntry[],
   variant: string,
-  pair: { control: string; treatment: string },
-): LedgerEntry | null {
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const e = entries[i]!;
-    if (e.kind !== "measurement" || e.subject !== variant) continue;
-    if (e.controlConfigHash !== pair.control) continue;
-    if (e.treatmentConfigHash !== pair.treatment) continue;
-    return e.win === true ? e : null;
+  key: PromotionKey,
+): { measurement: LedgerEntry | null; refusal: string | null } {
+  const pairRows = entries.filter(
+    (e) =>
+      e.kind === "measurement" &&
+      e.subject === variant &&
+      e.controlConfigHash === key.control &&
+      e.treatmentConfigHash === key.treatment,
+  );
+  if (pairRows.length === 0) {
+    return {
+      measurement: null,
+      refusal: `no passing A/B in the ledger for ${variant} at this exact configuration (control ${key.control} → treatment ${key.treatment}). Run \`rune evolve ab ${variant} --real\` first; a measurement of an older shape of this variant is evidence about a different change.`,
+    };
   }
-  return null;
+
+  const doctrineOk = (e: LedgerEntry) =>
+    key.doctrineHash === undefined || (e.doctrineHash ?? null) === key.doctrineHash;
+  const yardstickOk = (e: LedgerEntry) =>
+    key.yardstick === undefined || (e.yardstick ?? null) === key.yardstick;
+  const current = pairRows.filter((e) => doctrineOk(e) && yardstickOk(e));
+  if (current.length === 0) {
+    const last = pairRows[pairRows.length - 1]!;
+    const moved: string[] = [];
+    if (!doctrineOk(last)) {
+      moved.push(
+        `doctrine (measured under ${last.doctrineHash ?? "an unrecorded doctrine"}, now ${key.doctrineHash ?? "unknown"})`,
+      );
+    }
+    if (!yardstickOk(last)) {
+      moved.push(
+        `yardstick (measured against ${last.yardstick ?? "an unrecorded suite"}, blessed ${key.yardstick ?? "never"})`,
+      );
+    }
+    return {
+      measurement: null,
+      refusal: `every measurement of ${variant} at this configuration ran under a different ${moved.join(" and ")}: the evidence is about a prompt or a ruler no longer in force. Re-measure.`,
+    };
+  }
+
+  const live = current.filter((e) => e.mode === "real");
+  if (live.length === 0) {
+    return {
+      measurement: null,
+      refusal: `${variant} has only mock-mode measurements here. The scripted provider replays a script rather than reasoning, so mock can show harm, never lift; promotion needs \`rune evolve ab ${variant} --real\`.`,
+    };
+  }
+
+  const loss = [...live].reverse().find((e) => e.win !== true && e.inconclusive !== true);
+  if (loss) {
+    return {
+      measurement: null,
+      refusal: `a live measurement of ${variant} at this exact configuration, doctrine and yardstick lost on ${loss.at.slice(0, 10)} (${loss.refusals?.[0] ?? "no gate recorded"}). One predefined comparison has one answer: a win after it is a second look at an answered question, and a win it failed to replicate was noise. Ask a new question — change the variant, or a person re-blesses the yardstick.`,
+    };
+  }
+
+  const win = [...live].reverse().find((e) => e.win === true) ?? null;
+  if (!win) {
+    return {
+      measurement: null,
+      refusal: `no conclusive live measurement of ${variant} yet: ${live.length} run${live.length === 1 ? " was" : "s were"} inconclusive. Run \`rune evolve ab ${variant} --real\` again.`,
+    };
+  }
+  return { measurement: win, refusal: null };
+}
+
+/**
+ * What learning has cost so far: the list-rate spend of every measurement the
+ * ledger records, wins and losses alike. Rows from before the field existed
+ * count as nothing and say so by being absent, not by guessing.
+ */
+export function learningSpend(entries: LedgerEntry[]): number {
+  let total = 0;
+  for (const e of entries) {
+    if (e.kind !== "measurement") continue;
+    const cost = e.learningCostUsd;
+    if (typeof cost === "number" && Number.isFinite(cost) && cost > 0) total += cost;
+  }
+  return total;
 }
 
 /**

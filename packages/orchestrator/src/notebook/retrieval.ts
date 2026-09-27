@@ -37,9 +37,14 @@ export function buildNotebookBlock(
     const line = `- ${scopeTag(e)} ${e.body}\n`;
     if (used + line.length > budgetChars) break;
     used += line.length;
+    // A session the lesson was learned from is not held out from it: its
+    // outcome is part of why the lesson exists. It gets the advice as an
+    // unscored hint and never enters that lesson's trial.
+    const taught = opts.sessionId !== undefined && e.provenance.sessions.includes(opts.sessionId);
     // Reserve the same prompt slots in both arms. Withholding advice must
     // not make room for a different lesson and confound its comparison.
     if (
+      !taught &&
       opts.sessionId &&
       opts.cohort &&
       (e.stage === "trial" || !store.trials.evidence(e, opts.cohort).eligible) &&

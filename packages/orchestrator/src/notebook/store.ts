@@ -27,7 +27,8 @@ export type NotebookScope = "repo" | "stack" | "global";
  *   active    — controlled include/withhold evidence for this advice revision. Only
  *               active lessons reach the playbook.
  *   retired   — decayed, disused, contradicted, or turned off by the user.
- *               Kept and inspectable; revives if re-learned.
+ *               Kept and inspectable; revives if re-learned — unless a
+ *               person disabled it (`blocked`), which re-learning never undoes.
  *
  * The stages exist because "learned" and "believed" were the same thing before:
  * one observation was injected into every later run with no measurement between.
@@ -55,6 +56,12 @@ export interface NotebookEntry {
   retired: boolean;
   /** Lifecycle stage. `retired` here always agrees with `retired` above. */
   stage: LessonStage;
+  /**
+   * A person turned this off (`rune evolve lessons --disable`). A blocked row
+   * is always retired, re-learning it never revives it, and no rule can move
+   * it up the ladder; only `--enable` clears it, back to `candidate`.
+   */
+  blocked: boolean;
 }
 
 const BODY_MAX = 400;
@@ -75,6 +82,7 @@ interface Row {
   last_used: string | null;
   retired: number;
   stage: string | null;
+  blocked: number | null;
 }
 
 export class NotebookStore {
@@ -127,6 +135,11 @@ export class NotebookStore {
       this.db.exec(
         "UPDATE entries SET stage = CASE WHEN retired = 1 THEN 'retired' ELSE 'trial' END",
       );
+    }
+    if (!cols.some((c) => c.name === "blocked")) {
+      // Nothing was blocked before the column existed: a person's earlier
+      // `rm` deleted the row, and a retired row stays revivable as it was.
+      this.db.exec("ALTER TABLE entries ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0");
     }
   }
 
@@ -184,9 +197,12 @@ export class NotebookStore {
           // A revived row (re-learned after being retired) comes back as a
           // CANDIDATE, whatever it was before: it was retired because it stopped
           // being true, so it has to earn the ladder again rather than resume
-          // where it left off.
-          `UPDATE entries SET body = ?, provenance_json = ?, updated_at = ?, retired = 0,
-             stage = CASE WHEN body != ? AND stage = 'active' THEN 'trial' WHEN stage IS NULL THEN 'trial' WHEN stage = 'retired' THEN 'candidate' ELSE stage END
+          // where it left off. A row a PERSON disabled is the exception: the
+          // run that re-learns it is the same kind of evidence the person
+          // already overruled, so it stays retired and its record still grows.
+          `UPDATE entries SET body = ?, provenance_json = ?, updated_at = ?,
+             retired = CASE WHEN blocked = 1 THEN 1 ELSE 0 END,
+             stage = CASE WHEN blocked = 1 THEN 'retired' WHEN body != ? AND stage = 'active' THEN 'trial' WHEN stage IS NULL THEN 'trial' WHEN stage = 'retired' THEN 'candidate' ELSE stage END
            WHERE id = ?`,
         )
         .run(body, JSON.stringify(prov), now, body, existing.id);
@@ -227,7 +243,7 @@ export class NotebookStore {
         // Candidates are stored and NEVER injected: one observation is not a
         // belief. Only trial and active rows reach the prompt.
         `SELECT * FROM entries
-         WHERE retired = 0 AND COALESCE(stage, 'trial') IN ('trial', 'active') AND (
+         WHERE retired = 0 AND blocked = 0 AND COALESCE(stage, 'trial') IN ('trial', 'active') AND (
            (scope = 'repo' AND repo_key = ?) OR
            (scope = 'stack' AND stack_key = ?) OR
            scope = 'global'
@@ -291,9 +307,46 @@ export class NotebookStore {
     return (
       this.db
         .query(
-          `UPDATE entries SET stage = ?, retired = ?, updated_at = ? WHERE id = ? AND stage IS NOT ?`,
+          `UPDATE entries SET stage = ?, retired = ?, updated_at = ?
+           WHERE id = ? AND stage IS NOT ? AND blocked = 0`,
         )
         .run(stage, stage === "retired" ? 1 : 0, now, id, stage).changes > 0
+    );
+  }
+
+  /**
+   * A person's "no": retire the entry and keep it retired. Unlike `retire`
+   * (a later run contradicted it) and `remove` (the row is gone, so the next
+   * run that re-learns it starts over), a disabled entry survives re-learning
+   * — the retro keeps adding sessions to its record and nothing re-injects it.
+   * Returns false when there is no such entry or it is already disabled.
+   */
+  disable(id: string): boolean {
+    const now = new Date().toISOString();
+    return (
+      this.db
+        .query(
+          `UPDATE entries SET blocked = 1, retired = 1, stage = 'retired', updated_at = ?
+           WHERE id = ? AND blocked = 0`,
+        )
+        .run(now, id).changes > 0
+    );
+  }
+
+  /**
+   * Undo `disable`. The entry re-enters at `candidate` — the bottom rung —
+   * because the evidence that once moved it up was about a revision a person
+   * then turned off; it earns the ladder again like any re-learned lesson.
+   */
+  enable(id: string): boolean {
+    const now = new Date().toISOString();
+    return (
+      this.db
+        .query(
+          `UPDATE entries SET blocked = 0, retired = 0, stage = 'candidate', updated_at = ?
+           WHERE id = ? AND blocked = 1`,
+        )
+        .run(now, id).changes > 0
     );
   }
 
@@ -383,5 +436,6 @@ function rowToEntry(r: Row): NotebookEntry {
     lastUsed: r.last_used,
     retired: r.retired === 1,
     stage: (r.retired === 1 ? "retired" : ((r.stage as LessonStage) ?? "trial")) as LessonStage,
+    blocked: r.blocked === 1,
   };
 }

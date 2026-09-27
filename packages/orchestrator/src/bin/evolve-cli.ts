@@ -10,7 +10,7 @@
 //   gardener   harness defects the black box has evidence for, as a brief a
 //              detached run on Rune's own repository can take (--run)
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getRuneHome, SessionManager } from "@rune/shared";
@@ -18,7 +18,7 @@ import type { SessionEvent } from "@rune/shared";
 import { BlackboxStore } from "@rune/telemetry";
 import { NotebookStore } from "../notebook/store";
 import { repoKey as repoKeyOf } from "../notebook/fingerprint";
-import { PLAYBOOK_PENDING_REL, PLAYBOOK_REL, playbookEntries } from "../playbook";
+import { PLAYBOOK_PENDING_REL, PLAYBOOK_REL, playbookEntries, writePlaybook } from "../playbook";
 import {
   GARDENER_OFF_LIMITS,
   deriveRunRetro,
@@ -40,6 +40,7 @@ import {
   activePromotions,
   appendLedger,
   haltState,
+  learningSpend,
   ledgerPath,
   readLedger,
 } from "../evolve/ledger";
@@ -52,6 +53,7 @@ import {
   variantConfigLines,
 } from "../evolve/variants";
 import { currentYardstick, findRepoRoot, readBlessed, writeBlessed } from "../evolve/yardstick";
+import { RUNE_VERSION } from "../plugins";
 import { doctrineHash } from "../prompts";
 import { accent, danger, dim, faint, info, ok, text, warn } from "./ui/theme";
 
@@ -313,6 +315,63 @@ function cmdTune(sm: SessionManager, opts: Record<string, string | true>): numbe
   return 0;
 }
 
+/**
+ * `rune evolve lessons --disable <id>` / `--enable <id>` — a person's call on
+ * one lesson, and the loop's rollback for the half of what it learns that no
+ * A/B covers.
+ *
+ * Disabling retires the lesson for good: a run that re-learns it adds to its
+ * record and never re-injects it (`NotebookStore.disable`). The playbook is
+ * re-rendered now, because a rollback that waits for the next run is not a
+ * rollback, and the act lands in the evolve ledger beside the variant history.
+ */
+function lessonToggle(
+  store: NotebookStore,
+  workspaceRoot: string,
+  action: "disable" | "enable",
+  shortId: string,
+  opts: Record<string, string | true>,
+): number {
+  say();
+  const e = store.getByPrefix(shortId);
+  if (!e) {
+    say(
+      `  ${danger("!")} no single lesson matches "${shortId}" — rune evolve lessons --all lists ids.`,
+    );
+    say();
+    return 2;
+  }
+  const changed = action === "disable" ? store.disable(e.id) : store.enable(e.id);
+  if (!changed) {
+    say(dim(`  ${e.id.slice(-8)} is already ${action}d; nothing to do.`));
+    say();
+    return 0;
+  }
+  appendLedger(
+    {
+      v: 1,
+      at: new Date().toISOString(),
+      kind: "lesson",
+      subject: `lesson:${e.id}`,
+      note: `${action}d by a person: ${e.body.slice(0, 120)}`,
+    },
+    runeHome(opts),
+  );
+  if (e.scope === "repo" && e.repoKey) {
+    writePlaybook(workspaceRoot, store.listRepo(e.repoKey), { enabled: learnedSkillsEnabled() });
+  }
+  say(`  ${action === "disable" ? warn("Disabled") : ok("Enabled")} ${text(e.body.slice(0, 96))}`);
+  say(
+    dim(
+      action === "disable"
+        ? `  Retired for good: re-learning adds to its record and never re-injects it. Undo: rune evolve lessons --enable ${e.id.slice(-8)}`
+        : "  Back at candidate: it earns trial and active again like any new lesson.",
+    ),
+  );
+  say();
+  return 0;
+}
+
 function cmdLessons(workspaceRoot: string, opts: Record<string, string | true>): number {
   let store: NotebookStore;
   try {
@@ -322,6 +381,16 @@ function cmdLessons(workspaceRoot: string, opts: Record<string, string | true>):
     return 1;
   }
   try {
+    for (const action of ["disable", "enable"] as const) {
+      if (opts[action] === undefined) continue;
+      if (typeof opts[action] !== "string") {
+        say(
+          dim(`  Usage: rune evolve lessons --${action} <id>   (ids: rune evolve lessons --all)`),
+        );
+        return 2;
+      }
+      return lessonToggle(store, workspaceRoot, action, opts[action] as string, opts);
+    }
     const key = repoKeyOf(workspaceRoot);
     const entries = store.listRepo(key).filter((e) => opts.all === true || !e.retired);
     const inPlaybook = new Set(playbookEntries(entries).map((e) => e.id));
@@ -346,13 +415,15 @@ function cmdLessons(workspaceRoot: string, opts: Record<string, string | true>):
           ? ok("fix    ")
           : dim(e.kind.padEnd(7));
       const record = e.uses > 0 ? faint(` · used ${e.uses}× · ${pct(e.wins / e.uses)} wins`) : "";
-      const stage = e.retired
-        ? warn("retired")
-        : e.stage === "active"
-          ? ok("active")
-          : e.stage === "trial"
-            ? info("trial")
-            : dim("candidate");
+      const stage = e.blocked
+        ? danger("disabled")
+        : e.retired
+          ? warn("retired")
+          : e.stage === "active"
+            ? ok("active")
+            : e.stage === "trial"
+              ? info("trial")
+              : dim("candidate");
       say(
         `  ${kind} ${text(e.body.slice(0, 96))}\n          ${stage} ${faint(`· ${n} session${n === 1 ? "" : "s"}`)}${inPlaybook.has(e.id) ? faint(" · in playbook") : ""}${record} ${faint(`· ${e.id.slice(-8)}`)}`,
       );
@@ -381,7 +452,11 @@ function cmdLessons(workspaceRoot: string, opts: Record<string, string | true>):
         }`,
       );
     }
-    say(dim("  manage: rune notebook show <id> · rune notebook rm <id>"));
+    say(
+      dim(
+        "  manage: rune evolve lessons --disable <id> (for good) · --enable <id> · rune notebook show <id>",
+      ),
+    );
     say();
     return 0;
   } finally {
@@ -568,8 +643,13 @@ function cmdStatus(
   const halt = haltState(ledger);
   if (last) {
     const lift = `${(last.rateDelta ?? 0) >= 0 ? "+" : ""}${((last.rateDelta ?? 0) * 100).toFixed(1)}%`;
+    const verdict = last.inconclusive
+      ? warn("inconclusive")
+      : last.win
+        ? ok(`WIN ${lift}${last.mode === "mock" ? " (mock — cannot promote)" : ""}`)
+        : warn(`no change ${lift}`);
     say(
-      `  ${text("Last A/B")}  ${last.subject} ${dim("·")} ${last.win ? ok(`WIN ${lift}`) : warn(`no change ${lift}`)} ${dim(`· ${last.mode} · ${last.compared ?? 0} tasks · ${last.at.slice(0, 10)}`)}`,
+      `  ${text("Last A/B")}  ${last.subject} ${dim("·")} ${verdict} ${dim(`· ${last.mode} · ${last.compared ?? 0} tasks · ${last.at.slice(0, 10)}`)}`,
     );
   } else {
     say(
@@ -579,6 +659,11 @@ function cmdStatus(
   say(
     `  ${text("Promoted")}  ${standing.length === 0 ? dim("nothing standing") : standing.map((p) => `${ok(p.subject)} ${dim(p.at.slice(0, 10))}`).join(dim(" · "))}${halt.halted ? ` ${danger("· LOOP HALTED")}` : ""}`,
   );
+  if (measurements.length > 0) {
+    say(
+      `  ${text("Learning")}  $${learningSpend(ledger).toFixed(4)} ${dim(`list across ${measurements.length} measurement${measurements.length === 1 ? "" : "s"} · what the A/Bs themselves cost, wins and losses alike`)}`,
+    );
+  }
   say();
   say(
     dim(
@@ -599,6 +684,55 @@ function cmdStatus(
 
 function runeHome(opts: Record<string, string | true>): string {
   return typeof opts.home === "string" ? opts.home : getRuneHome();
+}
+
+/**
+ * The environment an A/B's runner starts with: a home of its own, with only
+ * the credential store pointed back at the real profile.
+ *
+ * Without it every eval engine the runner starts reads and writes the invoking
+ * user's profile — the notebook variants open the real `notebook.db` (their
+ * treatment arm then measures this machine's lessons, and eval sessions land
+ * in its trials), and every sandboxed command appends to the real audit log,
+ * which is why tests/scratch-home.ts exists. A live arm needs one thing from
+ * the real profile, its credentials, and gets them by PATH: no secret is
+ * copied or passed. Overrides the caller already set are kept.
+ *
+ * The mode is stated, never inherited. The runner's preload scrubs provider
+ * keys unless `RUNE_EVAL_REAL=1`, so a live arm must say so or it runs keyless;
+ * and a mock arm must NOT inherit it from the shell, or a "mock" A/B could go
+ * live on an exported variable. Mock keeps its keys scrubbed on purpose.
+ */
+export function abChildEnv(
+  base: NodeJS.ProcessEnv,
+  scratchHome: string,
+  realHome: string,
+  mode: "mock" | "real",
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...base, RUNE_HOME: scratchHome };
+  delete env.GEAR_HOME;
+  if (mode === "real") env.RUNE_EVAL_REAL = "1";
+  else delete env.RUNE_EVAL_REAL;
+  env.RUNE_CREDENTIAL_INDEX_PATH ??= join(realHome, "credentials.index.json");
+  env.RUNE_CREDENTIALS_PATH ??= join(realHome, "credentials.json");
+  return env;
+}
+
+/**
+ * The checkout's commit, `+dirty` when the tree has changes — recorded with a
+ * measurement so "which code was this about" has an answer. Null outside git.
+ */
+function checkoutRevision(repoRoot: string): string | null {
+  try {
+    const head = Bun.spawnSync(["git", "-C", repoRoot, "rev-parse", "--short=12", "HEAD"]);
+    if (head.exitCode !== 0) return null;
+    const sha = head.stdout.toString().trim();
+    const status = Bun.spawnSync(["git", "-C", repoRoot, "status", "--porcelain"]);
+    const dirty = status.exitCode === 0 && status.stdout.toString().trim().length > 0;
+    return sha ? `${sha}${dirty ? "+dirty" : ""}` : null;
+  } catch {
+    return null;
+  }
 }
 
 function printRefusals(refusals: string[]): void {
@@ -650,15 +784,25 @@ async function cmdAb(
   say();
 
   const out = join(tmpdir(), `rune-ab-${id}-${Date.now()}.json`);
-  const args = ["run", join(repoRoot, "tests", "eval", "runner.ts"), "--ab", id, "--ab-out", out];
+  const scratch = mkdtempSync(join(tmpdir(), "rune-ab-home-"));
+  const args = [
+    "--preload",
+    join(repoRoot, "tests", "scratch-home.ts"),
+    join(repoRoot, "tests", "eval", "runner.ts"),
+    "--ab",
+    id,
+    "--ab-out",
+    out,
+  ];
   if (mode === "real") args.push("--real");
   const proc = Bun.spawn(["bun", ...args], {
     cwd: repoRoot,
     stdout: "inherit",
     stderr: "inherit",
-    env: process.env,
+    env: abChildEnv(process.env, scratch, runeHome(opts), mode),
   });
   const code = await proc.exited;
+  rmSync(scratch, { recursive: true, force: true });
   if (code !== 0 || !existsSync(out)) {
     say(`  ${danger("!")} the A/B did not complete (exit ${code}); nothing recorded.`);
     say();
@@ -677,6 +821,8 @@ async function cmdAb(
       mode: "mock" | "real";
       controlConfigHash?: string;
       treatmentConfigHash?: string;
+      inconclusive?: boolean;
+      spentListCost?: number;
     };
     yardstick?: string | null;
   };
@@ -707,13 +853,27 @@ async function cmdAb(
       fixes: c.fixes,
       regressions: c.regressions,
       refusals: c.refusals,
+      inconclusive: c.inconclusive === true,
+      learningCostUsd: typeof c.spentListCost === "number" ? c.spentListCost : null,
+      revision: checkoutRevision(repoRoot),
+      runeVersion: RUNE_VERSION || null,
     },
     runeHome(opts),
   );
-  say(
-    `  ${c.win ? ok("recorded: WIN") : warn("recorded: no change")} ${dim("· ledger")} ${info(ledgerPath(runeHome(opts)))}`,
-  );
-  if (c.win) say(`  ${dim("next")}      ${info(`rune evolve promote ${id}`)}`);
+  const recorded = c.inconclusive
+    ? warn("recorded: inconclusive — it closes nothing")
+    : c.win
+      ? c.mode === "real"
+        ? ok("recorded: WIN")
+        : ok("recorded: mock WIN — shows no harm, cannot promote")
+      : warn("recorded: no change");
+  say(`  ${recorded} ${dim("· ledger")} ${info(ledgerPath(runeHome(opts)))}`);
+  if (c.win && c.mode === "real") say(`  ${dim("next")}      ${info(`rune evolve promote ${id}`)}`);
+  if (c.win && c.mode === "mock") {
+    say(
+      `  ${dim("next")}      ${info(`rune evolve ab ${id} --real`)} ${dim("· only a live run can show lift")}`,
+    );
+  }
   say();
   return 0;
 }
@@ -737,6 +897,7 @@ function cmdPromote(
     home,
     yardstick: hash,
     blessedYardstick: blessed?.hash ?? null,
+    doctrineHash: doctrineHash(),
   });
   if (!result.ok) {
     say(`  ${accent("Promote")} ${text(id)} ${dim("· not applied")}`);
@@ -860,7 +1021,12 @@ function cmdWhy(
     say();
     return 2;
   }
-  const entries = readLedger(home).filter((e) => e.subject === subject);
+  const entries = readLedger(home).filter(
+    (e) =>
+      e.subject === subject ||
+      (e.kind === "lesson" &&
+        (e.subject.endsWith(subject) || e.subject.startsWith(`lesson:${subject}`))),
+  );
 
   if (isVariantId(subject)) {
     const v = variantOf(subject);
@@ -892,19 +1058,28 @@ function cmdWhy(
   for (const e of entries) {
     const when = dim(e.at.slice(0, 16).replace("T", " "));
     if (e.kind === "measurement") {
-      const verdict = e.win ? ok("WIN     ") : warn("no change");
+      const verdict = e.inconclusive
+        ? warn("unclear  ")
+        : e.win
+          ? ok("WIN     ")
+          : warn("no change");
       const cost =
         e.costDelta === null || e.costDelta === undefined
           ? "no data"
           : `${((e.costDelta ?? 0) * 100).toFixed(1)}%`;
+      const spent =
+        typeof e.learningCostUsd === "number" ? ` · spent $${e.learningCostUsd.toFixed(4)}` : "";
+      const rev = e.revision ? ` · at ${e.revision}` : "";
       say(
-        `  ${when}  ${verdict} ${dim(`${e.mode} · ${e.compared} tasks · pass ${((e.rateDelta ?? 0) * 100).toFixed(1)}% · cost ${cost}`)}`,
+        `  ${when}  ${verdict} ${dim(`${e.mode} · ${e.compared} tasks · pass ${((e.rateDelta ?? 0) * 100).toFixed(1)}% · cost ${cost}${spent}${rev}`)}`,
       );
       for (const r of e.refusals ?? []) say(`                      ${faint(`· ${r}`)}`);
     } else if (e.kind === "promotion") {
       say(`  ${when}  ${ok("PROMOTED")} ${dim((e.configLines ?? []).join(" · "))}`);
     } else if (e.kind === "revert") {
       say(`  ${when}  ${warn("REVERTED")} ${dim(e.note ?? "")}`);
+    } else if (e.kind === "lesson") {
+      say(`  ${when}  ${info("LESSON  ")} ${dim(e.note ?? "")}`);
     } else {
       say(`  ${when}  ${danger("HALT")}     ${dim(e.note ?? "")}`);
     }

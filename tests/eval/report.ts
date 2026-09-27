@@ -32,7 +32,9 @@ export interface SuiteReport {
   passRate: number;
   /** Count of tasks excluded as throttle-contaminated. */
   throttled: number;
-  /** Tasks that actually produced a measurable result (total - throttled). */
+  /** Count of tasks excluded because infrastructure ended them. Absent when none. */
+  infra?: number;
+  /** Tasks that actually produced a measurable result (total - throttled - infra). */
   measured: number;
   /** passed / measured — the trustworthy number. NaN-safe (0 when measured=0). */
   cleanPassRate: number;
@@ -131,7 +133,10 @@ export function buildReport(
   const passed = results.filter((r) => r.pass).length;
   const passRate = total > 0 ? passed / total : 0;
   const throttled = results.filter((r) => r.throttled).length;
-  const measured = total - throttled;
+  // An outage is unscored for the same reason a throttle is: nothing about
+  // the harness was measured. Mock runs never have either.
+  const infra = results.filter((r) => r.infra && !r.throttled).length;
+  const measured = total - throttled - infra;
   const cleanPassRate = measured > 0 ? passed / measured : 0;
   const totalCost = results.reduce((s, r) => s + r.cost, 0);
   const avgCostPerTask = total > 0 ? totalCost / total : 0;
@@ -159,7 +164,8 @@ export function buildReport(
     const catPassed = tasks.filter((t) => t.pass).length;
     const catTotal = tasks.length;
     const catThrottled = tasks.filter((t) => t.throttled).length;
-    const catMeasured = catTotal - catThrottled;
+    const catMeasured =
+      catTotal - catThrottled - tasks.filter((t) => t.infra && !t.throttled).length;
     const catCost = tasks.reduce((s, t) => s + t.cost, 0);
     const catTurns = tasks.reduce((s, t) => s + t.turns, 0);
     return {
@@ -185,6 +191,7 @@ export function buildReport(
     passed,
     passRate,
     throttled,
+    ...(infra > 0 ? { infra } : {}),
     measured,
     cleanPassRate,
     totalCost,
@@ -684,13 +691,18 @@ export const DEFAULT_AB_NOISE_BAND = 0.05;
 
 export interface ArmTaskDelta {
   name: string;
-  control: "pass" | "fail" | "throttled";
-  treatment: "pass" | "fail" | "throttled";
-  /** +1 fixed, −1 regressed, 0 unchanged. Null when either side was throttled. */
+  control: ArmOutcome;
+  treatment: ArmOutcome;
+  /** +1 fixed, −1 regressed, 0 unchanged. Null when either side went unscored. */
   delta: number | null;
   controlListCost: number;
   treatmentListCost: number;
+  /** Either arm ran on a model with no list price. */
+  unpriced?: boolean;
 }
+
+/** How one arm's run of one task ended, for the comparison. */
+export type ArmOutcome = "pass" | "fail" | "throttled" | "infra";
 
 export interface ArmComparison {
   variant: string;
@@ -711,8 +723,20 @@ export interface ArmComparison {
   costBand: number;
   /** Every gate that refused, in the order they are checked. Empty = a win. */
   refusals: string[];
-  /** True only when all three gates pass. */
+  /** True only when every gate passes. */
   win: boolean;
+  /**
+   * The run could not answer its question: nothing comparable, most of the
+   * suite unscored, or (live) a cost that is unknown. Not a win and not a
+   * loss — the ledger lets it close nothing. A regression is never
+   * inconclusive: harm seen on both arms' scored rows is an answer.
+   */
+  inconclusive: boolean;
+  /**
+   * What the experiment itself cost at list rates: every row of both arms,
+   * excluded and interrupted ones included. The price of the learning.
+   */
+  spentListCost: number;
   /** Per-task rows, so a report can show the work rather than an average. */
   deltas: ArmTaskDelta[];
   /** Attribution: the config digests each arm actually ran under. */
@@ -720,11 +744,14 @@ export interface ArmComparison {
   treatmentConfigHash?: string;
 }
 
-function armOutcomeOf(r: TaskResult | undefined): "pass" | "fail" | "throttled" | null {
+function armOutcomeOf(r: TaskResult | undefined): ArmOutcome | null {
   if (!r) return null;
   if (r.throttled) return "throttled";
+  if (r.infra) return "infra";
   return r.pass ? "pass" : "fail";
 }
+
+const UNSCORED: ReadonlySet<ArmOutcome> = new Set<ArmOutcome>(["throttled", "infra"]);
 
 export function compareArms(
   variant: string,
@@ -749,10 +776,12 @@ export function compareArms(
       excluded.push(`${c.name} (missing from the ${to === null ? "treatment" : "control"} arm)`);
       continue;
     }
-    if (co === "throttled" || to === "throttled") {
-      // A rate limit in one arm and not the other is the easiest way to
-      // manufacture a fake win. Neither counts, and the row says why.
-      excluded.push(`${c.name} (throttled)`);
+    const unpriced = Boolean(c.unpriced || t!.unpriced);
+    if (UNSCORED.has(co) || UNSCORED.has(to)) {
+      // A rate limit or an outage in one arm and not the other is the easiest
+      // way to manufacture a fake win. Neither counts, and the row says why.
+      const why = co === "infra" || to === "infra" ? "infrastructure failure" : "throttled";
+      excluded.push(`${c.name} (${why})`);
       deltas.push({
         name: c.name,
         control: co,
@@ -760,6 +789,7 @@ export function compareArms(
         delta: null,
         controlListCost: c.listCost ?? 0,
         treatmentListCost: t!.listCost ?? 0,
+        ...(unpriced ? { unpriced } : {}),
       });
       continue;
     }
@@ -770,6 +800,7 @@ export function compareArms(
       delta: co === to ? 0 : to === "pass" ? 1 : -1,
       controlListCost: c.listCost ?? 0,
       treatmentListCost: t!.listCost ?? 0,
+      ...(unpriced ? { unpriced } : {}),
     });
   }
 
@@ -788,10 +819,29 @@ export function compareArms(
 
   const regressions = measured.filter((d) => d.delta === -1).map((d) => d.name);
   const fixes = measured.filter((d) => d.delta === 1).map((d) => d.name);
+  // Everything the experiment burned, scored or not: the learning's price.
+  const spentListCost =
+    control.tasks.reduce((s, r) => s + (r.listCost ?? 0), 0) +
+    treatment.tasks.reduce((s, r) => s + (r.listCost ?? 0), 0);
+  // Mock replays a script and prices nothing; its cost is not measured at all,
+  // and a mock row can never promote. Live, an unknown price is a gate that
+  // cannot be passed — only skipped, which is how an unpriced arm used to win.
+  const unpricedRows = mode === "real" ? measured.filter((d) => d.unpriced).length : 0;
+  const mostlyUnscored = excluded.length > compared;
+  // Exclusion is only neutral when it falls on both arms alike. A treatment
+  // that CAUSES throttling or outages — a heavier prompt, more tokens — would
+  // otherwise have its failures excluded and win on the tasks that survived.
+  const controlUnscored = deltas.filter((d) => UNSCORED.has(d.control)).length;
+  const treatmentUnscored = deltas.filter((d) => UNSCORED.has(d.treatment)).length;
+  const lopsided = treatmentUnscored > controlUnscored;
 
   const refusals: string[] = [];
   if (compared === 0) {
     refusals.push("no task was measured on both arms");
+  } else if (mostlyUnscored) {
+    refusals.push(
+      `most of the suite went unscored (${excluded.length} excluded, ${compared} compared) — too little was measured to answer`,
+    );
   }
   if (regressions.length > 0) {
     refusals.push(
@@ -811,6 +861,25 @@ export function compareArms(
       `metered-equivalent cost +${(costDelta * 100).toFixed(1)}% exceeds the ${(costBand * 100).toFixed(0)}% band`,
     );
   }
+  if (costDelta === null && treatmentListCost > EPS) {
+    // No band makes a rise from nothing a flat cost.
+    refusals.push(
+      `metered-equivalent cost rose from $0 to $${treatmentListCost.toFixed(4)} — a rise from nothing is not inside any band`,
+    );
+  }
+  if (unpricedRows > 0) {
+    refusals.push(
+      `${unpricedRows} compared task(s) ran on a model with no list price — the cost is unknown, and an unknown cost cannot pass the cost gate`,
+    );
+  }
+  if (lopsided) {
+    refusals.push(
+      `the treatment lost ${treatmentUnscored} task(s) to throttling or outages against the control's ${controlUnscored} — exclusions that fall on one arm can manufacture a win`,
+    );
+  }
+  // Not a loss: one stray 502 must not close a question for good.
+  const inconclusive =
+    regressions.length === 0 && (compared === 0 || mostlyUnscored || unpricedRows > 0 || lopsided);
 
   return {
     variant,
@@ -829,6 +898,8 @@ export function compareArms(
     costBand,
     refusals,
     win: refusals.length === 0,
+    inconclusive,
+    spentListCost,
     deltas,
     controlConfigHash: control.tasks.find((t) => t.configHash)?.configHash,
     treatmentConfigHash: treatment.tasks.find((t) => t.configHash)?.configHash,
@@ -864,6 +935,9 @@ export function printArmComparison(cmp: ArmComparison): void {
   console.log(
     `  tasks       ${cmp.compared} compared, ${cmp.fixes.length} fixed, ${cmp.regressions.length} regressed`,
   );
+  console.log(
+    `  spent       $${cmp.spentListCost.toFixed(4)} list   \x1b[2mboth arms, excluded rows included — the price of this measurement\x1b[0m`,
+  );
   if (cmp.controlConfigHash || cmp.treatmentConfigHash) {
     console.log(
       `  \x1b[2mconfig      control ${cmp.controlConfigHash ?? "?"} → treatment ${cmp.treatmentConfigHash ?? "?"}\x1b[0m`,
@@ -873,12 +947,22 @@ export function printArmComparison(cmp: ArmComparison): void {
     console.log(`  \x1b[2mexcluded    ${cmp.excluded.join(", ")}\x1b[0m`);
   }
   console.log();
-  if (cmp.win) {
+  if (cmp.win && cmp.mode === "mock") {
+    // Mock replays a script: a win here says the change did no harm to the
+    // scripted runs, never that it helps a model. Promotion needs --real.
     console.log(
-      `  \x1b[32mWIN\x1b[0m — all three gates pass. \x1b[2mrune evolve promote ${cmp.variant}\x1b[0m\n`,
+      `  \x1b[32mWIN (mock)\x1b[0m — every gate passes on the script, which shows no harm and cannot show lift. \x1b[2mrune evolve ab ${cmp.variant} --real\x1b[0m\n`,
+    );
+  } else if (cmp.win) {
+    console.log(
+      `  \x1b[32mWIN\x1b[0m — every gate passes. \x1b[2mrune evolve promote ${cmp.variant}\x1b[0m\n`,
     );
   } else {
-    console.log(`  \x1b[33mNO CHANGE\x1b[0m — the variant is not promoted:`);
+    console.log(
+      cmp.inconclusive
+        ? `  \x1b[33mINCONCLUSIVE\x1b[0m — this run could not answer, so it closes nothing:`
+        : `  \x1b[33mNO CHANGE\x1b[0m — the variant is not promoted:`,
+    );
     for (const r of cmp.refusals) console.log(`    · ${r}`);
     if (cmp.mode === "mock" && cmp.rateDelta === 0 && cmp.regressions.length === 0) {
       // Worth saying out loud, because a reader expecting the mock arm to

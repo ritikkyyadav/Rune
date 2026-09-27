@@ -113,6 +113,19 @@ export interface TaskResult {
    * failure — the exact contamination that poisoned the free-tier floor.
    */
   throttled?: boolean;
+  /**
+   * True when infrastructure, not capability, ended the run: the provider
+   * stopped answering (`provider_lost`), or a transport failure (a 5xx, a
+   * reset, a refused connection) ended a run before its first completed turn.
+   * UNSCORED, like `throttled` — an outage landing on one arm of an A/B is the
+   * other arm's fake win. `reason` names the cause.
+   */
+  infra?: boolean;
+  /**
+   * True when a model this task called has no list price, so `listCost`
+   * undercounts by an unknown amount. A live cost gate cannot pass on it.
+   */
+  unpriced?: boolean;
   /** Raw provider error messages captured from the stream (diagnostics). */
   errors?: string[];
   /** How many attempts ran (1 = no retry needed). */
@@ -234,6 +247,36 @@ function realCredentials(provider: string): Promise<Record<string, ResolvedCrede
 /** A provider error that means "slow down / out of quota", not "wrong answer". */
 function isThrottleError(msg: string): boolean {
   return /rate.?limit|usage limit|429|throttl|quota|too many requests|no credits/i.test(msg);
+}
+
+/** Transport and server-side failures: the provider or the path to it, not the model. */
+const INFRA_ERROR_RE =
+  /\b50[0-4]\b|\b52\d\b|bad gateway|service unavailable|gateway time-?out|internal server error|overloaded|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAIN|socket hang up|fetch failed|network is unreachable/i;
+
+/**
+ * Did infrastructure end this run? Returns the cause, or null for a result
+ * that stands as measured.
+ *
+ * Two shapes count, and nothing else does:
+ *
+ *   · the loop's own verdict that the provider stopped answering after its
+ *     retry budget (`provider_lost`), whatever work came before it;
+ *   · a transport failure with no completed turn — the task never started.
+ *
+ * A pass is never excused. Neither is a run that recovered from a transient
+ * error and then finished or hit a cap: that outcome is the harness's own.
+ */
+export function classifyInfra(r: {
+  pass: boolean;
+  turns: number;
+  errors: string[];
+  outcome?: string;
+}): string | null {
+  if (r.pass) return null;
+  if (r.outcome === "provider_lost") return "the provider stopped answering (provider_lost)";
+  if (r.turns > 0) return null;
+  const hit = r.errors.find((e) => INFRA_ERROR_RE.test(e) && !isThrottleError(e));
+  return hit ? hit.split("\n")[0]!.slice(0, 200) : null;
 }
 
 /** Real-mode retry/pacing knobs (env-overridable). */
@@ -398,7 +441,10 @@ export async function runTask(task: EvalTask, opts: RunOptions = {}): Promise<Ta
     const result = await attemptTask(task, opts, real);
     result.attempts = attempt;
     last = result;
-    if (!result.throttled) break; // genuine pass/fail — done
+    // A throttle, or an outage before the first turn, did no work: re-run it.
+    // Anything else is a result — including an outage after real work, which
+    // stays unscored with its spend on the record rather than being retried.
+    if (!result.throttled && !(result.infra && result.turns === 0)) break;
     if (attempt < maxAttempts) {
       // Exponential backoff; session/usage limits need real cool-down time.
       const wait = RETRY_BASE_MS * 2 ** (attempt - 1);
@@ -539,6 +585,7 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
     // the two numbers have never been captured together.
     const cost = engine.getCost();
     const listCost = engine.getListCost();
+    const unpriced = engine.getUnpricedModels().length > 0;
     // The run's retro is in the session log by the time chat() returns.
     const retro = lastRetro(dbPath, sessionId);
 
@@ -556,6 +603,7 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
         model: real ? model : "mock-model",
         provider: real ? provider : "mock",
         capped: true,
+        ...(unpriced ? { unpriced: true } : {}),
         errors: errors.length ? errors : undefined,
         retro,
         arm: opts.arm,
@@ -578,9 +626,14 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
     // A run that produced no completed turn AND hit a throttle error is
     // throttle-contaminated, not a measured failure. Surface the real cause.
     const throttled = !verifyResult.pass && turns === 0 && errors.some(isThrottleError);
+    const infraCause = throttled
+      ? null
+      : classifyInfra({ pass: verifyResult.pass, turns, errors, outcome: retro?.outcome });
     const reason = throttled
       ? `rate-limited: ${errors.find(isThrottleError)}`
-      : verifyResult.reason;
+      : infraCause
+        ? `infrastructure: ${infraCause}`
+        : verifyResult.reason;
 
     return {
       name: task.name,
@@ -594,6 +647,8 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
       model: real ? model : "mock-model",
       provider: real ? provider : "mock",
       throttled,
+      ...(infraCause ? { infra: true } : {}),
+      ...(unpriced ? { unpriced: true } : {}),
       errors: errors.length ? errors : undefined,
       retro,
       arm: opts.arm,
@@ -614,6 +669,9 @@ async function attemptTask(task: EvalTask, opts: RunOptions, real: boolean): Pro
       model: real ? model : undefined,
       provider: real ? provider : undefined,
       throttled: isThrottleError(msg),
+      ...(!isThrottleError(msg) && classifyInfra({ pass: false, turns: 0, errors: [msg] })
+        ? { infra: true, reason: `infrastructure: ${msg.split("\n")[0]!.slice(0, 200)}` }
+        : {}),
       errors,
       arm: opts.arm,
       configHash: armConfigHash,

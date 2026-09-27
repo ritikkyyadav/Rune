@@ -8,8 +8,10 @@
 // Everything a promotion must refuse is here, and each refusal has a failure it
 // is named after:
 //
-//   · no passing measurement for THIS EXACT arm pair — the evidence has to be
-//     about the change being made, not about a change that shared its name;
+//   · no evidence for THIS EXACT question — a live win for this arm pair,
+//     under the doctrine in force and against the blessed yardstick, with no
+//     conclusive loss beside it (`promotionEvidence` in ledger.ts says why
+//     each of those is required);
 //   · the yardstick moved since a human blessed it — a loop that can edit the
 //     eval suite and then promote on the result is grading its own exam;
 //   · a promotion already happened inside the interval — one change at a time,
@@ -30,7 +32,7 @@ import {
   appendLedger,
   haltState,
   lastPromotion,
-  passingMeasurement,
+  promotionEvidence,
   readLedger,
   type LedgerEntry,
 } from "./ledger";
@@ -64,6 +66,8 @@ export interface PromoteEnv {
   yardstick?: string | null;
   /** The digest a human last blessed. Null = never blessed. */
   blessedYardstick?: string | null;
+  /** The doctrine in force now; a measurement under another is about another prompt. */
+  doctrineHash?: string | null;
   now?: Date;
   intervalMs?: number;
 }
@@ -148,21 +152,28 @@ export function promote(variant: string, env: PromoteEnv = {}): PromoteResult {
   }
 
   const pair = { control: configHash({}), treatment: configHash(variantConfig(id)) };
-  const measurement = passingMeasurement(entries, id, pair);
-  if (!measurement) {
-    refusals.push(
-      `no passing A/B in the ledger for ${id} at this exact configuration (control ${pair.control} → treatment ${pair.treatment}). Run \`rune evolve ab ${id}\` first; a measurement of an older shape of this variant is evidence about a different change.`,
-    );
-  }
+  const evidence = promotionEvidence(entries, id, {
+    ...pair,
+    ...(env.doctrineHash !== undefined ? { doctrineHash: env.doctrineHash } : {}),
+    // Against the BLESSED ruler, not the checkout's: the blessing lives in
+    // RUNE_HOME, so this holds wherever `promote` runs, and a measurement taken
+    // before the suite changed cannot be replayed after a re-bless. With no
+    // blessing there is no ruler to match; the refusal below says so once.
+    ...(env.blessedYardstick ? { yardstick: env.blessedYardstick } : {}),
+  });
+  const measurement = evidence.measurement;
+  if (!measurement) refusals.push(evidence.refusal ?? `no evidence for ${id}.`);
 
-  if (env.yardstick !== undefined && env.blessedYardstick !== undefined) {
-    if (env.yardstick && env.blessedYardstick && env.yardstick !== env.blessedYardstick) {
+  if (env.blessedYardstick !== undefined) {
+    if (!env.blessedYardstick) {
+      // Wherever `promote` runs: outside a checkout the current digest is
+      // unknown, and "unknown" must not read as "nothing to check".
+      refusals.push(
+        `the yardstick${env.yardstick ? ` at ${env.yardstick}` : ""} has never been blessed. Run \`rune evolve yardstick --bless\` once, in a checkout, to anchor it.`,
+      );
+    } else if (env.yardstick && env.yardstick !== env.blessedYardstick) {
       refusals.push(
         `the yardstick moved: tests/eval/** is at ${env.yardstick}, last blessed at ${env.blessedYardstick}. A loop that edits the eval suite and then promotes on the result is grading its own exam — re-baseline with \`rune evolve yardstick --bless\`.`,
-      );
-    } else if (env.yardstick && !env.blessedYardstick) {
-      refusals.push(
-        `the yardstick at ${env.yardstick} has never been blessed. Run \`rune evolve yardstick --bless\` once to anchor it.`,
       );
     }
   }

@@ -8071,6 +8071,15 @@ export class Engine {
     return this.costTracker.getLedger().totalListCostUsd;
   }
 
+  /**
+   * Models this session called that have no list price. Non-empty means
+   * getListCost() undercounts by an unknown amount — a figure that cannot
+   * pass a cost gate, only fail to be one.
+   */
+  getUnpricedModels(): string[] {
+    return [...this.costTracker.getLedger().unpricedModels];
+  }
+
   verifyAuditChain() {
     return this.sessions.verifyAuditChain();
   }

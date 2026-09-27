@@ -41,6 +41,7 @@ function entry(
     updatedAt: "2026-09-01T00:00:00.000Z",
     lastUsed: null,
     retired: false,
+    blocked: false,
     // Active by default here: P7.7 restricts the playbook to ACTIVE lessons,
     // so every fixture that is meant to reach the file has to have climbed the
     // ladder. The stage cases are covered in tests/unit/evolve/lessons.test.ts.
