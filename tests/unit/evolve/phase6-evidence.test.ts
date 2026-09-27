@@ -219,6 +219,14 @@ describe("G3 — infrastructure failures are unscored, like throttling", () => {
     expect(cmp.refusals.join(" ")).toContain("one arm");
   });
 
+  it("counts a task missing from the treatment arm against that arm", () => {
+    const control = report([task("a", false), task("b", false), task("c", true)]);
+    const treatment = report([task("b", true), task("c", true)]);
+    const cmp = compareArms("doctrine_full", control, treatment);
+    expect(cmp.win).toBe(false);
+    expect(cmp.inconclusive).toBe(true);
+  });
+
   it("calls a suite that was mostly unscored inconclusive, not a loss", () => {
     const control = report([
       task("a", false, { infra: true }),

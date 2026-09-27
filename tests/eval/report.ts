@@ -768,12 +768,18 @@ export function compareArms(
   const byName = new Map(treatment.tasks.map((t) => [t.name, t]));
   const deltas: ArmTaskDelta[] = [];
   const excluded: string[] = [];
+  // A row an arm never produced is that arm's loss of a task, for the same
+  // one-sidedness check a throttle or an outage gets below.
+  let missingFromControl = 0;
+  let missingFromTreatment = 0;
   for (const c of control.tasks) {
     const t = byName.get(c.name);
     const co = armOutcomeOf(c);
     const to = armOutcomeOf(t);
     if (co === null || to === null) {
       excluded.push(`${c.name} (missing from the ${to === null ? "treatment" : "control"} arm)`);
+      if (to === null) missingFromTreatment++;
+      else missingFromControl++;
       continue;
     }
     const unpriced = Boolean(c.unpriced || t!.unpriced);
@@ -831,8 +837,9 @@ export function compareArms(
   // Exclusion is only neutral when it falls on both arms alike. A treatment
   // that CAUSES throttling or outages — a heavier prompt, more tokens — would
   // otherwise have its failures excluded and win on the tasks that survived.
-  const controlUnscored = deltas.filter((d) => UNSCORED.has(d.control)).length;
-  const treatmentUnscored = deltas.filter((d) => UNSCORED.has(d.treatment)).length;
+  const controlUnscored = deltas.filter((d) => UNSCORED.has(d.control)).length + missingFromControl;
+  const treatmentUnscored =
+    deltas.filter((d) => UNSCORED.has(d.treatment)).length + missingFromTreatment;
   const lopsided = treatmentUnscored > controlUnscored;
 
   const refusals: string[] = [];
@@ -874,7 +881,7 @@ export function compareArms(
   }
   if (lopsided) {
     refusals.push(
-      `the treatment lost ${treatmentUnscored} task(s) to throttling or outages against the control's ${controlUnscored} — exclusions that fall on one arm can manufacture a win`,
+      `the treatment lost ${treatmentUnscored} task(s) to throttling, outages or missing rows against the control's ${controlUnscored} — exclusions that fall on one arm can manufacture a win`,
     );
   }
   // Not a loss: one stray 502 must not close a question for good.
