@@ -54,7 +54,13 @@ export interface ResumeLoopDeps {
   unpriced(): boolean;
   /** The provider's known window (the gateway's persisted cap), or null. */
   providerUntil(): number | null;
-  save(plan: ResumePlan): void;
+  /**
+   * Record `next` only if the stored plan is still `prev`. False when
+   * something else moved it first: a cancel, or another process's claim.
+   */
+  save(next: ResumePlan, prev: ResumePlan): boolean;
+  /** The plan as stored now, for when a save was refused. */
+  stored(sessionId: string): ResumePlan | null;
   log(line: string): void;
 }
 
@@ -68,8 +74,18 @@ export async function runWithResume(
   initial: ResumePlan,
   deps: ResumeLoopDeps,
 ): Promise<{ result: HeadlessResult | null; plan: ResumePlan }> {
-  let plan = initial;
-  if (plan.status !== "active") return { result: null, plan };
+  if (initial.status !== "active") return { result: null, plan: initial };
+  let plan: ResumePlan = initial;
+  // Every transition is a compare-and-swap against the plan this loop last
+  // saw. When the stored plan has moved on without it — a person cancelled
+  // it, or a scheduled `missions run` claimed it — the loop adopts what is
+  // stored and stops: one plan is resumed by one process.
+  const advance = (from: ResumePlan, to: ResumePlan): { moved: boolean; plan: ResumePlan } => {
+    if (deps.save(to, from)) return { moved: true, plan: to };
+    const stored = deps.stored(from.sessionId) ?? from;
+    deps.log(`resume: the plan moved on without this process (${stored.status}); stopping here`);
+    return { moved: false, plan: stored };
+  };
   let next = prompt;
   for (;;) {
     const started = deps.now();
@@ -82,13 +98,17 @@ export async function runWithResume(
         why: "the budget cannot be enforced: this session used a model with no list price",
       };
     }
-    plan = afterRun(
+    const ended = advance(
       plan,
-      ending,
-      { spentUsd: deps.spentUsd(), activeMs: deps.now() - started },
-      deps.now(),
+      afterRun(
+        plan,
+        ending,
+        { spentUsd: deps.spentUsd(), activeMs: deps.now() - started },
+        deps.now(),
+      ),
     );
-    deps.save(plan);
+    plan = ended.plan;
+    if (!ended.moved) return { result, plan };
     if (plan.status !== "waiting") {
       if (plan.reason && plan.status !== "done")
         deps.log(`resume: ${plan.status} — ${plan.reason}`);
@@ -102,8 +122,9 @@ export async function runWithResume(
     for (;;) {
       const claim = claimIfDue(plan, deps.now());
       if (claim.plan !== plan) {
-        plan = claim.plan;
-        deps.save(plan);
+        const claimed = advance(plan, claim.plan);
+        plan = claimed.plan;
+        if (!claimed.moved) return { result, plan };
       }
       if (claim.claimed) break;
       if (plan.status !== "waiting") {

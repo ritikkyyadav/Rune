@@ -17,6 +17,7 @@ import {
   type ResumeLoopDeps,
 } from "../../../packages/orchestrator/src/resume-loop";
 import {
+  afterRun,
   cancelPlan,
   claimIfDue,
   startPlan,
@@ -71,9 +72,11 @@ function world(script: HeadlessResult[], opts: { runMs?: number; spendPerRun?: n
     spentUsd: () => spent,
     unpriced: () => false,
     providerUntil: () => windowUntil,
-    save: (p) => {
-      saved.push(p);
+    save: (next) => {
+      saved.push(next);
+      return true;
     },
+    stored: () => saved[saved.length - 1] ?? null,
     log: (l) => {
       logs.push(l);
     },
@@ -198,18 +201,170 @@ describe("a new process finds the plan the old one left waiting", () => {
     const due = store.due(T0 + HOUR, "/ws/a")[0]!;
     const claim = claimIfDue(due.plan, T0 + HOUR);
     expect(claim.claimed).toBe(true);
+    expect(store.transition(due.plan, claim.plan, "/ws/a", T0 + HOUR)).toBe(true);
     const out = await runWithResume(RESUME_PROMPT, claim.plan, {
       ...w.deps,
       now: () => T0 + HOUR + w.clock() - T0,
       spentUsd: () => 0.5,
-      save: (p) => store.save(p, "/ws/a", T0 + HOUR),
+      save: (next, prev) => store.transition(prev, next, "/ws/a", T0 + HOUR),
+      stored: (id) => store.get(id)?.plan ?? null,
     });
     expect(out.plan.status).toBe("done");
     expect(out.plan.spentUsd).toBe(0.5);
     const stored = store.get("s1")!;
-    expect(stored.history.map((h) => h.status)).toEqual(["waiting", "done"]);
+    expect(stored.history.map((h) => h.status)).toEqual(["waiting", "active", "done"]);
     expect(stored.plan.attempts).toBe(1);
     store.close();
+  });
+});
+
+describe("one plan, several processes", () => {
+  // A `-P` process waits on its plan in memory; a scheduler's `rune missions
+  // run` can find the same plan due in rune.db; a person can cancel it from a
+  // third shell. These drive the CLI's real wiring (engineResumeDeps) over a
+  // real store, on a fake clock, and count how often the session is resumed.
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "rune-resume-race-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  async function race(during: {
+    wait?: (db: string, store: ResumePlanStore, now: number) => void;
+    firstRun?: (db: string) => void;
+  }) {
+    const { engineResumeDeps } =
+      await import("../../../packages/orchestrator/src/bin/missions-cli");
+    const db = join(dir, "rune.db");
+    const store = ResumePlanStore.open(db);
+    const plan = startPlan("s1", policy(), T0);
+    store.save(plan, "/ws/a", T0);
+    let now = T0;
+    const runs: string[] = [];
+    const script = [result({ ok: false, error: QUOTA }), result()];
+    const engine = {
+      getListCost: () => 0.1 * runs.length,
+      getUnpricedModels: () => [],
+      getProvider: () => "ollama",
+      getProviderHealth: () => ({ cooling: [] }),
+    };
+    const deps = {
+      ...engineResumeDeps(
+        engine as never,
+        "/ws/a",
+        store,
+        async (prompt: string) => {
+          runs.push(prompt);
+          if (runs.length === 1) during.firstRun?.(db);
+          now += 10 * MIN;
+          return script.shift() ?? result();
+        },
+        () => {},
+      ),
+      now: () => now,
+      sleep: async (ms: number) => {
+        now += ms;
+        during.wait?.(db, store, now);
+      },
+    };
+    const out = await runWithResume("first", plan, deps);
+    const stored = store.get("s1")!.plan;
+    store.close();
+    return { runs, out, stored };
+  }
+
+  test("two processes claim the same due plan: exactly one wins", () => {
+    const db = join(dir, "rune.db");
+    const first = ResumePlanStore.open(db);
+    const second = ResumePlanStore.open(db);
+    first.save(
+      {
+        ...startPlan("s1", policy(), T0),
+        status: "waiting",
+        nextAt: T0 + HOUR,
+        hint: "backoff",
+        stoppedAt: T0,
+      },
+      "/ws/a",
+      T0,
+    );
+    // Both scheduled runs list the plan as due before either claims it.
+    const [a] = first.due(T0 + HOUR, "/ws/a");
+    const [b] = second.due(T0 + HOUR, "/ws/a");
+    const claimA = claimIfDue(a!.plan, T0 + HOUR);
+    const claimB = claimIfDue(b!.plan, T0 + HOUR);
+    expect([claimA.claimed, claimB.claimed]).toEqual([true, true]);
+    expect(first.transition(a!.plan, claimA.plan, "/ws/a", T0 + HOUR)).toBe(true);
+    expect(second.transition(b!.plan, claimB.plan, "/ws/a", T0 + HOUR)).toBe(false);
+    expect(second.get("s1")!.plan).toMatchObject({ status: "active", attempts: 1 });
+    first.close();
+    second.close();
+  });
+
+  test("a waiting -P loop does not resume a plan a scheduled `missions run` claimed", async () => {
+    let claimedElsewhere = false;
+    const { runs, stored } = await race({
+      wait: (_db, store, now) => {
+        const [due] = store.due(now, "/ws/a");
+        if (claimedElsewhere || !due) return;
+        const claim = claimIfDue(due.plan, now);
+        if (claim.claimed) {
+          store.save(claim.plan, "/ws/a", now);
+          claimedElsewhere = true;
+        }
+      },
+    });
+    expect(claimedElsewhere).toBe(true);
+    expect(runs).toEqual(["first"]);
+    expect(stored).toMatchObject({ status: "active", attempts: 1 });
+  });
+
+  test("a -P loop that slept through another resume and its wall does not resume a stale plan", async () => {
+    let elsewhere = false;
+    const { runs, stored } = await race({
+      wait: (_db, store, now) => {
+        const [due] = store.due(now, "/ws/a");
+        if (elsewhere || !due) return;
+        const claim = claimIfDue(due.plan, now);
+        if (!claim.claimed || !store.transition(due.plan, claim.plan, "/ws/a", now)) return;
+        // The scheduled run resumes the session, and meets the wall again.
+        const walled = afterRun(
+          claim.plan,
+          { kind: "wall", providerUntil: null },
+          { spentUsd: 0.3, activeMs: MIN },
+          now,
+        );
+        expect(store.transition(claim.plan, walled, "/ws/a", now)).toBe(true);
+        elsewhere = true;
+      },
+    });
+    expect(elsewhere).toBe(true);
+    expect(runs).toEqual(["first"]);
+    expect(stored).toMatchObject({ status: "waiting", attempts: 1 });
+  });
+
+  test("a cancel while a -P loop waits holds", async () => {
+    const { runMissionsCommand } =
+      await import("../../../packages/orchestrator/src/bin/missions-cli");
+    const { runs, out, stored } = await race({
+      wait: (db) => void runMissionsCommand(db, ["cancel", "s1"], () => {}),
+    });
+    expect(runs).toEqual(["first"]);
+    expect(stored.status).toBe("cancelled");
+    expect(out.plan.status).toBe("cancelled");
+  });
+
+  test("a cancel during a run is not undone when the run ends", async () => {
+    const { runMissionsCommand } =
+      await import("../../../packages/orchestrator/src/bin/missions-cli");
+    const { runs, out, stored } = await race({
+      firstRun: (db) => void runMissionsCommand(db, ["cancel", "s1"], () => {}),
+    });
+    expect(runs).toEqual(["first"]);
+    expect(stored.status).toBe("cancelled");
+    expect(out.plan.status).toBe("cancelled");
   });
 });
 

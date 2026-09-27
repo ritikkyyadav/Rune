@@ -51,7 +51,9 @@ rune missions cancel <id>  # stop one; it stays in the list with its history
 ```
 
 `rune missions run` is a one-shot, meant for a scheduler you already have (cron, launchd): there
-is no Rune daemon. A resumed run uses the configuration in force _now_ — the gear, the sandbox,
+is no Rune daemon. A plan is resumed by one process at a time: when the `-P` process that started
+it is still waiting and a scheduled run finds it due too, whichever claims it first continues the
+session and the other stops. A cancel holds against both. A resumed run uses the configuration in force _now_ — the gear, the sandbox,
 `--auto-approve` as passed to `missions run` — not the one the mission was started under.
 
 ## Limits, stated

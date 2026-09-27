@@ -108,7 +108,8 @@ export function engineResumeDeps(
       const cooling = engine.getProviderHealth().cooling.find((c) => c.provider === provider);
       return cooling ? cooling.untilMs : null;
     },
-    save: (plan) => store.save(plan, workspaceRoot),
+    save: (next, prev) => store.transition(prev, next, workspaceRoot),
+    stored: (sessionId) => store.get(sessionId)?.plan ?? null,
     log,
   };
 }
@@ -160,7 +161,10 @@ export async function runDueMissions(
     }
     for (const { plan } of due) {
       const claim = claimIfDue(plan, Date.now());
-      store.save(claim.plan, workspaceRoot);
+      if (claim.plan !== plan && !store.transition(plan, claim.plan, workspaceRoot)) {
+        log(`missions: ${plan.sessionId.slice(-8)} was claimed or cancelled elsewhere — skipped`);
+        continue;
+      }
       if (!claim.claimed) {
         log(
           `missions: ${plan.sessionId.slice(-8)} ${claim.plan.status} — ${claim.plan.reason ?? ""}`,

@@ -83,6 +83,34 @@ export class ResumePlanStore {
       );
   }
 
+  /**
+   * Move a plan from `from` to `to` — only if the stored row is still `from`
+   * (the same status at the same attempt: `attempts` only grows, so the pair
+   * never recurs). The plan's one lock. A `-P` loop waiting in memory and a
+   * scheduled `rune missions run` can both hold the same due plan, and a
+   * person can cancel it from a third shell; whoever moves the row first
+   * wins, and the others learn they lost instead of resuming the session a
+   * second time or undoing a cancel. IMMEDIATE, so the check and the write
+   * cannot interleave with another process's.
+   */
+  transition(
+    from: ResumePlan,
+    to: ResumePlan,
+    workspaceRoot: string,
+    now: number = Date.now(),
+  ): boolean {
+    return this.db
+      .transaction(() => {
+        const current = this.get(to.sessionId)?.plan;
+        if (!current || current.status !== from.status || current.attempts !== from.attempts) {
+          return false;
+        }
+        this.save(to, workspaceRoot, now);
+        return true;
+      })
+      .immediate();
+  }
+
   get(sessionId: string): StoredResumePlan | null {
     const row = this.db
       .query(
