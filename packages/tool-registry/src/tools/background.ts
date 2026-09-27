@@ -17,6 +17,14 @@ import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../
 /** Cap the retained output per shell — a chatty server must not eat memory. */
 const MAX_BUFFER_CHARS = 200_000;
 
+/**
+ * How long a stopped shell gets to exit on SIGTERM before its group is killed.
+ * The polite signal alone let a shell that ignores it — `trap '' TERM`, a
+ * wedged watcher — outlive its engine, its `kill_shell` and Rune itself
+ * (changelog-mining pilot, T20: tests/unit/probes/t20-background-lifecycle.test.ts).
+ */
+const KILL_GRACE_MS = 2000;
+
 export type ShellStatus = "running" | "completed" | "failed" | "killed";
 
 interface BackgroundShell {
@@ -38,7 +46,8 @@ export class BackgroundShellManager {
   private nextId = 1;
 
   constructor(private readonly binaryPath?: string) {
-    // Never leave orphaned servers behind when Rune exits.
+    // Never leave orphaned servers behind when Rune exits. An exit handler
+    // cannot wait, so this one does not ask twice: see killAll.
     process.on("exit", () => this.killAll());
   }
 
@@ -188,6 +197,14 @@ export class BackgroundShellManager {
   kill(shellId: string): { found: boolean; status?: ShellStatus } {
     const shell = this.shells.get(shellId);
     if (!shell) return { found: false };
+    // "killed" must come true: TERM now, KILL the group if it is still there
+    // after the grace. The timer never holds the process open.
+    if (shell.status === "running") {
+      const timer = setTimeout(() => {
+        if (this.groupAlive(shell)) this.signalTree(shell, "SIGKILL");
+      }, KILL_GRACE_MS);
+      (timer as { unref?: () => void }).unref?.();
+    }
     if (shell.status === "running") {
       shell.status = "killed";
       this.signalTree(shell, "SIGTERM");
@@ -203,11 +220,55 @@ export class BackgroundShellManager {
     }));
   }
 
+  /**
+   * The process-exit path. Nothing here can wait, so a shell that ignored the
+   * first signal would be orphaned the moment this returns: TERM, then KILL at
+   * once for any group still standing.
+   */
   killAll(): void {
     for (const shell of this.shells.values()) {
-      if (shell.status === "running") {
-        shell.status = "killed";
-        this.signalTree(shell, "SIGTERM");
+      if (shell.status === "running") shell.status = "killed";
+      if (!this.groupAlive(shell)) continue;
+      this.signalTree(shell, "SIGTERM");
+      this.signalTree(shell, "SIGKILL");
+    }
+  }
+
+  /**
+   * Stop every shell this manager started and wait for them to be gone:
+   * SIGTERM to each process group, then SIGKILL to any group still alive after
+   * `graceMs`. For an owner that closes and keeps running — an engine in a
+   * long-lived host — where waiting is possible and a polite signal is owed.
+   */
+  async stopAll(graceMs = KILL_GRACE_MS): Promise<void> {
+    const live = [...this.shells.values()].filter((shell) => this.groupAlive(shell));
+    for (const shell of live) {
+      if (shell.status === "running") shell.status = "killed";
+      this.signalTree(shell, "SIGTERM");
+    }
+    const deadline = Date.now() + graceMs;
+    while (live.some((shell) => this.groupAlive(shell)) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    for (const shell of live) {
+      if (this.groupAlive(shell)) this.signalTree(shell, "SIGKILL");
+    }
+  }
+
+  /** Whether anything in the shell's process group is still running. */
+  private groupAlive(shell: BackgroundShell): boolean {
+    const pid = shell.proc.pid;
+    if (pid === undefined) return false;
+    try {
+      process.kill(-pid, 0);
+      return true;
+    } catch {
+      try {
+        // Not a group leader (a platform without detached groups): the leader alone.
+        process.kill(pid, 0);
+        return shell.exitCode === null;
+      } catch {
+        return false;
       }
     }
   }

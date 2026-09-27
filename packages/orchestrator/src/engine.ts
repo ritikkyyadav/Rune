@@ -58,7 +58,7 @@ import {
   stopLanguageServers,
 } from "@rune/tool-registry";
 import { expandPromptCommand, findResourceMentions, readResourceText } from "@rune/tool-registry";
-import { reapToolChildren, type ReapedChild } from "@rune/tool-registry";
+import { reapToolChildren, type BuiltinToolsHandle, type ReapedChild } from "@rune/tool-registry";
 import type {
   DashboardInfo,
   McpEvent,
@@ -1374,6 +1374,8 @@ export interface ProviderChangeResult {
 export class Engine {
   private gateway: LlmGateway;
   private registry: ToolRegistry;
+  /** What each `registerBuiltinTools` call left for close() to stop. */
+  private builtinTools: BuiltinToolsHandle[] = [];
   private sessions: SessionManager;
   private permissions: PermissionBroker;
   /** Verified org policy (null on unmanaged machines). */
@@ -1739,7 +1741,7 @@ export class Engine {
     // [mcp] deferTools = false ships every connector schema on every request
     // (the pre-P4.1 behaviour). An escape, not a recommendation.
     if (this.config.mcp?.deferTools === false) this.registry.setDeferralEnabled(false);
-    registerBuiltinTools(this.registry, this.config.toolsBinaryPath);
+    this.builtinTools.push(registerBuiltinTools(this.registry, this.config.toolsBinaryPath));
 
     // Clear the checkouts of workers whose process is gone, at process start
     // rather than on the first dispatch. Lane W had to hang the reaper off the
@@ -8115,7 +8117,7 @@ export class Engine {
       );
     }
     const subRegistry = new ToolRegistry();
-    registerBuiltinTools(subRegistry, this.config.toolsBinaryPath);
+    this.builtinTools.push(registerBuiltinTools(subRegistry, this.config.toolsBinaryPath));
     // `todo_write` has category "read", so it was reachable from a `task`
     // sub-agent — which then wrote its plan into a throwaway store that nobody
     // ever read, and left the lead's real ledger untouched. A scout that
@@ -9000,6 +9002,11 @@ export class Engine {
     // Post-edit diagnostics spawn one on the write path, so that leak now has
     // real weight.
     stopLanguageServers().catch(() => {});
+    // Background shells are the same debt, and were missed: the dev server a
+    // closed session's bash started kept running for as long as its host did
+    // (changelog-mining pilot, T20). Only THIS engine's shells — another
+    // session in the same host keeps its own.
+    for (const tools of this.builtinTools) tools.stopBackgroundShells().catch(() => {});
     this.dashboards.closeAll();
     if (this.recorder) {
       setToolArgsSalvageListener(null); // never leave a listener pointing at a closed recorder

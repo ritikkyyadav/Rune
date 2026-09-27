@@ -330,7 +330,16 @@ export async function stopLanguageServers(): Promise<void> {
  * Register all built-in tools with the registry.
  * @param binaryPath - Path to the compiled rune-tools binary
  */
-export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string): void {
+/** What the caller of `registerBuiltinTools` owns and must stop when it closes. */
+export interface BuiltinToolsHandle {
+  /** Stop the background shells this registry's bash started (TERM, then KILL). */
+  stopBackgroundShells(graceMs?: number): Promise<void>;
+}
+
+export function registerBuiltinTools(
+  registry: ToolRegistry,
+  binaryPath: string,
+): BuiltinToolsHandle {
   // Harness-side file-state tracking: read_file/write_file/edit_file/multi_edit
   // record each file's post-call hash; edit tools get the hash injected
   // automatically instead of making the model plumb SHA-256 strings through.
@@ -402,4 +411,5 @@ export function registerBuiltinTools(registry: ToolRegistry, binaryPath: string)
   // is still deferred (ToolRegistry.toLlmTools), so a connector-less session
   // never sees it.
   registry.register(createLoadToolsTool(registry));
+  return { stopBackgroundShells: (graceMs?: number) => shells.stopAll(graceMs) };
 }

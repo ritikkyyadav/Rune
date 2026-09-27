@@ -56,6 +56,7 @@ export {
   BASH_CONTAINMENT_ESCAPES,
   registerBuiltinTools,
   stopLanguageServers,
+  type BuiltinToolsHandle,
 } from "./tools/builtin";
 // Web search: the engine roster's runtime half. `/login` and `rune login` use
 // the probe to verify a pasted key with one real search.
