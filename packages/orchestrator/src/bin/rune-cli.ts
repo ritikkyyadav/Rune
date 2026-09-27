@@ -179,6 +179,11 @@ const { values, positionals } = parseArgs({
     // NDJSON: every event as it happens, the envelope last. See docs/protocol.md.
     "stream-json": { type: "boolean", default: false },
     "auto-approve": { type: "boolean", default: false },
+    // Opt a headless run into resuming after a provider wall (M6): until a
+    // deadline, within a cumulative budget, at most N times. missions-cli.ts.
+    "resume-until": { type: "string" },
+    "resume-budget": { type: "string" },
+    "resume-max": { type: "string" },
     // Acceptance stated OUTSIDE the run: a JSON file of criteria the runtime
     // checks itself at the finish gate and the model never sees. Declared
     // once here and threaded into the Engine, so it applies to an interactive
@@ -409,6 +414,18 @@ if (command === "audit") {
 if (command === "cost") {
   const { runCost } = await import("./cost-cli");
   process.exit(await runCost(positionals.slice(1) as string[], values as Record<string, unknown>));
+}
+if (command === "missions" && positionals[1] !== "run") {
+  const { runMissionsCommand } = await import("./missions-cli");
+  const dbPath =
+    (typeof values.db === "string" && values.db) ||
+    process.env.RUNE_DB_PATH ||
+    joinPath(getRuneHome(), "rune.db");
+  process.exit(
+    runMissionsCommand(dbPath, positionals.slice(1) as string[], (line) =>
+      process.stdout.write(`${line}\n`),
+    ),
+  );
 }
 if (command === "evolve") {
   const { runEvolve } = await import("./evolve-cli");
@@ -1513,6 +1530,29 @@ async function main() {
     );
   }
 
+  // ─── `rune missions run`: continue this workspace's due resume plans, then exit ───
+  // After the engine and its credentials, before any session is created: the
+  // one-shot that cron or launchd calls to pick up what a dead process left
+  // waiting. Each resumed run is under the policy in force NOW — this engine's
+  // gear, sandbox and flags — not the one the plan was made under.
+  if (command === "missions" && positionals[1] === "run") {
+    const { runDueMissions } = await import("./missions-cli");
+    const { runHeadless } = await import("../headless");
+    const code = await runDueMissions(
+      engine,
+      config.engine.dbPath,
+      workspaceRoot,
+      (sid, prompt) =>
+        runHeadless(engine, sid, prompt, {
+          autoApprove: values["auto-approve"] === true,
+          onProgress: (line) => process.stderr.write(`${line}\n`),
+        }),
+      (line) => process.stderr.write(`${line}\n`),
+    );
+    engine.close();
+    process.exit(code);
+  }
+
   // ─── Composer mode decision (needed before session resolution) ───
   // The TUI — the focused terminal workbench from docs/design/rune-customizer.html — is the default on
   // interactive terminals, with fixed chrome: a pinned header, a scrolling transcript and a pinned
@@ -1743,13 +1783,40 @@ async function main() {
         );
       }
     };
-    const result = await runHeadless(engine, sessionId, values.print as string, {
+    const headlessOpts = {
       autoApprove: values["auto-approve"] === true,
-      onProgress: (line) => process.stderr.write(`${line}\n`),
+      onProgress: (line: string) => process.stderr.write(`${line}\n`),
       onEvent: streamJson
-        ? (event) => process.stdout.write(`${JSON.stringify(event)}\n`)
+        ? (event: AgentTurnEvent) => process.stdout.write(`${JSON.stringify(event)}\n`)
         : printToolRows,
-    });
+    };
+    // `--resume-until`: the opt-in. Without it this is exactly the one run it
+    // always was; with it, a provider wall is waited out and the session
+    // continued, within the deadline, the budget and the resume allowance.
+    const { resumePolicyFrom, runHeadlessWithResume } = await import("./missions-cli");
+    const resumePolicy = resumePolicyFrom(values as Record<string, unknown>, Date.now());
+    if (resumePolicy && "error" in resumePolicy) {
+      process.stderr.write(`${resumePolicy.error}\n`);
+      engine.close();
+      process.exit(2);
+    }
+    let result;
+    if (resumePolicy) {
+      const out = await runHeadlessWithResume(
+        engine,
+        sessionId,
+        values.print as string,
+        resumePolicy,
+        config.engine.dbPath,
+        workspaceRoot,
+        (prompt) => runHeadless(engine, sessionId, prompt, headlessOpts),
+        (line) => process.stderr.write(`${line}\n`),
+      );
+      if (!out.result) throw new Error("the resume plan ended before its first run");
+      result = out.result;
+    } else {
+      result = await runHeadless(engine, sessionId, values.print as string, headlessOpts);
+    }
     process.stdout.write(
       values.json === true || streamJson
         ? `${headlessEnvelope(result, { compact: streamJson, sessionId })}\n`
