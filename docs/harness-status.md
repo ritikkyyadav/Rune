@@ -2213,3 +2213,67 @@ it. The home path is replaced by `~` in all 59 tracked docs and evidence files, 
 compiled Python caches that carried it are untracked, and `__pycache__/` is ignored. Left
 to the founder: rotate the Google, OpenRouter and Brave keys (the file that held them sat in a
 folder Bun loaded for every test since June), then delete the backup.
+
+### Addendum 46 — Phase 6: evidence that cannot count, closed and attacked
+
+The self-evolution machinery existed; Phase 6 asked whether it could be fooled. Eleven ways a
+measurement could have become evidence it is not were each reproduced by a red test at `f4d047b`
+(`.codex/audit-20260927/phase6/red-run.log`: 17 red), then closed in `c33f46d`, `8a5e58f` and
+`164b914`: a mock win promoting; an unpriced arm skipping the cost gate; an outage — or a row
+missing — on one arm scoring as a capability miss; re-running a live A/B until it won; a
+measurement under another doctrine or yardstick (or a never-blessed suite) promoting; the
+experiment's own spend unrecorded; a learned `fix` lesson advising `unsandboxed: true`; a person's
+retire undone by re-learning; a session trialling a lesson it taught; and `rune evolve ab` running
+the eval suite inside the invoking profile (the notebook variants opened the real `notebook.db`).
+`f02316a` adds the harness's release line to the trial cohort at the founder's chosen grain
+(a minor release restarts trials; patch and dev builds share a cohort).
+
+An independent adversarial verifier (not the author) reproduced 210/210 and 29/29, ran six
+mutations — each broke exactly the test built for it, each restored — and two live, scratch-homed
+CLI runs with the real `notebook.db` and `audit.jsonl` unchanged by size and mtime. It verified G1,
+G2, G4, G6 and G11 and found three adjacent gaps, each reproduced and closed in `2c440c9`: a bare
+`500` in ordinary text read as an HTTP status; a `pitfall` built from raw error text could carry
+"re-run it once with unsandboxed: true" (kept out only by a 140-character clip); `rune notebook rm`
+silently undid a disable. Report and tests: `.codex/audit-20260927/phase6/`.
+
+Gates on the Phase 6 tree: unit 6,202 / 0 / 1 skip (unsandboxed; the sandbox's 76 failures are the
+loopback artifact), integration 389 / 0 / 7 skip (the two ACP cases need an absolute
+`RUNE_TOOLS_BIN`), typecheck 15/15, lint 7/7, `tests/unit/evolve/phase6-evidence.test.ts` 37 / 0.
+Three mock A/Bs through the CLI (`notebook_on`, `repo_map_off`, `effort_medium`; 63 tasks per arm)
+recorded their ledger rows with every new field, and `promote` refused them.
+
+Not demonstrated: any live measurement, any finished lesson trial, any promotion. No lift is
+claimed; this is controlled experimentation. The yardstick moved (`tests/eval/**` changed), so a
+promotion needs `rune evolve yardstick --bless` — a person's act. Next: the live A/B the founder
+approved — one variant, a free model with a list price (an unpriced one is inconclusive by rule).
+
+### Addendum 47 — Phase 7 on Windows, the corpus rerun, and M6's first slice
+
+**Windows.** v1.2.0's CI was red on Windows since release. Public check-run annotations (logs need
+auth) named the cause: `WINDOWS_ABSOLUTE_PATH` in `auto-containment.ts` had shipped unset, so Auto's
+containment extracted no path from any drive-letter spelling — a recursive delete of the home's
+Documents and writes into `.rune/config.toml` and the memory store went uncaught on Windows, where
+there is no OS sandbox underneath. `08d9beb` fills it (drive and UNC paths, ending where the POSIX
+alternatives end) and `pathCandidateRe(platform)` makes it testable off Windows; on PR #26's
+Windows runner the three containment failures are gone. That exposed two more: a 5 ms lease that
+could not survive a Windows runner's disk (now 500 ms), and the reaper's identity test, which
+asserts a property Windows does not have (no start-time probe; the documented trade is to reap on
+liveness alone) — scoped to POSIX in `7a27b21`, with a Windows start-time probe
+(`GetProcessTimes`) as the residual. Still red: `rust-test (windows-latest)`, cause unread.
+
+**The corpus, rerun at `164b914`** (offline, zero calls; `docs/evidence/corpus-offline-20260927.json`):
+false completions 0/44, but false negatives 10/10 against 2/12 on 2026-09-15, and the two browser
+tasks skipped. Every correct arm now ends `partial`: its evaluator criteria are all satisfied, and
+one criterion inferred from the model's read-back stays `needs_review` because the only evidence
+for it is a test the run wrote — the anti-forgery rule of 2026-09-15 (`7909b62` flipped M1's T2 from
+`met` to `partial` on purpose). The corpus's expectation predates that rule. The consequence is a
+product one: with no independent acceptance file, a run that verifies new work with its own new
+test ends `partial`. Whether that stays the rule is the founder's decision.
+
+**M6, the minimal slice** (the founder's choice, 2026-09-27): a run stopped by a provider wall comes
+back within an absolute deadline, a cumulative budget and a resume allowance, waiting for the
+provider's own window (the gateway's persisted `Retry-After`) or backing off, bounded — across
+process restarts, with no daemon: `rune -P … --resume-until 8h [--resume-budget 2]`, and
+`rune missions [run | cancel <id>]`, where `run` is what cron or launchd calls. Built and tested on
+a fake clock (`resume-plan.ts`, `resume-store.ts`, `resume-loop.ts`, `bin/missions-cli.ts`); held
+out of a commit until the wall policy — the founder's contribution — lands.

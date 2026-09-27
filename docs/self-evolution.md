@@ -106,6 +106,23 @@ are the evidence ladder, and each rung costs more than the last.
   every run.
 - **A re-learned retired lesson comes back as a candidate**, not where it left
   off. It was retired because it stopped being true.
+- **A lesson a person disabled stays disabled.** `rune evolve lessons --disable
+<id>` retires it for good: a later run that re-learns it adds to its record
+  and never re-injects it, no rule can move it up the ladder, and the playbook
+  is re-rendered at once rather than after the next run. `--enable <id>` puts
+  it back at `candidate`. Both land in the evolve ledger. (`rune notebook rm`
+  deletes the row, so the next run that re-learns it starts over — that is
+  forgetting, not a decision.)
+- **A trial measures sessions the lesson did not come from.** A session in a
+  lesson's own provenance gets the advice as an unscored hint and never enters
+  its include/withhold trial: its outcome is part of why the lesson exists.
+- **A learned lesson never advises leaving containment.** The `bash` arguments
+  that take a call outside the sandbox — `network`, `run_in_background`,
+  `unsandboxed`, one list beside the tool's schema that the permission broker
+  reads too — are never the body of a `fix` lesson. "It passed once it left the
+  sandbox" is true and is still not something a run may teach the next one; the
+  broker decides escapes per call. The reviewed `bash-network` remedy, which
+  says how egress is requested, is human-written advice, not a learned one.
 
 Notebook _facts_ — "`bun test` passed here", "this is a bun+turbo monorepo" —
 still enter at `trial`. A reading the harness took itself is not advice, and
@@ -261,7 +278,27 @@ Three gates, all of which must hold:
 
 A task throttled on either arm is excluded from every number and named in the
 report: a rate limit landing on one arm is the easiest way to manufacture a
-fake win.
+fake win. An **infrastructure failure** is excluded the same way — the loop's
+own `provider_lost`, or a transport failure (a 5xx, a reset, a refused
+connection) before the first completed turn. An outage after real work is not
+retried: it stays unscored with its spend on the record.
+
+Live, cost has two more rules. A task that ran on a model with **no list
+price** fails the cost gate rather than skipping it — an unknown cost used to
+make `costDelta` null, and a null delta skipped the gate, so an unpriced arm
+could win on pass rate alone. And a treatment that costs something where the
+control cost **$0** is refused: no band makes a rise from nothing flat. (Mock
+prices nothing; its cost is not measured at all, and a mock win cannot promote.)
+
+A run that could not answer — nothing comparable on both arms, more of the
+suite excluded than compared, or a live cost unknown — is **inconclusive**: not
+a win and not a loss. A regression is never inconclusive; harm seen on both
+arms' scored rows is an answer.
+
+Every measurement records what it cost to take (`learningCostUsd`: both arms,
+excluded rows included), the checkout's revision and the Rune version. `rune
+evolve status` totals the learning spend. Learning is not free, and a loop that
+hid its own spend could not be weighed against what it found.
 
 **Mock is the regression gate, not the discovery gate.** The scripted provider
 replays a script rather than reasoning, so a configuration that only changes
@@ -269,7 +306,7 @@ what the model is _told_ usually shows no difference there. Mock catches harm,
 cheaply and deterministically, on every change. Finding an improvement needs
 `--real`.
 
-## Promote, revert, and the four refusals
+## Promote, revert, and the refusals
 
 ```bash
 rune evolve promote doctrine_full     # only on a passing A/B for this exact config
@@ -286,11 +323,19 @@ contribution is visible, diffable and removable by hand. The block is always
 placed last, because the config parser lets later keys win, which is what makes
 a promotion an override rather than a hope.
 
-It refuses on four grounds, each named after a failure:
+It refuses on these grounds, each named after a failure:
 
-- **No passing A/B for this exact arm pair.** The evidence has to be about the
-  change being made, not about a change that shared its name. A measurement
-  taken before someone widened the variant is evidence about something else.
+- **No evidence about this exact question.** The rows that can answer are the
+  _live_ measurements of this exact arm pair, taken under the doctrine in force
+  now and against the yardstick a human blessed. A measurement taken before
+  someone widened the variant, changed the doctrine or moved the suite is
+  evidence about something else, and mock replays a script — it can show harm,
+  never lift.
+- **The question was already answered.** One predefined comparison has one
+  answer: a conclusive loss at that key closes it. A win recorded after the
+  loss is a second look, and a win a later run failed to replicate was noise.
+  Inconclusive runs close nothing. A new question needs a changed variant or a
+  person re-blessing the yardstick.
 - **The yardstick moved.** `tests/eval/**` is digested and a promotion is
   refused when that digest differs from the one a human blessed. A loop that can
   edit the eval suite and then promote on the result is grading its own exam.
@@ -357,9 +402,23 @@ Applied by itself: retro → notebook → playbook. Proposals only: tune. A
 person on the merge: gardener. That split is deliberate, and the status page
 prints it.
 
+**What has been demonstrated, 2026-09-27:** the controls, not an improvement.
+Every refusal above is a red-then-green test
+(`tests/unit/evolve/phase6-evidence.test.ts`); an independent adversarial pass
+mutation-tested them and found three adjacent gaps, all closed (a bare `500` in
+ordinary text read as a status; a pitfall built from an error that advised
+`unsandboxed: true`; `rune notebook rm` quietly undoing a disable). Trials are
+keyed on the harness's release line, so a minor release restarts them. The mock
+A/B runs end to end against a scratch home, but no variant has a live
+measurement and no lesson has finished a controlled trial, so there is **no
+promotion and no measured lift**. This is controlled experimentation, not
+demonstrated self-improvement. A live A/B needs a priced model (an unpriced one
+is inconclusive by rule — `gpt-oss` has no list price in the catalog) and a
+blessed yardstick.
+
 ## The invariants
 
-Everything above is machinery. These six properties are what make the machinery
+Everything above is machinery. These seven properties are what make the machinery
 mean something, and they live in
 `tests/unit/orchestrator/evolution-invariants.test.ts` — the tests that should be
 hardest to delete.
@@ -369,8 +428,10 @@ hardest to delete.
    stores import nothing from `notebook/`, `retro`, `playbook` or `evolve/` —
    checked directly _and transitively_, because the direct check is the one
    people remember and the transitive one catches a helper quietly pulling the
-   notebook in. The isolation is mutual: nothing under `evolve/` may import a
-   decider either.
+   notebook in. The isolation is mutual: no learner — `evolve/`, `notebook/`,
+   `retro.ts`, `playbook.ts` — imports a decider either. A constant both sides
+   need lives with the thing it describes (the bash escape list sits beside the
+   bash schema), not on one side of the wall.
 2. **The off-limits write-deny.** A real `git commit` of `prompts.ts` is refused
    by a real hook in a real repository, and an ordinary fix commits fine.
 3. **The yardstick lock.** A diff under `tests/eval/**` changes the digest and
@@ -386,6 +447,12 @@ hardest to delete.
 6. **The lifecycle property.** Nothing skips a rung: a candidate with a perfect
    record stays a candidate until it recurs, then becomes a trial, and only then
    can reach active. Every transition carries the numbers that justified it.
+7. **Evidence that cannot count** (`tests/unit/evolve/phase6-evidence.test.ts`).
+   A mock win, an unpriced or zero-to-something cost, an outage on one arm, a
+   win after a loss at the same key, a measurement under another doctrine or
+   yardstick, and a teacher session's own outcome never become promotion
+   evidence; a person's disable survives re-learning; no learned lesson carries
+   a containment escape.
 
 ## Benchmark
 
