@@ -88,39 +88,47 @@ function stranger(): number {
   return proc.pid!;
 }
 
-test("a live process the ledger cannot vouch for is left alone, not killed", async () => {
-  const workspace = mkdtempSync(`${tmpdir()}/rune-child-ledger-identity-`);
-  dirs.push(workspace);
+// POSIX only, by design: Windows has no start time to read, and the reaper
+// there keeps its liveness-only behaviour rather than losing reaping
+// altogether (`reapToolChildren` in child-ledger.ts). The Windows fix is a
+// start-time probe (GetProcessTimes), recorded as a Phase 7 residual — not a
+// passing test that asserts a property the platform does not have.
+test.skipIf(process.platform === "win32")(
+  "a live process the ledger cannot vouch for is left alone, not killed",
+  async () => {
+    const workspace = mkdtempSync(`${tmpdir()}/rune-child-ledger-identity-`);
+    dirs.push(workspace);
 
-  const deadOwner = recentlyDeadPid();
-  const victim = stranger();
-  await Bun.sleep(120);
+    const deadOwner = recentlyDeadPid();
+    const victim = stranger();
+    await Bun.sleep(120);
 
-  // Preconditions, so a failure below can only mean what the test says.
-  expect(alive(deadOwner)).toBe(false);
-  expect(alive(victim)).toBe(true);
+    // Preconditions, so a failure below can only mean what the test says.
+    expect(alive(deadOwner)).toBe(false);
+    expect(alive(victim)).toBe(true);
 
-  // The ledger row a crashed engine would have left: recent (inside the TTL),
-  // owner gone, child "alive". Every field is the shape rune-tools and the
-  // bridge actually write — minus the identity, which is what a row naming a
-  // recycled pid would be missing or wrong about.
-  const path = childLedgerPath(workspace);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(
-    path,
-    `${JSON.stringify({
-      pid: victim,
-      pgid: victim,
-      ownerPid: deadOwner,
-      at: new Date().toISOString(),
-      tool: "bash",
-    })}\n`,
-  );
+    // The ledger row a crashed engine would have left: recent (inside the TTL),
+    // owner gone, child "alive". Every field is the shape rune-tools and the
+    // bridge actually write — minus the identity, which is what a row naming a
+    // recycled pid would be missing or wrong about.
+    const path = childLedgerPath(workspace);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(
+      path,
+      `${JSON.stringify({
+        pid: victim,
+        pgid: victim,
+        ownerPid: deadOwner,
+        at: new Date().toISOString(),
+        tool: "bash",
+      })}\n`,
+    );
 
-  const report = reapToolChildren(workspace);
-  await Bun.sleep(250);
+    const report = reapToolChildren(workspace);
+    await Bun.sleep(250);
 
-  expect(report.map((r) => r.outcome)).not.toContain("killed");
-  expect(report[0]?.reason ?? "").toContain("identity mismatch");
-  expect(alive(victim)).toBe(true);
-});
+    expect(report.map((r) => r.outcome)).not.toContain("killed");
+    expect(report[0]?.reason ?? "").toContain("identity mismatch");
+    expect(alive(victim)).toBe(true);
+  },
+);

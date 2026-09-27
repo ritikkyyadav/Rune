@@ -652,12 +652,15 @@ test("G12 — a lease taken on another machine is never cleared by a local pid p
 
   // Only the TTL clears it — the one bound that does not depend on being able
   // to see the holder.
-  const brief = new DelegatedSessions(manager, { hostId: "build-box", leaseTtlMs: 5 });
+  // 500 ms, not 5: on a Windows runner the SQLite write and read between the
+  // two claims alone outlasted a 5 ms lease (CI run 36301706676), so the
+  // "still running" half passed or failed on the disk's speed.
+  const brief = new DelegatedSessions(manager, { hostId: "build-box", leaseTtlMs: 500 });
   brief.claim(parent, "task_h2");
   expect(() => here.claim(parent, "task_h2")).toThrow("already running");
   const start = Date.now();
-  while (Date.now() - start < 20) {
-    /* the TTL is 5 ms; this is the wait */
+  while (Date.now() - start < 600) {
+    /* the TTL is 500 ms; this is the wait */
   }
   expect(() => here.claim(parent, "task_h2")()).not.toThrow();
   manager.close();
