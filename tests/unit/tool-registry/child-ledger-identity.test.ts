@@ -77,7 +77,12 @@ function recentlyDeadPid(): number {
  * what makes the group kill safe to demonstrate: it can only reach this tree.
  */
 function stranger(): number {
-  const proc = spawn("/bin/sleep", ["120"], { detached: true, stdio: "ignore" });
+  // The runtime again, idling: `/bin/sleep` is not on Windows (ts-windows,
+  // run 36229814062: `uv_spawn '/bin/sleep'` ENOENT).
+  const proc = spawn(process.execPath, ["-e", "setTimeout(() => {}, 120_000)"], {
+    detached: true,
+    stdio: "ignore",
+  });
   proc.unref();
   strangers.push(proc.pid!);
   return proc.pid!;

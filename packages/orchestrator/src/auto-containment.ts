@@ -1116,25 +1116,38 @@ function stripBypassFlags(command: string): string {
 // TODO(human)
 const WINDOWS_ABSOLUTE_PATH: string | null = null;
 
-const PATH_CANDIDATE_RE = new RegExp(
-  // Boundary: start, whitespace, or a character a path can legitimately follow.
-  // `:` is deliberately absent so `https://host/path` is not read as a path.
-  String.raw`(?:^|[\s"'` +
-    "`" +
-    String.raw`=(,;|&<>])` +
-    // A home spelling, alone or with a path after it …
-    String.raw`((?:~[\w.-]*|\$\{?(?:HOME|RUNE_HOME|GEAR_HOME|ALAN_HOME)\}?)(?:/[^\s"'` +
-    "`" +
-    String.raw`;|&()<>]*)?` +
-    // … or an ordinary absolute, relative or bare-directory path …
-    String.raw`|(?:\.{0,2}/|[\w.@-]+/)[^\s"'` +
-    "`" +
-    String.raw`;|&()<>]*` +
-    // … or, on Windows only, a drive or UNC path.
-    (process.platform === "win32" && WINDOWS_ABSOLUTE_PATH ? `|${WINDOWS_ABSOLUTE_PATH}` : "") +
-    ")",
-  "g",
-);
+/**
+ * The path-candidate matcher for a platform. Group 1 is the candidate.
+ *
+ * A function of the platform, not a constant, so the Windows alternative can
+ * be exercised where it is not compiled in: a test on macOS builds the win32
+ * matcher and checks what it extracts. The downstream checks already use the
+ * native `path` module, whose win32 build normalizes `C:\\x/y` — extraction is
+ * the only half that was platform-blind.
+ */
+export function pathCandidateRe(platform: NodeJS.Platform): RegExp {
+  return new RegExp(
+    // Boundary: start, whitespace, or a character a path can legitimately follow.
+    // `:` is deliberately absent so `https://host/path` is not read as a path.
+    String.raw`(?:^|[\s"'` +
+      "`" +
+      String.raw`=(,;|&<>])` +
+      // A home spelling, alone or with a path after it …
+      String.raw`((?:~[\w.-]*|\$\{?(?:HOME|RUNE_HOME|GEAR_HOME|ALAN_HOME)\}?)(?:/[^\s"'` +
+      "`" +
+      String.raw`;|&()<>]*)?` +
+      // … or an ordinary absolute, relative or bare-directory path …
+      String.raw`|(?:\.{0,2}/|[\w.@-]+/)[^\s"'` +
+      "`" +
+      String.raw`;|&()<>]*` +
+      // … or, on Windows only, a drive or UNC path.
+      (platform === "win32" && WINDOWS_ABSOLUTE_PATH ? `|${WINDOWS_ABSOLUTE_PATH}` : "") +
+      ")",
+    "g",
+  );
+}
+
+const PATH_CANDIDATE_RE = pathCandidateRe(process.platform);
 
 const HOME_TOKEN_RE = /^(?:~[\w.-]*|\$\{?(?:HOME|RUNE_HOME|GEAR_HOME|ALAN_HOME)\}?)/;
 
