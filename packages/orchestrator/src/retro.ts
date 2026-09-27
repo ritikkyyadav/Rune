@@ -698,6 +698,22 @@ const SECONDARY_RUNNER_RE =
   /^(\.\/[\w.-]+|bash|sh|zsh|make|just|tox|poetry|uv|pipenv|bundle|rake|mix|sbt|dotnet|swift|xcodebuild|deno|nx|lerna|mise|ctest|cmake)\b/;
 
 /**
+ * Escape ADVICE in text: `unsandboxed: true`, `"network": true`,
+ * `run_in_background=true` — the same list the broker reads. A learned lesson
+ * built from such text would carry the advice into later runs, so it is not
+ * learned at all (verifier finding V2: the shipped sandbox-denial hint says
+ * exactly this, and only a 140-character clip was keeping it out of pitfalls).
+ */
+const ESCAPE_ADVICE_RE = new RegExp(
+  `["'\`]?\\b(?:${BASH_CONTAINMENT_ESCAPES.join("|")})\\b["'\`]?\\s*[:=]\\s*true\\b`,
+  "i",
+);
+
+export function advisesEscape(text: string): boolean {
+  return ESCAPE_ADVICE_RE.test(text);
+}
+
+/**
  * The arguments that changed between a failing call and the passing one — the
  * body of a `fix` lesson.
  *
@@ -869,6 +885,8 @@ export function retroLessons(observations: ToolObservation[]): RetroLesson[] {
 
   for (const [cmd, f] of failures) {
     if (f.count < 2 || passed.has(cmd)) continue;
+    // The whole line, not the clipped body: advice past the clip is still advice.
+    if (advisesEscape(f.line)) continue;
     lessons.push({
       kind: "pitfall",
       title: `avoid:${head(cmd)}:${hash6(cmd)}`,

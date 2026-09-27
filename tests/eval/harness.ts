@@ -249,9 +249,15 @@ function isThrottleError(msg: string): boolean {
   return /rate.?limit|usage limit|429|throttl|quota|too many requests|no credits/i.test(msg);
 }
 
-/** Transport and server-side failures: the provider or the path to it, not the model. */
+/**
+ * Transport and server-side failures: the provider or the path to it, not the
+ * model. A 5xx counts only where it reads as a status — beside `HTTP`,
+ * `status`, `code` or `API error`, or followed by its reason phrase — because
+ * a bare number is ordinary text: "expected 500 rows", "line 502" (verifier
+ * finding V1). The reason phrases count on their own.
+ */
 const INFRA_ERROR_RE =
-  /\b50[0-4]\b|\b52\d\b|bad gateway|service unavailable|gateway time-?out|internal server error|overloaded|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAIN|socket hang up|fetch failed|network is unreachable/i;
+  /\b(?:https?(?:\/\d(?:\.\d)?)?|status(?:\s*code)?|(?:api\s+)?error(?:\s+code)?|code)\s*[:=]?\s*5(?:0[0-4]|2\d)\b|\b5(?:0[0-4]|2\d)\s*[:\-]?\s*(?:internal server error|bad gateway|service unavailable|gateway time-?out|overloaded)|bad gateway|service unavailable|gateway time-?out|internal server error|overloaded|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAIN|socket hang up|fetch failed|network is unreachable/i;
 
 /**
  * Did infrastructure end this run? Returns the cause, or null for a result

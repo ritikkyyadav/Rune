@@ -191,9 +191,10 @@ export function promotionEvidence(
 
   const live = current.filter((e) => e.mode === "real");
   if (live.length === 0) {
+    const unlabelled = current.some((e) => e.mode === undefined);
     return {
       measurement: null,
-      refusal: `${variant} has only mock-mode measurements here. The scripted provider replays a script rather than reasoning, so mock can show harm, never lift; promotion needs \`rune evolve ab ${variant} --real\`.`,
+      refusal: `${variant} has no live measurement at this configuration: ${unlabelled ? "a row that does not say how it was measured cannot count, and " : ""}mock replays a script rather than reasoning, so it can show harm, never lift. Promotion needs \`rune evolve ab ${variant} --real\`.`,
     };
   }
 

@@ -40,6 +40,8 @@ import { NotebookStore } from "../../../packages/orchestrator/src/notebook/store
 import { buildNotebookBlock } from "../../../packages/orchestrator/src/notebook/retrieval";
 import type { ToolObservation } from "../../../packages/orchestrator/src/notebook/capture";
 import { retroLessons } from "../../../packages/orchestrator/src/retro";
+import { runNotebook } from "../../../packages/orchestrator/src/bin/notebook-cli";
+import { getRuneHome } from "../../../packages/shared/src/paths";
 import { BASH_CONTAINMENT_ESCAPES } from "../../../packages/tool-registry/src/tools/builtin";
 import { abChildEnv } from "../../../packages/orchestrator/src/bin/evolve-cli";
 import { compareArms, type SuiteReport } from "../../../tests/eval/report";
@@ -464,5 +466,122 @@ describe("G11 — the A/B runner never touches the invoking profile", () => {
     // tests/scratch-home.ts scrubs provider keys unless RUNE_EVAL_REAL=1.
     expect(abChildEnv({}, "/s", "/r", "real").RUNE_EVAL_REAL).toBe("1");
     expect(abChildEnv({ RUNE_EVAL_REAL: "1" }, "/s", "/r", "mock").RUNE_EVAL_REAL).toBeUndefined();
+  });
+});
+
+// ─── From the independent verifier (.codex/audit-20260927/phase6/verify-report.md) ───
+
+describe("V1 — a number in ordinary text is not an HTTP status", () => {
+  it("does not excuse a genuine miss whose message happens to contain 500–504 or 52x", () => {
+    for (const msg of [
+      "AssertionError: expected 500 rows but got 3",
+      "line 502 in file server.py: unexpected indent",
+      "took 504ms, budget was 100ms",
+      "wrote 521 bytes",
+    ]) {
+      expect({ msg, infra: classifyInfra({ pass: false, turns: 0, errors: [msg] }) }).toEqual({
+        msg,
+        infra: null,
+      });
+    }
+  });
+
+  it("still reads a status the way providers and gateways spell it", () => {
+    for (const msg of [
+      "502 Bad Gateway from upstream",
+      "HTTP 503",
+      "status 500: upstream error",
+      "OpenAI API error 504",
+      "Anthropic API error: 529 overloaded_error",
+      "Service Unavailable",
+    ]) {
+      expect({
+        msg,
+        infra: classifyInfra({ pass: false, turns: 0, errors: [msg] }) !== null,
+      }).toEqual({ msg, infra: true });
+    }
+  });
+});
+
+describe("V2 — no learned lesson carries escape advice, whichever kind it is", () => {
+  it("learns no pitfall from an error line that advises an escape, wherever in the line it sits", () => {
+    const denial =
+      "This command ran inside the OS sandbox and failed with a permission error, which is usually a " +
+      "sandbox restriction: writes are confined to the workspace, temp and Rune's cache; credential " +
+      "stores are unreadable. If the command genuinely needs host access, re-run it once with unsandboxed: true.";
+    for (const error of ["denied: retry with unsandboxed: true", denial, 'set "network": true']) {
+      const lessons = retroLessons([
+        bash("chmod 700 /etc/x", false, error),
+        bash("chmod 700 /etc/x", false, error),
+      ]);
+      expect({
+        error: error.slice(0, 40),
+        pitfalls: lessons.filter((l) => l.kind === "pitfall"),
+      }).toEqual({
+        error: error.slice(0, 40),
+        pitfalls: [],
+      });
+    }
+  });
+
+  it("still learns an ordinary pitfall", () => {
+    const lessons = retroLessons([
+      bash("bun test tests/unit/", false, "EADDRINUSE"),
+      bash("bun test tests/unit/", false, "EADDRINUSE"),
+    ]);
+    expect(lessons.filter((l) => l.kind === "pitfall")).toHaveLength(1);
+  });
+});
+
+describe("G5 — the refusal names what is missing", () => {
+  it("does not call a row mock when it never said how it was measured", () => {
+    const legacy = measurement();
+    delete (legacy as Partial<LedgerEntry>).mode;
+    appendLedger(legacy, home);
+    const r = promote("doctrine_full", { home, ...ENV });
+    expect(r.ok).toBe(false);
+    expect(r.refusals.join(" ")).toContain("no live measurement");
+  });
+});
+
+describe("V3 — `rune notebook rm` cannot quietly undo a person's disable", () => {
+  it("refuses a disabled lesson, and records every other removal in the ledger", () => {
+    // The test preload gives this process a scratch RUNE_HOME; the CLI opens
+    // its notebook there, exactly as it would the real one.
+    const runeHome = getRuneHome();
+    const store = new NotebookStore(join(runeHome, "notebook.db"));
+    const title = (n: string) => `avoid:v3-${n}-${process.pid}`;
+    const seed = (n: string) =>
+      store.upsert({
+        kind: "tactic",
+        scope: "repo",
+        repoKey: "v3",
+        title: title(n),
+        body: `v3 lesson ${n}`,
+        stage: "candidate",
+        sessionId: "v3",
+      });
+    const blocked = seed("blocked");
+    const plain = seed("plain");
+    store.disable(blocked);
+    store.close();
+
+    const log = console.log;
+    console.log = () => {};
+    try {
+      runNotebook(["notebook", "rm", blocked.slice(-12)], {});
+      runNotebook(["notebook", "rm", plain.slice(-12)], {});
+    } finally {
+      console.log = log;
+    }
+
+    const after = new NotebookStore(join(runeHome, "notebook.db"));
+    const ids = after.listRepo("v3").map((e) => e.id);
+    after.close();
+    expect(ids).toContain(blocked);
+    expect(ids).not.toContain(plain);
+    const rows = readLedger(runeHome).filter((e) => e.subject === `lesson:${plain}`);
+    expect(rows.map((e) => e.kind)).toEqual(["lesson"]);
+    expect(rows[0]!.note).toContain("removed by a person");
   });
 });

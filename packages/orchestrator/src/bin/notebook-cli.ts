@@ -5,6 +5,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getRuneHome } from "@rune/shared";
+import { appendLedger } from "../evolve/ledger";
 import { NotebookStore } from "../notebook/store";
 import type { NotebookEntry } from "../notebook/store";
 import { dim, faint, info, ok, text, warn } from "./ui/theme";
@@ -75,8 +76,24 @@ export function runNotebook(positionals: string[], values: Record<string, unknow
     const e = positionals[2] ? store.getByPrefix(positionals[2]) : null;
     if (!e) {
       console.log(dim("  Usage: rune notebook rm <id-prefix> (no unique match)"));
+    } else if (e.blocked) {
+      // A person disabled it so that re-learning cannot bring it back. Deleting
+      // the row would erase that "no" and let the next run learn it afresh —
+      // undoing a decision with a command that looks like tidying up.
+      console.log(
+        `  ${warn("!")} ${faint(e.body.slice(0, 70))} is disabled; removing it would let a run learn it again. ` +
+          `To undo the disable on purpose: rune evolve lessons --enable ${e.id.slice(-8)}`,
+      );
     } else {
       store.remove(e.id);
+      // Forgetting is recorded like every other act on what the loop learned.
+      appendLedger({
+        v: 1,
+        at: new Date().toISOString(),
+        kind: "lesson",
+        subject: `lesson:${e.id}`,
+        note: `removed by a person (rune notebook rm): ${e.body.slice(0, 120)}`,
+      });
       console.log(`  ${ok("✓")} removed: ${faint(e.body.slice(0, 70))}`);
     }
   } else if (sub === "export") {
