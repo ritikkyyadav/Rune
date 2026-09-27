@@ -1113,8 +1113,18 @@ function stripBypassFlags(command: string): string {
  * filename, and the platforms whose behaviour is already proven stay
  * byte-identical.
  */
-// TODO(human)
-const WINDOWS_ABSOLUTE_PATH: string | null = null;
+const WINDOWS_ABSOLUTE_PATH: string | null =
+  // A drive path, `C:\…` or `C:/…` with either separator after it (a bare
+  // `C:\` included), ending where the POSIX alternatives end: whitespace, a
+  // quote, a backtick, or a shell operator. A drive-relative `C:x` is not
+  // matched — it names no root, and `a:b` in ordinary text must stay text.
+  String.raw`[A-Za-z]:[\\/][^\s"'` +
+  "`" +
+  String.raw`;|&()<>]*` +
+  // … or a UNC path, `\\server\share\…`.
+  String.raw`|\\\\[^\s"'` +
+  "`" +
+  String.raw`;|&()<>]+`;
 
 /**
  * The path-candidate matcher for a platform. Group 1 is the candidate.
