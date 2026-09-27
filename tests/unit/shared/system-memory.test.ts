@@ -32,6 +32,7 @@ import {
   saveRefreshedSystemMemory,
   resolveMemoryMode,
   memoryKeyLocation,
+  memoryKeyNeedsRepair,
   describeMemoryKey,
   getMemoryKeyPath,
   loadMemorySecret,
@@ -555,23 +556,43 @@ describe("shared/system-memory — the meta sidecar is authenticated", () => {
 // is exactly the thing a test like this can silently start doing.
 describe("shared/system-memory — the memory key is not a file a run can read", () => {
   let dir: string;
-  let calls: Array<{ cmd: string; args: readonly string[]; input?: string }>;
+  let calls: Array<{ cmd: string; args: readonly string[]; input?: string; timeoutMs?: number }>;
   let vault: Map<string, string>;
   let prevBackend: string | undefined;
 
-  const fakeStore = (opts?: { refuseWrite?: boolean }): void => {
-    setMemoryKeyRunner((cmd, args, input) => {
-      calls.push({ cmd, args, ...(input === undefined ? {} : { input }) });
+  const fakeStore = (opts?: {
+    refuseWrite?: boolean;
+    /** Accounts whose SECRET read ends in this status — a dialog denied (128)
+     *  or left to time out (127). Attribute-only lookups still answer. */
+    deny?: Record<string, number>;
+  }): void => {
+    setMemoryKeyRunner((cmd, args, input, timeoutMs) => {
+      calls.push({
+        cmd,
+        args,
+        ...(input === undefined ? {} : { input }),
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      });
       if (cmd === "security" && args[0] === "help") return { status: 0, stdout: "" };
       if (cmd === "security" && args[0] === "find-generic-password") {
         const account = args[args.indexOf("-a") + 1]!;
         const held = vault.get(account);
-        return held ? { status: 0, stdout: held + "\n" } : { status: 44, stdout: "" };
+        if (!held) return { status: 44, stdout: "" };
+        if (!args.includes("-w")) return { status: 0, stdout: `"acct"<blob>="${account}"\n` };
+        const denied = opts?.deny?.[account];
+        return denied !== undefined
+          ? { status: denied, stdout: "" }
+          : { status: 0, stdout: held + "\n" };
       }
       if (cmd === "security" && args[0] === "add-generic-password") {
         if (opts?.refuseWrite) return { status: 45, stdout: "" };
         vault.set(args[args.indexOf("-a") + 1]!, args[args.indexOf("-w") + 1]!);
         return { status: 0, stdout: "" };
+      }
+      if (cmd === "security" && args[0] === "delete-generic-password") {
+        return vault.delete(args[args.indexOf("-a") + 1]!)
+          ? { status: 0, stdout: "" }
+          : { status: 44, stdout: "" };
       }
       if (cmd === "secret-tool" && args[0] === "lookup") {
         const held = vault.get(args[args.indexOf("account") + 1]!);
@@ -618,8 +639,12 @@ describe("shared/system-memory — the memory key is not a file a run can read",
     expect([...vault.values()]).toEqual([hex!]);
     const write = calls.find((c) => c.args[0] === "add-generic-password")!;
     expect(write.cmd).toBe("security");
-    // An empty trusted-application list: no other binary is pre-authorised.
-    expect(write.args).toContain("-T");
+    // No `-T`: `security` made the item, so `security` reads it back without a
+    // dialog. `-T ""` emptied that list and asked for the login password on
+    // every read of every session — the regression this pins.
+    expect(write.args).not.toContain("-T");
+    expect(write.args[write.args.indexOf("-l") + 1]).toBe("Rune memory key");
+    expect(write.args[write.args.indexOf("-a") + 1]).toMatch(/^memory-key\.v2:[0-9a-f]{16}$/);
     // …and the secret is an argv element of `security`, never a file.
     expect(loadMemorySecret(false, dir)).toBe(hex);
   });
@@ -689,5 +714,90 @@ describe("shared/system-memory — the memory key is not a file a run can read",
     } finally {
       rmSync(other, { recursive: true, force: true });
     }
+  });
+
+  // ── The keychain prompt on every launch (founder, 2026-09-28) ──
+  //
+  // The first keychain build wrote the key with `-T ""`, which EMPTIES the
+  // item's trusted-application list (`man security`), so every read asked for
+  // the login password: every session, and — because a failed read was not
+  // remembered — once per entry per render after a "Deny". Those items move,
+  // once, to an item `security` itself made.
+  const askingAccount = (): string =>
+    memoryKeyLocation(dir).account.replace(/^memory-key\.v2:/, "memory-key:");
+
+  it("a key in the asking item moves once, same secret, and the old item goes", () => {
+    process.env.RUNE_MEMORY_KEY_BACKEND = "keychain";
+    fakeStore();
+    expect(memoryKeyNeedsRepair(dir)).toBe(false);
+    const existing = "b".repeat(64);
+    const asking = askingAccount();
+    vault.set(asking, existing);
+    expect(memoryKeyNeedsRepair(dir)).toBe(true);
+    // The check read no secret, so it cannot have put a dialog up.
+    expect(calls.some((c) => c.args.includes("-w"))).toBe(false);
+
+    // The same secret, so every entry signed before the move still verifies.
+    expect(loadMemorySecret(false, dir)).toBe(existing);
+    expect([...vault.entries()]).toEqual([[memoryKeyLocation(dir).account, existing]]);
+    // The one read that can ask is given a person's time to answer it.
+    const askingRead = calls.find((c) => c.args.includes("-w") && c.args.includes(asking))!;
+    expect(askingRead.timeoutMs).toBeGreaterThanOrEqual(60_000);
+    expect(calls.find((c) => c.args[0] === "add-generic-password")!.args).not.toContain("-T");
+
+    // The next process reads the new item and never names the old one.
+    forgetMemorySecretCache();
+    calls = [];
+    expect(memoryKeyNeedsRepair(dir)).toBe(false);
+    expect(loadMemorySecret(false, dir)).toBe(existing);
+    expect(calls.some((c) => c.args.includes(asking))).toBe(false);
+  });
+
+  it("a denied dialog is asked once per process, and no key is minted over it", () => {
+    process.env.RUNE_MEMORY_KEY_BACKEND = "keychain";
+    const existing = "c".repeat(64);
+    const asking = askingAccount();
+    vault.set(asking, existing);
+    fakeStore({ deny: { [asking]: 128 } });
+    // A write path asks with create=true. Minting here would orphan every
+    // entry the real key signed.
+    expect(loadMemorySecret(true, dir)).toBeNull();
+    expect([...vault.entries()]).toEqual([[asking, existing]]);
+    expect(existsSync(getMemoryKeyPath(dir))).toBe(false);
+    // Every entry on every render asks again; none of it reaches `security`.
+    const spawned = calls.length;
+    for (let i = 0; i < 5; i++) {
+      expect(memoryMac("payload", true, dir)).toBeUndefined();
+      expect(loadMemorySecret(false, dir)).toBeNull();
+    }
+    expect(calls.length).toBe(spawned);
+    // The next launch asks again, so the person can still say yes.
+    forgetMemorySecretCache();
+    expect(memoryKeyNeedsRepair(dir)).toBe(true);
+  });
+
+  it("an unreadable key under the new name is never minted over either", () => {
+    process.env.RUNE_MEMORY_KEY_BACKEND = "keychain";
+    const account = memoryKeyLocation(dir).account;
+    const existing = "d".repeat(64);
+    // Locked keychain, a dialog left until it timed out, a denied one.
+    for (const status of [51, 127, 128]) {
+      forgetMemorySecretCache();
+      vault.set(account, existing);
+      fakeStore({ deny: { [account]: status } });
+      expect(loadMemorySecret(true, dir)).toBeNull();
+      expect([...vault.entries()]).toEqual([[account, existing]]);
+    }
+  });
+
+  it("a copy the keychain refuses leaves the old item where it was", () => {
+    process.env.RUNE_MEMORY_KEY_BACKEND = "keychain";
+    const existing = "e".repeat(64);
+    const asking = askingAccount();
+    vault.set(asking, existing);
+    fakeStore({ refuseWrite: true });
+    expect(loadMemorySecret(false, dir)).toBe(existing);
+    expect([...vault.entries()]).toEqual([[asking, existing]]);
+    expect(calls.some((c) => c.args[0] === "delete-generic-password")).toBe(false);
   });
 });

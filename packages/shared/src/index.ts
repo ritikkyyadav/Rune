@@ -203,6 +203,7 @@ export {
   memorySecretMissing,
   forgetMemorySecretCache,
   memoryKeyLocation,
+  memoryKeyNeedsRepair,
   describeMemoryKey,
   setMemoryKeyRunner,
   type MemoryKeyCommandRunner,

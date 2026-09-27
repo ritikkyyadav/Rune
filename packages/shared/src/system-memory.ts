@@ -283,12 +283,34 @@ const KEY_RE = /^[0-9a-f]{64}$/;
 /** The keychain service namespace, shared with `credential-store.ts`. */
 const MEMORY_KEY_SERVICE = "rune";
 
+/**
+ * What Keychain Access lists the item as. Every other Rune item is labelled
+ * plain "rune", so a dialog about this one could not say which it meant.
+ */
+const MEMORY_KEY_LABEL = "Rune memory key";
+
+/**
+ * How long a read that may put a password dialog on screen is given. The
+ * ordinary 10 s is a timeout for a tool; this one is for a person typing a
+ * password, and killing `security` mid-dialog throws their answer away.
+ */
+const ASKING_READ_TIMEOUT_MS = 120_000;
+
 /** One process, one subprocess per store: a MAC is checked once per entry. */
 const secretCache = new Map<string, string>();
+
+/**
+ * Accounts that were there but would not open — a dialog denied, or left
+ * until it timed out. Asked once per process: the store checks a MAC per
+ * entry on every render, and a failure nobody remembered was one dialog per
+ * entry per frame.
+ */
+const unreadable = new Set<string>();
 
 /** Tests and `rune memory resign` re-ask the store rather than a stale cache. */
 export function forgetMemorySecretCache(): void {
   secretCache.clear();
+  unreadable.clear();
 }
 
 /**
@@ -359,12 +381,13 @@ export type MemoryKeyCommandRunner = (
   cmd: string,
   args: readonly string[],
   input?: string,
+  timeoutMs?: number,
 ) => MemoryKeyCommandResult;
 
-const realRunner: MemoryKeyCommandRunner = (cmd, args, input) => {
+const realRunner: MemoryKeyCommandRunner = (cmd, args, input, timeoutMs = 10_000) => {
   const r = spawnSync(cmd, [...args], {
     encoding: "utf8",
-    timeout: 10_000,
+    timeout: timeoutMs,
     ...(input === undefined ? {} : { input }),
   });
   if (r.error) return { status: 127, stdout: "" };
@@ -376,16 +399,27 @@ let keyRunner: MemoryKeyCommandRunner = realRunner;
 /** Tests only. `null` restores the real one. */
 export function setMemoryKeyRunner(runner: MemoryKeyCommandRunner | null): void {
   keyRunner = runner ?? realRunner;
-  secretCache.clear();
+  toolPresence.clear();
+  forgetMemorySecretCache();
 }
 
-/** Is the OS tool actually there? 127 is this runner's "not found". */
+/**
+ * Is the OS tool actually there? 127 is this runner's "not found". Asked once
+ * per process: the backend is resolved on every MAC check — one per entry,
+ * on every render — and a tool does not come and go while Rune runs.
+ */
+const toolPresence = new Map<string, boolean>();
 function toolPresent(cmd: string, args: string[]): boolean {
+  const known = toolPresence.get(cmd);
+  if (known !== undefined) return known;
+  let present: boolean;
   try {
-    return keyRunner(cmd, args).status !== 127;
+    present = keyRunner(cmd, args).status !== 127;
   } catch {
-    return false;
+    present = false;
   }
+  toolPresence.set(cmd, present);
+  return present;
 }
 
 function forcedKeyBackend(): string {
@@ -408,9 +442,24 @@ function memoryKeyBackend(dir: string): MemoryKeyBackend {
  * The account name, bound to the store directory. Two homes on one machine
  * hold two keys, so an entry cannot be carried from one to the other — the
  * per-home binding the file gave us for free, kept.
+ *
+ * The keychain name carries a generation because an item's access list is
+ * set when the item is made: `-U` rewrites the password and leaves the list
+ * as it was, and changing the list asks for the password too. Every item made
+ * under the first name was made with `-T ""` (see writeSecureSecret), so the
+ * way off it is a new item under a new name — loadMemorySecret's repair.
  */
-function memoryKeyAccount(dir: string): string {
-  return `memory-key:${createHash("sha256").update(dir).digest("hex").slice(0, 16)}`;
+function memoryKeyAccount(dir: string, backend: MemoryKeyBackend): string {
+  return backend === "keychain" ? `memory-key.v2:${homeTag(dir)}` : `memory-key:${homeTag(dir)}`;
+}
+
+/** The first keychain name: an item that asked for the login password on every read. */
+function askingKeychainAccount(dir: string): string {
+  return `memory-key:${homeTag(dir)}`;
+}
+
+function homeTag(dir: string): string {
+  return createHash("sha256").update(dir).digest("hex").slice(0, 16);
 }
 
 /** Where this home's key is, what it is called, and whether it is secure. */
@@ -427,7 +476,7 @@ export function memoryKeyLocation(storeDir?: string): MemoryKeyLocation {
         : "no OS credential store on this platform";
     return { backend, account: file, secure: false, where: `${file} (0600 — ${why})` };
   }
-  const account = memoryKeyAccount(dir);
+  const account = memoryKeyAccount(dir, backend);
   const where =
     backend === "keychain"
       ? `macOS Keychain — service "${MEMORY_KEY_SERVICE}", account "${account}"`
@@ -448,24 +497,65 @@ export function describeMemoryKey(storeDir?: string): string {
   return memoryKeyLocation(storeDir).where;
 }
 
-function readSecureSecret(backend: MemoryKeyBackend, account: string): string | null {
+/** What a store said when asked for the key. */
+type SecretRead =
+  | { state: "held"; hex: string }
+  /** Definitely not there — the one answer that makes minting a key safe. */
+  | { state: "absent" }
+  /** There, or maybe there, and not handed over: a dialog denied or left to
+   *  time out, or a value that is not a key. Never minted over. */
+  | { state: "unreadable" };
+
+/** `security`'s exit status for errSecItemNotFound (-25300, low byte). */
+const KEYCHAIN_NOT_FOUND = 44;
+
+function readSecureSecret(
+  backend: MemoryKeyBackend,
+  account: string,
+  timeoutMs?: number,
+): SecretRead {
   try {
     const r =
       backend === "keychain"
-        ? keyRunner("security", [
-            "find-generic-password",
-            "-a",
-            account,
-            "-s",
-            MEMORY_KEY_SERVICE,
-            "-w",
-          ])
+        ? keyRunner(
+            "security",
+            ["find-generic-password", "-a", account, "-s", MEMORY_KEY_SERVICE, "-w"],
+            undefined,
+            timeoutMs,
+          )
         : keyRunner("secret-tool", ["lookup", "service", MEMORY_KEY_SERVICE, "account", account]);
-    if (r.status !== 0) return null;
-    const hex = (r.stdout ?? "").trim();
-    return KEY_RE.test(hex) ? hex : null;
+    if (r.status === 0) {
+      const hex = (r.stdout ?? "").trim();
+      return KEY_RE.test(hex) ? { state: "held", hex } : { state: "unreadable" };
+    }
+    // `secret-tool` says 1 for "no such item" and for every other failure, so
+    // there a failure has always read as absence. The keychain tells the two
+    // apart, and a denied dialog is not an empty keychain: minting over it
+    // would orphan every entry the real key signed.
+    if (backend !== "keychain" || r.status === KEYCHAIN_NOT_FOUND) return { state: "absent" };
+    return { state: "unreadable" };
   } catch {
-    return null;
+    return { state: "unreadable" };
+  }
+}
+
+/**
+ * Whether a keychain item exists, WITHOUT its secret: no `-w`, so `security`
+ * reads the item's attributes only, which no access list guards and no dialog
+ * asks about.
+ */
+function keychainItemExists(account: string): boolean {
+  try {
+    const r = keyRunner("security", [
+      "find-generic-password",
+      "-a",
+      account,
+      "-s",
+      MEMORY_KEY_SERVICE,
+    ]);
+    return r.status === 0;
+  } catch {
+    return false;
   }
 }
 
@@ -473,19 +563,26 @@ function writeSecureSecret(backend: MemoryKeyBackend, account: string, hex: stri
   try {
     const r =
       backend === "keychain"
-        ? // `-T ""` gives the item an empty trusted-application list: nothing
-          // but this binary, with the user's own keychain unlocked, reads it.
+        ? // No `-T`. The tool that makes an item is trusted to read it back,
+          // and every read here is that tool. The first keychain build passed
+          // `-T ""` believing it meant "only this binary"; `man security` says
+          // it removes even the maker's access, so every read put a login-
+          // password dialog on screen, every session. What keeps a run from
+          // forging an entry is the rest of the fence, as for every provider
+          // credential Rune keeps: the sandbox confines a run's writes to the
+          // workspace, so a forged entry has nowhere to land, and Auto defers
+          // a `security find-generic-password` as a credential-store read.
           keyRunner("security", [
             "add-generic-password",
             "-a",
             account,
             "-s",
             MEMORY_KEY_SERVICE,
+            "-l",
+            MEMORY_KEY_LABEL,
             "-U",
             "-w",
             hex,
-            "-T",
-            "",
           ])
         : keyRunner(
             "secret-tool",
@@ -502,10 +599,35 @@ function writeSecureSecret(backend: MemoryKeyBackend, account: string, hex: stri
           );
     if (r.status !== 0) return false;
     // Believe the readback, not the exit code.
-    return readSecureSecret(backend, account) === hex;
+    const back = readSecureSecret(backend, account);
+    return back.state === "held" && back.hex === hex;
   } catch {
     return false;
   }
+}
+
+/** Best effort: once its copy exists, an item left behind is never read again. */
+function deleteKeychainItem(account: string): void {
+  try {
+    keyRunner("security", ["delete-generic-password", "-a", account, "-s", MEMORY_KEY_SERVICE]);
+  } catch {
+    // Left in place. The new name is read first; this one only when that is missing.
+  }
+}
+
+/**
+ * True when this home's key still sits in the item that asks for the login
+ * password on every read, so the first read that needs it will put that
+ * dialog up one last time. Answered from attributes alone, so asking never
+ * shows a dialog — the interactive launch uses it to say what the dialog is
+ * before it appears, rather than leaving a password prompt to explain itself.
+ */
+export function memoryKeyNeedsRepair(storeDir?: string): boolean {
+  const dir = resolveDir(storeDir);
+  if (memoryKeyBackend(dir) !== "keychain") return false;
+  const account = memoryKeyAccount(dir, "keychain");
+  if (secretCache.has(account) || unreadable.has(account)) return false;
+  return !keychainItemExists(account) && keychainItemExists(askingKeychainAccount(dir));
 }
 
 function writeFileSecret(path: string, hex: string): boolean {
@@ -542,6 +664,10 @@ function readFileSecret(path: string): string | null {
  * A legacy `.key` is imported into the secure store on the first call that
  * finds one and then REMOVED, so the window in which the secret is a file a
  * run can read is one process long, and closes without anyone being asked.
+ *
+ * A key the store holds but will not hand over — a dialog denied or left to
+ * time out — is never minted over: that would orphan every entry it signed.
+ * It is asked for once per process, not once per entry per render.
  */
 export function loadMemorySecret(create = false, storeDir?: string): string | null {
   const dir = resolveDir(storeDir);
@@ -549,17 +675,42 @@ export function loadMemorySecret(create = false, storeDir?: string): string | nu
   const file = getMemoryKeyPath(storeDir);
   if (backend === "file") return readFileSecret(file) ?? (create ? mintFileSecret(file) : null);
 
-  const account = memoryKeyAccount(dir);
+  const account = memoryKeyAccount(dir, backend);
   const cached = secretCache.get(account);
   if (cached) return cached;
+  if (unreadable.has(account)) return null;
 
   const held = readSecureSecret(backend, account);
-  if (held) {
+  if (held.state === "held") {
     // A key that is in both places is a key the migration already moved; the
     // leftover file is removed on sight rather than left to be read.
     if (readFileSecret(file) !== null) removeLegacyKeyFile(file);
-    secretCache.set(account, held);
-    return held;
+    secretCache.set(account, held.hex);
+    return held.hex;
+  }
+  if (held.state === "unreadable") {
+    unreadable.add(account);
+    return null;
+  }
+  // ── Repair: a key under the first keychain name ──
+  // That item asks for the login password on every read. Read it one last
+  // time, with a person's time to answer the dialog, copy the SAME secret to
+  // an item that trusts its reader (so every signed entry still verifies), and
+  // delete the old item only once the copy has read back.
+  if (backend === "keychain") {
+    const asking = askingKeychainAccount(dir);
+    const prior = readSecureSecret(backend, asking, ASKING_READ_TIMEOUT_MS);
+    if (prior.state === "unreadable") {
+      // Denied or left: the key is there, so nothing is minted over it. No
+      // memory this process and no second dialog; the next launch asks again.
+      unreadable.add(account);
+      return null;
+    }
+    if (prior.state === "held") {
+      if (writeSecureSecret(backend, account, prior.hex)) deleteKeychainItem(asking);
+      secretCache.set(account, prior.hex);
+      return prior.hex;
+    }
   }
   // ── Migration: a home that already has a `.key` ──
   const legacy = readFileSecret(file);

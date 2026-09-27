@@ -47,6 +47,8 @@ import {
   parseMemoryMode,
   describeMemoryMode,
   describeMemoryKey,
+  memoryKeyNeedsRepair,
+  loadMemorySecret,
   isWithdrawnCadence,
   MEMORY_CADENCE_REFUSAL,
   type MemoryMode,
@@ -1073,6 +1075,16 @@ async function main() {
     command === "export" ||
     Boolean(values.list) ||
     typeof values.print === "string";
+  // The memory key's one-time move off a keychain item that asked for the
+  // login password on every read (see memoryKeyNeedsRepair). Said BEFORE the
+  // dialog it explains appears, and done here, ahead of the screen being
+  // taken, so the last prompt arrives with a sentence saying what it is.
+  if (!oneShotCommand && process.stdin.isTTY && memoryKeyNeedsRepair()) {
+    console.error(
+      `  ${dim("rune: macOS will ask for your login password once more, for Rune's memory key — allow it, and it won't ask again")}`,
+    );
+    loadMemorySecret(false);
+  }
   if (!oneShotCommand) configureAutoTheme(await detectTerminalColors());
   // Detached, and only for a session that will outlive it: a one-shot printer
   // exits before the fetch lands, and an unawaited request racing process exit
