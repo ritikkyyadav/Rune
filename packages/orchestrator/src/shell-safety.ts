@@ -448,8 +448,8 @@ const SECRET_SUBJECT_RE =
 const CLOUD_IDENTITY_SUBJECT_RE =
   /^(?:aws|gcloud|az|doctl)\s+(?:auth|config|configure|iam|sts|ssm|account|accounts|ad|acm|signer|identity)(?![\w-])|^(?:aws|gcloud|az|doctl)\b[\s\S]*\b(?:keys?|credentials?|tokens?|parameters?|passwords?|service-accounts?)\b/i;
 
-/** Whitespace tokenizer that keeps quoted arguments whole. */
-function tokenize(segment: string): string[] {
+/** Whitespace tokenizer that keeps quoted arguments whole (and strips the quotes). */
+export function tokenize(segment: string): string[] {
   const out: string[] = [];
   let current = "";
   let quote: '"' | "'" | null = null;

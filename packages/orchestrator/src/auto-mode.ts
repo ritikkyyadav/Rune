@@ -20,6 +20,7 @@ import {
   mechanicalBreaker,
   routeContainment,
   shellGuardrailChange,
+  uncommittedWorkDiscard,
   type ContainmentKind,
   type ContainmentOutcome,
 } from "./auto-containment";
@@ -2567,6 +2568,9 @@ function shellRiskPattern(command: string): "critical" | "high" | undefined {
   if (CRITICAL_COMMAND_PATTERNS.some((p) => p.re.test(command))) return "critical";
   if (
     HIGH_RISK_COMMAND_RE.test(command) ||
+    // The rest of the hard reset's class: work that is not yet committed,
+    // thrown away (`git checkout -- .`, `git restore .`, `git clean -f`).
+    uncommittedWorkDiscard(command) !== undefined ||
     PUBLISH_COMMAND_RE.test(command) ||
     SECRET_PATH_RE.test(command) ||
     PIPE_TO_INTERPRETER_RE.test(command) ||

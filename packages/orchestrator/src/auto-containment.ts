@@ -48,7 +48,9 @@
 import { existsSync } from "fs";
 import { homedir } from "os";
 import { dirname, isAbsolute, relative, resolve, sep } from "path";
+import { splitShellSegments, stripLeadingAssignments } from "@rune/shared";
 import type { AutoModeAction } from "./auto-mode";
+import { tokenize as shellWords } from "./shell-safety";
 
 export type ContainmentKind = "extend" | "contain" | "redirect" | "defer" | "halt";
 
@@ -148,7 +150,14 @@ const HOST_DESTRUCTION_RE =
  * the verb alone would make the mode unusable; halting on the target is the
  * whole judgement.
  */
-const RECURSIVE_DELETE_RE = /\brm\s+(?:-[a-zA-Z]*\s+)*-[a-zA-Z]*[rR][a-zA-Z]*f/;
+//
+// Any spelling of the flag, in the same command segment as `rm`: `-rf`, `-fr`,
+// `-r -f`, `--recursive --force`, and plain `-r` / `-R` — recursion without
+// force still deletes everything writable, and a sandboxed shell has no
+// terminal to prompt on. This wanted an `f` after the `r` in one cluster, so
+// `rm -fr ~/Documents` was not a recursive delete at all (changelog-mining
+// pilot, 2026-09-27; tests/unit/probes/t17-destructive-deletes.test.ts).
+const RECURSIVE_DELETE_RE = /\brm\b(?=[^;&|\n]*?\s(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)(?=\s|$))/;
 
 /** Broad data destruction that a dump can precede. */
 const DB_DESTRUCTION_RE = /\b(?:DROP\s+(?:DATABASE|SCHEMA)|TRUNCATE\s+TABLE)\b/i;
@@ -480,10 +489,26 @@ export function mechanicalBreaker(action: AutoModeAction): MechanicalBreaker | u
     // a home directory, so `echo cleaning && rm -rf ~/Documents` rated medium
     // and ran. The broker has always asked the right question — does it name
     // something outside the workspace — and now the pre-scan asks it too.
-    if (RECURSIVE_DELETE_RE.test(command) && namesPathOutsideWorkspace(action, command)) {
+    const reach = recursiveDeleteReach(action, command);
+    if (
+      reach === "outside" ||
+      (RECURSIVE_DELETE_RE.test(command) && namesPathOutsideWorkspace(action, command))
+    ) {
       return {
         id: "recursive-delete-outside-workspace",
         reason: "recursive forced deletion names a path outside the workspace",
+      };
+    }
+    if (reach === "workspace") {
+      return {
+        id: "recursive-delete-of-workspace",
+        reason: "recursive deletion of the workspace itself or its version history",
+      };
+    }
+    if (reach === "unresolved") {
+      return {
+        id: "recursive-delete-unresolved-target",
+        reason: "recursive deletion of a target only known at run time",
       };
     }
     if (WORLD_WRITABLE_RE.test(command) && namesPathOutsideWorkspace(action, command)) {
@@ -670,13 +695,37 @@ export function routeContainment(ctx: ContainmentContext): ContainmentOutcome {
     command &&
     (HOST_DESTRUCTION_RE.test(command) ||
       (WORLD_WRITABLE_RE.test(command) && namesPathOutsideWorkspace(action, command)) ||
-      (RECURSIVE_DELETE_RE.test(command) && namesPathOutsideWorkspace(action, command)))
+      (RECURSIVE_DELETE_RE.test(command) && namesPathOutsideWorkspace(action, command)) ||
+      recursiveDeleteReach(action, command) === "outside")
   ) {
     return halt(
       "host-destruction",
       "This command destroys state outside the workspace and cannot be undone. " +
         "Auto mode does not run it and does not offer to. If this is genuinely the work, " +
         "the user runs it themselves or shifts to 4th gear deliberately.",
+    );
+  }
+
+  // 2b. The project itself. Deleting build output is the job; deleting the
+  //     workspace root, every entry in it, or its history (`.git`) is not a
+  //     cleanup anyone can undo. It waits for the user; the agent carries on.
+  //     A target the shell only computes at run time waits too — a variable
+  //     that is empty or wrong turns `rm -rf "$DIR/"` into something else.
+  const reach = command ? recursiveDeleteReach(action, command) : undefined;
+  if (reach === "workspace") {
+    return defer(
+      "workspace-destruction",
+      "This deletes the workspace itself, every entry in it, or its version history, and nothing " +
+        "brings that back. Delete the specific build output you mean instead (for example " +
+        "`rm -rf ./dist`); this step is recorded and reported to the user when the turn ends.",
+    );
+  }
+  if (reach === "unresolved") {
+    return defer(
+      "unresolved-delete-target",
+      "This recursive delete aims at a target the shell only computes when it runs — a variable " +
+        "or command output that, empty or wrong, deletes something else. Run it again naming the " +
+        "literal path you mean; this attempt is recorded and reported to the user.",
     );
   }
 
@@ -793,6 +842,26 @@ export function routeContainment(ctx: ContainmentContext): ContainmentOutcome {
       "Deleting a remote branch removes it for everyone. Delete the local branch instead; the " +
         "remote one is recorded and reported to the user when the turn ends.",
       true,
+    );
+  }
+  const discard = command ? uncommittedWorkDiscard(command) : undefined;
+  if (discard === "ignored" || discard === "stash") {
+    return defer(
+      "irrecoverable-discard",
+      discard === "stash"
+        ? "This destroys stashed work, including the stashes Auto mode takes before a discard. " +
+            "Continue without it; the step is recorded and reported to the user when the turn ends."
+        : "This deletes ignored files too — local configuration like .env, and anything else git " +
+            "does not track — which no stash keeps. Continue without it (a plain `git clean -fd` " +
+            "is recoverable); the step is recorded and reported to the user when the turn ends.",
+    );
+  }
+  if (discard === "tracked" || discard === "untracked") {
+    return redirect(
+      "discard-stashed-first",
+      `git stash push -u -m gear-auto-safety && ${command}`,
+      "This discards uncommitted work. Stash first, then run it — the command does exactly what it " +
+        "did before and the discarded work stays retrievable with `git stash list`.",
     );
   }
   if (HARD_RESET_RE.test(command)) {
@@ -1425,6 +1494,176 @@ function safeStringify(value: unknown): string {
  */
 const HOME_REFERENCE_RE =
   /(?:^|[\s"'`=(,;|&])(?:~|\$\{?(?:HOME|RUNE_HOME|GEAR_HOME|ALAN_HOME)\}?)(?:[/\s"'`)]|$)/;
+
+// ─── Where a recursive delete lands ───
+//
+// The breaker used to ask one question — does the command NAME a path outside
+// the workspace — and the ways to destroy something without naming it were
+// the gap (changelog-mining pilot, 2026-09-27): a bare `..`; `cd ..` and then
+// a relative name; the workspace root spelled `.`, `*`, `"$(pwd)"` or `$PWD`;
+// its history, `.git`; a target that is a variable. Each operand is resolved
+// the way the shell would, segment by segment, following `cd`/`pushd`.
+
+export type DeleteReach = "outside" | "workspace" | "unresolved";
+
+const DELETE_REACH_RANK: Record<DeleteReach, number> = { unresolved: 1, workspace: 2, outside: 3 };
+
+/** The current directory as the shell spells it at run time, optionally with a path after it. */
+const PWD_SPELLING_RE =
+  /^(?:\$\(\s*pwd\s*\)|`\s*pwd\s*`|\$\{?PWD\}?|(\$\(\s*git\s+rev-parse\s+--show-toplevel\s*\)|`\s*git\s+rev-parse\s+--show-toplevel\s*`))(\/.*)?$/;
+
+/** `find` predicates that narrow what `-delete` reaches; with none, it reaches everything below. */
+const FIND_NARROWING_RE =
+  /^-(?:i?name|i?path|i?regex|i?wholename|i?lname|empty|newer\w*|[acm]time|[acm]min|size|user|group|perm|links|inum|samefile)$/;
+
+const COMMAND_PREFIXES = new Set(["sudo", "command", "nice", "nohup", "time", "exec", "doas"]);
+
+function isRecursiveFlag(word: string): boolean {
+  return word === "--recursive" || /^-[a-zA-Z]*[rR][a-zA-Z]*$/.test(word);
+}
+
+/** An operand the shell expands at run time into something Rune cannot see. */
+function isRuntimeValue(word: string): boolean {
+  return /[$`]/.test(word) && !HOME_TOKEN_RE.test(word);
+}
+
+/**
+ * What one operand reaches from `cwd` (null: a `cd` Rune could not resolve).
+ * Undefined means "inside the workspace, and not the workspace itself".
+ */
+function operandReach(op: string, cwd: string | null, root: string): DeleteReach | undefined {
+  let target = op;
+  const pwd = target.match(PWD_SPELLING_RE);
+  if (pwd) {
+    const base = pwd[1] ? root : cwd;
+    if (base === null) return "unresolved";
+    target = base + (pwd[2] ?? "");
+  } else if (isRuntimeValue(target)) {
+    return "unresolved";
+  }
+  // `*`, `./*`, `dir/*` and `.*` delete every entry of their directory, which
+  // for the root is the project (and `.*` alone takes `.git` and `.env`).
+  // A narrower glob (`*.log`, `build*`) reaches some entries of its
+  // directory, never the directory itself.
+  let whole = target;
+  let narrow = false;
+  if (target === "*" || target === ".*") whole = ".";
+  else if (target.endsWith("/*") || target.endsWith("/.*")) whole = dirname(target);
+  else if (/[*?[]/.test(target)) {
+    whole = dirname(target);
+    narrow = true;
+  }
+  if (cwd === null && !isAbsolute(whole) && !HOME_TOKEN_RE.test(whole)) return "unresolved";
+  const abs = expandHome(whole, cwd ?? root);
+  if (!isPathInside(root, abs)) return "outside";
+  if (narrow) return undefined;
+  const rel = relative(root, abs);
+  if (rel === "") return "workspace";
+  if (rel === ".git" || rel.startsWith(`.git${sep}`)) return "workspace";
+  return undefined;
+}
+
+/** Where `cd`/`pushd <target>` leaves the shell; null when Rune cannot follow it. */
+function changedDirectory(
+  cwd: string | null,
+  target: string | undefined,
+  root: string,
+): string | null {
+  if (target === undefined || target === "~") return homedir();
+  if (target === "-") return null;
+  const pwd = target.match(PWD_SPELLING_RE);
+  if (pwd) return pwd[1] ? root : cwd;
+  if (isRuntimeValue(target)) return null;
+  if (cwd === null && !isAbsolute(target) && !HOME_TOKEN_RE.test(target)) return null;
+  return expandHome(target, cwd ?? root);
+}
+
+/** The worst place any recursive delete in `command` reaches, or undefined. */
+export function recursiveDeleteReach(
+  action: AutoModeAction,
+  command: string,
+): DeleteReach | undefined {
+  if (!action.workspaceRoot || !/\b(?:rm|find|xargs)\b/.test(command)) return undefined;
+  const root = resolve(action.workspaceRoot);
+  let cwd: string | null = root;
+  let worst: DeleteReach | undefined;
+  const mark = (reach: DeleteReach | undefined): void => {
+    if (reach && (!worst || DELETE_REACH_RANK[reach] > DELETE_REACH_RANK[worst])) worst = reach;
+  };
+  for (const segment of splitShellSegments(command)) {
+    const words = shellWords(stripLeadingAssignments(segment.trim()));
+    while (words.length > 0 && COMMAND_PREFIXES.has(words[0]!)) words.shift();
+    const verb = words[0];
+    if (verb === "cd" || verb === "pushd") {
+      cwd = changedDirectory(cwd, words[1], root);
+      continue;
+    }
+    if (verb === "rm") {
+      const rest = words.slice(1);
+      const end = rest.indexOf("--");
+      const flags = end === -1 ? rest : rest.slice(0, end);
+      if (!flags.some(isRecursiveFlag)) continue;
+      const operands =
+        end === -1
+          ? rest.filter((w) => !w.startsWith("-"))
+          : [...rest.slice(0, end).filter((w) => !w.startsWith("-")), ...rest.slice(end + 1)];
+      for (const op of operands) mark(operandReach(op, cwd, root));
+      continue;
+    }
+    if (verb === "find") {
+      const rest = words.slice(1);
+      const deletes =
+        rest.includes("-delete") ||
+        rest.some((w, i) => (w === "-exec" || w === "-execdir") && rest[i + 1] === "rm");
+      if (!deletes || rest.some((w) => FIND_NARROWING_RE.test(w))) continue;
+      const firstExpr = rest.findIndex((w) => w.startsWith("-") || w === "(" || w === "!");
+      const starts = firstExpr === -1 ? rest : rest.slice(0, firstExpr);
+      for (const op of starts.length > 0 ? starts : ["."]) mark(operandReach(op, cwd, root));
+      continue;
+    }
+    // `… | xargs rm -r`: the targets arrive on stdin, which no reading of the
+    // command line can resolve.
+    if (verb === "xargs" && words.includes("rm") && words.some(isRecursiveFlag)) mark("unresolved");
+  }
+  return worst;
+}
+
+// ─── Discarding uncommitted work ───
+//
+// `git reset --hard` has always been stashed first. The rest of the class was
+// ordinary — `git checkout -- .`, `git restore .`, `git clean -f` — and ran
+// without a trace. Tracked and untracked changes can be stashed; ignored files
+// (`.env`, local configuration) and existing stashes cannot, so those wait.
+
+export type UncommittedDiscard = "tracked" | "untracked" | "ignored" | "stash";
+
+/** Which kind of uncommitted work a command throws away, if any. */
+export function uncommittedWorkDiscard(command: string): UncommittedDiscard | undefined {
+  for (const segment of splitShellSegments(command)) {
+    const words = shellWords(stripLeadingAssignments(segment.trim()));
+    while (words.length > 0 && COMMAND_PREFIXES.has(words[0]!)) words.shift();
+    if (words[0] !== "git") continue;
+    const sub = words[1];
+    const rest = words.slice(2);
+    const wholeTree = rest.some((w) => w === "." || w === ":/" || w === "./");
+    if (sub === "stash" && (rest[0] === "clear" || rest[0] === "drop")) return "stash";
+    if (sub === "clean") {
+      const shortFlags = rest.filter((w) => /^-[a-zA-Z]+$/.test(w)).join("");
+      const force = /f/.test(shortFlags) || rest.includes("--force");
+      const dryRun = /n/.test(shortFlags) || rest.includes("--dry-run");
+      if (!force || dryRun) continue;
+      return /[xX]/.test(shortFlags) ? "ignored" : "untracked";
+    }
+    if (sub === "checkout" && wholeTree) return "tracked";
+    if (sub === "restore" && wholeTree) {
+      const staged = rest.includes("--staged") || rest.includes("-S");
+      const worktree = rest.includes("--worktree") || rest.includes("-W");
+      if (staged && !worktree) continue;
+      return "tracked";
+    }
+  }
+  return undefined;
+}
 
 /**
  * Whether the command positively names something OUTSIDE the workspace.
