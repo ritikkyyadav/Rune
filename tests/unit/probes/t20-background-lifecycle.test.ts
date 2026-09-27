@@ -145,6 +145,79 @@ describe.skipIf(!POSIX)("T20 — a background shell ends with what started it", 
     expect(alive(pid)).toBe(false);
   });
 
+  // ── Whose group is it? ──
+  //
+  // A stop signals a shell's process group by number, and a number is recycled
+  // once its group is empty. The escalation added above asks "is the group
+  // still there?" of every shell ever started — including one that ended hours
+  // ago — so without an identity check, Rune's exit could SIGKILL an unrelated
+  // group that happens to hold a finished shell's old number. These play the
+  // kernel's answers through the manager's signal seam; nothing real is sent.
+
+  /** A manager whose signals land in `sent`, answering probes from `world`. */
+  function fakeKernel() {
+    const k = {
+      // gone: our group left with its leader. orphans: the leader exited, its
+      // group lives on. recycled: the number now leads someone else's group.
+      world: "gone" as "gone" | "orphans" | "recycled",
+      sent: [] as Array<[number, string]>,
+    };
+    const manager = new BackgroundShellManager(undefined, {
+      signal: (pid, signal) => {
+        if (signal !== 0) {
+          k.sent.push([pid, signal]);
+          return;
+        }
+        const live = pid < 0 ? k.world !== "gone" : k.world === "recycled";
+        if (!live) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+      },
+    });
+    return { k, manager };
+  }
+
+  async function finishedShell(m: BackgroundShellManager): Promise<void> {
+    const { shellId } = m.start("true", root);
+    await waitFor(() => m.read(shellId).status !== "running");
+    expect(m.read(shellId).status).toBe("completed");
+  }
+
+  test("a finished shell's recycled number is never signalled (its group left with it)", async () => {
+    const { k, manager } = fakeKernel();
+    await finishedShell(manager);
+    k.world = "recycled";
+    manager.killAll();
+    await manager.stopAll(50);
+    expect(k.sent).toEqual([]);
+  });
+
+  test("a finished shell's recycled number is never signalled (its orphans left later)", async () => {
+    const { k, manager } = fakeKernel();
+    k.world = "orphans";
+    await finishedShell(manager);
+    k.world = "recycled";
+    manager.killAll();
+    expect(k.sent).toEqual([]);
+  });
+
+  test("a group seen gone stays gone, even when a leaderless group holds its number later", async () => {
+    const { k, manager } = fakeKernel();
+    await finishedShell(manager); // the group left with its leader, and was seen to
+    k.world = "orphans"; // a newcomer took the number, then left orphans of its own
+    manager.killAll();
+    expect(k.sent).toEqual([]);
+  });
+
+  test("orphans a finished shell left in its group are still stopped", async () => {
+    const { k, manager } = fakeKernel();
+    k.world = "orphans";
+    await finishedShell(manager);
+    manager.killAll();
+    expect(k.sent.map(([pid, signal]) => [pid < 0, signal])).toEqual([
+      [true, "SIGTERM"],
+      [true, "SIGKILL"],
+    ]);
+  });
+
   test("a process exit leaves no background shell behind, even one that ignores SIGTERM", async () => {
     const pidFile = join(root, "exit.pid");
     const script = join(root, "child.ts");

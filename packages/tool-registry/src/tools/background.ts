@@ -39,13 +39,25 @@ interface BackgroundShell {
   status: ShellStatus;
   exitCode: number | null;
   startedAt: number;
+  /** The leader's exit was seen: from here its number can be recycled once the group empties. */
+  leaderExited: boolean;
+  /** The group was seen empty, or someone else's, once. A number seen free is never ours again. */
+  groupGone: boolean;
 }
+
+/** Sends `signal` to a pid, or to a process group when `pid` is negative; `0` only probes. */
+export type SignalFn = (pid: number, signal: NodeJS.Signals | 0) => void;
 
 export class BackgroundShellManager {
   private shells = new Map<string, BackgroundShell>();
   private nextId = 1;
+  private readonly signal: SignalFn;
 
-  constructor(private readonly binaryPath?: string) {
+  constructor(
+    private readonly binaryPath?: string,
+    opts: { signal?: SignalFn } = {},
+  ) {
+    this.signal = opts.signal ?? ((pid, signal) => void process.kill(pid, signal));
     // Never leave orphaned servers behind when Rune exits. An exit handler
     // cannot wait, so this one does not ask twice: see killAll.
     process.on("exit", () => this.killAll());
@@ -121,6 +133,8 @@ export class BackgroundShellManager {
       status: "running",
       exitCode: null,
       startedAt: Date.now(),
+      leaderExited: false,
+      groupGone: false,
     };
     this.shells.set(id, shell);
 
@@ -146,6 +160,8 @@ export class BackgroundShellManager {
       if (shell.status === "running") shell.status = "failed";
     });
     procEvents.on("exit", (code) => {
+      shell.leaderExited = true;
+      this.groupAlive(shell); // latches groupGone when the group left with its leader
       if (shell.status === "running") {
         shell.status = code === 0 ? "completed" : "failed";
       }
@@ -160,7 +176,7 @@ export class BackgroundShellManager {
     const pid = shell.proc.pid;
     try {
       if (pid) {
-        process.kill(-pid, signal); // negative pid → whole process group
+        this.signal(-pid, signal); // negative pid → whole process group
         return;
       }
     } catch {
@@ -255,21 +271,43 @@ export class BackgroundShellManager {
     }
   }
 
-  /** Whether anything in the shell's process group is still running. */
+  /**
+   * Whether anything in the shell's process group is still running — and is
+   * still the shell's. A group's number is recycled once the group is empty,
+   * and the leader's pid with it, so a stop asked about a shell that ended
+   * hours ago must not mistake a newcomer's group for this one:
+   *
+   *   - a group seen gone stays gone;
+   *   - once the leader has exited, the group counts only while no live
+   *     process holds the leader's pid. The number cannot be reused while the
+   *     group stands, so a process holding it now is a newcomer, and the group
+   *     it leads is its own. The shell's orphans have no leader.
+   */
   private groupAlive(shell: BackgroundShell): boolean {
     const pid = shell.proc.pid;
-    if (pid === undefined) return false;
+    if (pid === undefined || shell.groupGone) return false;
     try {
-      process.kill(-pid, 0);
-      return true;
+      this.signal(-pid, 0);
     } catch {
-      try {
-        // Not a group leader (a platform without detached groups): the leader alone.
-        process.kill(pid, 0);
-        return shell.exitCode === null;
-      } catch {
-        return false;
-      }
+      // No such group — or a platform without detached groups: the leader alone.
+      if (!shell.leaderExited && this.holdsPid(pid)) return true;
+      shell.groupGone = true;
+      return false;
+    }
+    if (shell.leaderExited && this.holdsPid(pid)) {
+      shell.groupGone = true;
+      return false;
+    }
+    return true;
+  }
+
+  /** Whether a live process holds `pid` (one we may not signal still holds it). */
+  private holdsPid(pid: number): boolean {
+    try {
+      this.signal(pid, 0);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "EPERM";
     }
   }
 }
