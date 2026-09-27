@@ -34,6 +34,7 @@ import {
   readLedger,
   type LedgerEntry,
 } from "../../../packages/orchestrator/src/evolve/ledger";
+import { harnessCohortKey } from "../../../packages/orchestrator/src/evolve/lessons";
 import { promote } from "../../../packages/orchestrator/src/evolve/promote";
 import { variantConfig } from "../../../packages/orchestrator/src/evolve/variants";
 import { NotebookStore } from "../../../packages/orchestrator/src/notebook/store";
@@ -583,5 +584,20 @@ describe("V3 — `rune notebook rm` cannot quietly undo a person's disable", () 
     const rows = readLedger(runeHome).filter((e) => e.subject === `lesson:${plain}`);
     expect(rows.map((e) => e.kind)).toEqual(["lesson"]);
     expect(rows[0]!.note).toContain("removed by a person");
+  });
+});
+
+describe("G9 — trials hold the harness still at the release line", () => {
+  it("a patch release and a dev build share a cohort; a minor release starts over", () => {
+    expect(harnessCohortKey("1.2.0")).toBe("1.2");
+    expect(harnessCohortKey("1.2.7")).toBe(harnessCohortKey("1.2.0"));
+    expect(harnessCohortKey("1.2.0-dev+f4d047b")).toBe(harnessCohortKey("1.2.0"));
+    expect(harnessCohortKey("1.3.0")).not.toBe(harnessCohortKey("1.2.9"));
+    expect(harnessCohortKey("2.0.0")).not.toBe(harnessCohortKey("1.2.0"));
+  });
+
+  it("an unreadable version is its own cohort, never a real one's", () => {
+    expect(harnessCohortKey("")).toBe("unversioned");
+    expect(harnessCohortKey("garbage")).toBe("unversioned");
   });
 });

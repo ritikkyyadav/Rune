@@ -110,6 +110,23 @@ export function isWinningRun(s: RunOutcomeSignal): boolean {
   return true;
 }
 
+/**
+ * The part of the harness's identity a lesson trial's cohort is keyed on.
+ *
+ * A trial compares runs with and without one piece of advice; everything else
+ * has to hold still, or it measures two harnesses instead of the advice —
+ * "mixed-revision outcomes cannot become positive evidence" (Phase 6). The
+ * doctrine hash in the cohort already splits on any prompt change; this splits
+ * on the rest of the harness at the founder's chosen grain (2026-09-27): a
+ * minor release starts every trial over, a patch release does not. Dev builds
+ * carry their release's manifest version, so they share its cohort. A version
+ * that cannot be read gets a key of its own rather than joining a real one.
+ */
+export function harnessCohortKey(version: string): string {
+  const m = version.trim().match(/^(\d+)\.(\d+)/);
+  return m ? `${Number(m[1])}.${Number(m[2])}` : "unversioned";
+}
+
 export interface StageTransition {
   id: string;
   title: string;

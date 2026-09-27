@@ -287,7 +287,7 @@ import {
 } from "./loop-mode";
 import { configHash } from "./evolve/config-hash";
 import { learnedSkillsEnabled } from "./evolve/consent";
-import { advanceLessons, isWinningRun } from "./evolve/lessons";
+import { advanceLessons, harnessCohortKey, isWinningRun } from "./evolve/lessons";
 import {
   AGENT_DOCTRINE,
   doctrineForRequest,
@@ -8929,7 +8929,9 @@ export class Engine {
    */
   private lessonTrialCohort(): string {
     return JSON.stringify({
-      version: 1,
+      // 2: the harness's release line joined the key (Phase 6, G9).
+      version: 2,
+      harness: harnessCohortKey(RUNE_VERSION),
       repo: this.notebookKeys?.repoKey,
       provider: this.config.provider,
       model: this.config.model,
