@@ -277,12 +277,23 @@ describe("retroLessons — precision over recall", () => {
 
   test("the same command failing then passing with different arguments is a fix", () => {
     const lessons = retroLessons([
+      obs("cargo build --release", false, "command exceeded its timeout"),
+      obs("cargo build --release", true, undefined, { timeout_ms: 600000 }),
+    ]);
+    expect(lessons).toHaveLength(1);
+    expect(lessons[0]).toMatchObject({ kind: "fix", command: "cargo build --release" });
+    expect(lessons[0].body).toBe(
+      "`cargo build --release` needs timeout_ms: 600000 here — it failed without.",
+    );
+  });
+
+  test("a pass bought by leaving containment is not a fix a run may teach", () => {
+    // Phase 6: lessons must not weaken permissions or sandbox policy.
+    const lessons = retroLessons([
       obs("npm install", false, "getaddrinfo ENOTFOUND registry.npmjs.org"),
       obs("npm install", true, undefined, { network: true }),
     ]);
-    expect(lessons).toHaveLength(1);
-    expect(lessons[0]).toMatchObject({ kind: "fix", command: "npm install" });
-    expect(lessons[0].body).toBe("`npm install` needs network: true here — it failed without.");
+    expect(lessons.filter((l) => l.kind === "fix")).toHaveLength(0);
   });
 
   test("a command that simply passes on retry with the same arguments teaches nothing", () => {
@@ -400,8 +411,8 @@ describe("recordLessons → notebook", () => {
     const lessons = retroLessons([
       obs("bun test tests/unit/", false, "EADDRINUSE"),
       obs("bun test tests/unit/", false, "EADDRINUSE"),
-      obs("npm install", false, "ENOTFOUND"),
-      obs("npm install", true, undefined, { network: true }),
+      obs("cargo build", false, "command exceeded its timeout"),
+      obs("cargo build", true, undefined, { timeout_ms: 600000 }),
     ]);
     const r = recordLessons(store, { repoKey: "r1", sessionId: "s1" }, lessons);
     expect(r.written).toHaveLength(2);

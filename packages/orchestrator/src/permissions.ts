@@ -1,5 +1,6 @@
 import { isAbsolute, relative, resolve } from "path";
 import {
+  BASH_CONTAINMENT_ESCAPES,
   getSandboxMode,
   isOsIsolationAvailable,
   isSandboxAutoAllow,
@@ -569,7 +570,7 @@ export class PermissionBroker {
    */
   private static escapesContainment(tool: string, args: Record<string, unknown>): boolean {
     if (tool !== "bash") return false;
-    return args.network === true || args.run_in_background === true || args.unsandboxed === true;
+    return BASH_CONTAINMENT_ESCAPES.some((key) => args[key] === true);
   }
 
   /** The narrow lookup behind the exact-grant fast path in check(). */

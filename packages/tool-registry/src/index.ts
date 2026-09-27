@@ -52,7 +52,11 @@ export {
   processIdentitySupported,
   type ProcessProbe,
 } from "./tools/process-identity";
-export { registerBuiltinTools, stopLanguageServers } from "./tools/builtin";
+export {
+  BASH_CONTAINMENT_ESCAPES,
+  registerBuiltinTools,
+  stopLanguageServers,
+} from "./tools/builtin";
 // Web search: the engine roster's runtime half. `/login` and `rune login` use
 // the probe to verify a pasted key with one real search.
 export {

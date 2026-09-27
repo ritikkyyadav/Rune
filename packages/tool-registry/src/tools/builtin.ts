@@ -192,6 +192,18 @@ const BASH_SCHEMA: ToolSchema = {
   category: "execute",
 };
 
+/**
+ * The `bash` arguments that take a call OUTSIDE the containment it runs in by
+ * default: `network` (egress, outside the OS sandbox), `run_in_background`
+ * (detached, binds ports, outlives the turn) and `unsandboxed` (full host).
+ *
+ * Declared beside the schema that defines them, so the two readers that must
+ * agree — the permission broker, which will not let a blanket grant cover
+ * them, and the retro, which never turns one into a learned lesson — share one
+ * list without either importing the other.
+ */
+export const BASH_CONTAINMENT_ESCAPES = ["network", "run_in_background", "unsandboxed"] as const;
+
 // The registry and every provider serialization hold this schema object by
 // reference, so swapping the strings in place when /sandbox toggles (or the
 // capability probe lands) means the very next model turn sees an accurate

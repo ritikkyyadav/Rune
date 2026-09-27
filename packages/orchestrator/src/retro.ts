@@ -15,6 +15,7 @@ import { createHash } from "node:crypto";
 import type { SessionEvent } from "@rune/shared";
 import type { CallRole } from "@rune/llm-gateway";
 import { isGovernanceRole } from "@rune/llm-gateway";
+import { BASH_CONTAINMENT_ESCAPES } from "@rune/tool-registry";
 import { isVerificationCommand } from "./brief";
 import { filesChangedFrom } from "./lifecycle";
 import { categorizeProjectCommand, toolObservation } from "./notebook/capture";
@@ -696,10 +697,22 @@ function clip(s: string, n: number): string {
 const SECONDARY_RUNNER_RE =
   /^(\.\/[\w.-]+|bash|sh|zsh|make|just|tox|poetry|uv|pipenv|bundle|rake|mix|sbt|dotnet|swift|xcodebuild|deno|nx|lerna|mise|ctest|cmake)\b/;
 
+/**
+ * The arguments that changed between a failing call and the passing one — the
+ * body of a `fix` lesson.
+ *
+ * A containment escape is never one of them. "It passed once it left the
+ * sandbox" is true and is still not advice a run may teach the next one: the
+ * broker decides escapes per call, and a lesson that nudged every later run
+ * toward `unsandboxed: true` would be the loop learning to ask for more
+ * access. The reviewed `bash-network` remedy below states how egress is
+ * requested; a learned lesson does not.
+ */
 function argDiff(before: Record<string, unknown>, after: Record<string, unknown>): string[] {
   const out: string[] = [];
+  const escapes: ReadonlySet<string> = new Set(BASH_CONTAINMENT_ESCAPES);
   for (const [k, v] of Object.entries(after)) {
-    if (k === "command") continue;
+    if (k === "command" || escapes.has(k)) continue;
     if (JSON.stringify(before[k]) === JSON.stringify(v)) continue;
     const shown = typeof v === "string" ? `"${clip(v, 40)}"` : JSON.stringify(v);
     out.push(`${k}: ${shown}`);

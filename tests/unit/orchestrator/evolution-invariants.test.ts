@@ -181,6 +181,38 @@ describe("the deciders cannot reach the learners", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("no learner imports a decider — the isolation is mutual", () => {
+    // A learner reaching INTO the broker to "check" something is the same
+    // coupling in the other direction. Checked for every learner, not only
+    // evolve/: retro.ts once imported a constant from permissions.ts, and the
+    // evolve/-only check below could not see it.
+    const learnerFiles = [
+      join(SRC, "retro.ts"),
+      join(SRC, "playbook.ts"),
+      ...readdirSync(join(SRC, "notebook"))
+        .filter((f) => f.endsWith(".ts"))
+        .map((f) => join(SRC, "notebook", f)),
+      ...readdirSync(join(SRC, "evolve"))
+        .filter((f) => f.endsWith(".ts"))
+        .map((f) => join(SRC, "evolve", f)),
+    ];
+    const deciderStems = new Set(
+      DECIDERS.filter((d) => d.startsWith(SRC + sep)).map((d) =>
+        relative(SRC, d).replace(/\.ts$/, ""),
+      ),
+    );
+    const offenders: string[] = [];
+    for (const file of learnerFiles) {
+      for (const { target } of localImports(file)) {
+        if (!target.startsWith(SRC + sep)) continue;
+        const stem = relative(SRC, target).replace(/\.ts$/, "");
+        if (deciderStems.has(stem)) offenders.push(`${relative(SRC, file)} → ${stem}`);
+      }
+    }
+    expect(learnerFiles.length).toBeGreaterThan(10);
+    expect(offenders).toEqual([]);
+  });
+
   it("detects an offending import when one is introduced", () => {
     // Guards the guard: the matcher has to fire on the shape it forbids.
     expect(reachesLearner("./notebook/store")).toBe("notebook");
