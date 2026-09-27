@@ -11,6 +11,33 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-09-28
+
+**No more keychain prompt, and the models your account actually has.** A patch on 1.3.0. Full
+notes: [`docs/releases/v1.3.1.md`](docs/releases/v1.3.1.md).
+
+### Fixed
+
+- **macOS no longer asks for your login password every time Rune starts.** Rune's memory key was
+  stored with an access list that locked out even Rune itself, so every read opened the "security
+  wants to use your confidential information stored in "rune"" dialog. That happened in every
+  release from v0.1.0 to v1.3.0. The key moves to a new keychain item with the default access
+  list. The first launch after upgrading asks one last time, with a line saying why, and then
+  never again. A read that fails no longer asks again on every check or replaces the real key
+  with a new one.
+- **gpt-6-astra was metered at about an eighth of its cost.** It carried an estimated $1.25/$10
+  per million tokens; the published rate is $10/$50.
+
+### Added
+
+- **The latest models.** GPT-6 Sol and GPT-6 Luna become Codex's standard and light tiers under
+  GPT-6 Astra. Claude Opus 5.5 is the new Anthropic default, and grok-4.7 is added. Published
+  prices replace estimates for the GPT-5.6 and grok lines. On OpenRouter, Qwen3.8 27B is added
+  to the free models and GLM-5.2's free listing is removed.
+- **`/model` shows what your account can use.** Rune reads the model list a signed-in account
+  publishes, Codex and the OpenAI API included, and merges it into the built-in one. A model
+  released after this version still shows up.
+
 ## [1.3.0] - 2026-09-28
 
 **Runs that come back.** A headless run stopped by a provider limit can now resume on its own,
@@ -547,7 +574,8 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/ritikkyyadav/Rune/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/ritikkyyadav/Rune/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/ritikkyyadav/Rune/compare/v0.1.1...v1.2.0
 [0.4.1]: https://github.com/ritikkyyadav/Rune/compare/v0.4.0...v0.4.1

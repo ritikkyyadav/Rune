@@ -39,7 +39,7 @@ irm https://savoir.services/install.ps1 | iex            # Windows, PowerShell
 
 > A local-first, sandboxed, multi-provider coding agent that lives in your terminal.
 
-**v1.3.0 — runs that come back after a provider limit, and honest about it.** Rune is built and used by one person. Everything below is
+**v1.3.1 — runs that come back after a provider limit, and honest about it.** Rune is built and used by one person. Everything below is
 marked **verified live**, **verified by tests or mocks only**, or **unverified**, and the
 [What is verified](#what-is-verified) table is the contract: if a capability is not in the first
 column, nobody has watched it work on a real run.
@@ -93,7 +93,7 @@ Derived from [`docs/program/status.md`](docs/program/status.md),
 (`[team]`), and workflows (`rune workflow`). They are built and tested; they are not evidence of
 anything yet.
 
-**v1.3.0 is the current release, and v0.1.0 (2026-09-16) was the first public one.** Everything
+**v1.3.1 is the current release, and v0.1.0 (2026-09-16) was the first public one.** Everything
 tagged before it — Berne 0.2.0, Gear 0.3.x, Rune 0.4.x — was an internal build, is marked as a
 pre-release on GitHub, and is never what `releases/latest` or the installers resolve to. The
 one-liner installs a binary with verified checksums and hosts a session under `rune serve --check`;
