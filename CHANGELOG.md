@@ -11,6 +11,58 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-28
+
+**Runs that come back.** A headless run stopped by a provider limit can now resume on its own,
+within a deadline, a budget and a resume count you set. And Auto's containment, background shells
+and `config.toml` each lose a class of silent failure, found by turning another coding agent's
+public changelog into tests. Full notes: [`docs/releases/v1.3.0.md`](docs/releases/v1.3.0.md).
+
+### Added
+
+- **Missions: a headless run that comes back after a provider limit.**
+  `rune -P "…" --resume-until 8h [--resume-budget 2] [--resume-max 12]` waits for the provider's
+  own window, or backs off from 5 minutes to a 4-hour cap, and continues the same session until
+  the task is done or a limit is reached. Plans live in `rune.db` and survive a restart:
+  `rune missions` lists them, `rune missions run` continues this workspace's due ones (for cron or
+  launchd; there is no daemon), and `rune missions cancel <id>` stops one. One plan is resumed by
+  one process, and a cancel holds. Without `--resume-until` a headless run is unchanged. See
+  [`docs/missions.md`](docs/missions.md).
+- **Rune Mono.** Black-and-white chrome, white on dark and black on light, with a matte finish
+  (the default) beside the crisp one; one full-width selection bar on every list; a quieter
+  header and an empty idle frame; one status line with the gear, the model, and only the keys
+  that act now.
+
+### Fixed
+
+- **The fixed frame holds in macOS Terminal.app, and the wheel scrolls the transcript.**
+  Terminal.app turns the wheel into arrow keys only for a program in application cursor mode, so
+  it scrolled its own window instead: the header slid down and the footer dropped off the bottom.
+  Rune now sets that mode while it runs and resets it on exit, and no longer erases the display
+  on entry, which gave the window a blank band to scroll into.
+- **Recursive deletes are judged by what they reach, however they are spelled.** `rm -fr`,
+  `-r -f`, `--recursive --force`, `-R`, `..` escapes, the workspace itself (`.`, `"$(pwd)"`,
+  `cd .. && rm -rf <workspace>`), `.git`, and targets only the shell resolves (`$TARGET`,
+  `xargs rm -r`) were allowed in Auto with no screening. Outside the workspace now halts; the
+  workspace, its history or an unresolved target waits for you with the literal next step; build
+  output (`rm -rf ./build`, `node_modules`, `dist/*`) stays ordinary. `git checkout -- .`,
+  `git restore .` and `git clean -f` stash uncommitted work first, like a hard reset. Windows
+  drive-letter and UNC paths are recognised as paths.
+- **`config.toml` is read as TOML.** A list written over several lines was read as the string
+  `"["`, so a multi-line `denyRead`, `denyRules` or `excludedCommands` was dropped without a word;
+  a quoted value was cut at `#`; a quoted list item was split at its commas; and a path Rune wrote
+  read back with doubled backslashes. Bun's TOML parser reads the file now. A file it refuses still
+  applies what it can, with a warning naming it, and setting a key written over several lines
+  replaces all of it.
+- **Background shells end with what started them.** Closing an engine stops the shells its bash
+  started. A stop escalates to SIGKILL after a two-second grace, so a shell that ignores SIGTERM
+  no longer outlives its engine, its `kill_shell` or Rune. A stop only ever signals a process
+  group that is still the shell's, never a number the system has since given to someone else.
+- **Self-evolution evidence.** A learned lesson never advises leaving containment. A mock win, an
+  unknown cost, an outage or a second look at an answered question cannot count toward a
+  promotion, and a task missing from one arm counts against that arm. A lesson trial holds the
+  harness still at its release line, so trials start again with this release.
+
 ## [1.2.0] - 2026-09-26
 
 **Auto mode stops asking.** Every Auto prompt recorded since the 2026-08-28 redesign was a shell
@@ -495,7 +547,9 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/ritikkyyadav/Rune/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/ritikkyyadav/Rune/compare/v0.1.1...v1.2.0
 [0.4.1]: https://github.com/ritikkyyadav/Rune/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/ritikkyyadav/Rune/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/ritikkyyadav/Rune/compare/v0.3.0...v0.3.1
