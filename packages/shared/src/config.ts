@@ -914,9 +914,43 @@ const DEFAULT_CONFIG: RuneConfig = {
   },
 };
 
-// ─── TOML Parser (minimal, handles our config shape) ───
+// ─── TOML ───
+//
+// Bun's own TOML parser reads the file. The line reader below it was Rune's
+// only reader until 2026-09-27, and it understood a subset of TOML that missed
+// shapes people write: a list over several lines became the string "[" (a
+// `denyRead` or `denyRules` list written that way was dropped without a word),
+// a quoted value was cut at its first `#`, a quoted list item was split at its
+// commas, and escapes were never decoded, so a path Rune wrote came back with
+// its backslashes doubled (changelog-mining pilot, T24). The line reader stays
+// for a file Bun's parser refuses: such a file still applies the lines it can,
+// as it always did — and now it says so, once per file and reason.
 
-function parseToml(text: string): Record<string, unknown> {
+const tomlWarned = new Set<string>();
+
+function parseToml(text: string, file?: string): Record<string, unknown> {
+  const bun = (globalThis as { Bun?: { TOML?: { parse(text: string): unknown } } }).Bun;
+  if (bun?.TOML) {
+    try {
+      const parsed = bun.TOML.parse(text);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      if (file && !tomlWarned.has(`${file}\n${reason}`)) {
+        tomlWarned.add(`${file}\n${reason}`);
+        console.warn(
+          `rune: ${file} is not valid TOML (${reason}); reading it line by line, which skips values written over several lines`,
+        );
+      }
+    }
+  }
+  return parseTomlLines(text);
+}
+
+/** The line-at-a-time reader: single-line values only, no escapes. */
+function parseTomlLines(text: string): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   let currentSection: Record<string, unknown> = result;
   let sectionPath: string[] = [];
@@ -1114,7 +1148,7 @@ export function loadConfig(workspaceRoot?: string): RuneConfig {
   if (existsSync(globalConfig)) {
     try {
       const text = readFileSync(globalConfig, "utf-8");
-      merged = deepMerge(merged, parseToml(text));
+      merged = deepMerge(merged, parseToml(text, globalConfig));
     } catch {
       // Ignore malformed global config
     }
@@ -1126,7 +1160,7 @@ export function loadConfig(workspaceRoot?: string): RuneConfig {
     if (existsSync(projectConfig)) {
       try {
         const text = readFileSync(projectConfig, "utf-8");
-        merged = deepMerge(merged, parseToml(text));
+        merged = deepMerge(merged, parseToml(text, projectConfig));
       } catch {
         // Ignore malformed project config
       }
@@ -1221,6 +1255,44 @@ function isSectionHeader(line: string): string | null {
   return m ? m[1].trim() : null;
 }
 
+/**
+ * How many lines the value that begins `first` (the text after `=` on line
+ * `at`) occupies. One, unless it opens a bracket or a triple-quoted string
+ * that closes on a later line of the same section — so replacing a list
+ * written over several lines replaces all of it, instead of leaving its tail
+ * behind as invalid TOML, which would send the whole file to the line reader.
+ * A value that never closes before `end` counts as one line: the writer never
+ * deletes lines it cannot account for.
+ */
+function valueLineCount(lines: readonly string[], at: number, first: string, end: number): number {
+  let depth = 0;
+  let quote: string | null = null;
+  for (let n = 0; at + n < end; n++) {
+    const text = n === 0 ? first : lines[at + n]!;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i]!;
+      if (quote) {
+        if (ch === "\\" && quote.startsWith('"')) i++;
+        else if (text.startsWith(quote, i)) {
+          i += quote.length - 1;
+          quote = null;
+        }
+        continue;
+      }
+      if (ch === "#") break;
+      if (text.startsWith('"""', i) || text.startsWith("'''", i)) {
+        quote = text.slice(i, i + 3);
+        i += 2;
+      } else if (ch === '"' || ch === "'") quote = ch;
+      else if (ch === "[" || ch === "{") depth++;
+      else if (ch === "]" || ch === "}") depth--;
+    }
+    if (quote?.length === 1) quote = null; // a one-line string cannot continue
+    if (depth <= 0 && quote === null) return n + 1;
+  }
+  return 1;
+}
+
 export interface SetConfigResult {
   /** The file that was written. */
   path: string;
@@ -1310,10 +1382,13 @@ export function setConfigValue(
       created = true;
     } else {
       const indent = lines[keyLine]!.match(/^(\s*)/)![1] ?? "";
-      previousRaw = lines[keyLine]!.slice(indent.length + key.length)
-        .replace(/^\s*=\s*/, "")
+      const first = lines[keyLine]!.slice(indent.length + key.length).replace(/^\s*=\s*/, "");
+      const span = valueLineCount(lines, keyLine, first, sectionEnd);
+      previousRaw = [first, ...lines.slice(keyLine + 1, keyLine + span)]
+        .map((l) => l.trim())
+        .join(" ")
         .trim();
-      lines[keyLine] = `${indent}${key} = ${rendered}`;
+      lines.splice(keyLine, span, `${indent}${key} = ${rendered}`);
       created = false;
     }
   }
