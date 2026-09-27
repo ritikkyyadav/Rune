@@ -2277,3 +2277,27 @@ process restarts, with no daemon: `rune -P … --resume-until 8h [--resume-budge
 `rune missions [run | cancel <id>]`, where `run` is what cron or launchd calls. Built and tested on
 a fake clock (`resume-plan.ts`, `resume-store.ts`, `resume-loop.ts`, `bin/missions-cli.ts`); held
 out of a commit until the wall policy — the founder's contribution — lands.
+
+### Addendum 48 — the changelog-mining pilot, M6's slice finished, and Windows rust-test
+
+**The pilot** ([method and results](program/changelog-mining.md)): 3,338 fix entries from another
+agent's public changelog, a 34-type taxonomy by mechanism, frequencies from 300 hand-labelled
+entries with 95% intervals, and zero-spend probes for the top three types. All three found real
+defects. T17 (`585230a`): five classes of destructive command Auto allowed with no screening —
+recursive-flag spellings other than `-rf`, `..` escapes, the workspace or `.git`, variable
+targets, and discards of uncommitted work — now routed like the cases Rune already handled; the
+offline Auto-safety corpus is unchanged (P 92.8 / R 89.1 / F1 90.9, 116/116 ordinary allows kept).
+T20 (`a36ca74`): `engine.close()` now stops the background shells its bash started, and every stop
+escalates to SIGKILL after a grace; integration 389 / 0. T24: `config.toml` parsing defects
+confirmed and a fix drafted, not applied — open.
+
+**M6's minimal slice** (`f4a9e71`): opt-in resume after a provider limit, within a deadline, a
+budget and a resume allowance, durable across restarts; `rune missions`. 27 fake-clock tests.
+
+**Windows rust-test** (`0e94728`): read with `gh`; two sandbox tests asserted unix-only features
+(a start-time identity, the parent-death watchdog) and are now gated to the platforms that have
+them. Awaiting CI.
+
+Gates on the tree at `f4a9e71`: unit 6,259 / 0 / 1 skip, integration 389 / 0 / 7 skip (at
+`a36ca74`), typecheck 15/15, lint 7/7, `cargo test -p rune-sandbox` 39 / 0. Held for an
+independent verifier before pushing: `585230a`, `a36ca74`, `0e94728`, `f4a9e71`.
