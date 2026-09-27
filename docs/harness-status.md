@@ -2301,3 +2301,29 @@ them. Awaiting CI.
 Gates on the tree at `f4a9e71`: unit 6,259 / 0 / 1 skip, integration 389 / 0 / 7 skip (at
 `a36ca74`), typecheck 15/15, lint 7/7, `cargo test -p rune-sandbox` 39 / 0. Held for an
 independent verifier before pushing: `585230a`, `a36ca74`, `0e94728`, `f4a9e71`.
+
+### Addendum 49 — T24 fixed, and two defects in the pilot's own fixes
+
+**T24** (`653698d`): `config.toml` is read by Bun's TOML parser. Red first
+(`tests/unit/shared/config-toml.test.ts`): a list over several lines read as the string `"["` — a
+multi-line `denyRead`, `denyRules` or `excludedCommands` was dropped without a word, in v1.2.0 as
+released; a quoted value was cut at `#`; a quoted list item was split at its commas; a path Rune
+wrote read back with its backslashes doubled. The line reader stays as the fallback for a file
+Bun's parser refuses, which still applies the lines it can and now warns once, naming the file.
+The writer replaced only a multi-line value's first line — with lists read whole, `/sandbox`
+setting `excludedCommands` would have left invalid TOML that sent the whole file back to the line
+reader; it now replaces the value's span and never deletes lines of a value that does not close.
+Open from T24: special object keys, and non-regular files at the config path.
+
+**The fixes, checked.** The independent verifier for `585230a`…`16ac7b1` stopped at a provider
+session limit before reporting; a spot check of the riskiest claims in the meantime found two
+defects in this session's own commits. `a36ca74`'s SIGKILL escalation asked "is the group still
+alive?" of every shell ever started, so a finished shell's recycled process-group number could
+get someone else's group killed at Rune's exit; a group now counts as the shell's only while it
+can be (`18dda21`). `f4a9e71` claimed plans read-then-write, so a waiting `-P` process and a
+scheduled `missions run` could both resume one session, and a cancel was overwritten by a live
+loop; one IMMEDIATE-transaction compare-and-swap is now the plan's only lock (`88758b3`). Each
+reproduced red first; each part of each rule is caught by its own mutant.
+
+Gates at `88758b3`: unit 6,275 / 0 / 1 skip and integration 389 / 0 / 7 skip (unsandboxed),
+typecheck 15/15, lint 7/7. Nine commits held locally for the independent verifier before push.
