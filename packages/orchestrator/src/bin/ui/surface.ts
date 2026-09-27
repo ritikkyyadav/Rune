@@ -14,7 +14,9 @@
 //                     repaints at the new width and clips), and it leaves the
 //                     mouse to the terminal so click-drag copy stays native; the
 //                     wheel reaches the transcript through the terminal's
-//                     alternate-scroll mode (arrow keys), plus PgUp/PgDn.
+//                     alternate-scroll mode (arrow keys; Terminal.app needs
+//                     application cursor mode too, see viewport.ts), plus
+//                     PgUp/PgDn.
 //   INLINE (--inline / RUNE_INLINE)  the transcript committed to the terminal's
 //                     OWN scrollback with the composer trailing the output --
 //                     how Claude Code behaves. Native reflow and copy, but the

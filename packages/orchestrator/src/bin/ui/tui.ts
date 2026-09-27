@@ -1061,7 +1061,9 @@ export class Tui {
       // released, native selection works on everything visible. The wheel
       // still reaches the transcript: enter() switches on the terminal's
       // alternate-scroll mode (?1007), which turns a notch into arrow keys on
-      // the alternate screen, and onData routes that burst as a scroll. Set
+      // the alternate screen -- plus application cursor mode (?1h), without
+      // which Terminal.app scrolls its own window instead -- and onData routes
+      // that burst as a scroll. Set
       // RUNE_MOUSE=1 to capture the wheel outright at the cost of drag-to-select.
       if (mouseCaptureEnabled()) this.viewport.captureMouse();
     }

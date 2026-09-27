@@ -192,6 +192,13 @@ describe("ui/viewport Viewport", () => {
     // Alternate-scroll mode rides along: the wheel reaches the transcript as
     // arrow keys with the mouse left uncaptured (selection stays native).
     expect(h.all()).toContain("\x1b[?1007h");
+    // Terminal.app ignores ?1007 and turns the wheel into arrows only for a
+    // program in application cursor mode; without it, it scrolls its own
+    // window and the pinned header and footer slide with it.
+    expect(h.all()).toContain("\x1b[?1h");
+    // No erase-display on the way in: Terminal.app pushes an erased screen
+    // into scrollback, which gave the window blank rows to scroll up into.
+    expect(h.all()).not.toContain("\x1b[2J");
     expect(h.all()).toContain("\x1b[?7l"); // autowrap off: a wrapped row desyncs every row below it
     expect(h.all()).toContain("\x1b[?1006h");
     h.reset();
@@ -201,6 +208,9 @@ describe("ui/viewport Viewport", () => {
     expect(h.all()).toBe(VIEWPORT_RESTORE);
     expect(h.all()).toContain("\x1b[?1049l");
     expect(h.all()).toContain("\x1b[?25h");
+    // Cursor keys go back to normal mode: a shell left in application mode
+    // receives SS3 arrows that a plain line reader does not parse.
+    expect(h.all()).toContain("\x1b[?1l");
   });
 
   it("leave() is safe without enter(), and safe twice", () => {

@@ -17,8 +17,9 @@
 // screen. That is a real trade and it is stated plainly in tui.ts's header: the
 // terminal's native scrollback and momentum scrolling stop applying to the
 // transcript, and Rune scrolls its own buffer instead: PgUp/PgDn, the arrows on
-// an empty composer, and the wheel by way of alternate-scroll mode (below),
-// which keeps the mouse uncaptured so selection stays the terminal's.
+// an empty composer, and the wheel by way of alternate-scroll mode (below) --
+// or, on Terminal.app, application cursor mode -- which keeps the mouse
+// uncaptured so selection stays the terminal's.
 // `--inline` keeps the old layout for anyone who wants native scrollback back.
 //
 // Everything here is deliberately split into a PURE part (`composeFrame`,
@@ -48,10 +49,32 @@ const MOUSE_ON = "\x1b[?1000h\x1b[?1006h";
  * sticky-on side effect is benign, the sticky-off one is not.)
  */
 const ALT_SCROLL_ON = "\x1b[?1007h";
+/**
+ * Application cursor keys (DECCKM, DEC private 1). macOS Terminal.app does not
+ * implement ?1007; its own "Scroll alternate screen" setting turns the wheel
+ * into arrows instead, and gates that on application cursor mode -- the escape
+ * hatch is a hidden default literally named
+ * ScrollAlternateScreenWithoutApplicationCursorMode. less and vim switch the
+ * mode on, which is why they scroll there; Rune did not, so Terminal.app
+ * scrolled its own window: the pinned header slid down, the footer dropped off
+ * the bottom, and the transcript never moved. The arrows arrive as SS3
+ * (ESC O A), which keys.ts reads like the CSI form. Unlike ?1007 this IS reset
+ * on leave: a shell or a plain line reader left in this mode receives SS3
+ * arrows it may not parse.
+ */
+const CURSOR_KEYS_APP = "\x1b[?1h";
+const CURSOR_KEYS_NORMAL = "\x1b[?1l";
 const MOUSE_OFF = "\x1b[?1006l\x1b[?1000l";
 const RESET = "\x1b[0m";
 const EL = "\x1b[0K"; // erase from cursor to end of line
-const CLEAR_ALL = "\x1b[2J\x1b[H";
+/**
+ * Home, and deliberately no erase-display. ?1049h already hands over a blank
+ * alternate screen, and the first frame writes every row and erases each to
+ * its end, so ESC[2J here bought nothing -- and Terminal.app answers it by
+ * pushing the screen into scrollback, the likeliest source of the band of
+ * blank rows its window scrolled up into above the pinned header.
+ */
+const HOME = "\x1b[H";
 /**
  * Synchronized output (DEC private mode 2026). Between these two marks a
  * terminal that understands them holds the frame and presents it whole, so a
@@ -64,7 +87,7 @@ export const SYNC_END = "\x1b[?2026l";
 
 /** Escapes a caller must send to leave the terminal exactly as it was found.
  *  Exported so the crash/`exit` hook can restore without holding a Viewport. */
-export const VIEWPORT_RESTORE = MOUSE_OFF + WRAP_ON + SHOW + ALT_LEAVE;
+export const VIEWPORT_RESTORE = MOUSE_OFF + CURSOR_KEYS_NORMAL + WRAP_ON + SHOW + ALT_LEAVE;
 
 /** The body may never be squeezed out of existence -- a scrolling region with no
  *  rows is a window with nothing in it. Chrome yields before content does. */
@@ -613,7 +636,7 @@ export class Viewport {
     if (this.active) return;
     // Autowrap off: a line one cell too wide would otherwise wrap, push every
     // row below it down by one, and desync the diff for the rest of the session.
-    this.write(ALT_ENTER + WRAP_OFF + HIDE + CLEAR_ALL + ALT_SCROLL_ON);
+    this.write(ALT_ENTER + WRAP_OFF + HIDE + HOME + ALT_SCROLL_ON + CURSOR_KEYS_APP);
     this.active = true;
     this.prev = [];
     this.caret = null;
