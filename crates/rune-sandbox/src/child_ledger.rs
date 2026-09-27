@@ -253,6 +253,10 @@ mod tests {
         assert!(!text.contains("\"pid\":4243"), "{text}");
     }
 
+    // Linux and macOS only: `probe_process` reads a start time there and has no
+    // Windows reader, so a Windows row carries no identity by design (the
+    // reaper's documented trade; a GetProcessTimes probe is the residual).
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn a_noted_child_carries_the_kernels_identity_for_that_pid() {
         let _guard = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());

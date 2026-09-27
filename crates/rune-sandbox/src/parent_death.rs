@@ -90,6 +90,9 @@ mod tests {
         }
     }
 
+    // Unix only: the parent-death watchdog is `#[cfg(unix)]`; elsewhere
+    // `parent_gone` is a stub that never fires, and the pid ledger is the layer.
+    #[cfg(unix)]
     #[test]
     fn a_different_parent_reads_as_gone() {
         // Reparenting is the whole signal: any ppid that is not the one we
