@@ -7,6 +7,7 @@ target/
 tests/eval/results/
 # Captured aggregate benchmark receipts retain their original bytes and hashes.
 docs/evidence/comparison-*.json
+docs/evidence/corpus-offline-*.json
 # The README's terminal frames are captures: their spacing IS the picture, and the HTML
 # formatter only knows default display rules, not the frame's `white-space: pre`.
 docs/assets/readme/*.html
