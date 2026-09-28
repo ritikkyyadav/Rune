@@ -21,8 +21,8 @@ Tests: `tests/unit/eval/parity-{score,bootstrap,report}.test.ts`, fixtures in
 - `q = quality(outcome)` from `types.ts`. A pair where **either q is null** (no runnable
   hidden check) is excluded and counted as `noHiddenChecks`.
 - A pair where **both q = 0** is excluded, and its task is flagged **too hard**.
-- A row with no partner (`unpaired`) is not scored. It is listed per side and named in the
-  report's reasons.
+- A row with no partner (`unpaired`) is not scored. It is listed per side, named in the
+  report's reasons, and caps its family at PROVISIONAL (decision 6).
 
 ## Axes, per family f (R = Rune, C = comparator)
 
@@ -124,10 +124,10 @@ overrides the refusal, and the report then says so in `mixedVersions` and in its
 
    None of these is ever dropped quietly from a denominator.
 
-6. **Unpaired rows do not change a status.** They are counted and named in the reasons. This
-   is the one rule the founder may want tightened, for example making a family with unpaired
-   rows PROVISIONAL at best. A missing comparator row removes a task Rune might have won, but
-   a missing Rune row removes a task Rune might have lost.
+6. **An unpaired row caps its family at PROVISIONAL.** A missing comparator row removes a task
+   Rune might have won; a missing Rune row removes one Rune might have lost. Either way,
+   dropping half a pair could move the number, so a family with any partnerless row (either
+   side) can never PASS until the missing arm is re-run. It can still FAIL on its scored pairs.
 7. **With nothing measured**, the headline is null and the status is PROVISIONAL, with the
    reason "no product-mode family was measured".
 
@@ -138,3 +138,7 @@ overrides the refusal, and the report then says so in `mixedVersions` and in its
   mixed-build refusal covers two Rune `--version` strings in one mode as well as two
   `binarySha256` values. Two version strings are two builds even when a row carries no hash,
   and `--allow-mixed-versions` overrides both.
+- **2026-09-28, review**: Decision 6 was tightened on review. The first version only counted
+  unpaired rows; now a family with any partnerless row is PROVISIONAL at best
+  (`pairRows().unpairedByFamily` → `gateFamily({ unpaired })`). Two mutants (the gate
+  ignoring the count; the comparator side not counted) each turn a test red.

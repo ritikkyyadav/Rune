@@ -307,6 +307,8 @@ export interface GateInput {
   n: number;
   tasks: number;
   efficiencyPairs: number;
+  /** Rows in this family with no partner from the other arm. */
+  unpaired?: number;
 }
 
 const f1 = (x: number) => x.toFixed(1);
@@ -336,6 +338,11 @@ export function gateFamily(g: GateInput): { status: FamilyStatus; reasons: strin
   if (g.piLower === null) short.push("no bootstrap lower bound");
   else if (!atLeast(g.piLower, GATE.lowerBound))
     short.push(`PI lower bound ${f1(g.piLower)} < ${GATE.lowerBound}`);
+  // A run whose partner is missing is not scored, so dropping the bad half of
+  // a pair would raise the number. The founder's rule (2026-09-28): a family
+  // with any partnerless row can be PROVISIONAL at best, never PASS.
+  if ((g.unpaired ?? 0) > 0)
+    short.push(`${g.unpaired} unpaired row(s): re-run the missing arm before this family can pass`);
 
   if (hard.length > 0) return { status: "FAIL", reasons: [...hard, ...short] };
   if (short.length > 0) return { status: "PROVISIONAL", reasons: short };
@@ -380,6 +387,8 @@ export interface ScoreOptions {
   seed: number;
   /** Bootstrap replicates; BOOTSTRAP_B unless a test says otherwise. */
   b?: number;
+  /** Partnerless rows per family (aggregate.ts `pairRows`). */
+  unpaired?: Partial<Record<Family, number>>;
 }
 
 type IntervalName = "PI" | "O" | "E" | "R" | "S";
@@ -436,6 +445,7 @@ export function scoreFamily(
     n: included.length,
     tasks: tasks.length,
     efficiencyPairs: point.efficiencyPairs,
+    unpaired: options.unpaired?.[family] ?? 0,
   });
 
   return {

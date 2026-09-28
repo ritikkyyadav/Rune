@@ -33,6 +33,7 @@ import {
   exclusionPairs,
   goldenPairs,
   pair,
+  row,
 } from "../../fixtures/parity/rows";
 
 const pairsOf = (rows: ParityRunResult[], mode: ParityMode = "product") =>
@@ -283,6 +284,40 @@ describe("the gate, one threshold at a time", () => {
 
   test("E insufficient does not rescue a failed guard-rail", () => {
     expect(gateFamily(input({ ...all100, E: null, O: 90 })).status).toBe("FAIL");
+  });
+
+  // Dropping the bad half of a pair would raise the number; the founder's rule
+  // (2026-09-28) is that a family with any partnerless row cannot PASS.
+  test("an unpaired row caps an otherwise passing family at PROVISIONAL", () => {
+    const g = gateFamily(input(all100, { unpaired: 1 }));
+    expect(g.status).toBe("PROVISIONAL");
+    expect(g.reasons[0]).toMatch(/^1 unpaired row/);
+    expect(gateFamily(input(all100, { unpaired: 0 })).status).toBe("PASS");
+  });
+});
+
+describe("partnerless rows are counted per family, on both sides", () => {
+  test("a Rune row and a comparator row without partners land in their own families", () => {
+    const rows = [
+      ...pair("a", 1, {}, {}, { family: "F2" }),
+      row({ task: "b", run: 1, arm: "rune", family: "F2" }),
+      row({ task: "c", run: 1, arm: "claude-code", family: "F7" }),
+    ];
+    const p = pairRows(rows, "product", "claude-code");
+    expect(p.pairs).toHaveLength(1);
+    expect(p.unpairedByFamily).toEqual({ F2: 1, F7: 1 });
+  });
+
+  test("scoreMode carries the count to the family's gate", () => {
+    const rows = [...goldenPairs(), row({ task: "z", run: 1, arm: "rune" })];
+    const p = pairRows(rows, "product", "claude-code");
+    const f1 = scoreMode("product", p.pairs, {
+      seed: 7,
+      b: B,
+      unpaired: p.unpairedByFamily,
+    }).families.find((f) => f.family === "F1")!;
+    expect(f1.status).not.toBe("PASS");
+    expect(f1.reasons.some((r) => r.startsWith("1 unpaired row"))).toBe(true);
   });
 });
 

@@ -213,6 +213,8 @@ export interface Pairing {
   pairs: RawPair[];
   /** `task#run` of rows with no partner, by side. */
   unpaired: { rune: string[]; comparator: string[] };
+  /** How many partnerless rows each family has — each one caps it at PROVISIONAL. */
+  unpairedByFamily: Partial<Record<Family, number>>;
   /** Rows from arms that are neither Rune nor this comparator. */
   otherArmRows: number;
 }
@@ -235,19 +237,27 @@ export function pairRows(
   }
   const pairs: RawPair[] = [];
   const unpaired = { rune: [] as string[], comparator: [] as string[] };
+  const unpairedByFamily: Partial<Record<Family, number>> = {};
+  const count = (r: ParityRunResult) =>
+    void (unpairedByFamily[r.family] = (unpairedByFamily[r.family] ?? 0) + 1);
   for (const [key, r] of rune) {
     const c = comp.get(key);
     if (!c) {
       unpaired.rune.push(key);
+      count(r);
       continue;
     }
     pairs.push({ task: r.task, family: r.family, run: r.run, mode, rune: r, comparator: c });
   }
-  for (const key of comp.keys()) if (!rune.has(key)) unpaired.comparator.push(key);
+  for (const [key, c] of comp)
+    if (!rune.has(key)) {
+      unpaired.comparator.push(key);
+      count(c);
+    }
   pairs.sort((a, b) => (a.task < b.task ? -1 : a.task > b.task ? 1 : a.run - b.run));
   unpaired.rune.sort();
   unpaired.comparator.sort();
-  return { pairs, unpaired, otherArmRows };
+  return { pairs, unpaired, unpairedByFamily, otherArmRows };
 }
 
 // ── Versions ──

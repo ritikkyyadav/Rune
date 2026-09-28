@@ -105,7 +105,11 @@ export function buildReport(o: BuildOptions): ParityReport {
   const modes = {} as Record<ParityMode, ModeReport>;
   for (const mode of ["product", "harness"] as const) {
     const pairing = pairRows(o.rows, mode, comparator);
-    const score = scoreMode(mode, pairing.pairs, { seed, b });
+    const score = scoreMode(mode, pairing.pairs, {
+      seed,
+      b,
+      unpaired: pairing.unpairedByFamily,
+    });
     modes[mode] = { ...score, unpaired: pairing.unpaired, otherArmRows: pairing.otherArmRows };
   }
 
