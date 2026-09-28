@@ -11,6 +11,24 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+### Removed
+
+- **Signing in with a Claude Pro or Max plan.** Anthropic's terms do not permit third-party apps to
+  offer Claude.ai login or to send requests through Free, Pro or Max plans. Rune's route did both:
+  it used Claude Code's sign-in and presented each request as Claude Code. Claude models still work
+  with an Anthropic API key, through Bedrock, and through Vertex. If you signed in with a plan
+  before, Rune ignores that token and `rune login` tells you why. Rune never deletes the token
+  itself: `rune logout anthropic` removes it, and also removes any stored Anthropic API key, so run
+  it before you add a key. `rune login anthropic --method oauth` now says why it is refused.
+  Details: [`docs/program/compliance-subscription-routes.md`](docs/program/compliance-subscription-routes.md).
+
+### Fixed
+
+- **A failed Anthropic request is no longer retried behind Rune's back.** The Anthropic SDK
+  retried twice on its own under each of Rune's retries, so one overloaded response could turn into
+  a dozen requests before Rune saw a failure. Rune's own retries and fallback now handle it alone,
+  as they already did for OpenAI-compatible providers.
+
 ## [1.3.1] - 2026-09-28
 
 **No more keychain prompt, and the models your account actually has.** A patch on 1.3.0. Full

@@ -28,8 +28,15 @@ import {
   authMethodLabel,
   accountLoginLabel,
   type AuthMethod,
+  type CredentialStore,
 } from "@rune/shared";
-import { getStrategy, AuthError, type AuthContext } from "@rune/llm-gateway";
+import {
+  getStrategy,
+  AuthError,
+  RETIRED_OAUTH_NOTICES,
+  retiredOAuthNotices,
+  type AuthContext,
+} from "@rune/llm-gateway";
 import { probeSearchBackend } from "@rune/tool-registry";
 import { bold, danger, dim, faint, info, ok, text, warn } from "./ui/theme";
 import { glyph } from "./ui/glyphs";
@@ -48,13 +55,14 @@ const log = (line = "") => process.stdout.write(`${pad}${line}\n`);
 export async function runLogin(
   positionals: string[],
   values: Record<string, unknown> = {},
+  deps: { store?: CredentialStore } = {},
 ): Promise<void> {
   const methodArg = typeof values.method === "string" ? values.method : undefined;
   const noBrowser = values["no-browser"] === true;
 
   const config = loadConfig(process.cwd());
   const secrets = loadSecrets();
-  const store = await openCredentialStore();
+  const store = deps.store ?? (await openCredentialStore());
 
   const insecure = insecureNoticeLine(store);
   if (insecure) log(warn(insecure));
@@ -98,6 +106,18 @@ export async function runLogin(
     process.exitCode = 1;
     return;
   }
+
+  // A sign-in Rune retired (the Claude subscription route) is refused by name,
+  // with the reason, rather than as an unknown method.
+  const retired = RETIRED_OAUTH_NOTICES[providerId];
+  if (retired && (methodArg === "oauth" || methodArg === "device")) {
+    log(danger(`${glyph("failure")} ${retired}`));
+    process.exitCode = 1;
+    return;
+  }
+  // Someone who still has a token from a retired sign-in is told why it no
+  // longer works, once. The token itself is left alone: removing it is theirs.
+  for (const line of await retiredOAuthNotices(store)) log(warn(`! ${line}`));
 
   // Choose the auth method: --method, else the provider's preferred (or ask).
   const method = await chooseMethod(descriptor.auth, methodArg, providerId);
@@ -232,8 +252,14 @@ async function reportProbe(id: string, label: string): Promise<void> {
   }
 }
 
-/** `rune logout <provider>` — remove any stored key/OAuth session for a provider or search engine. */
-export async function runLogout(positionals: string[]): Promise<void> {
+/**
+ * `rune logout <provider>` — remove any stored key/OAuth session for a provider or search engine.
+ * This is also how a token from a retired sign-in leaves the store. `deps.store` is for tests.
+ */
+export async function runLogout(
+  positionals: string[],
+  deps: { store?: CredentialStore } = {},
+): Promise<void> {
   const providerId = positionals[0];
   if (!providerId) {
     log(warn("Usage: ") + info("rune logout <provider>"));
@@ -253,7 +279,7 @@ export async function runLogout(positionals: string[]): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  const store = await openCredentialStore();
+  const store = deps.store ?? (await openCredentialStore());
   // Remove both a stored API key and any OAuth session; leaves env/config keys
   // untouched, so the provider falls back to those (if present) on next boot.
   await store.delete(apiKeyAccount(providerId));
@@ -309,9 +335,12 @@ async function pickProvider(): Promise<string | undefined> {
   log(faint("Models"));
   models.forEach((p, i) => {
     const d = getProviderDescriptor(p.id)!;
-    // Prefer the subscription/account name where a provider has one (Claude
-    // Pro/Max, ChatGPT Plus/Pro); then the pitch; otherwise the methods.
-    const hint = accountLoginLabel(p.id) ?? p.tagline ?? d.auth.join(", ");
+    // Prefer the subscription/account name where a provider still offers that
+    // sign-in (ChatGPT Plus/Pro); then the pitch; otherwise the methods. The
+    // gate is the descriptor, so a retired account login never names a plan.
+    const account =
+      d.auth.includes("oauth") || d.auth.includes("device") ? accountLoginLabel(p.id) : undefined;
+    const hint = account ?? p.tagline ?? d.auth.join(", ");
     log(`  ${info(String(i + 1).padStart(2))}. ${text(p.label.padEnd(22))} ${faint(hint)}`);
   });
   log(faint("Web search"));

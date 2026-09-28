@@ -4,7 +4,7 @@
 // ephemeral 127.0.0.1 loopback to capture the redirect — and delegates only the
 // provider-specific URL shape and token exchange to an injected `OAuthFlow`.
 // OpenRouter is the working reference (its flow mints a normal API key); a
-// bearer-token provider with refresh (e.g. Anthropic) slots in as another flow.
+// bearer-token provider with refresh (e.g. Codex) slots in as another flow.
 //
 // Officially documented flows only: no scraping, no unofficial token extraction.
 
@@ -60,8 +60,7 @@ export interface OAuthFlow {
    * How the authorization code comes back:
    *   "loopback" (default) — an ephemeral 127.0.0.1 server captures the redirect.
    *   "manual" — the provider only redirects to its OWN callback page, which
-   *     DISPLAYS a code (often `code#state`) for the user to paste. Used by
-   *     Anthropic's Claude Pro/Max flow.
+   *     DISPLAYS a code (often `code#state`) for the user to paste.
    */
   readonly redirect?: "loopback" | "manual";
   /** For manual redirect: the fixed redirect_uri the provider's page is shown at. */
@@ -321,9 +320,8 @@ export class OAuthStrategy implements AuthenticationStrategy {
 
   /**
    * Manual redirect: the provider only redirects to its OWN callback page, which
-   * displays a `code#state` for the user to paste back (Anthropic's Claude
-   * Pro/Max flow). PKCE is the primary CSRF defense; state is verified when the
-   * provider includes it in the pasted value.
+   * displays a `code#state` for the user to paste back. PKCE is the primary CSRF
+   * defense; state is verified when the provider includes it in the pasted value.
    */
   private async authenticateManual(ctx: AuthContext): Promise<ResolvedCredential> {
     if (!ctx.prompt) {
@@ -351,7 +349,7 @@ export class OAuthStrategy implements AuthenticationStrategy {
         recovery: `run: rune login ${ctx.providerId}`,
       });
     }
-    // Anthropic returns `code#state`; split it. Lenient state check: verify only
+    // A pasted value may be `code#state`; split it. Lenient state check: verify only
     // when a state is present (some providers omit it — PKCE still protects).
     const [code, returnedState = ""] = pasted.split("#");
     if (this.flow.usesState && returnedState && returnedState !== state) {

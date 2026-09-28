@@ -23,6 +23,10 @@ export {
   type DevicePoll,
 } from "./device-code-strategy";
 export { getStrategy } from "./registry";
-export { makeOAuthStrategy, makeDeviceStrategy } from "./oauth-registry";
+export {
+  makeOAuthStrategy,
+  makeDeviceStrategy,
+  RETIRED_OAUTH_NOTICES,
+  retiredOAuthNotices,
+} from "./oauth-registry";
 export { openRouterOAuthFlow } from "../oauth/openrouter";
-export { anthropicOAuthFlow } from "../oauth/anthropic";

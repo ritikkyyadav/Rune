@@ -53,8 +53,10 @@ function keyedProviderCount(): number {
 
 /**
  * The first question, in the user's terms. "Subscription" leads because it is
- * the case the old surface served worst: someone paying for ChatGPT or Claude
- * had no way in that mentioned either product by name. "Web search" is last:
+ * the case the old surface served worst: someone paying for ChatGPT had no way
+ * in that mentioned the product by name. Claude is not on it: Anthropic's terms
+ * do not permit a third-party app to sign in with a Claude plan, so Claude is
+ * reached with an API key (or Bedrock / Vertex) instead. "Web search" is last:
  * it is the one thing here that is not a model, and it reads as the answer to
  * "how do I let it look things up?".
  */
@@ -65,7 +67,7 @@ export function routeChoices(): RouteChoice[] {
     {
       id: "subscription",
       label: "Subscription",
-      hint: "you already pay for ChatGPT or Claude",
+      hint: "you already pay for ChatGPT",
     },
     {
       id: "api_key",
@@ -106,13 +108,11 @@ export interface LoginTarget {
  */
 const SUBSCRIPTION_LABELS: Record<string, string> = {
   codex: "ChatGPT Plus / Pro",
-  anthropic: "Claude Pro / Max",
   openrouter: "OpenRouter account",
 };
 
 const SUBSCRIPTION_HINTS: Record<string, string> = {
   codex: "sign in with ChatGPT - no API key needed",
-  anthropic: "sign in with Claude - no API key needed",
   openrouter: "sign in once; OpenRouter mints the key",
 };
 
@@ -267,7 +267,7 @@ export function loginTargets(route: LoginRoute, opts: LoginTargetOpts = {}): Log
 }
 
 function rank(id: string): number {
-  const order = ["codex", "anthropic", "openrouter"];
+  const order = ["codex", "openrouter"];
   const i = order.indexOf(id);
   return i === -1 ? order.length : i;
 }

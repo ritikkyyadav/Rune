@@ -90,21 +90,14 @@ describe("buildGateway", () => {
     expect(gw.getRegisteredProviderNames()).toEqual(["google"]);
   });
 
-  it("builds the Anthropic transport in OAuth mode for a bearer (subscription) credential", () => {
-    const gw = buildGateway({
-      provider: "anthropic",
-      keys: {},
-      credentials: {
-        anthropic: { kind: "bearer", secret: "oauth-access-token", meta: { method: "oauth" } },
-      },
-      env: noEnv,
-    });
-    const provider = gw.getProvider("anthropic") as unknown as { oauth: boolean } | undefined;
-    expect(provider).toBeDefined();
-    expect(provider!.oauth).toBe(true); // Bearer + Claude-Code identity path
-  });
+  // The Anthropic transport's client, as the SDK was configured.
+  const anthropicClient = (gw: ReturnType<typeof buildGateway>) =>
+    (gw.getProvider("anthropic") as unknown as { client: Record<string, unknown> }).client as {
+      apiKey: string | null;
+      authToken: string | null;
+    };
 
-  it("keeps the Anthropic transport in api-key mode for an apiKey credential", () => {
+  it("builds the Anthropic transport with the API key as x-api-key", () => {
     const gw = buildGateway({
       provider: "anthropic",
       keys: {},
@@ -113,8 +106,26 @@ describe("buildGateway", () => {
       },
       env: noEnv,
     });
-    const provider = gw.getProvider("anthropic") as unknown as { oauth: boolean } | undefined;
-    expect(provider!.oauth).toBe(false);
+    expect(anthropicClient(gw).apiKey).toBe("sk-ant-xyz");
+    expect(anthropicClient(gw).authToken).toBeNull();
+  });
+
+  it("never builds a subscription-mode Anthropic transport, even from a bearer credential", () => {
+    // The Claude subscription sign-in is retired. Nothing resolves a bearer for
+    // anthropic any more; if one ever arrived, it must not switch on a bearer +
+    // identity mode (there is none left to switch on).
+    const gw = buildGateway({
+      provider: "anthropic",
+      keys: {},
+      credentials: {
+        anthropic: { kind: "bearer", secret: "oauth-access-token", meta: { method: "oauth" } },
+      },
+      env: noEnv,
+    });
+    expect(gw.getProvider("anthropic") as unknown as { oauth?: boolean }).not.toHaveProperty(
+      "oauth",
+    );
+    expect(anthropicClient(gw).authToken).toBeNull();
   });
 
   it("never registers a provider that was removed, even with a credential", () => {

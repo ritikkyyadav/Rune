@@ -163,13 +163,14 @@ describe("auth methods + descriptor", () => {
     expect(effectiveAuthMethods(getPreset("openrouter")!, noEnv)).toEqual(["oauth", "api_key"]);
   });
 
-  it("offers Anthropic subscription OAuth (Claude Pro/Max) with api_key as fallback", () => {
-    // Ships enabled now (no RUNE_ANTHROPIC_OAUTH flag): oauth preferred, api_key
-    // fallback. Env-independent — existing key/env users still resolve to api_key
-    // because no OAuth session is stored (see resolveProviderCredentials).
-    expect(effectiveAuthMethods(getPreset("anthropic")!, noEnv)).toEqual(["oauth", "api_key"]);
+  it("offers Anthropic by API key only — the Claude subscription sign-in is retired", () => {
+    // Anthropic's terms do not permit a third-party app to sign in with a
+    // Claude plan (docs/program/compliance-subscription-routes.md). No env
+    // variable brings it back.
+    expect(effectiveAuthMethods(getPreset("anthropic")!, noEnv)).toEqual(["api_key"]);
     const anyEnv = { RUNE_ANTHROPIC_OAUTH: "1" } as NodeJS.ProcessEnv;
-    expect(effectiveAuthMethods(getPreset("anthropic")!, anyEnv)).toEqual(["oauth", "api_key"]);
+    expect(effectiveAuthMethods(getPreset("anthropic")!, anyEnv)).toEqual(["api_key"]);
+    expect(getProviderDescriptor("anthropic", noEnv)!.auth).toEqual(["api_key"]);
   });
 
   it("getProviderDescriptor surfaces identity, auth, capabilities, and models", () => {
@@ -189,16 +190,15 @@ describe("auth methods + descriptor", () => {
 
   it("adds the subscription providers with account-style logins", () => {
     // `copilot` was the third until P8.5 dropped it (zero sessions ever ran on
-    // it). Codex → OAuth (ChatGPT); Anthropic → OAuth (Claude Pro/Max).
+    // it), and Anthropic's Claude Pro/Max sign-in was retired on 2026-09-28.
+    // Codex → OAuth (ChatGPT) is the one left.
     expect(getPreset("codex")).toBeDefined();
     expect(effectiveAuthMethods(getPreset("codex")!, noEnv)).toEqual(["oauth"]);
-    expect(effectiveAuthMethods(getPreset("anthropic")!, noEnv)).toEqual(["oauth", "api_key"]);
   });
 });
 
 describe("subscription login labels (pi-style picker)", () => {
   it("frames the account login per subscription provider", () => {
-    expect(accountLoginLabel("anthropic")).toMatch(/Claude Pro\/Max/);
     expect(accountLoginLabel("codex")).toMatch(/ChatGPT Plus\/Pro/);
     expect(accountLoginLabel("copilot")).toBeUndefined(); // dropped in P8.5
     expect(accountLoginLabel("groq")).toBeUndefined(); // API-key-only provider
@@ -206,8 +206,8 @@ describe("subscription login labels (pi-style picker)", () => {
 
   it("labels methods the way pi does: account vs API key", () => {
     expect(authMethodLabel("api_key")).toBe("Sign in with an API key");
-    expect(authMethodLabel("oauth", "anthropic")).toBe(
-      "Sign in with your Claude Pro/Max subscription",
+    expect(authMethodLabel("oauth", "codex")).toBe(
+      "Sign in with your ChatGPT Plus/Pro subscription",
     );
     expect(authMethodLabel("oauth", "groq")).toBe("Sign in with an account");
   });

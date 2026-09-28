@@ -122,19 +122,31 @@ Because the result is an ordinary key, it streams exactly like a pasted key and
 never expires. Security: PKCE (S256) is mandatory; the loopback binds only to
 127.0.0.1; the code is useless to an interceptor without the verifier Rune holds.
 
-### Anthropic subscription OAuth
+### Claude: API key, Bedrock or Vertex (subscription sign-in retired)
 
-`rune login anthropic` (method `oauth`) runs the same authorization-code + PKCE
-shape against Anthropic's endpoints: the browser opens the claude.com authorize
-page, and the loopback callback exchanges the code at the platform token
-endpoint. The resulting subscription credential is stored in the credential
-store and refreshed automatically. `--method api_key` remains available for
-console API keys.
+Rune no longer signs in with a Claude Pro or Max plan. Anthropic's terms
+([Authentication and credential use](https://code.claude.com/docs/en/legal-and-compliance))
+say: "Anthropic does not permit third-party developers to offer Claude.ai login
+into their own applications, or to route requests through Free, Pro, or Max plan
+credentials on behalf of their users." The route Rune used did exactly that, so
+it was removed on 2026-09-28.
 
-This reuses Anthropic's own first-party public client id (the OpenCode-style
-approach) — set `RUNE_ANTHROPIC_OAUTH_CLIENT_ID` to override it if Anthropic
-rotates the id. `rune login codex` follows the same pattern for ChatGPT
-subscription sign-in.
+Claude models remain available three ways:
+
+- `rune login anthropic` with a console API key (`ANTHROPIC_API_KEY` works too).
+- `bedrock`: Claude on AWS, signed with your AWS credential chain.
+- `vertex`: Claude on Google Cloud, with Application Default Credentials.
+
+If you signed in with a Claude plan on an earlier version, the stored token is
+ignored, and `rune login` tells you why. Rune never deletes it on its own. Run
+`rune logout anthropic` to remove it. That command also removes a stored
+Anthropic API key, so run it before you add a new key, not after.
+`rune login anthropic --method oauth` is refused with the same reason, and
+`RUNE_ANTHROPIC_OAUTH_CLIENT_ID` no longer does anything.
+
+`rune login codex` (ChatGPT sign-in) is still offered. Whether OpenAI's terms
+allow it for a third-party app is an open question, recorded in
+[`docs/program/compliance-subscription-routes.md`](program/compliance-subscription-routes.md).
 
 ## Config
 

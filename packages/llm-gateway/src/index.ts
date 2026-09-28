@@ -99,6 +99,8 @@ export {
   DeviceCodeStrategy,
   getStrategy,
   makeOAuthStrategy,
+  RETIRED_OAUTH_NOTICES,
+  retiredOAuthNotices,
   generatePkce,
   startLoopback,
   openRouterOAuthFlow,

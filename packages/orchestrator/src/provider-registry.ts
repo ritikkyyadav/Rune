@@ -218,12 +218,11 @@ export function buildGateway(opts: BuildGatewayOpts): LlmGateway {
     const cred = opts.credentials?.[preset.id];
     const key = cred?.secret ?? resolveKey(preset.id, preset.envVar, opts.keys, env);
     if (!key) continue;
-    // A subscription bearer token (Claude Pro/Max OAuth) authenticates differently
-    // from an API key — flag it so the transport uses Bearer + first-party headers.
-    const oauth = cred?.kind === "bearer";
     switch (preset.kind) {
       case "anthropic":
-        gw.registerProvider(new AnthropicProvider(key, undefined, { oauth }));
+        // An API key, always: the transport has no subscription mode any more
+        // (docs/program/compliance-subscription-routes.md).
+        gw.registerProvider(new AnthropicProvider(key));
         break;
       case "google":
         gw.registerProvider(new GoogleProvider(key));

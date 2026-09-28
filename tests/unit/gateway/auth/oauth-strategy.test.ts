@@ -9,7 +9,6 @@ import {
   type OAuthFlow,
 } from "../../../../packages/llm-gateway/src/auth/oauth-strategy";
 import { openRouterOAuthFlow } from "../../../../packages/llm-gateway/src/oauth/openrouter";
-import { anthropicOAuthFlow } from "../../../../packages/llm-gateway/src/oauth/anthropic";
 import { AuthError } from "../../../../packages/llm-gateway/src/auth/types";
 import type { AuthContext } from "../../../../packages/llm-gateway/src/auth/types";
 import {
@@ -266,10 +265,10 @@ describe("OpenRouter reference flow", () => {
 });
 
 // ─── Manual code-paste redirect (no loopback) ───
-describe("OAuthStrategy manual code-paste redirect (Anthropic-style)", () => {
+describe("OAuthStrategy manual code-paste redirect", () => {
   function manualFlow(over: Partial<OAuthFlow> = {}): OAuthFlow {
     return {
-      providerId: "anthropic",
+      providerId: "manual-provider",
       credentialKind: "bearer",
       usesState: true,
       redirect: "manual",
@@ -287,8 +286,9 @@ describe("OAuthStrategy manual code-paste redirect (Anthropic-style)", () => {
     };
   }
 
-  function anthropicCtx(over: Partial<AuthContext> = {}): AuthContext {
-    return ctx({ providerId: "anthropic", preset: getPreset("anthropic")!, ...over });
+  // Any preset will do: the manual mechanics are provider-neutral.
+  function manualCtx(over: Partial<AuthContext> = {}): AuthContext {
+    return ctx({ providerId: "manual-provider", preset: getPreset("openrouter")!, ...over });
   }
 
   it("opens the browser, prompts for a pasted code#state, and persists the bearer", async () => {
@@ -297,7 +297,7 @@ describe("OAuthStrategy manual code-paste redirect (Anthropic-style)", () => {
     let promptedFor = "";
     let sentState = "";
     const cred = await new OAuthStrategy(manualFlow()).authenticate(
-      anthropicCtx({
+      manualCtx({
         store,
         openBrowser: async (url: string) => {
           opened = url;
@@ -312,7 +312,7 @@ describe("OAuthStrategy manual code-paste redirect (Anthropic-style)", () => {
     expect(opened).toContain("https://provider.test/auth");
     expect(promptedFor).toMatch(/paste/i);
     expect(cred).toMatchObject({ kind: "bearer", secret: "access-tok" });
-    expect(JSON.parse((await store.get(oauthAccount("anthropic")))!)).toMatchObject({
+    expect(JSON.parse((await store.get(oauthAccount("manual-provider")))!)).toMatchObject({
       secret: "access-tok",
       refreshToken: "refresh-tok",
     });
@@ -320,7 +320,7 @@ describe("OAuthStrategy manual code-paste redirect (Anthropic-style)", () => {
 
   it("accepts a bare code with no #state — PKCE still protects", async () => {
     const cred = await new OAuthStrategy(manualFlow()).authenticate(
-      anthropicCtx({ openBrowser: async () => {}, prompt: async () => "the-code" }),
+      manualCtx({ openBrowser: async () => {}, prompt: async () => "the-code" }),
     );
     expect(cred.secret).toBe("access-tok");
   });
@@ -328,7 +328,7 @@ describe("OAuthStrategy manual code-paste redirect (Anthropic-style)", () => {
   it("rejects a pasted state that doesn't match the one we sent (CSRF)", async () => {
     await expect(
       new OAuthStrategy(manualFlow()).authenticate(
-        anthropicCtx({ openBrowser: async () => {}, prompt: async () => "the-code#tampered" }),
+        manualCtx({ openBrowser: async () => {}, prompt: async () => "the-code#tampered" }),
       ),
     ).rejects.toBeInstanceOf(AuthError);
   });
@@ -336,7 +336,7 @@ describe("OAuthStrategy manual code-paste redirect (Anthropic-style)", () => {
   it("errors clearly when there is no interactive prompt to paste into", async () => {
     await expect(
       new OAuthStrategy(manualFlow()).authenticate(
-        anthropicCtx({ openBrowser: async () => {}, prompt: undefined }),
+        manualCtx({ openBrowser: async () => {}, prompt: undefined }),
       ),
     ).rejects.toMatchObject({ name: "AuthError" });
   });
@@ -344,109 +344,8 @@ describe("OAuthStrategy manual code-paste redirect (Anthropic-style)", () => {
   it("treats an empty paste as a terminal AuthError", async () => {
     await expect(
       new OAuthStrategy(manualFlow()).authenticate(
-        anthropicCtx({ openBrowser: async () => {}, prompt: async () => "   " }),
+        manualCtx({ openBrowser: async () => {}, prompt: async () => "   " }),
       ),
     ).rejects.toBeInstanceOf(AuthError);
-  });
-});
-
-// ─── Anthropic Claude Pro/Max flow shape ───
-describe("Anthropic subscription flow (Claude Pro/Max)", () => {
-  it("is a LOOPBACK, stateful, bearer flow", () => {
-    // It was manual. A comment asserted "Anthropic only redirects to its OWN
-    // console callback ... no arbitrary loopback is accepted" -- false, and it
-    // is the whole bug: the Pro/Max flow requires the loopback and rejects the
-    // manual paste page. Verified in a real browser.
-    expect(anthropicOAuthFlow.credentialKind).toBe("bearer");
-    expect(anthropicOAuthFlow.redirect ?? "loopback").toBe("loopback");
-    expect(anthropicOAuthFlow.usesState).toBe(true);
-    expect(anthropicOAuthFlow.manualRedirectUri).toBeUndefined();
-  });
-
-  it("authorize URL carries PKCE (S256), the user:inference scope, and code=true", () => {
-    const u = new URL(
-      anthropicOAuthFlow.authorizeUrl({
-        redirectUri: "https://platform.claude.com/oauth/code/callback",
-        codeChallenge: "CHAL",
-        state: "STATE",
-      }),
-    );
-    // claude.ai endpoint: the Pro/Max flow, which pairs with the loopback
-    // redirect. Verified in a real browser -- this combination proceeds to
-    // claude.ai/login, "Continue with your Claude.ai account".
-    expect(u.origin + u.pathname).toBe("https://claude.com/cai/oauth/authorize");
-    expect(u.searchParams.get("code")).toBe("true");
-    expect(u.searchParams.get("code_challenge")).toBe("CHAL");
-    expect(u.searchParams.get("code_challenge_method")).toBe("S256");
-    expect(u.searchParams.get("scope")).toContain("user:inference");
-    expect(u.searchParams.get("state")).toBe("STATE");
-    expect(u.searchParams.get("client_id")).toBeTruthy();
-  });
-
-  it("serializes exactly like the first-party client — URLSearchParams, so spaces are +", () => {
-    // Raw-string assertion on purpose: URLSearchParams.get() decodes + and %20
-    // identically, so a parsed-param check cannot tell these apart.
-    //
-    // This test previously asserted the OPPOSITE, citing a comment that "%20 is
-    // what the first-party client sends and the only encoding this endpoint
-    // accepts". The client's decompiled builder does
-    // `new URL(...).searchParams.append("scope", L.join(" "))`, and
-    // URLSearchParams writes a space as `+`. The `%20` was Rune's invention.
-    const raw = anthropicOAuthFlow.authorizeUrl({
-      redirectUri: "https://platform.claude.com/oauth/code/callback",
-      codeChallenge: "CHAL",
-      state: "STATE",
-    });
-    expect(raw).toContain(
-      "scope=org%3Acreate_api_key+user%3Aprofile+user%3Ainference" +
-        "+user%3Asessions%3Aclaude_code+user%3Amcp_servers+user%3Afile_upload",
-    );
-    expect(raw).toContain(
-      "redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback",
-    );
-  });
-
-  it("exchanges an authorization code for a refreshable bearer", async () => {
-    let sent: Record<string, unknown> = {};
-    globalThis.fetch = (async (_url: string, init: RequestInit) => {
-      sent = JSON.parse(init.body as string);
-      return new Response(
-        JSON.stringify({ access_token: "at", refresh_token: "rt", expires_in: 3600 }),
-        { status: 200 },
-      );
-    }) as typeof fetch;
-    const result = await anthropicOAuthFlow.exchange({
-      code: "c",
-      codeVerifier: "v",
-      redirectUri: "https://platform.claude.com/oauth/code/callback",
-      state: "s",
-    });
-    expect(result).toMatchObject({ secret: "at", refreshToken: "rt", expiresInSec: 3600 });
-    expect(sent).toMatchObject({
-      grant_type: "authorization_code",
-      code: "c",
-      code_verifier: "v",
-      state: "s",
-    });
-  });
-
-  it("refreshes the bearer via the refresh token", async () => {
-    let sent: Record<string, unknown> = {};
-    globalThis.fetch = (async (_url: string, init: RequestInit) => {
-      sent = JSON.parse(init.body as string);
-      return new Response(JSON.stringify({ access_token: "at2", expires_in: 3600 }), {
-        status: 200,
-      });
-    }) as typeof fetch;
-    const result = await anthropicOAuthFlow.refresh!("rt");
-    expect(result.secret).toBe("at2");
-    expect(sent).toMatchObject({ grant_type: "refresh_token", refresh_token: "rt" });
-  });
-
-  it("throws with the HTTP status on a failed exchange", async () => {
-    globalThis.fetch = (async () => new Response("bad", { status: 401 })) as typeof fetch;
-    await expect(
-      anthropicOAuthFlow.exchange({ code: "c", codeVerifier: "v", redirectUri: "x" }),
-    ).rejects.toThrow(/Anthropic token endpoint failed \(401\)/);
   });
 });

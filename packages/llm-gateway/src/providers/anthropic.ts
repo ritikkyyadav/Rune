@@ -16,19 +16,16 @@ import type {
 import { parseToolArguments } from "@rune/shared";
 import { IdleWatchdog } from "./stream-guard";
 
-// ─── Subscription OAuth (Claude Pro/Max) ───
-// A Claude Pro/Max login yields a bearer *access token*, not an API key. The
-// subscription backend accepts it only when the request presents as Claude Code:
-// the `anthropic-beta: oauth-2025-04-20` header AND this exact identity as the
-// first system block. This is the same handshake the official CLI performs; we
-// send the user's OWN token (no key minting, no scraping).
-const CLAUDE_CODE_IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude.";
-const OAUTH_BETA = "oauth-2025-04-20";
+// API key only. The Claude subscription sign-in this transport used to carry
+// (a bearer token presented under another client's identity) is retired:
+// Anthropic's terms do not permit a third-party app to offer Claude.ai login or
+// route requests through Free/Pro/Max plan credentials. Claude models stay
+// reachable here with a console API key, and through Bedrock and Vertex. See
+// docs/program/compliance-subscription-routes.md; the tripwire in
+// tests/unit/compliance/ fails the build if that handshake comes back.
 const INTERLEAVED_BETA = "interleaved-thinking-2025-05-14";
 
 export interface AnthropicAuthOpts {
-  /** The credential is a subscription OAuth bearer token, not an x-api-key. */
-  oauth?: boolean;
   /**
    * Register under a DIFFERENT provider id while sharing this whole translation
    * layer. The enterprise routes (`bedrock`, `vertex`) serve Anthropic models
@@ -56,23 +53,20 @@ export interface AnthropicAuthOpts {
 export class AnthropicProvider implements LlmProvider {
   readonly name: ProviderName;
   private client: Anthropic;
-  /** Subscription-OAuth mode: authenticate with Bearer + Claude-Code identity. */
-  private readonly oauth: boolean;
   /** Model used by countTokens/healthCheck; see AnthropicAuthOpts.utilityModel. */
   protected readonly utilityModel: string;
 
   constructor(apiKey?: string, baseUrl?: string, auth?: AnthropicAuthOpts) {
-    this.oauth = auth?.oauth ?? false;
     this.name = auth?.name ?? "anthropic";
     this.utilityModel = auth?.utilityModel ?? "claude-sonnet-4-6";
     this.client = new Anthropic({
-      // OAuth: send Authorization: Bearer (authToken) and suppress x-api-key by
-      // nulling apiKey — with both set, the SDK prefers x-api-key. API-key mode
-      // is unchanged.
-      ...(this.oauth
-        ? { authToken: apiKey ?? null, apiKey: null }
-        : { apiKey: apiKey ?? process.env.ANTHROPIC_API_KEY }),
+      apiKey: apiKey ?? process.env.ANTHROPIC_API_KEY,
       ...(baseUrl && { baseURL: baseUrl }),
+      // The gateway owns retries (its own attempts, backoff and fallback). The
+      // SDK's default of 2 stacked underneath it, so one 529 could become a
+      // dozen requests before the gateway saw a single failure. Same as the
+      // OpenAI transport.
+      maxRetries: 0,
       // Cast: the SDK's Fetch type isn't exported; the shapes are compatible.
       ...(auth?.fetch && { fetch: auth.fetch as never }),
     });
@@ -270,15 +264,11 @@ export class AnthropicProvider implements LlmProvider {
   }
 
   async countTokens(messages: Message[], tools?: ToolDefinition[]): Promise<number> {
-    const result = await this.client.messages.countTokens(
-      {
-        model: this.utilityModel,
-        messages: this.toAnthropicMessages(messages),
-        tools: tools ? this.toAnthropicTools(tools) : undefined,
-      },
-      // Subscription tokens need the oauth beta on every endpoint they touch.
-      this.oauth ? { headers: { "anthropic-beta": OAUTH_BETA } } : undefined,
-    );
+    const result = await this.client.messages.countTokens({
+      model: this.utilityModel,
+      messages: this.toAnthropicMessages(messages),
+      tools: tools ? this.toAnthropicTools(tools) : undefined,
+    });
     return result.input_tokens;
   }
 
@@ -350,30 +340,19 @@ export class AnthropicProvider implements LlmProvider {
   // ─── Translation Helpers ───
 
   /**
-   * Compose the `anthropic-beta` header: the OAuth beta (always, in subscription
-   * mode) plus interleaved-thinking when budget-mode thinking + tools need it.
-   * Undefined when neither applies (the API-key, non-interleaved default) so the
-   * request is byte-identical to before BYOP.
+   * Compose the `anthropic-beta` header: interleaved-thinking when budget-mode
+   * thinking + tools need it, and nothing otherwise, so the default request
+   * carries no beta header at all.
    */
   private betaHeader(needsInterleaved: boolean): Record<string, string> | undefined {
-    const betas: string[] = [];
-    if (this.oauth) betas.push(OAUTH_BETA);
-    if (needsInterleaved) betas.push(INTERLEAVED_BETA);
-    return betas.length ? { "anthropic-beta": betas.join(",") } : undefined;
+    return needsInterleaved ? { "anthropic-beta": INTERLEAVED_BETA } : undefined;
   }
 
   /**
-   * System blocks for the request. In subscription-OAuth mode the FIRST block
-   * must be the Claude Code identity (the backend rejects the token otherwise);
-   * the real system prompt follows and carries the cache breakpoint. In API-key
-   * mode this is exactly today's single cached system block (or none).
+   * System blocks for the request: Rune's own system prompt as one cached block,
+   * or none. Nothing is ever prepended to it.
    */
   private toSystemBlocks(system?: string): Anthropic.TextBlockParam[] | undefined {
-    if (this.oauth) {
-      const identity: Anthropic.TextBlockParam = { type: "text", text: CLAUDE_CODE_IDENTITY };
-      if (!system) return [{ ...identity, cache_control: { type: "ephemeral" } }];
-      return [identity, { type: "text", text: system, cache_control: { type: "ephemeral" } }];
-    }
     return system ? this.toSystemWithCache(system) : undefined;
   }
 

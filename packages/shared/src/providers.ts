@@ -331,11 +331,12 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     defaultModel: "claude-opus-5-5",
     docsUrl: "https://console.anthropic.com/settings/keys",
     keyHint: "sk-ant-…",
-    // Two ways in: sign in with a Claude Pro/Max *subscription* (OAuth → a
-    // refreshable bearer token spent against your plan), or paste an API key.
-    // OAuth is preferred in the picker; the API key stays the fallback and the
-    // env/console path is byte-identical to before for existing key users.
-    auth: ["oauth", "api_key"],
+    // API key only. The Claude subscription sign-in is retired (2026-09-28):
+    // Anthropic's terms do not permit third-party apps to offer Claude.ai login
+    // or route requests through Free/Pro/Max plans. Claude models stay available
+    // with a console key here and through the `bedrock` and `vertex` routes.
+    // See docs/program/compliance-subscription-routes.md.
+    auth: ["api_key"],
     // Roster refreshed 2026-09-28 against Anthropic's models overview. Opus 5.5
     // is the documented starting point ("start with Claude Opus 5.5 for most
     // workloads") and is the default; Opus 5 moved to the legacy list the same

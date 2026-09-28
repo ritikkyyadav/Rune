@@ -66,13 +66,20 @@ describe("subscriptions are named as products", () => {
   test("ChatGPT is called ChatGPT, not codex", () => {
     const list = labels("subscription");
     expect(list).toContain("ChatGPT Plus / Pro");
-    expect(list).toContain("Claude Pro / Max");
     expect(list).not.toContain("GitHub Copilot"); // dropped in P8.5
     expect(list.join(" ")).not.toContain("codex");
   });
 
+  test("the Claude subscription sign-in is not offered", () => {
+    // Retired 2026-09-28 under Anthropic's terms; Claude is on the API-key route.
+    expect(ids("subscription")).not.toContain("anthropic");
+    expect(labels("subscription").join(" ")).not.toContain("Claude");
+    expect(routeChoices().find((r) => r.id === "subscription")!.hint).not.toContain("Claude");
+    expect(ids("api_key")).toContain("anthropic");
+  });
+
   test("the plans people are likeliest to hold come first", () => {
-    expect(ids("subscription").slice(0, 2)).toEqual(["codex", "anthropic"]);
+    expect(ids("subscription")[0]).toBe("codex");
   });
 
   test("a plain key mint is not a subscription, so it sorts last", () => {
@@ -222,12 +229,14 @@ describe("the list doubles as a status readout", () => {
   test("what you are already signed in to is marked", () => {
     const targets = loginTargets("subscription", { connected: (id) => id === "codex" });
     expect(targets.find((t) => t.providerId === "codex")?.connected).toBe(true);
-    expect(targets.find((t) => t.providerId === "anthropic")?.connected).toBe(false);
+    expect(targets.find((t) => t.providerId === "openrouter")?.connected).toBe(false);
   });
 
   test("the summary speaks product names, and says so plainly when empty", () => {
     expect(connectedSummary([])).toBe("nothing connected yet");
     expect(connectedSummary(["codex"])).toContain("ChatGPT Plus / Pro");
+    // Anthropic is connected by key now, so it is named as Anthropic, not a plan.
+    expect(connectedSummary(["anthropic"])).toBe("connected: Anthropic");
   });
 
   test("the summary answers both halves: can it think, and can it look things up", () => {
