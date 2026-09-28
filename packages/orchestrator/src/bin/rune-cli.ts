@@ -3394,9 +3394,7 @@ async function main() {
             }
             provs.forEach((p, i) => process.stdout.write(formatProviderLine(i + 1, p) + "\n"));
             process.stdout.write(`    ${warn("[t]")} ${faint("type provider/model directly")}\n\n`);
-            process.stdout.write(
-              `  ${faint("subscriptions (Claude Pro/Max · ChatGPT):")} ${info("rune login")}\n`,
-            );
+            process.stdout.write(`  ${faint("subscriptions (ChatGPT):")} ${info("rune login")}\n`);
 
             const a1 = (await ask(`  ${info("›")} `)).toLowerCase();
             if (a1 === "t" || a1 === "c") {

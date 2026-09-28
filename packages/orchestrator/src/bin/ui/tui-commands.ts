@@ -1319,7 +1319,7 @@ export const COMMAND_METHODS = {
       l1start,
       undefined,
       provs.length
-        ? "subscriptions (Claude Pro/Max or ChatGPT): rune login \u00b7 keys: /keys"
+        ? "subscriptions (ChatGPT): rune login \u00b7 keys: /keys"
         : "no providers configured yet -- add a key with /keys or sign in with rune login",
     );
     if (a1 == null) return;

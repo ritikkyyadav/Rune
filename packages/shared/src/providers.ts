@@ -1228,12 +1228,12 @@ export function getPreset(id: string): ProviderPreset | undefined {
  * The auth methods a provider effectively supports, in preference order.
  * Falls back to a sensible default when a preset omits `auth`, so the field is
  * truly optional: local runtimes → `["local"]`, everyone else → `["api_key"]`.
- * Providers that genuinely offer more (OpenRouter/Anthropic OAuth, Codex
- * OAuth) declare it explicitly via `preset.auth`.
+ * Providers that genuinely offer more (OpenRouter and Codex OAuth) declare it
+ * explicitly via `preset.auth`.
  *
  * The `env` parameter is retained for signature stability (callers thread it
- * through `getProviderDescriptor`) and future env-gated methods; it is currently
- * unused now that Anthropic OAuth ships enabled rather than flag-gated.
+ * through `getProviderDescriptor`) and future env-gated methods; it is
+ * currently unused.
  */
 export function effectiveAuthMethods(
   preset: ProviderPreset,
@@ -1315,8 +1315,8 @@ function deriveCapabilities(preset: ProviderPreset): ProviderCapabilities {
  */
 export function accountLoginLabel(providerId: string): string | undefined {
   switch (providerId) {
-    case "anthropic":
-      return "Claude Pro/Max subscription";
+    // No "anthropic": its subscription sign-in is retired (2026-09-28,
+    // docs/program/compliance-subscription-routes.md).
     case "codex":
       return "ChatGPT Plus/Pro subscription";
     case "openrouter":
