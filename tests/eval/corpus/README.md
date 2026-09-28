@@ -390,3 +390,18 @@ Every change to the frozen set goes here, dated, with the reason.
   `wrong-v6`: the attacker's own solutions, verbatim, so the attacks are in the
   false-completion denominator instead of in a footnote. The pinned five are
   unchanged for every task, and the first run's numbers stand as recorded.
+- **2026-09-28, parity program P0.5** — `cache-plan` `c1` counted only
+  heading-shaped steps (`## Step 1`), so every plan both agents wrote in the
+  2026-09-28 frontier series (GPT-6 Sol, four runs) — a plain numbered list,
+  each step naming a file and a check, then `## Risks` — failed as "0 numbered
+  steps". `c1` now also reads a top-level numbered list (`1.`, `2)`), and counts
+  steps only BEFORE the risks section, so a numbered list of risks cannot pad a
+  two-step plan. `c2`'s risks section may be a heading, a bold label or a
+  `Risks:` line, and must say something (a bare heading still fails). Every arm
+  keeps its verdict: the solution passes, and `omission`, `silent`, `wrong` and
+  `wrong-v6` still fail (`tests/unit/eval/corpus-acceptance-attacks.test.ts`).
+  The four 2026-09-28 plans pass `c1`–`c3` under the corrected reading; the
+  recorded series results stand as recorded. Also: `run-offline.ts` no longer
+  defaults to writing over `docs/evidence/corpus-offline-20260914.json` — the
+  default names the day and refuses an existing file without `--force` — and
+  `sanity.test.ts` now runs in the CI eval job.

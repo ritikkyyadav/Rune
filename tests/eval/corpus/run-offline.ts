@@ -373,8 +373,17 @@ if (import.meta.main) {
     const at = args.indexOf(`--${key}`);
     return at < 0 ? undefined : args[at + 1];
   };
+  // The default used to be a fixed, dated evidence file, so a bare run wrote
+  // over the 2026-09-14 record. A run names its own day, and evidence already
+  // on disk is never replaced without `--force` (README Changes, 2026-09-28).
+  const stamp = new Date().toISOString().slice(0, 10).replaceAll("-", "");
+  const out = resolve(get("out") ?? join(repoRoot, `docs/evidence/corpus-offline-${stamp}.json`));
+  if (existsSync(out) && !args.includes("--force")) {
+    console.error(`${out} already exists — evidence is never overwritten. Pass --out or --force.`);
+    process.exit(2);
+  }
   await runOffline({
-    out: resolve(get("out") ?? join(repoRoot, "docs/evidence/corpus-offline-20260914.json")),
+    out,
     ...(get("tasks") ? { tasks: get("tasks")!.split(",") } : {}),
     ...(get("scenarios") ? { scenarios: get("scenarios")!.split(",") as ScenarioName[] } : {}),
   });

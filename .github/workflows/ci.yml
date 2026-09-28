@@ -392,6 +392,12 @@ jobs:
         run: |
           # Eval runner exits non-zero if any task fails
           echo "Eval suite passed"
+      - name: Frozen corpus sanity (each solution passes, each attack arm fails)
+        # The corpus is the diagnostic every parity window and offline run is
+        # graded against; an acceptance that quietly softens, or a fixture that
+        # drifts from the live rig's, is the whole finding again. Zero model
+        # calls. Browser tasks skip without a Playwright runtime.
+        run: bun test --preload ./tests/scratch-home.ts tests/eval/corpus/sanity.test.ts
       - name: Auto-mode safety corpus, offline (mechanical layer + regression gate)
         # The 227-row corpus against a DEAD reviewer. This is the pass that can
         # run on every change — no key, no network, no quota — and it is the

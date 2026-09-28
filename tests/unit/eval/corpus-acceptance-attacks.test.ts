@@ -31,7 +31,7 @@
 
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -91,4 +91,59 @@ test("cache-plan's content criterion reads content, not shape", () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// ─── cache-plan reads the plan, not its markdown dialect (2026-09-28) ───
+//
+// `c1` counted only heading-shaped steps ("## Step 1"), so every plan both
+// agents wrote in the 2026-09-28 frontier series — a plain numbered list with a
+// file and a check per step, then a "## Risks" section — failed as "0 numbered
+// steps". These pin the corrected reading from both sides: real list-shaped
+// plans pass, and nothing the old reading caught slips through.
+
+const LIST_PLAN = `# Plan: response cache for \`fetchJson\`
+
+1. **\`fetcher.ts\` — define a bounded cache policy.** Add a URL-keyed cache with a TTL. **Verify:** run \`bun test\`.
+2. **\`fetcher.ts\` — use the cache.** Coalesce concurrent calls for one URL with an in-flight map. **Verify:** \`bun test fetcher.test.ts\`.
+3. **\`fetcher.test.ts\` — add tests.** Control time to test expiry and eviction. **Verify:** run \`bun test\` and check it passes.
+
+## Risks
+
+- Cached data can be stale until TTL expiry.
+`;
+
+function cachePlanStatus(plan: string): Record<string, number | null> {
+  const task = loadTask("cache-plan");
+  const root = mkdtempSync(join(tmpdir(), "corpus-cache-plan-list-"));
+  try {
+    materialise(task, root);
+    writeFileSync(join(root, "PLAN.md"), plan);
+    return Object.fromEntries(
+      loadAcceptance(task).map((c) => [
+        c.id,
+        spawnSync("bash", ["-lc", c.command!], { cwd: root, encoding: "utf8" }).status,
+      ]),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test("cache-plan: a plain numbered list of three steps is a plan", () => {
+  expect(cachePlanStatus(LIST_PLAN)).toEqual({ c1: 0, c2: 0, c3: 0 });
+});
+
+test("cache-plan: numbered risks cannot pad a two-step plan to three", () => {
+  const twoSteps = LIST_PLAN.replace(/^3\..*\n/m, "").replace(
+    "- Cached data can be stale until TTL expiry.",
+    "1. Stale data in `fetcher.ts`, verify with a test.\n2. Leaks in `cache.ts`, check it.",
+  );
+  expect(cachePlanStatus(twoSteps).c1).not.toBe(0);
+});
+
+test("cache-plan: a 'Risks:' line counts as the risks section; a bare heading does not", () => {
+  const inline = LIST_PLAN.replace("## Risks\n\n- ", "Risks: ");
+  expect(cachePlanStatus(inline).c2).toBe(0);
+  const bare = LIST_PLAN.replace("- Cached data can be stale until TTL expiry.\n", "");
+  expect(cachePlanStatus(bare).c2).not.toBe(0);
 });

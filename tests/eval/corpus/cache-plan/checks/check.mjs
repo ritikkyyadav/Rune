@@ -16,12 +16,27 @@ const safe = (message) =>
     .replace(/no such file or directory/gi, "missing")
     .replace(/command not found/gi, "unavailable");
 
+// A step is a numbered heading ("## Step 1", "### 2") OR a top-level numbered
+// list item ("1. …", "2) …"). The heading-only reading failed every plan both
+// agents wrote in the 2026-09-28 series — each a plain numbered list with a file
+// and a check per step — so it measured markdown dialect, not the plan
+// (README Changes, 2026-09-28).
+const STEP = /^ {0,3}(?:#{1,6}[ \t]*(?:step[ \t]*)?\d+\b|(?:step[ \t]*)?\d+[.)][ \t])/im;
+// The risks section's header: a heading, a bold label, or a "Risks:" line.
+// Only header-shaped lines count, so a sentence that begins "Risks are…"
+// inside a step does not cut the plan short.
+const RISKS = /^ {0,3}(?:#{1,6}[ \t]*risks?\b|(?:\*\*|__)risks?\b|risks?[ \t]*:)/im;
+
 const checks = {
   // Three steps, each naming a file it touches and how it will be checked.
   // Whether the plan is GOOD is a person's judgement; this is its shape.
+  // Steps are counted BEFORE the risks section, so a numbered list of risks
+  // cannot pad a two-step plan to three.
   steps() {
     const text = readFileSync(join(root, "PLAN.md"), "utf8");
-    const steps = text.split(/^#{1,6}\s*(?:step\s*)?\d+\b/im).slice(1);
+    const risksAt = text.search(RISKS);
+    const body = risksAt >= 0 ? text.slice(0, risksAt) : text;
+    const steps = body.split(STEP).slice(1);
     assert.ok(steps.length >= 3, `the plan has ${steps.length} numbered steps, fewer than three`);
     steps.forEach((step, index) => {
       assert.match(
@@ -58,9 +73,16 @@ const checks = {
       /single[- ]?flight|in[- ]?flight|concurrent|share a request|dedup/i,
       "the plan never says what two concurrent misses for one URL do",
     );
-    const risks = text.split(/^#{1,6}\s*/m).find((section) => /^risk/i.test(section)) ?? "";
+    // The section must SAY something: "Risks: an unbounded map leaks" counts,
+    // a bare "## Risks" with nothing after it does not.
+    const risksAt = text.search(RISKS);
+    const section = risksAt >= 0 ? text.slice(risksAt) : "";
+    const content = section
+      .replace(RISKS, "")
+      .replace(/^[\s:*_—-]+/, "")
+      .split(/^ {0,3}#{1,6}\s/m)[0];
     assert.ok(
-      risks.trim().length > "Risks".length,
+      content.trim().length > 0,
       "the plan has no risks section, which the prompt asks for at the end",
     );
   },
