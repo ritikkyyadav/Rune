@@ -63,7 +63,7 @@ import {
   resolveUiFinish,
   type RuneFinish,
 } from "@rune/shared";
-import type { ProviderName, ResolvedCredential } from "@rune/llm-gateway";
+import { retiredOAuthNotices, type ProviderName, type ResolvedCredential } from "@rune/llm-gateway";
 import { configModeToPermissionMode, resolveStartupPermissionFlags } from "../permissions";
 import {
   modelForProvider,
@@ -1259,6 +1259,10 @@ async function main() {
       localBaseUrls: resolveLocalBaseUrls(config, secrets),
       authOverrides: readAuthOverrides(config),
     });
+    // A Claude plan token saved by an older Rune is never used now; say so
+    // once, with the way out (docs/program/compliance-subscription-routes.md).
+    for (const line of await retiredOAuthNotices(store))
+      console.warn(`  ${brass("!")} ${dim(line)}`);
   } catch {
     credentials = {};
   }
