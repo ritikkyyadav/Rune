@@ -1,6 +1,6 @@
 # Reproducible harness comparisons
 
-This directory contains a small live Rune/OpenCode pilot, two further comparator arms (Claude Code and Codex) validated offline and never yet run, an executable SWE-bench prediction adapter, and a Harbor adapter. None supplies an overall capability score. The pilot tasks are authored in this repository and are not an independent benchmark.
+This directory contains a small live Rune/OpenCode pilot, four arms behind one interface (Rune, OpenCode, Claude Code and Codex) with the fairness rules and the paired runner the parity index reads, an executable SWE-bench prediction adapter, and a Harbor adapter. The Claude Code and Codex arms and the paired runner are validated offline and have never been run live. None supplies an overall capability score. The pilot tasks are authored in this repository and are not an independent benchmark.
 
 ## Live pilot
 
@@ -29,10 +29,15 @@ Cost is normalized using Rune's pricing table and all recorded gateway usage, in
 
 Terminal quota, authentication and provider-server errors leave the task unscored even when
 some inference completed before the interruption. Actual usage and partial artifacts remain
-in the report, with a sanitized `unscoredReason`. The runner stops further tasks after an
-infrastructure interruption. Ordinary tool failures or text mentioning quotas do not trigger
-this exclusion. See the [dated evidence and corrections](../../../docs/audit-followthrough-20260908.md)
-for the early attempts; the original aggregate reports were preserved.
+in the report, with a sanitized `unscoredReason`. Each row is judged by the one classifier
+every arm shares (see the parity section below): a timeout is a scored failure for Rune
+exactly as for OpenCode. An unscored row is recorded and the series goes on; it stops only
+once more than a quarter of the planned rows have come back unscored (it used to stop at the
+first one). Ordinary tool failures or text mentioning quotas do not trigger the exclusion.
+The pilot keeps its own symmetric caps (24 turns for Rune, 24 steps for OpenCode, a per-task
+dollar ceiling for both); the parity runner does not. See the
+[dated evidence and corrections](../../../docs/audit-followthrough-20260908.md) for the early
+attempts; the original aggregate reports were preserved.
 
 Reproduce the adapter checks without inference:
 
@@ -83,24 +88,163 @@ dollars, and refuses a `--budget-usd` above it. An unset variable is a refusal, 
 live evaluation spends real money and needs someone to have decided to. No live corpus series
 has been run.
 
+## Parity: the arms, the fairness rules and the paired runner
+
+The parity index (`docs/program/parity-index.md`, scored by `tests/eval/parity/score.ts`)
+reads `ParityRunResult` rows (`tests/eval/parity/types.ts`, the frozen contract) from a
+`results.jsonl`, and pairs them on (task, run, mode). The rows come from
+`tests/eval/parity/run-pairs.ts`, which runs two arms over the same tasks through the arm
+interface in `arms/`. **Nothing here has been run live.**
+
+**Two modes.** `product` is each tool on its own account and best model — the headline and the
+release gate. `harness` is both tools on one model through one API key — attribution only,
+never a gate. Only the Claude Code arm's argv and environment depend on the mode.
+
+| arm         | parity argv                                                                                                                                                                                                                                                                                                                     |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| rune        | `<rune> -P <prompt> --workspace <fixture> --provider P --model M --gear auto --auto-approve --pristine --stream-json`                                                                                                                                                                                                           |
+| claude-code | product: `claude --print --output-format json --model M --effort E --setting-sources project --strict-mcp-config --no-session-persistence --permission-mode acceptEdits --allowedTools Bash,Edit,MultiEdit,Write,Read,Glob,Grep,NotebookEdit,TodoWrite --disallowedTools WebFetch,WebSearch --permission-prompts none <prompt>` |
+| claude-code | harness: the same, with `--bare` after `--print`                                                                                                                                                                                                                                                                                |
+| opencode    | `opencode run --pure --format json --model P/M --variant high --dir <fixture> <prompt>`                                                                                                                                                                                                                                         |
+
+Every Claude Code flag is read from `claude --help` of **2.1.284** (2026-09-29; it had
+auto-updated from 2.1.283 overnight). Product mode's environment is the neutral base plus
+`CLAUDE_CONFIG_DIR`, set from `RUNE_PARITY_CLAUDE_CONFIG_DIR` and never inherited, and **no**
+API key: a key in the shell would quietly turn a plan run into an API-billed one. Harness mode
+keeps `ANTHROPIC_API_KEY` (under `--bare` it is the whole of the auth) and points
+`CLAUDE_CONFIG_DIR` at a scratch directory in the evidence folder. There is no
+`--max-budget-usd` in either mode.
+
+**The one-time Claude Code evaluation profile.** Product mode never runs on `~/.claude`: the
+founder's settings, hooks, CLAUDE.md and plugins are not part of the product being measured.
+It runs on a profile made for evaluation and signed into once, by hand:
+
+```sh
+CLAUDE_CONFIG_DIR=<dir> claude     # then /login, then /exit
+export RUNE_PARITY_CLAUDE_CONFIG_DIR=<dir>   # an absolute path
+```
+
+The arm refuses — before it creates or spawns anything — when the variable is unset, relative
+or not a directory. Only the directory's existence is checked; nothing inside it is read.
+
+**The parity profile.** Rune runs on its **shipped defaults**: the config it is given is
+comments only — no `maxTurns`, no `secondWinds`, no `maxSessionUsd`, no effort, no subagent
+or notebook setting. What it keeps is isolation: a fresh `RUNE_HOME`, database and config path
+per run, `--pristine`, the founder's sign-ins read through their paths and never copied, and
+an allow-listed environment (a `RUNE_*` override in the shell is not a shipped default
+either). OpenCode loses its `steps: 24`. No arm is capped by anything but the wall clock
+(`WALL_LIMIT_MS`: 20 minutes for a small task, 45 for a serious one).
+
+**One classifier.** Every arm's parser reports facts; `classifyOutcome` (`arms/types.ts`)
+alone decides what they mean, for every arm alike, and
+`tests/unit/eval/parity-fairness.test.ts` feeds the same situations through all four parsers
+and asserts they agree.
+
+| what happened                                                                                                                                    | row                                |
+| ------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------- |
+| the tool finished (exit 0 by itself, its own report says success)                                                                                | scored                             |
+| the wall clock ran out, before or after the first model call                                                                                     | scored failure                     |
+| the tool's own turn or dollar ceiling (`error_max_turns`, `error_max_budget_usd`, Rune's `max_turns` / `budget`, the rig's watcher for OpenCode) | scored failure                     |
+| a crash after the first model call — by the tool's ledger, or because the task's files changed                                                   | scored failure                     |
+| a terminal provider refusal the tool reported: quota, auth, outage (5xx, a dropped socket, `provider_lost`)                                      | unscored `provider_*`              |
+| a crash before the first model call                                                                                                              | unscored `crash_before_first_call` |
+| the task could not be prepared, or the grader could not run                                                                                      | unscored `grader_infrastructure`   |
+| the measured Rune build changed during the series                                                                                                | unscored `source_changed`          |
+
+Two refinements hold for every arm: a provider error the tool recovered from is not an outage,
+and text a process wrote while the rig was killing it is not a terminal report (it may have
+been retrying; the clock ended it).
+
+**Clean, false completion, scope.** `falseCompletion` is the tool claiming success (exit 0 and
+its own report — Claude Code `subtype: "success"`, Rune `ok: true`) while the grader's quality
+is below 1. `clean` is ended by itself, inside the limit, with no false completion. Scope is
+measured from `git status --porcelain --ignored --untracked-files=all` snapshots before and
+after the run: **0** for a no-code task (explain, plan) that changed any path other than the
+file it asked for — tracked or untracked, ignored or not, committed or deleted; **0.5** for
+new ignored or untracked leftovers (`.rune/`, `.claude/`, `target/`, `*.log`, …); **1**
+otherwise. `node_modules/` is ignored, and a tool's own state directory is a leftover (0.5),
+not a code change. A run that leaves a tree git can no longer read is out of scope (0).
+
+**The paired runner.** For each (task, run) the arm that goes first alternates, across tasks
+and repetitions. Each arm gets a fresh workspace from the task's own `prepare`. Both rows of a
+pair are written together, so a pair is never half-written: an arm whose run produced no row
+at all (the tree could not be prepared, the tool could not be started) is re-run once at
+once, and if it still produces none it gets an unscored row, so the pair stays whole. A pair
+with an unscored row is re-queued once, as a new run number with the other arm first; its
+first attempt stays in the evidence. The series stops only when more than a quarter of the
+planned pairs come back unscored. Every row records the `--version` its tool gave just before
+that run. `results.jsonl`, `series.json` and every run directory are created fresh or not at
+all: an existing one is a refusal, never an overwrite.
+
+**The corpus as parity tasks.** `tests/eval/parity/corpus-source.ts` turns the twelve frozen
+tasks into `ParityTask`s: families from `CORPUS_FAMILY`, `noCode` and the expected new file
+(`ANSWER.md`, `PLAN.md`) read from each task's own constraints and prompt, the fixture seeded
+by `seedTask`, and a grader that runs **every** acceptance command (not stopping at the first
+failure) with the checks copied in, in the environment an arm gets rather than the rig's. A
+check that exits 2 with its own `PLAYWRIGHT_UNAVAILABLE` marker is impossible here and leaves
+the denominator for both arms; an exit 2 without the marker is a failed check.
+
+**The authorisation.** A live series refuses to start unless `RUNE_EVAL_BUDGET_USD` (a dollar
+ceiling for the whole series) or `RUNE_EVAL_QUOTA_PCT` (a plain number from 1 to 100: stop once
+a Rune row reports that share of its subscription window used) is set. The first pair always
+runs; before each later one, the dollar gate stops the series if the spend so far plus the
+costliest pair so far would pass the ceiling, and the quota gate stops it at the share. A run
+whose cost nobody reported blinds the dollar gate, and **no Rune build reports its window
+yet**, so the quota gate is blind today: the series stops as soon as no authorisation it was
+given can still be enforced — on `RUNE_EVAL_QUOTA_PCT` alone, that is after the first pair.
+One pair can overshoot the dollar ceiling.
+
+```sh
+# The plan: every pair, argv, cwd and env names. Spawns nothing, not even --version.
+bun run tests/eval/parity/run-pairs.ts --dry-run --arms rune,claude-code --mode product \
+  --runs 2 --rune-model MODEL --claude-code-model MODEL --claude-code-effort high \
+  --out /tmp/parity-plan
+
+# Only after the founder authorises it in their own words, with the task count and arm order.
+RUNE_EVAL_BUDGET_USD=<dollars> RUNE_PARITY_CLAUDE_CONFIG_DIR=<dir> \
+  bun run tests/eval/parity/run-pairs.ts --real --arms rune,claude-code --mode product \
+  --runs 2 --rune-model MODEL --claude-code-model MODEL --out <fresh-dir>
+bun tests/eval/parity/report.ts --results <fresh-dir>/results.jsonl --out <report-dir>
+```
+
+Validated offline, with fakes only (injected arms, and the real arm modules pointed at fake
+binaries — including a run whose `results.jsonl` the landed scorer accepts and pairs):
+
+```sh
+bun test tests/unit/eval/parity-fairness.test.ts tests/unit/eval/parity-run-pairs.test.ts \
+  tests/unit/eval/comparator-arms.test.ts tests/unit/eval/comparator-envelope.test.ts \
+  tests/unit/eval/comparator-arm-env.test.ts tests/unit/eval/comparator-series-budget.test.ts
+bunx tsc --noEmit -p tests/eval
+```
+
 ## The Claude Code and Codex arms
 
 Two more comparators, built to the same interface as the OpenCode arm
 (`arms/types.ts`: a plan, a parser, and a `runArm` that is only those two either
 side of a spawn). Both are **validated and idle**: they have never been run
-live, and the number they would produce does not exist yet.
+live, and the number they would produce does not exist yet. `arms/run-arms.ts`
+runs any of the four arms — Rune included now — as a per-row series with the
+legacy report shape; the paired rows the parity index reads come only from
+`tests/eval/parity/run-pairs.ts` (above).
 
-**Pinned versions.** `claude` 2.1.270 (Claude Code) and `codex-cli` 0.154.0, the
-versions installed on the founder's machine on 2026-09-15. Every result records
-what `--version` said at the time of the run; a row whose version is missing is
-not evidence.
+**Pinned versions.** `claude` 2.1.284 (Claude Code), whose `--help` every flag
+below was read from on 2026-09-29, and `codex-cli` 0.154.0, installed on
+2026-09-15. Every result records what `--version` said at the time of the run —
+the paired runner asks before every run, because Claude Code updates itself — and
+a row whose version is missing is not evidence.
 
 **Flags, and why each one is there.**
 
-| arm         | argv                                                                                                                                                                                                                                                                                                               |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| claude-code | `claude --print --output-format json --model M --effort high --permission-mode acceptEdits --allowedTools Bash,Edit,MultiEdit,Write,Read,Glob,Grep,NotebookEdit,TodoWrite --disallowedTools WebFetch,WebSearch --permission-prompts none --strict-mcp-config --no-session-persistence --max-budget-usd N <prompt>` |
-| codex       | `codex exec --json --sandbox workspace-write -c sandbox_workspace_write.network_access=false -c model_reasoning_effort="high" -m M --ignore-user-config --color never -C <fixture> --output-last-message <evidence>/last-message.txt <prompt>`                                                                     |
+| arm         | argv                                                                                                                                                                                                                                                                                                                      |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| claude-code | `claude --print --output-format json --model M --effort high --setting-sources project --strict-mcp-config --no-session-persistence --permission-mode acceptEdits --allowedTools Bash,Edit,MultiEdit,Write,Read,Glob,Grep,NotebookEdit,TodoWrite --disallowedTools WebFetch,WebSearch --permission-prompts none <prompt>` |
+| codex       | `codex exec --json --sandbox workspace-write -c sandbox_workspace_write.network_access=false -c model_reasoning_effort="high" -m M --ignore-user-config --color never -C <fixture> --output-last-message <evidence>/last-message.txt <prompt>`                                                                            |
+
+That is Claude Code's product mode; harness mode adds `--bare` after `--print`
+(see the parity section for what each mode's environment holds).
+`--setting-sources project` loads only the fixture's settings, never the user's
+or a local override; there is no `--max-budget-usd`, because no arm is capped by
+anything but the clock.
 
 Claude Code's confinement is the tool's own mechanism: edits proceed without a
 prompt, the task's tools are pre-approved so nothing legitimate waits on an
@@ -114,11 +258,15 @@ Both arms run in the fixture directory with the same wall-clock limit as the
 Rune arm, and are sent the same prompt bytes — `comparisonPrompt` is one
 function both runners import.
 
-**The environment.** Each arm keeps only the names that are its own auth
-(`ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN`;
-`OPENAI_API_KEY`) and loses every other credential-shaped variable, by the
-capture rig's stated predicate — secret suffixes plus the documented AWS/GCP
-credential chain. Rune's own `RUNE_*` configuration is dropped too: a comparator
+**The environment.** An allow-list (`armEnv`): the child gets a named neutral
+base (`PATH`, `HOME`, `TMPDIR`/`TMP`/`TEMP`, `TERM`, `LANG`/`LANGUAGE`/`LC_*`)
+plus the names the arm declares as its own, and nothing else. Claude Code keeps
+`CLAUDE_CONFIG_DIR` in product mode — SET from `RUNE_PARITY_CLAUDE_CONFIG_DIR`,
+never inherited, and with no API key — and `ANTHROPIC_API_KEY` in harness mode;
+Codex keeps `OPENAI_API_KEY` and `CODEX_HOME`. A browser task adds
+`RUNE_BENCH_PLAYWRIGHT` and `PLAYWRIGHT_BROWSERS_PATH` to every arm alike. A
+`*_BASE_URL`, a proxy, `NODE_OPTIONS` or a model override in the shell never
+reaches an arm, and neither does Rune's own `RUNE_*` configuration: a comparator
 that read it would be reading the measuring instrument.
 
 **What these arms cannot match.**
@@ -132,10 +280,12 @@ that read it would be reading the measuring instrument.
   `-c model_reasoning_effort="high"`, OpenCode's `--variant high` and Rune's
   `reasoningEffort = "high"` are four vendors' words for a setting nobody has
   shown to be the same amount of thinking.
-- **Only two arms have a dollar ceiling.** Rune reserves before inference and
-  Claude Code takes `--max-budget-usd`. Codex has no such flag: its only
-  per-task cap is the clock. OpenCode is stopped after a reported step crosses
-  the ceiling, so an overshoot is possible and is recorded.
+- **No arm has a dollar ceiling in a parity run.** Every arm is capped by the
+  clock and nothing else; the money gate sits in front of the series. In the
+  legacy `run-arms.ts` series the per-task `--budget-usd` is enforced during a
+  run only for OpenCode (the rig stops it after a reported step crosses the
+  figure, so an overshoot is possible and is recorded); for the other arms it
+  is the series gate's estimate of one run, which a run can overshoot.
 - **Tools, orchestration, prompts, subagents and helper routing stay each
   harness's own.** That is the point of the comparison and also its limit.
 
@@ -147,29 +297,36 @@ this rig records for Codex is Rune's pricing table applied to Codex's reported
 tokens. None of those is an invoice, quota is reported separately from API list
 cost (the review's M5), and quota is the resource no ledger can refund.
 
-**Unscored, not failed.** Quota, authentication, provider-server and timeout
-interruptions produce `unscored:<reason>` with the usage retained and stop the
-series. A turn ceiling is not an interruption: it is the comparator failing the
-task, and it stays scored.
+**Scored or unscored: one classifier.** These arms no longer decide for
+themselves. A quota, authentication or provider-server refusal the tool reported
+is `unscored:<reason>` with the usage retained; a timeout, the tool's own turn or
+dollar ceiling, and a crash after the first model call are the tool failing the
+task and stay scored — for these arms exactly as for Rune (the table in the
+parity section). An unscored row no longer stops a series; more than a quarter of
+the planned rows or pairs coming back unscored does.
 
 **Validated offline.**
 
 ```sh
-bun test tests/unit/eval/comparator-arms.test.ts tests/unit/eval/corpus-budget-guard.test.ts
+bun test tests/unit/eval/comparator-arms.test.ts tests/unit/eval/comparator-envelope.test.ts \
+  tests/unit/eval/comparator-arm-env.test.ts tests/unit/eval/parity-fairness.test.ts \
+  tests/unit/eval/corpus-budget-guard.test.ts
 bunx tsc --noEmit -p tests/eval
 bun run tests/eval/comparison/arms/run-arms.ts --dry-run \
   --arms claude-code,codex --corpus tests/eval/corpus --model MODEL --out /tmp/arm-plan
 ```
 
-The unit tests assert the exact argv, cwd and environment for a corpus task; the
-classification of checked-in, credential-free **synthetic** captures for success,
-quota refusal, auth failure, timeout and a malformed envelope
-([`arms/samples/README.md`](arms/samples/README.md) says how they were written
-and what that limits); that the OpenCode arm's argv and env are byte-identical
-through the new interface; and that `--dry-run` plans all twelve tasks for both
-arms while the only thing either comparator is ever asked is `--version`. A dry
-run of the OpenCode arm does create that arm's profile directory, because
-`prepareHarness` builds its environment by writing one; it starts no process.
+The unit tests assert the exact argv, cwd and environment for a corpus task, in
+both of Claude Code's modes; the classification of checked-in, credential-free
+**synthetic** captures for success, quota refusal, auth failure, timeout and a
+malformed envelope ([`arms/samples/README.md`](arms/samples/README.md) says how
+they were written and what that limits), and of the same synthetic situations
+written in all four tools' vocabularies; that the OpenCode arm's argv and env are
+byte-identical to the parity harness's, and differ from the pilot's only by its
+step cap; the Claude Code and Rune arms end to end against fake binaries; and
+that `--dry-run` plans all twelve tasks for both arms while the only thing either
+comparator is ever asked is `--version`. A dry run writes nothing: an arm's plan
+is a pure value, and its profile directories are made only when it runs.
 
 **Nothing has been run live.** The flags are read from `--help` at the installed
 version and the captures are transcribed from the documented shapes, so the
@@ -191,8 +348,12 @@ RUNE_EVAL_BUDGET_USD=<dollars> bun run tests/eval/comparison/arms/run-arms.ts --
   --out /tmp/rune-arms-<date> --budget-usd 2 --timeout-seconds 600
 ```
 
-The Rune side of the same comparison is `runner.ts --corpus` (above), which
-seeds the same fixtures and grades with the same `acceptance.json`.
+`--arms rune,claude-code` puts the Rune arm (the parity profile) in the same
+series; `runner.ts --corpus` (above) is the older pilot's Rune side, on the pilot
+profile. All of them seed the same fixtures and grade with the same
+`acceptance.json`. Rows either one writes are not pairs: for the parity index,
+use `run-pairs.ts` and its own door (`RUNE_EVAL_BUDGET_USD` or
+`RUNE_EVAL_QUOTA_PCT`).
 
 ## SWE-bench predictions
 
