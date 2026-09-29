@@ -1,12 +1,30 @@
 #!/usr/bin/env bun
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, lstatSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
-import { CostTracker } from "../../../packages/llm-gateway/src/cost-tracker";
 import { runProcess } from "./process";
-import { runeCost, opencodeCost, prepareHarness } from "./harness";
+import {
+  runeCost,
+  opencodeCost,
+  openCodeBudgetWatcher,
+  prepareHarness,
+  sourceDigest,
+} from "./harness";
 import { COMPARISON_TASKS, type ComparisonTask } from "./tasks";
+import { parseOpenCodeOutput } from "./arms/opencode";
+import { parseRuneOutput } from "./arms/rune";
+import {
+  type ProviderFailure,
+  classifyOutcome,
+  providerFailureInEvent,
+  tooManyUnscored,
+} from "./arms/types";
+
+// The OpenCode spend cap and the source digest live in harness.ts now, beside
+// the other harness helpers, so the arm modules can use them without importing
+// the runner that imports them. Re-exported under the names callers know.
+export { openCodeBudgetWatcher, sourceDigest };
 
 export type Arm = "rune" | "opencode";
 export interface PilotOptions {
@@ -99,32 +117,23 @@ export function comparisonPrompt(
   return `${task.prompt}${task.browser ? `\nPlaywright module path (also available if the shell filters environment variables): ${playwrightModule}.` : ""}\n\nWork autonomously in this fixture, make the changes and verify them. No deployment, external messages or unrelated files. This is a fresh task; do not inspect other runs or benchmark infrastructure.`;
 }
 
+/** The legacy report's spelling of each provider failure. */
+const LEGACY_PROVIDER_REASON: Readonly<Record<ProviderFailure, string>> = {
+  quota: "provider_quota",
+  auth: "provider_authentication",
+  outage: "provider_unavailable",
+};
+
 /** Only terminal provider errors affect scoring. Tool failures and prose that
  * discuss quotas are task evidence, not evidence of a provider outage. Return
- * a category rather than publishing provider error headers or response bodies. */
+ * a category rather than publishing provider error headers or response bodies.
+ *
+ * The reading itself is `providerFailureInEvent` now — the ONE reading every
+ * arm shares (arms/types.ts). This keeps the name and the legacy spelling for
+ * the callers that print it. */
 export function providerFailureReason(event: unknown): string | undefined {
-  if (!event || typeof event !== "object") return;
-  const row = event as Record<string, unknown>;
-  if (row.type !== "error") return;
-  const error = row.error;
-  const detail = error && typeof error === "object" ? (error as Record<string, unknown>) : {};
-  const data =
-    detail.data && typeof detail.data === "object" ? (detail.data as Record<string, unknown>) : {};
-  const status = data.statusCode ?? detail.statusCode;
-  const message = [
-    typeof error === "string" ? error : "",
-    row.message,
-    detail.message,
-    data.message,
-  ]
-    .filter((value): value is string => typeof value === "string")
-    .join(" ");
-  if (status === 429 || /quota exceeded|usage limit|rate.?limit|too many requests/i.test(message))
-    return "provider_quota";
-  if (status === 401 || /invalid api.?key|authentication failed|not authenticated/i.test(message))
-    return "provider_authentication";
-  if (typeof status === "number" && status >= 500) return "provider_unavailable";
-  return undefined;
+  const failure = providerFailureInEvent(event);
+  return failure ? LEGACY_PROVIDER_REASON[failure] : undefined;
 }
 const sha = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 const repo = resolve(import.meta.dir, "../../..");
@@ -132,19 +141,6 @@ function git(cwd: string, args: string[]): string {
   const result = spawnSync("git", args, { cwd, encoding: "utf8" });
   if (result.status !== 0) throw new Error(result.stderr);
   return result.stdout;
-}
-function sourceDigest(): string {
-  const files = git(repo, ["ls-files", "--cached", "--others", "--exclude-standard", "-z"])
-    .split("\0")
-    .filter((path) => /^(?:packages|crates|skills)\//.test(path))
-    .sort();
-  const hash = createHash("sha256");
-  for (const path of files) {
-    const full = join(repo, path);
-    if (existsSync(full) && lstatSync(full).isFile())
-      hash.update(path + "\0").update(readFileSync(full));
-  }
-  return hash.digest("hex");
 }
 function write(path: string, value: string) {
   mkdirSync(dirname(path), { recursive: true });
@@ -201,50 +197,6 @@ export function checkTask(
   write(join(artifactDir, "acceptance.log"), detail);
   return { passed: result.status === 0 && protectedSource, detail: detail.slice(-1500) };
 }
-/**
- * The OpenCode arm's LIVE spend cap.
- *
- * Extracted from `runPilot`'s stdout callback so it can be compiled and tested
- * on its own. It could not be, before: the accounting sat in an inline closure
- * inside a `catch { return false; }`, in a workspace with no typecheck, so when
- * `CostTracker.record`'s signature changed the stale call throwing at runtime
- * read as "this line is not a step" — the ledger stayed at zero and the cap
- * could never fire. On a paid route that is an uncapped-spend path.
- *
- * `observe` never throws: a shape it does not recognise is not a step, and a
- * benchmark's stdout is not a contract.
- */
-export function openCodeBudgetWatcher(
-  model: string,
-  budgetUsd: number,
-): { observe(event: unknown): boolean; totalListCostUsd(): number } {
-  const monitor = new CostTracker();
-  return {
-    observe(event: unknown): boolean {
-      const row = event && typeof event === "object" ? (event as Record<string, any>) : null;
-      if (row?.type !== "step_finish") return false;
-      const t = row.part?.tokens;
-      if (!t) return false;
-      monitor.record(
-        model,
-        "openai",
-        {
-          inputTokens: t.input ?? 0,
-          outputTokens: (t.output ?? 0) + (t.reasoning ?? 0),
-          cacheReadTokens: t.cache?.read ?? 0,
-          cacheCreationTokens: t.cache?.write ?? 0,
-        },
-        // Every OpenCode step is the competitor's own turn as far as this side
-        // can tell — the same reading `opencodeCost` takes of its database.
-        // Stated rather than inherited (P3B I1).
-        { role: "primary" },
-      );
-      return monitor.getLedger().totalListCostUsd >= budgetUsd;
-    },
-    totalListCostUsd: () => monitor.getLedger().totalListCostUsd,
-  };
-}
-
 /**
  * The LIVE spend authorisation.
  *
@@ -394,7 +346,14 @@ export async function runPilot(options: PilotOptions) {
   const persist = () =>
     write(join(options.out, "report.json"), JSON.stringify(report, null, 2) + "\n");
   persist();
-  tasksRun: for (let run = 0; run < options.runs; run++)
+  // The series used to stop at the FIRST unscored row (`break tasksRun`), so
+  // one provider blip ended it and left every later task unmeasured. Now an
+  // unscored row is recorded and the series goes on, and it stops only once
+  // more than a quarter of the planned rows have come back unscored — the
+  // rule every runner shares (`tooManyUnscored`).
+  const plannedRows = tasks.length * options.runs * 2;
+  let unscoredRows = 0;
+  series: for (let run = 0; run < options.runs; run++)
     for (const [index, task] of tasks.entries()) {
       // Alternate the first arm, including across repetitions.
       const arms: Arm[] = (run + index) % 2 ? ["opencode", "rune"] : ["rune", "opencode"];
@@ -410,7 +369,6 @@ export async function runPilot(options: PilotOptions) {
         const { command, env } = prepareHarness(arm, options, dir, root, prompt);
         console.log(`${task.id} run ${run + 1}: ${arm}`);
         const budget = openCodeBudgetWatcher(options.model, options.budgetUsd);
-        let providerFailure: string | undefined;
         const sourceBefore =
           options.runeCommand.length === 1 && existsSync(options.runeCommand[0]!)
             ? sha(readFileSync(options.runeCommand[0]!))
@@ -426,6 +384,7 @@ export async function runPilot(options: PilotOptions) {
             // The `try` covers the PARSE and nothing else. It used to wrap the
             // accounting too, which is how a wrong-arity `record` call turned
             // this arm's live spend cap off without a word (V-L0 #2/#3).
+            if (arm !== "opencode") return false;
             let event: unknown;
             try {
               event = JSON.parse(line);
@@ -433,8 +392,6 @@ export async function runPilot(options: PilotOptions) {
               // Harnesses interleave plain log lines with their event stream.
               return false;
             }
-            providerFailure = providerFailureReason(event) ?? providerFailure;
-            if (arm !== "opencode") return false;
             return budget.observe(event);
           },
         });
@@ -452,14 +409,27 @@ export async function runPilot(options: PilotOptions) {
             ? sha(readFileSync(options.runeCommand[0]!))
             : sourceDigest();
         const sourceChanged = arm === "rune" && sourceBefore !== sourceAfter;
-        const unscoredReason = sourceChanged
-          ? "source_changed"
-          : processResult.exitCode !== 0 && providerFailure
-            ? providerFailure
-            : cost.entries === 0
-              ? "no_model_usage"
-              : undefined;
-        const infrastructure = unscoredReason !== undefined;
+        // The arm's own parser reads the facts; the one classifier every arm
+        // shares decides what they mean. A timeout is a scored failure here
+        // exactly as it is for a comparator, and a run that never reached the
+        // model is unscored for either side.
+        const capture = {
+          stdout: existsSync(join(dir, "events.jsonl"))
+            ? readFileSync(join(dir, "events.jsonl"), "utf8")
+            : "",
+          stderr: existsSync(join(dir, "stderr.log"))
+            ? readFileSync(join(dir, "stderr.log"), "utf8")
+            : "",
+          exitCode: processResult.exitCode,
+          durationMs: processResult.durationMs,
+          ...(processResult.stopped ? { stopped: processResult.stopped } : {}),
+        };
+        const parsed =
+          arm === "rune" ? parseRuneOutput(capture, cost) : parseOpenCodeOutput(capture, cost);
+        const classification = classifyOutcome({ ...parsed.signals, sourceChanged });
+        const unscoredReason = classification.unscoredReason;
+        const infrastructure = !classification.scored;
+        if (infrastructure) unscoredRows++;
         const onBudget =
           cost.listUsd !== null && cost.listUsd <= options.budgetUsd && !processResult.stopped;
         git(root, ["add", "-N", "."]);
@@ -474,6 +444,8 @@ export async function runPilot(options: PilotOptions) {
           costError,
           scored: !infrastructure,
           unscoredReason,
+          ...(classification.failure ? { failure: classification.failure } : {}),
+          claimedSuccess: parsed.claimedSuccess,
           acceptancePassed: check.passed,
           onBudget,
           success: !infrastructure && check.passed && onBudget && processResult.exitCode === 0,
@@ -485,7 +457,13 @@ export async function runPilot(options: PilotOptions) {
         console.log(
           `${arm}: ${infrastructure ? `UNSCORED (${unscoredReason})` : check.passed ? "acceptance passed" : "acceptance failed"}; ${cost.listUsd === null ? "cost unknown" : `$${cost.listUsd.toFixed(4)} list`}; ${(processResult.durationMs / 1000).toFixed(1)}s`,
         );
-        if (infrastructure) break tasksRun;
+        if (tooManyUnscored(unscoredRows, plannedRows)) {
+          const stop = `Series stopped: ${unscoredRows} of ${plannedRows} planned row(s) came back unscored, more than a quarter — the series is measuring the provider now, not the tools.`;
+          console.log(stop);
+          (report as Record<string, unknown>).stoppedEarly = stop;
+          persist();
+          break series;
+        }
       }
     }
   return report;

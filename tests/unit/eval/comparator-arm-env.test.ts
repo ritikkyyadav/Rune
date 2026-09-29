@@ -23,7 +23,12 @@
 
 import { describe, expect, test } from "bun:test";
 
-import { CLAUDE_CODE_AUTH_VARS } from "../../eval/comparison/arms/claude-code";
+import {
+  CLAUDE_CODE_AUTH_VARS,
+  CLAUDE_CODE_ENV,
+  claudeCodeEnv,
+  harnessConfigDir,
+} from "../../eval/comparison/arms/claude-code";
 import { CODEX_AUTH_VARS } from "../../eval/comparison/arms/codex";
 import { armEnv, neutralEnvName } from "../../eval/comparison/arms/types";
 
@@ -136,6 +141,40 @@ describe("the comparator arm environment is an allow-list", () => {
     expect(
       armEnv(CLAUDE_CODE_AUTH_VARS, { CODEX_HOME: "/home/x/.codex-alt" }).CODEX_HOME,
     ).toBeUndefined();
+  });
+
+  test("Claude Code's product mode keeps no key at all; only harness mode keeps one", () => {
+    // `CLAUDE_CODE_AUTH_VARS` is the union of the two modes, for a reader. What
+    // a PLAN hands the child is per mode, and product mode's only addition is
+    // the evaluation profile — SET from RUNE_PARITY_CLAUDE_CONFIG_DIR, never
+    // inherited. A key in the founder's shell would turn a plan run into an
+    // API-billed one without a word.
+    const env = {
+      ...HOSTILE,
+      RUNE_PARITY_CLAUDE_CONFIG_DIR: "/",
+      CLAUDE_CONFIG_DIR: "/home/x/.claude",
+    };
+    const product = claudeCodeEnv({}, "/evidence/run", { timeoutMs: 1, env }).env;
+    expect(product.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(product.CLAUDE_CONFIG_DIR).toBe("/");
+    expect(Object.keys(product).sort()).toEqual([
+      "CLAUDE_CONFIG_DIR",
+      "HOME",
+      "LANG",
+      "LC_ALL",
+      "PATH",
+      "TERM",
+      "TMPDIR",
+    ]);
+    const harness = claudeCodeEnv({}, "/evidence/run", { timeoutMs: 1, env, mode: "harness" }).env;
+    expect(harness.ANTHROPIC_API_KEY).toBe("sk-synthetic");
+    expect(harness.CLAUDE_CONFIG_DIR).toBe(harnessConfigDir("/evidence/run"));
+    for (const mode of [product, harness]) {
+      expect(mode.ANTHROPIC_BASE_URL).toBeUndefined();
+      expect(mode.NODE_OPTIONS).toBeUndefined();
+      expect(mode.RUNE_PARITY_CLAUDE_CONFIG_DIR).toBeUndefined();
+    }
+    expect(CLAUDE_CODE_ENV.product).not.toContain("ANTHROPIC_API_KEY");
   });
 
   test("the neutral base is locale, terminal and paths — nothing that steers a request", () => {

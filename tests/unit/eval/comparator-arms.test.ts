@@ -7,6 +7,11 @@
 // `codex` — the dry-run test spawns a FAKE of each, and asserts that the only
 // thing a dry run ever asks a comparator is `--version`.
 //
+// What each outcome MEANS is no longer this file's to pin: every arm reports
+// facts and one classifier decides (arms/types.ts `classifyOutcome`), and
+// parity-fairness.test.ts feeds the same situations through every arm and
+// asserts they agree. These are the recorded captures, read through it.
+//
 // What this cannot prove is the other half, and it is worth saying in the file
 // rather than only in the README: the flags are read from `--help` at the
 // installed version and the captures are transcribed from the documented
@@ -18,7 +23,7 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { prepareHarness } from "../../eval/comparison/harness";
+import { planParityHarness, prepareHarness } from "../../eval/comparison/harness";
 import { comparisonPrompt, corpusTasks } from "../../eval/comparison/runner";
 import {
   CLAUDE_CODE_ALLOWED_TOOLS,
@@ -36,7 +41,7 @@ import {
 import { opencodeArm } from "../../eval/comparison/arms/opencode";
 import { planSeries } from "../../eval/comparison/arms/run-arms";
 import type { ArmCapture, ArmLimits } from "../../eval/comparison/arms/types";
-import { armEnv, credentialShaped } from "../../eval/comparison/arms/types";
+import { armEnv, classifyOutcome, credentialShaped } from "../../eval/comparison/arms/types";
 import { rmTemp } from "../../helpers/tmp";
 
 const CORPUS = join(import.meta.dir, "../../eval/corpus");
@@ -68,6 +73,8 @@ describe("the exact argv, cwd and environment", () => {
   test("Claude Code: print, json, the confinement flags, and the prompt verbatim and last", () => {
     const task = firstTask();
     const plan = claudeCodeArm.plan(task, "/evidence/csv-claude-code", LIMITS);
+    // Product mode (the default). The full argv for both modes, and the
+    // version it was read from, are pinned in parity-fairness.test.ts.
     expect(plan.command).toEqual([
       "claude",
       "--print",
@@ -77,6 +84,10 @@ describe("the exact argv, cwd and environment", () => {
       "synthetic-model",
       "--effort",
       "high",
+      "--setting-sources",
+      "project",
+      "--strict-mcp-config",
+      "--no-session-persistence",
       "--permission-mode",
       "acceptEdits",
       "--allowedTools",
@@ -85,12 +96,12 @@ describe("the exact argv, cwd and environment", () => {
       "WebFetch,WebSearch",
       "--permission-prompts",
       "none",
-      "--strict-mcp-config",
-      "--no-session-persistence",
-      "--max-budget-usd",
-      "2",
       task.prompt,
     ]);
+    // A per-task dollar figure in the limits does NOT become a ceiling on this
+    // arm: no arm is capped by anything but the clock.
+    expect(LIMITS.budgetUsd).toBe(2);
+    expect(plan.command).not.toContain("--max-budget-usd");
     // The fixture directory, and no `--add-dir`: the working directory is the
     // only directory the file tools may write.
     expect(plan.cwd).toBe("/evidence/csv-claude-code/workspace");
@@ -150,6 +161,8 @@ describe("the exact argv, cwd and environment", () => {
       HOME: "/home/founder",
       ANTHROPIC_API_KEY: "sk-ant-synthetic",
       CLAUDE_CODE_OAUTH_TOKEN: "oat-synthetic",
+      CLAUDE_CONFIG_DIR: "/home/founder/.claude",
+      RUNE_PARITY_CLAUDE_CONFIG_DIR: "/",
       OPENAI_API_KEY: "sk-openai-synthetic",
       OPENROUTER_API_KEY: "sk-or-synthetic",
       AWS_SECRET_ACCESS_KEY: "aws-synthetic",
@@ -158,21 +171,18 @@ describe("the exact argv, cwd and environment", () => {
       RUNE_HOME: "/evidence/profile",
       RUNE_DB_PATH: "/evidence/profile/rune.db",
     };
-    const claude = armEnv(
-      ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"],
-      base,
-    );
-    expect(Object.keys(claude).sort()).toEqual([
-      "ANTHROPIC_API_KEY",
-      "CLAUDE_CODE_OAUTH_TOKEN",
-      "HOME",
-      "PATH",
-    ]);
-    const codex = armEnv(["OPENAI_API_KEY"], base);
+    const task = firstTask();
+    // Claude Code in product mode: the evaluation profile, and NO key — a key
+    // in the founder's shell would quietly turn a plan run into an API one.
+    const claude = claudeCodeArm.plan(task, "/evidence/c", { ...LIMITS, env: base }).env;
+    expect(Object.keys(claude).sort()).toEqual(["CLAUDE_CONFIG_DIR", "HOME", "PATH"]);
+    expect(claude.CLAUDE_CONFIG_DIR).toBe("/");
+    const codex = codexArm.plan(task, "/evidence/x", { ...LIMITS, env: base }).env;
     expect(Object.keys(codex).sort()).toEqual(["HOME", "OPENAI_API_KEY", "PATH"]);
     // Rune's own configuration never reaches a comparator: it would be reading
     // the measuring instrument.
     expect(codex.RUNE_HOME).toBeUndefined();
+    expect(armEnv(["OPENAI_API_KEY"], base)).toEqual(codex);
     // The predicate is the capture rig's — suffixes plus the documented chain —
     // so a provider nobody listed is still scrubbed.
     expect(credentialShaped("SCW_SECRET_KEY")).toBe(true);
@@ -181,17 +191,21 @@ describe("the exact argv, cwd and environment", () => {
     expect(credentialShaped("PATH")).toBe(false);
   });
 
-  test("the OpenCode arm is the SAME arm: identical argv and env to prepareHarness", () => {
+  test("the OpenCode arm is the parity harness's OpenCode: identical argv and env", () => {
     const task = firstTask();
     // Real directories, one each: `prepareHarness` creates the arm's profile
     // and symlinks the shared OpenCode credential store, which is part of what
     // "identical" means here and cannot be done twice into one directory.
     const dir = mkdtempSync(join(tmpdir(), "arm-opencode-"));
     const twin = mkdtempSync(join(tmpdir(), "arm-opencode-twin-"));
-    const plan = opencodeArm.plan(task, dir, LIMITS);
-    const prepared = prepareHarness(
-      "opencode",
-      {
+    const pilotTwin = mkdtempSync(join(tmpdir(), "arm-opencode-pilot-"));
+    // Both profiles look for OpenCode's credential store under XDG_DATA_HOME;
+    // a scratch one keeps this test from so much as looking for the founder's.
+    const xdg = process.env.XDG_DATA_HOME;
+    process.env.XDG_DATA_HOME = join(dir, "xdg");
+    try {
+      const plan = opencodeArm.plan(task, dir, LIMITS);
+      const options = {
         out: "",
         model: "synthetic-model",
         runeProvider: "",
@@ -201,21 +215,55 @@ describe("the exact argv, cwd and environment", () => {
         runs: 1,
         runeCommand: [],
         opencodeCommand: ["opencode"],
-        route: "live",
-      },
-      twin,
-      `${twin}/workspace`,
-      task.prompt,
-    );
-    // The evidence directory is the only thing that differs, so it is the only
-    // thing normalised away.
-    const here = (value: string) => value.split(twin).join(dir);
-    expect(plan.command).toEqual(prepared.command.map(here));
-    expect(
-      Object.fromEntries(Object.entries(plan.env).map(([k, v]) => [k, here(v ?? "")])),
-    ).toEqual(Object.fromEntries(Object.entries(prepared.env).map(([k, v]) => [k, here(v ?? "")])));
-    rmTemp(dir);
-    rmTemp(twin);
+        route: "live" as const,
+      };
+      const workspace = (root: string) => `${root}/workspace`;
+      const parity = prepareHarness(
+        "opencode",
+        options,
+        twin,
+        workspace(twin),
+        task.prompt,
+        true,
+        "parity",
+      );
+      // The evidence directory is the only thing that differs, so it is the
+      // only thing normalised away.
+      const here = (root: string) => (value: string) => value.split(root).join(dir);
+      const envOf = (env: NodeJS.ProcessEnv, root: string) =>
+        Object.fromEntries(Object.entries(env).map(([k, v]) => [k, here(root)(v ?? "")]));
+      expect(plan.command).toEqual(parity.command.map(here(twin)));
+      expect(envOf(plan.env, dir)).toEqual(envOf(parity.env, twin));
+      expect(plan.env).toEqual(
+        planParityHarness(
+          "opencode",
+          { command: ["opencode"], provider: "openai", model: "synthetic-model", taskEnv: [] },
+          dir,
+          workspace(dir),
+          task.prompt,
+        ).env,
+      );
+      // And the pilot profile runPilot still uses is the same argv with the old
+      // 24-step cap in its config — the one difference the parity profile made.
+      const pilot = prepareHarness(
+        "opencode",
+        options,
+        pilotTwin,
+        workspace(pilotTwin),
+        task.prompt,
+      );
+      expect(plan.command).toEqual(pilot.command.map(here(pilotTwin)));
+      expect(JSON.parse(pilot.env.OPENCODE_CONFIG_CONTENT!)).toEqual({
+        ...JSON.parse(plan.env.OPENCODE_CONFIG_CONTENT!),
+        agent: { build: { steps: 24 } },
+      });
+    } finally {
+      if (xdg === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = xdg;
+      rmTemp(dir);
+      rmTemp(twin);
+      rmTemp(pilotTwin);
+    }
   });
 });
 
@@ -243,6 +291,8 @@ describe("parsing the recorded captures — synthetic, credential-free", () => {
       capture({ stdout: sample("claude-code.max-turns.stdout.txt"), exitCode: 1 }),
     );
     expect(parsed.outcome).toBe("scored");
+    expect(parsed.failure).toBe("turn_limit");
+    expect(parsed.claimedSuccess).toBe(false);
     expect(parsed.detail).toBe("error_max_turns");
     expect(parsed.usage!.inputTokens).toBe(9110);
   });
@@ -267,10 +317,13 @@ describe("parsing the recorded captures — synthetic, credential-free", () => {
     const parsed = parseClaudeCodeOutput(
       capture({ stderr: sample("claude-code.auth.stderr.txt"), exitCode: 1 }),
     );
-    expect(parsed.outcome).toBe("unscored:provider_authentication");
+    expect(parsed.outcome).toBe("unscored:provider_auth");
   });
 
-  test("Claude Code: a killed tree is unscored:timeout whatever it printed", () => {
+  test("Claude Code: a tree killed on the clock is a SCORED timeout, like Rune's", () => {
+    // It used to be `unscored:timeout` here while a Rune timeout in runPilot
+    // went to the acceptance as a failure: the same event, counted on one
+    // side only. One classifier now, and a timeout is the tool failing.
     const parsed = parseClaudeCodeOutput(
       capture({
         stdout: sample("claude-code.timeout.stdout.txt"),
@@ -278,16 +331,26 @@ describe("parsing the recorded captures — synthetic, credential-free", () => {
         stopped: "timeout",
       }),
     );
-    expect(parsed.outcome).toBe("unscored:timeout");
+    expect(parsed.outcome).toBe("scored");
+    expect(parsed.failure).toBe("timeout");
+    expect(parsed.claimedSuccess).toBe(false);
   });
 
-  test("Claude Code: a truncated envelope is an error — neither a score nor an outage", () => {
+  test("Claude Code: a truncated envelope is no evidence of work on its own", () => {
+    // Without the envelope nobody can say a call completed, so the parser
+    // alone calls it a crash before the first call. The paired runner adds
+    // the workspace's own evidence: if the task's files changed, it is scored.
     const parsed = parseClaudeCodeOutput(
       capture({ stdout: sample("claude-code.malformed.stdout.txt") }),
     );
-    expect(parsed.outcome).toBe("error");
+    expect(parsed.outcome).toBe("unscored:crash_before_first_call");
+    expect(parsed.signals.reachedModel).toBeNull();
     expect(parsed.detail).toBe("malformed envelope");
     expect(parsed.usage).toBeNull();
+    expect(classifyOutcome({ ...parsed.signals, workspaceTouched: true })).toEqual({
+      scored: true,
+      failure: "unfinished",
+    });
   });
 
   test("Codex: a finished turn is scored, usage summed, answer from the agent_message item", () => {
@@ -328,29 +391,49 @@ describe("parsing the recorded captures — synthetic, credential-free", () => {
     const parsed = parseCodexOutput(
       capture({ stdout: sample("codex.auth.events.txt"), exitCode: 1 }),
     );
-    expect(parsed.outcome).toBe("unscored:provider_authentication");
+    expect(parsed.outcome).toBe("unscored:provider_auth");
   });
 
-  test("Codex: a stream killed on the clock is unscored:timeout", () => {
+  test("Codex: a stream killed on the clock is a scored timeout", () => {
     const parsed = parseCodexOutput(
       capture({ stdout: sample("codex.timeout.events.txt"), exitCode: null, stopped: "timeout" }),
     );
-    expect(parsed.outcome).toBe("unscored:timeout");
+    expect(parsed.outcome).toBe("scored");
+    expect(parsed.failure).toBe("timeout");
   });
 
-  test("Codex: a stream with no parsable event is an error", () => {
+  test("Codex: a stream with no parsable event is no evidence of work on its own", () => {
     const parsed = parseCodexOutput(
       capture({ stdout: sample("codex.malformed.events.txt"), exitCode: 0 }),
     );
-    expect(parsed.outcome).toBe("error");
+    expect(parsed.outcome).toBe("unscored:crash_before_first_call");
+    expect(parsed.claimedSuccess).toBe(false);
   });
 
   test("Codex: the non-JSON form's usage line is read as a floor", () => {
     const parsed = parseCodexOutput(capture({ stdout: sample("codex.plain-usage.stdout.txt") }));
-    // No events: the row is an error, and the usage is still recorded, because
-    // "the flag was missing" must never look like "the run cost nothing".
-    expect(parsed.outcome).toBe("error");
+    // No events, but a usage line: the model was reached, so the tree is
+    // graded (scored) — and since there is no turn.completed, Codex never
+    // claimed success. The usage is recorded, because "the flag was missing"
+    // must never look like "the run cost nothing".
+    expect(parsed.outcome).toBe("scored");
+    expect(parsed.claimedSuccess).toBe(false);
     expect(parsed.usage!.inputTokens).toBe(50600);
+  });
+
+  test("Codex: a dropped stream it reconnected from is not an outage", () => {
+    const parsed = parseCodexOutput(
+      capture({
+        stdout: [
+          '{"type":"turn.started"}',
+          '{"type":"error","message":"stream disconnected before completion; Reconnecting... 1/5"}',
+          '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}',
+        ].join("\n"),
+      }),
+    );
+    expect(parsed.outcome).toBe("scored");
+    expect(parsed.claimedSuccess).toBe(true);
+    expect(parsed.signals.provider).toBeUndefined();
   });
 });
 

@@ -32,7 +32,7 @@ const CORPUS = join(import.meta.dir, "..", "..", "eval", "corpus");
 const NOWHERE = {
   "claude-code": ["/nonexistent/claude"],
   codex: ["/nonexistent/codex"],
-} as const;
+};
 
 const OPTIONS = {
   arms: ["claude-code", "codex"] as Array<"claude-code" | "codex">,

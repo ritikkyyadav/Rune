@@ -1,10 +1,16 @@
 #!/usr/bin/env bun
-// ─── Running a comparator arm over the frozen corpus ───
+// ─── Running arms over the frozen corpus, one row per (task, arm) ───
 //
-// The Rune side of a comparison is `runner.ts --corpus`. This is the other
-// side: it takes the SAME twelve tasks, seeds the same fixtures, and grades
-// with the same `acceptance.json`, so a Claude Code row and a Rune row are
-// answering one question.
+// It takes the frozen corpus's twelve tasks, seeds the same fixtures, and
+// grades with the same `acceptance.json`, so a Claude Code row and a Rune row
+// are answering one question. The Rune arm is here too now (`arms/rune.ts`, on
+// the parity profile) — it used to be absent, which meant the two sides of a
+// comparison came out of two different runners with two different rules.
+//
+// This is the per-row series with the legacy report shape. The PAIRED runner —
+// alternating arm order, pair-atomic rows, re-queued unscored pairs, the
+// `ParityRunResult` rows the parity index reads — is
+// `tests/eval/parity/run-pairs.ts`.
 //
 // Two doors, and only two:
 //
@@ -25,36 +31,43 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
+import type { ParityMode } from "../../parity/types";
 import { authorisedBudgetUsd, checkTask, comparisonPrompt, corpusTasks, seedTask } from "../runner";
 import type { ComparisonTask } from "../tasks";
 import { claudeCodeArm } from "./claude-code";
 import { codexArm } from "./codex";
 import { opencodeArm } from "./opencode";
+import { runeArm } from "./rune";
 import type { ArmLimits, ArmName, ArmPlan, ArmTask, ComparatorArm } from "./types";
-import { credentialShaped, workspaceOf } from "./types";
+import { credentialShaped, tooManyUnscored, workspaceOf } from "./types";
 
 /**
- * The arms this driver can run.
+ * The arms this driver can run — all four, through one interface.
  *
- * `rune` is deliberately absent: the Rune arm lives in `runPilot`, where the
- * source digest, the profile isolation and the reserve-before-inference cap
- * live with it. A second Rune implementation would be a second thing to keep
- * honest.
+ * `rune` used to be absent ("a second Rune implementation would be a second
+ * thing to keep honest"). It is not a second implementation now: `arms/rune.ts`
+ * is the parity profile's Rune, the same one `run-pairs.ts` runs, and it is
+ * judged by the same classifier as the arm it is compared with.
  */
-export const ARMS: Record<Exclude<ArmName, "rune">, ComparatorArm> = {
+export const ARMS: Record<ArmName, ComparatorArm> = {
+  rune: runeArm,
   opencode: opencodeArm,
   "claude-code": claudeCodeArm,
   codex: codexArm,
 };
 
 export interface ArmSeriesOptions {
-  arms: Array<Exclude<ArmName, "rune">>;
+  arms: ArmName[];
   out: string;
   /** The frozen corpus directory. */
   corpus: string;
   tasks?: string[];
   model?: string;
+  /** The provider route for the arms that take one (Rune, OpenCode). */
+  provider?: Partial<Record<ArmName, string>>;
   reasoningEffort?: string;
+  /** product (default) or harness — see `ParityMode`. */
+  mode?: ParityMode;
   budgetUsd: number;
   timeoutMs: number;
   dryRun?: boolean;
@@ -67,14 +80,16 @@ export function limitsFor(options: ArmSeriesOptions, arm: ArmName): ArmLimits {
     timeoutMs: options.timeoutMs,
     budgetUsd: options.budgetUsd,
     ...(options.model ? { model: options.model } : {}),
+    ...(options.provider?.[arm] ? { provider: options.provider[arm]! } : {}),
     ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
+    ...(options.mode ? { mode: options.mode } : {}),
     ...(options.command?.[arm] ? { command: options.command[arm]! } : {}),
   };
 }
 
 export interface PlannedRun {
   task: string;
-  arm: Exclude<ArmName, "rune">;
+  arm: ArmName;
   dir: string;
   plan: ArmPlan;
 }
@@ -170,6 +185,7 @@ export function planSeries(options: ArmSeriesOptions): SeriesPlan {
         `    cwd  ${plan.cwd}`,
         `    argv ${JSON.stringify(plan.command)}`,
         `    auth ${KEPT_CREDENTIALS(plan.env).join(", ") || "(none present in this shell)"}`,
+        ...(plan.refusal ? [`    REFUSED live: ${plan.refusal}`] : []),
       );
     }
   // The figure the person authorising the run is actually authorising. It was
@@ -178,6 +194,7 @@ export function planSeries(options: ArmSeriesOptions): SeriesPlan {
   lines.push(
     `${runs.length} run(s) planned. Nothing was executed: a dry run spawns nothing but --version.`,
     `worst case: ${runs.length} run(s) × $${options.budgetUsd}/task = $${(runs.length * options.budgetUsd).toFixed(2)} total across the series. RUNE_EVAL_BUDGET_USD is the ceiling for the SERIES and must be at least this to run it live.`,
+    `per-task ceiling: enforced during a run only for opencode (the rig watches its steps); for every other arm it is an estimate, one run can overshoot it, and the running total stops the series before the next run.`,
   );
   return { versions, runs, lines };
 }
@@ -192,8 +209,16 @@ const write = (path: string, value: string) => {
  *
  * Same order as `runPilot`'s evidence: seed the fixture, run the arm, grade it
  * from outside the workspace, write the row, persist after every row. An
- * infrastructure interruption stops the series, because a quota that ran out
- * halfway makes every later row a different experiment.
+ * unscored row is recorded and the series goes on; it stops once more than a
+ * quarter of the planned rows are unscored (`tooManyUnscored`), or before a run
+ * that could take the running total past the authorisation.
+ *
+ * The per-task `--budget-usd` is enforced DURING a run only where the rig can
+ * watch the spend live (OpenCode's step stream). The Claude Code arm no longer
+ * carries `--max-budget-usd` — no arm is capped by anything but the clock — so
+ * for it, for Codex and for Rune the per-task figure is the series gate's
+ * estimate of one run, a run can overshoot it, and the running total is what
+ * stops the series before the next one.
  */
 export async function runArmSeries(options: ArmSeriesOptions) {
   // The authorisation is the FIRST thing, ahead of the plan: `planSeries`
@@ -223,6 +248,11 @@ export async function runArmSeries(options: ArmSeriesOptions) {
     throw new Error(
       "Report already exists. Use a fresh output directory so evidence is never overwritten.",
     );
+  // A plan an arm would refuse (no evaluation profile, no API key, no model)
+  // refuses the SERIES, before the first run — not halfway through it, after
+  // the other arm has spent.
+  const refused = plan.runs.find((run) => run.plan.refusal);
+  if (refused) throw new Error(`${refused.arm}: ${refused.plan.refusal}`);
   const byId = new Map<string, ComparisonTask>(
     corpusTasks(options.corpus).map((task) => [task.id, task]),
   );
@@ -250,10 +280,11 @@ export async function runArmSeries(options: ArmSeriesOptions) {
     reasoningEffort: options.reasoningEffort ?? null,
     versions: plan.versions,
     limitations: [
-      "One comparator arm per row. The Rune row for the same task comes from runner.ts --corpus; the two are comparable because the fixture and the acceptance are the same bytes.",
+      "One arm per row, with no pairing and no fixed arm order: rows the parity index can score come from tests/eval/parity/run-pairs.ts. Rows here are comparable with each other because the fixture and the acceptance are the same bytes.",
       "Claude Code and Codex run different model families, so a row against both is a harness comparison across families, never a same-model one.",
       "A subscription arm spends quota, not dollars. Quota is reported separately from any list-price figure and neither is an invoice.",
-      "Infrastructure interruptions are unscored with usage retained, and stop the series.",
+      "Every arm is judged by one classifier (classifyOutcome): a timeout, the tool's own ceiling, or a crash after the first model call is a scored failure; a provider outage, quota or auth refusal, or a crash before the first call is unscored, with the usage retained.",
+      "An unscored row does not stop the series; more than a quarter of the planned rows coming back unscored does.",
     ],
     results: [] as Array<Record<string, unknown>>,
   };
@@ -265,6 +296,7 @@ export async function runArmSeries(options: ArmSeriesOptions) {
   // nobody reported counts as the full per-task ceiling: an unknown price is
   // not a free one, and this is the founder's money.
   let spentUsd = 0;
+  let unscoredRows = 0;
   const charged = (result: { listUsd: number | null; reportedCostUsd: number | null }): number =>
     result.reportedCostUsd === null && result.listUsd === null
       ? options.budgetUsd
@@ -306,12 +338,21 @@ export async function runArmSeries(options: ArmSeriesOptions) {
     console.log(
       `${run.arm}: ${result.scored ? (check.passed ? "acceptance passed" : "acceptance failed") : `UNSCORED (${result.unscoredReason})`}; ${result.listUsd === null ? "cost unknown" : `$${result.listUsd.toFixed(4)} list`}; ${(result.durationMs / 1000).toFixed(1)}s`,
     );
-    if (!result.scored) break;
+    // Not `break` on the first unscored row any more: that stopped a whole
+    // series on one provider blip, and fell on whichever arm hit the wall.
+    if (!result.scored) unscoredRows++;
+    if (tooManyUnscored(unscoredRows, plan.runs.length)) {
+      const stop = `Series stopped: ${unscoredRows} of ${plan.runs.length} planned run(s) came back unscored, more than a quarter.`;
+      console.log(stop);
+      (report as Record<string, unknown>).stoppedEarly = stop;
+      persist();
+      break;
+    }
   }
   return report;
 }
 
-const USAGE = `Comparator arms over the frozen corpus.
+const USAGE = `Arms over the frozen corpus, one row per (task, arm).
 
   bun run tests/eval/comparison/arms/run-arms.ts --dry-run \\
     --arms claude-code,codex --corpus tests/eval/corpus --out /tmp/arm-plan
@@ -320,10 +361,14 @@ const USAGE = `Comparator arms over the frozen corpus.
     --arms claude-code,codex --corpus tests/eval/corpus --model MODEL \\
     --effort high --out /tmp/rune-arms-<date> --budget-usd 2 --timeout-seconds 600
 
+Arms: rune, claude-code, codex, opencode. --mode product|harness (default
+product; Claude Code product mode needs RUNE_PARITY_CLAUDE_CONFIG_DIR).
+--rune-provider / --opencode-provider pick those arms' routes.
+
 --real spends real money or subscription quota and refuses to start without
 RUNE_EVAL_BUDGET_USD. A live comparator run is an external action: it happens
 only when the founder authorises it in their own words, with the task count and
-the arm order.`;
+the arm order. For paired parity rows use tests/eval/parity/run-pairs.ts.`;
 
 if (import.meta.main) {
   const args = process.argv.slice(2);
@@ -339,14 +384,23 @@ if (import.meta.main) {
     if (!out) throw new Error("--out is required");
     const arms = (get("arms") ?? "claude-code,codex")
       .split(",")
-      .map((name) => name.trim()) as Array<Exclude<ArmName, "rune">>;
+      .map((name) => name.trim()) as ArmName[];
     for (const arm of arms) if (!ARMS[arm]) throw new Error(`Unknown arm: ${arm}`);
+    const mode = get("mode") ?? "product";
+    if (mode !== "product" && mode !== "harness")
+      throw new Error(`--mode is product or harness, not ${mode}`);
+    const provider: Partial<Record<ArmName, string>> = {
+      ...(get("rune-provider") ? { rune: get("rune-provider")! } : {}),
+      ...(get("opencode-provider") ? { opencode: get("opencode-provider")! } : {}),
+    };
     await runArmSeries({
       arms,
       out: resolve(out),
       corpus: get("corpus") ?? join(import.meta.dir, "../../corpus"),
       ...(get("tasks") ? { tasks: get("tasks")!.split(",") } : {}),
       ...(get("model") ? { model: get("model")! } : {}),
+      provider,
+      mode,
       reasoningEffort: get("effort") ?? "high",
       budgetUsd: Number(get("budget-usd") ?? 2),
       timeoutMs: Number(get("timeout-seconds") ?? 600) * 1000,

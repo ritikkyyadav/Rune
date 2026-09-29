@@ -46,16 +46,18 @@ import {
   type ArmLimits,
   type ArmPlan,
   type ArmResult,
-  type ArmTask,
   type ArmUsage,
   type ComparatorArm,
+  type OutcomeSignals,
   type ParsedArm,
   NO_USAGE,
   armEnv,
+  binarySha256Of,
   failureCategory,
+  judged,
   priceUsage,
   probeVersion,
-  unscored,
+  taskEnvNames,
   workspaceOf,
 } from "./types";
 
@@ -156,29 +158,39 @@ export function parseCodexOutput(capture: ArmCapture): ParsedArm {
   let sawUsage = false;
   let resultText: string | null = capture.lastMessage?.trim() || null;
   let turns = 0;
+  // A failed TURN is terminal: `codex exec` runs one turn and exits after it.
+  // A bare `error` event is not, on its own — Codex streams one for a dropped
+  // connection it is about to retry ("Reconnecting... 1/5") — so it counts
+  // only when no turn completed after it and the process then failed.
   let failure: string | undefined;
+  let lastError: string | undefined;
+  const messageOf = (event: CodexEvent): string => {
+    const error = event.error;
+    return [typeof error === "string" ? error : error?.message, event.message]
+      .filter((value): value is string => typeof value === "string")
+      .join(" ");
+  };
   for (const event of events) {
     if (event.type === "turn.started") turns++;
-    if (event.type === "turn.completed" && event.usage) {
-      const u = event.usage;
-      sawUsage = true;
-      totals.inputTokens += u.input_tokens ?? 0;
-      totals.outputTokens += u.output_tokens ?? 0;
-      totals.reasoningTokens += u.reasoning_output_tokens ?? 0;
-      totals.cacheReadTokens += u.cached_input_tokens ?? 0;
-      totals.cacheWriteTokens += u.cache_write_input_tokens ?? 0;
+    if (event.type === "turn.completed") {
+      lastError = undefined;
+      if (event.usage) {
+        const u = event.usage;
+        sawUsage = true;
+        totals.inputTokens += u.input_tokens ?? 0;
+        totals.outputTokens += u.output_tokens ?? 0;
+        totals.reasoningTokens += u.reasoning_output_tokens ?? 0;
+        totals.cacheReadTokens += u.cached_input_tokens ?? 0;
+        totals.cacheWriteTokens += u.cache_write_input_tokens ?? 0;
+      }
     }
     if (event.type === "item.completed") {
       const kind = event.item?.type ?? event.item?.item_type;
       if (kind === "agent_message" && typeof event.item?.text === "string")
         resultText = event.item.text;
     }
-    if (event.type === "turn.failed" || event.type === "error") {
-      const error = event.error;
-      failure = [typeof error === "string" ? error : error?.message, event.message]
-        .filter((value): value is string => typeof value === "string")
-        .join(" ");
-    }
+    if (event.type === "turn.failed") failure = messageOf(event);
+    if (event.type === "error") lastError = messageOf(event);
   }
 
   // The plain (non-`--json`) form prints a usage line instead of events. Read
@@ -194,47 +206,64 @@ export function parseCodexOutput(capture: ArmCapture): ParsedArm {
     }
   }
   const usage: ArmUsage | null = sawUsage ? totals : null;
+  const turnCompleted = events.some((event) => event.type === "turn.completed");
+  const itemsCompleted = events.some((event) => event.type === "item.completed");
 
-  const base: ParsedArm = {
-    outcome: "scored",
+  // Facts only. What they mean is `classifyOutcome`'s, the same for every arm.
+  const signals: OutcomeSignals = {
+    ...(capture.stopped ? { stopped: capture.stopped } : {}),
+    exitCode: capture.exitCode,
+    // Codex's success is a stream that completed its turn and failed none,
+    // from a process that exited 0 by itself.
+    claimedSuccess:
+      !capture.stopped && capture.exitCode === 0 && turnCompleted && failure === undefined,
+    // A completed turn's usage, the plain form's usage line, or any completed
+    // item (an item is model output) says a call went through. A stream with
+    // none of them — or no stream at all — says none did.
+    reachedModel: sawUsage || itemsCompleted,
+  };
+  // A failed turn's message is the tool's error channel. An `error` event that
+  // no completed turn followed is too, once the process has failed by itself.
+  // With no events at all, the only text there is IS the tool's failure, so it
+  // is read — unless the rig killed the process, because then nothing it
+  // printed is a terminal report: it was still running, perhaps retrying, and
+  // the clock (not the provider) is what ended it. A failed turn that is NOT a
+  // provider refusal is the tool failing the task, and the classifier scores
+  // it once a call had gone through.
+  const endedFailing = !capture.stopped && capture.exitCode !== 0;
+  const errorText =
+    failure ??
+    (lastError !== undefined && endedFailing
+      ? lastError
+      : !events.length && !capture.stopped
+        ? `${capture.stderr}\n${capture.stdout}`
+        : "");
+  const provider = errorText ? failureCategory(errorText) : undefined;
+  if (provider) signals.provider = provider;
+
+  const detail = capture.stopped
+    ? capture.stopped
+    : failure !== undefined
+      ? "turn.failed"
+      : !events.length
+        ? capture.exitCode === 0
+          ? "no events on stdout"
+          : "no events; exited non-zero"
+        : !turnCompleted
+          ? "event stream ended without turn.completed"
+          : undefined;
+  return judged(signals, {
     resultText,
     turns: turns || null,
+    // Codex's stream counts turns, not model calls, and it keeps no per-call
+    // ledger this side can read. Null, never a guess.
+    calls: null,
     // Codex prints no dollar figure at any version this arm has seen.
     reportedCostUsd: null,
     usage,
     models: [],
-  };
-
-  if (capture.stopped === "timeout")
-    return { ...base, outcome: unscored("timeout"), unscoredReason: "timeout", detail: "timeout" };
-  if (capture.stopped)
-    return {
-      ...base,
-      outcome: unscored("cost_limit"),
-      unscoredReason: "cost_limit",
-      detail: capture.stopped,
-    };
-
-  if (failure !== undefined) {
-    const category = failureCategory(failure);
-    if (category) return { ...base, outcome: unscored(category), unscoredReason: category };
-    // A failed turn that is not a provider outage is the comparator failing
-    // the task. It stays scored; the acceptance decides what it was worth.
-    return { ...base, outcome: "scored", detail: "turn.failed" };
-  }
-
-  if (!events.length) {
-    const category = failureCategory(`${capture.stderr}\n${capture.stdout}`);
-    if (category) return { ...base, outcome: unscored(category), unscoredReason: category };
-    return {
-      ...base,
-      outcome: "error",
-      detail: capture.exitCode === 0 ? "no events on stdout" : "no events; exited non-zero",
-    };
-  }
-  if (!events.some((event) => event.type === "turn.completed"))
-    return { ...base, outcome: "error", detail: "event stream ended without turn.completed" };
-  return base;
+    ...(detail ? { detail } : {}),
+  });
 }
 
 export const codexArm: ComparatorArm = {
@@ -251,7 +280,7 @@ export const codexArm: ComparatorArm = {
       arm: "codex",
       command,
       cwd: workspace,
-      env: armEnv(CODEX_AUTH_VARS),
+      env: armEnv([...CODEX_AUTH_VARS, ...taskEnvNames(task)], limits.env ?? process.env),
       artifacts: { lastMessage },
       parityGaps: CODEX_PARITY_GAPS,
     };
@@ -280,17 +309,18 @@ export const codexArm: ComparatorArm = {
       lastMessage: read(plan.artifacts!.lastMessage!),
     });
     const priced = priceUsage(limits.model ?? "", "openai", parsed.usage);
+    const binarySha256 = binarySha256Of(limits.command);
     return {
       ...parsed,
       arm: "codex",
       version: this.version(limits),
+      ...(binarySha256 ? { binarySha256 } : {}),
       command: plan.command,
       cwd: plan.cwd,
       exitCode: process_.exitCode,
       durationMs: process_.durationMs,
       ...(process_.stopped ? { stopped: process_.stopped } : {}),
       ...priced,
-      scored: parsed.outcome === "scored",
       parityGaps: plan.parityGaps,
     };
   },
