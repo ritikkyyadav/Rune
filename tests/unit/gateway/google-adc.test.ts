@@ -228,10 +228,13 @@ describe("rung 2: the gcloud ADC file", () => {
 });
 
 describe("rung 3: the metadata server", () => {
+  // Rung 3 is opt-in since P4a (see adc-metadata.test.ts for the default).
+  // These pin what it does once a caller that knows Vertex is in use allows it.
   test("answers with a token on GCE", async () => {
     let seenUrl = "";
     const token = await resolveGoogleAdc({
       env: {},
+      allowMetadata: true,
       readFileImpl: noFiles,
       fetchImpl: (async (url: string, init: RequestInit) => {
         seenUrl = String(url);
@@ -249,6 +252,7 @@ describe("rung 3: the metadata server", () => {
     let touched = false;
     const token = await resolveGoogleAdc({
       env: { NO_GCE_CHECK: "true" },
+      allowMetadata: true,
       readFileImpl: noFiles,
       fetchImpl: (async () => {
         touched = true;
@@ -262,6 +266,7 @@ describe("rung 3: the metadata server", () => {
   test("an unreachable metadata server resolves to null, never a hang or a throw", async () => {
     const token = await resolveGoogleAdc({
       env: {},
+      allowMetadata: true,
       readFileImpl: noFiles,
       fetchImpl: (async () => {
         throw new Error("ETIMEDOUT");

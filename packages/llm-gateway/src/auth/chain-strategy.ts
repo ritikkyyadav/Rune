@@ -36,6 +36,17 @@ export interface ChainProbe {
   secret?: string;
 }
 
+export interface ChainProbeOpts {
+  /**
+   * Let the Vertex probe ask the GCE metadata server. Off unless the caller
+   * says so: the boot scan probes EVERY cloud route, and on a machine that is
+   * not on Google Cloud that request is a stray packet to
+   * metadata.google.internal and up to a second of startup. AWS already
+   * refuses its instance-metadata endpoint outright (providers/aws/credentials).
+   */
+  allowMetadata?: boolean;
+}
+
 /**
  * Probe one provider's ambient credentials.
  *
@@ -46,6 +57,7 @@ export interface ChainProbe {
 export async function probeCloudChain(
   providerId: string,
   env: NodeJS.ProcessEnv,
+  opts: ChainProbeOpts = {},
 ): Promise<ChainProbe | null> {
   switch (providerId) {
     case "bedrock": {
@@ -56,7 +68,7 @@ export async function probeCloudChain(
     }
     case "vertex": {
       const { resolveGoogleAdc, describeAdcSource } = await import("../providers/google/adc");
-      const token = await resolveGoogleAdc({ env });
+      const token = await resolveGoogleAdc({ env, allowMetadata: opts.allowMetadata === true });
       return token ? { detail: describeAdcSource(token) } : null;
     }
     // Azure's ambient credential is an Entra ID access token in the
@@ -100,11 +112,30 @@ export function chainSetupHint(providerId: string): string {
   }
 }
 
+/**
+ * The auth context, plus the one question only this strategy asks. The boot
+ * scan (provider-registry's resolveProviderCredentials) builds one context per
+ * preset; it should set `allowMetadata` only on the context of the provider
+ * the session actually selected.
+ */
+export interface ChainAuthContext extends AuthContext {
+  /** See ChainProbeOpts.allowMetadata. */
+  allowMetadata?: boolean;
+}
+
 export class CloudChainStrategy implements AuthenticationStrategy {
   readonly method = "chain" as const;
 
-  async loadCredentials(ctx: AuthContext): Promise<ResolvedCredential | null> {
-    const probe = await probeCloudChain(ctx.providerId, ctx.env);
+  /** The non-interactive load (the boot scan): no metadata probe unless the caller allows it. */
+  async loadCredentials(ctx: ChainAuthContext): Promise<ResolvedCredential | null> {
+    return this.probe(ctx, ctx.allowMetadata === true);
+  }
+
+  private async probe(
+    ctx: ChainAuthContext,
+    allowMetadata: boolean,
+  ): Promise<ResolvedCredential | null> {
+    const probe = await probeCloudChain(ctx.providerId, ctx.env, { allowMetadata });
     if (!probe) return null;
     return {
       ...(probe.secret
@@ -121,9 +152,14 @@ export class CloudChainStrategy implements AuthenticationStrategy {
    * Pretending to have a flow (a prompt asking for an access key) would invite
    * someone to paste a long-lived cloud credential into a tool that has no
    * business holding one.
+   *
+   * Login names the provider, which is exactly the explicit selection the
+   * metadata probe waits for — so here it is on unless the caller turns it
+   * off. On a GCE VM with no key file the metadata server IS the credential,
+   * and `rune login vertex` answering "no credentials" there would be false.
    */
-  async authenticate(ctx: AuthContext): Promise<ResolvedCredential> {
-    const cred = await this.loadCredentials(ctx);
+  async authenticate(ctx: ChainAuthContext): Promise<ResolvedCredential> {
+    const cred = await this.probe(ctx, ctx.allowMetadata !== false);
     if (!cred) {
       throw new AuthError({
         providerId: ctx.providerId,
@@ -138,7 +174,7 @@ export class CloudChainStrategy implements AuthenticationStrategy {
   }
 
   /** Re-probing IS the refresh: expiry is the chain's problem, not Rune's. */
-  async refresh(ctx: AuthContext): Promise<ResolvedCredential | null> {
+  async refresh(ctx: ChainAuthContext): Promise<ResolvedCredential | null> {
     return this.loadCredentials(ctx);
   }
 

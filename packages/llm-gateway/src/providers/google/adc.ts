@@ -9,7 +9,11 @@
 //      JSON key file
 //   2. the gcloud ADC file (~/.config/gcloud/application_default_credentials.json,
 //      %APPDATA%\gcloud\… on Windows) — normally an authorized_user refresh token
-//   3. the GCE/Cloud Run metadata server, probed with a short timeout
+//   3. the GCE/Cloud Run metadata server, probed with a short timeout — and
+//      ONLY when the caller allows it (`allowMetadata`) or GCE_METADATA_HOST
+//      names a server. Rung 3 used to run on every resolution without a key
+//      file, which made Rune's startup credential scan send a request to
+//      metadata.google.internal on a laptop whose only provider was Codex.
 //
 // A **service account** key is exchanged the documented way: build a JWT
 // asserting the service account and the cloud-platform scope, sign it RS256
@@ -47,6 +51,15 @@ export interface AdcOpts {
   home?: string;
   /** Fixed clock, for tests. */
   now?: () => number;
+  /**
+   * Whether the GCE metadata server may be asked (rung 3). Off by default: a
+   * machine that is not on Google Cloud should never see that request, and
+   * only the caller knows whether Vertex is the provider actually in use.
+   * GCE_METADATA_HOST set to a host also enables it — that variable is how a
+   * workload says where its metadata server is — and NO_GCE_CHECK=true or an
+   * empty GCE_METADATA_HOST still wins over both.
+   */
+  allowMetadata?: boolean;
 }
 
 const TOKEN_URI = "https://oauth2.googleapis.com/token";
@@ -90,7 +103,7 @@ export async function resolveGoogleAdc(opts: AdcOpts = {}): Promise<GoogleAccess
   const token = await fromKeyFile(gcloudAdcPath(opts), opts);
   if (token) return token;
 
-  // 3. The metadata server, only when it is plausible AND bounded.
+  // 3. The metadata server, only when it is allowed, plausible AND bounded.
   return await fromMetadata(opts);
 }
 
@@ -266,7 +279,10 @@ async function fromMetadata(opts: AdcOpts): Promise<GoogleAccessToken | null> {
   const env = opts.env ?? process.env;
   // Google's own opt-out, honoured so a locked-down machine is not probed.
   if (env.GCE_METADATA_HOST === "" || env.NO_GCE_CHECK === "true") return null;
-  const host = env.GCE_METADATA_HOST ? `http://${env.GCE_METADATA_HOST}` : METADATA_HOST;
+  const named = env.GCE_METADATA_HOST?.trim();
+  // Opt-in: the caller said Vertex is in use, or the environment named a server.
+  if (opts.allowMetadata !== true && !named) return null;
+  const host = named ? `http://${named}` : METADATA_HOST;
   const now = opts.now?.() ?? Date.now();
   try {
     const doFetch = opts.fetchImpl ?? fetch;
@@ -323,15 +339,22 @@ export async function resolveGoogleProject(
  * Vertex tokens last an hour and every request needs one, so re-running the
  * whole chain per call would be both slow and a token-endpoint call per turn.
  * Refresh at 60s before expiry.
+ *
+ * This is the Vertex ADAPTER's resolver, and it runs only when a Vertex
+ * request is about to be sent — the one moment the metadata server is
+ * certainly worth asking, and on a GCE VM with no key file the only
+ * credential there is. So unlike the probes above it may ask unless the
+ * caller says `allowMetadata: false`.
  */
 export function createGoogleTokenResolver(
   opts: AdcOpts = {},
 ): () => Promise<GoogleAccessToken | null> {
+  const resolveOpts: AdcOpts = { ...opts, allowMetadata: opts.allowMetadata ?? true };
   let cached: GoogleAccessToken | null = null;
   return async () => {
     const now = opts.now?.() ?? Date.now();
     if (!cached || cached.expiresAt - now < 60_000) {
-      cached = await resolveGoogleAdc(opts);
+      cached = await resolveGoogleAdc(resolveOpts);
     }
     return cached;
   };
