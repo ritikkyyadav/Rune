@@ -1,0 +1,55 @@
+{
+  "id": "f7-72605e6-folded-tail-prefix",
+  "sha": "72605e6cca65724886d43c6a094657957ccb0e7c",
+  "parent": "23f10c7c88bb3309cbb6a15c377b4e24ba0d6717",
+  "subject": "harness: a folded tail is history, and the meter measures what went out",
+  "packages": ["llm-gateway", "orchestrator"],
+  "shape": "fix",
+  "family": "F7",
+  "prompt": "On the host where a request that ends on a user message breaks the prompt cache (Codex; see `foldsEphemeralTail` in packages/llm-gateway/src/providers/cache-policy.ts), the agent loop folds the ephemeral tail — the plan ledger and the team and budget notices — into the last stable message instead of appending it as a separate user message. The stored transcript keeps that message bare, which is right. But the NEXT request then replays that message bare as well. Consecutive requests therefore diverge one message before the end, at the tool output the model has just read (usually the largest item in the conversation), so the provider's prefix cache can never match beyond it. On a mock rig, consecutive Codex requests share only 2 of 3 and 4 of 5 messages, while a host that does not fold shares all of its stable messages.\n\nThe composition meter (`measureComposition` in packages/llm-gateway/src/prompt-composition.ts, called from the agent loop) has a related blind spot. It is handed the messages as they were before the fold, so its `prefixHash` fingerprints a request that never went out — it reports two requests as sharing a prefix while the wire had them diverging — and its parts do not add up to the request that was actually sent.\n\nWhat should happen:\n- Within a run, a message that went out carrying a folded tail is sent with exactly that tail, byte for byte, on every later request; only the newest message carries the current tail. Consecutive requests on a folding host then share their whole stable prefix, as they do on other hosts. The stored transcript stays bare: nothing stored changes.\n- The composition row describes the messages that actually go on the wire: its `prefixHash` equals `measureComposition({ system, messages }).prefixHash` of the request as sent, and its `total` equals the bytes of the system prompt plus the bytes of the messages as sent, on both wire shapes. The plan-ledger and task-state bytes are still reported as ledger and task state, and are not counted a second time as conversation.\n\nOther hosts' wire shape does not change. Keep the existing exported APIs working, and keep the existing tests passing, except the old assertion that a folding and a non-folding host report identical `conversation` and `total` figures for the same run: the folding host's request is genuinely larger (the tail rides behind a blank line inside the last message, and earlier tails are replayed).",
+  "f2p": [
+    "tests/unit/orchestrator/agent-loop-ephemeral-fold.test.ts :: ephemeral tail wire shape per host > the meter measures the request that went out, on either wire shape",
+    "tests/unit/orchestrator/agent-loop-fold-prefix.test.ts :: §3.3 — the folded tail and the prefix the cache matches on > a message that went out carrying a tail is replayed carrying that tail",
+    "tests/unit/orchestrator/agent-loop-fold-prefix.test.ts :: §3.3 — the folded tail and the prefix the cache matches on > consecutive requests share the whole stable prefix, folding host or not",
+    "tests/unit/orchestrator/agent-loop-fold-prefix.test.ts :: §3.3 — the folded tail and the prefix the cache matches on > the parts still add up to the request, on either wire shape",
+    "tests/unit/orchestrator/agent-loop-fold-prefix.test.ts :: §3.3 — the folded tail and the prefix the cache matches on > the prefix fingerprint is the fingerprint of the bytes that went out"
+  ],
+  "p2p": [
+    "tests/unit/orchestrator/agent-loop-ephemeral-fold.test.ts :: ephemeral tail wire shape per host > anthropic: the same run keeps the block as the trailing user message",
+    "tests/unit/orchestrator/agent-loop-ephemeral-fold.test.ts :: ephemeral tail wire shape per host > codex: after the plan exists, the block rides inside whatever message ends the request",
+    "tests/unit/orchestrator/agent-loop-ephemeral-fold.test.ts :: ephemeral tail wire shape per host > codex: the stored transcript never carries the block",
+    "tests/unit/orchestrator/agent-loop-ephemeral-fold.test.ts :: ephemeral tail wire shape per host > the policy folds only for codex",
+    "tests/unit/orchestrator/agent-loop-ephemeral-fold.test.ts :: withTailFolded > after tool results, the tail rides at the end of the last tool output",
+    "tests/unit/orchestrator/agent-loop-ephemeral-fold.test.ts :: withTailFolded > on the opening request the tail joins the user's own message",
+    "tests/unit/orchestrator/agent-loop-ephemeral-fold.test.ts :: withTailFolded > with nothing to ride on, it falls back to the user message every host takes"
+  ],
+  "impossible": [],
+  "typecheckPackages": ["packages/llm-gateway", "packages/orchestrator"],
+  "typecheckBaseClean": {
+    "packages/llm-gateway": true,
+    "packages/orchestrator": true
+  },
+  "typecheckFixedClean": {
+    "packages/llm-gateway": true,
+    "packages/orchestrator": true
+  },
+  "timeLimit": "serious",
+  "hiddenFiles": [
+    "tests/unit/orchestrator/agent-loop-ephemeral-fold.test.ts",
+    "tests/unit/orchestrator/agent-loop-fold-prefix.test.ts"
+  ],
+  "testFiles": [
+    "tests/unit/orchestrator/agent-loop-ephemeral-fold.test.ts",
+    "tests/unit/orchestrator/agent-loop-fold-prefix.test.ts"
+  ],
+  "fixFiles": [
+    "packages/llm-gateway/src/prompt-composition.ts",
+    "packages/orchestrator/src/agent-loop.ts"
+  ],
+  "mined": {
+    "at": "2026-09-28",
+    "bun": "1.3.14",
+    "baseWallMs": [187, 191],
+    "fixedWallMs": [209, 205]
+  }
+}

@@ -1,0 +1,74 @@
+{
+  "id": "f7-a218abc-checkpoint-report-matches-prune",
+  "sha": "a218abcec566a9900a6dd89ae998e7ae1262584f",
+  "parent": "24511f337af0f9575bfaee7ad64fdf15b96c27b4",
+  "subject": "harness: the checkpoint advisory promises exactly what the prune removes",
+  "packages": ["shared"],
+  "shape": "fix",
+  "family": "F7",
+  "prompt": "`rune doctor` promises more than `rune doctor prune-checkpoints` delivers. On a real database the doctor printed \"552 superseded or orphaned rows, 136 MB — rune doctor prune-checkpoints\", and that command then offered to remove 428 rows / 106 MB.\n\nThe report (`reportCheckpoints` in packages/shared/src/state.ts) counts a checkpoint row as reclaimable when ANY newer version of the same run exists, while the prune (`pruneCheckpoints`) keeps the newest versions of each run (two by default) and removes only what is older than those.\n\nWhat should happen: the rows and bytes the report calls reclaimable are exactly the rows and bytes `pruneCheckpoints` would remove with the same keep count, both at the default keep and at any other keep count. Rows whose session is gone still count as reclaimable in both, as they do today.\n\nKeep the existing exported APIs working, and keep the existing tests passing.\n\nInterface the fix must provide:\n- `reportCheckpoints(db, keep?)` accepts an optional keep count. With no count it uses the same default `pruneCheckpoints` uses, and `reportCheckpoints(db, n).reclaimableRows` / `.reclaimableBytes` equal `pruneCheckpoints(db, { keep: n })`'s `removedRows` / `removedBytes`.",
+  "interface": ["reportCheckpoints"],
+  "f2p": [
+    "tests/integration/engine-lifecycle-projection.test.ts :: checkpoints are addressable, bounded and prunable > the run id is stable, the payload is a pointer, and old versions rotate"
+  ],
+  "p2p": [
+    "tests/integration/engine-lifecycle-projection.test.ts :: an interrupted run hands its budget forward > a lifecycle row with open steps narrows the next run; a clean end does not",
+    "tests/integration/engine-lifecycle-projection.test.ts :: an interrupted run hands its budget forward > a run that wrote its close is not treated as interrupted",
+    "tests/integration/engine-lifecycle-projection.test.ts :: an interrupted run hands its budget forward > the resume line reaches the stream, and the loop's ceiling with it",
+    "tests/integration/engine-lifecycle-projection.test.ts :: one definition of what a run changed > apply_patch and worker files count, and a read does not",
+    "tests/integration/engine-lifecycle-projection.test.ts :: the lifecycle projection > a run emits it at the start and at the end, and both are durable",
+    "tests/integration/engine-lifecycle-projection.test.ts :: the lifecycle projection > the workspace revision is recorded on the run's own marker",
+    "tests/integration/engine-lifecycle-projection.test.ts :: the terminal result reaches a machine consumer > S-2 — a compaction the eviction tier RESCUED still names the summarizer that failed",
+    "tests/integration/engine-lifecycle-projection.test.ts :: the terminal result reaches a machine consumer > a compaction that FAILED is an event, not only a notice",
+    "tests/integration/engine-lifecycle-projection.test.ts :: the terminal result reaches a machine consumer > a manual /compact emits the event it always persisted a name for",
+    "tests/integration/engine-lifecycle-projection.test.ts :: the terminal result reaches a machine consumer > every unfinished verdict has a line, and end_turn stays the only finish",
+    "tests/integration/engine-lifecycle-projection.test.ts :: the terminal result reaches a machine consumer > open steps are ok:false, and the envelope carries the lifecycle",
+    "tests/integration/engine-lifecycle-projection.test.ts :: user constraints survive a restart > the brief and its rungs are restored beside the task spine",
+    "tests/unit/protocol/exhaustiveness.test.ts :: AgentTurnEvent is handled by every reducer > TUI formatter (bin/ui/events.ts formatEvent) names all 31 members",
+    "tests/unit/protocol/exhaustiveness.test.ts :: AgentTurnEvent is handled by every reducer > TUI shell (bin/ui/tui.ts chat loop) names all 31 members",
+    "tests/unit/protocol/exhaustiveness.test.ts :: AgentTurnEvent is handled by every reducer > TUI transcript (bin/ui/turn.ts onEvent) names all 31 members",
+    "tests/unit/protocol/exhaustiveness.test.ts :: AgentTurnEvent is handled by every reducer > every reducer ends in an exhaustiveness assertion, not a bare default",
+    "tests/unit/protocol/exhaustiveness.test.ts :: AgentTurnEvent is handled by every reducer > headless runner (headless.ts runHeadless) names all 31 members",
+    "tests/unit/protocol/exhaustiveness.test.ts :: AgentTurnEvent is handled by every reducer > no reducer takes the event union as `any`",
+    "tests/unit/protocol/exhaustiveness.test.ts :: ResearchEvent is handled where research is rendered > the TUI formatter names every research-only member",
+    "tests/unit/protocol/exhaustiveness.test.ts :: ResearchEvent is handled where research is rendered > the TUI transcript names every research-only member",
+    "tests/unit/protocol/exhaustiveness.test.ts :: ResearchEvent is handled where research is rendered > the two unions overlap only on notice and error",
+    "tests/unit/protocol/exhaustiveness.test.ts :: inbound event narrowing > accepts every declared member and rejects junk",
+    "tests/unit/protocol/exhaustiveness.test.ts :: manifests > AGENT_TURN_EVENT_TYPES has no duplicates",
+    "tests/unit/protocol/exhaustiveness.test.ts :: manifests > HOST_COMMANDS and HOST_STREAMS have no duplicates",
+    "tests/unit/protocol/exhaustiveness.test.ts :: manifests > docs/protocol.md counts the reducers this file guards",
+    "tests/unit/protocol/exhaustiveness.test.ts :: manifests > every stream the host emits is declared",
+    "tests/unit/protocol/exhaustiveness.test.ts :: manifests > the member count in this file's header is the real one",
+    "tests/unit/protocol/exhaustiveness.test.ts :: no client redeclares the event union > the orchestrator re-exports rather than redefines",
+    "tests/unit/protocol/exhaustiveness.test.ts :: the persisted session is a reducer too > every member is persisted, replayed from its own row, or declared unpersisted",
+    "tests/unit/protocol/exhaustiveness.test.ts :: the persisted session is a reducer too > every unpersisted member carries a reason, not just an absence",
+    "tests/unit/protocol/exhaustiveness.test.ts :: the persisted session is a reducer too > replayEvents keeps a deliberate default, not a silent one",
+    "tests/unit/protocol/exhaustiveness.test.ts :: the persisted session is a reducer too > the terminal verdict and the lifecycle projection are durable",
+    "tests/unit/protocol/exhaustiveness.test.ts :: the persisted session is a reducer too > the three persistence sets name nothing that is not an event",
+    "tests/unit/protocol/exhaustiveness.test.ts :: version > same major is compatible, different major is not"
+  ],
+  "impossible": [],
+  "typecheckPackages": ["packages/shared"],
+  "typecheckBaseClean": {
+    "packages/shared": true
+  },
+  "typecheckFixedClean": {
+    "packages/shared": true
+  },
+  "timeLimit": "serious",
+  "hiddenFiles": [
+    "tests/integration/engine-lifecycle-projection.test.ts",
+    "tests/unit/protocol/exhaustiveness.test.ts"
+  ],
+  "testFiles": [
+    "tests/integration/engine-lifecycle-projection.test.ts",
+    "tests/unit/protocol/exhaustiveness.test.ts"
+  ],
+  "fixFiles": ["packages/shared/src/state.ts"],
+  "mined": {
+    "at": "2026-09-28",
+    "bun": "1.3.14",
+    "baseWallMs": [1919, 1796],
+    "fixedWallMs": [2645, 3335]
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "id": "f7-5ab7fa0-check-exit-code-verdict",
+  "sha": "5ab7fa06812537f8e1fb39adac074c819291396b",
+  "parent": "f75499652f31afb439e0590ae5e2fbc18b13aa28",
+  "subject": "fix(orchestrator): P11.1 a check's verdict is its exit code, not the tool's success flag",
+  "packages": ["orchestrator"],
+  "shape": "fix",
+  "family": "F7",
+  "prompt": "Checks the model runs itself never count as failures. The `bash` tool reports success for any command that RAN: a failing test suite is a successful tool call whose result JSON carries `\"exit_code\": 1`. The task-state spine in the agent loop (packages/orchestrator/src/agent-loop.ts) reads the tool's success flag, so every check the model ran is recorded as a PASS, and the plan-ledger rule that a step completed right after a failing check is refused can never fire for such a check — only the harness's own verifier, which reads exit codes, can ever record a failure. The web transcript already reads `exit_code`; the spine does not.\n\nWhat should happen:\n- A check's verdict comes from the shell's result. A non-zero `exit_code` is a failure however successfully the tool ran; `timed_out: true` is a failure even at exit code 0; a failed tool call is a failure. A failure's summary is taken from stdout (where a test runner prints its verdict), from stderr when stdout is empty, and from the tool's error for a failed call. A pass's summary is \"ok\" and a timeout's is \"timed out\". A result that is not the shell's JSON (a plain string from an embedder or a stubbed registry) falls back to the tool's success flag, as today, and never throws.\n- The hypothesis inference that refutes a hypothesis whose step's check failed must also fire when that step is completed LATER — after the run wrote its finding up and moved on — and the completion is accepted. The failing check is still the verdict on the theory, with the check's summary as the reason, and the step itself closes cleanly.\n\nKeep the existing exported APIs working, and keep the existing tests passing.\n\nInterface the fix must provide:\n- `bashCheckVerdict(output: { success: boolean; result?: string; error?: string }): { passed: boolean; summary: string; exitCode?: number }`, exported from packages/orchestrator/src/agent-loop.ts. `exitCode` is present when the result was the shell's JSON and absent otherwise.",
+  "interface": ["bashCheckVerdict"],
+  "f2p": [
+    "tests/unit/orchestrator/agent-loop-narrative.test.ts :: a step that closes AFTER a failing check still refutes > ruling a theory out is writing the finding up and moving on",
+    "tests/unit/orchestrator/narrative-tools.test.ts :: a check's verdict is its exit code, not the tool's success flag > a failed tool call is a failed check",
+    "tests/unit/orchestrator/narrative-tools.test.ts :: a check's verdict is its exit code, not the tool's success flag > a non-zero exit is a FAILURE, however successfully the tool ran it",
+    "tests/unit/orchestrator/narrative-tools.test.ts :: a check's verdict is its exit code, not the tool's success flag > a result that is not the shell's JSON falls back to the flag",
+    "tests/unit/orchestrator/narrative-tools.test.ts :: a check's verdict is its exit code, not the tool's success flag > a timeout is a failure even at exit 0",
+    "tests/unit/orchestrator/narrative-tools.test.ts :: a check's verdict is its exit code, not the tool's success flag > exit 0 is a pass",
+    "tests/unit/orchestrator/narrative-tools.test.ts :: a check's verdict is its exit code, not the tool's success flag > stderr answers when stdout is silent",
+    "tests/unit/orchestrator/narrative-tools.test.ts :: artifacts a tool result announces > a dashboard's url",
+    "tests/unit/orchestrator/narrative-tools.test.ts :: artifacts a tool result announces > a research report's saved path",
+    "tests/unit/orchestrator/narrative-tools.test.ts :: artifacts a tool result announces > anything else announces nothing, and malformed output never throws",
+    "tests/unit/orchestrator/narrative-tools.test.ts :: evidence refs are validated, not trusted > a non-array is no evidence at all, and never throws",
+    "tests/unit/orchestrator/narrative-tools.test.ts :: evidence refs are validated, not trusted > shapeless entries are dropped, good ones kept and stamped",
+    "tests/unit/orchestrator/narrative-tools.test.ts :: evidence refs are validated, not trusted > the list is bounded",
+    "tests/unit/orchestrator/narrative-tools.test.ts :: note_hypothesis > a run with no spine says so instead of failing the turn",
+    "tests/unit/orchestrator/narrative-tools.test.ts :: note_hypothesis > evidence given with the verdict lands on the hypothesis",
+    "tests/unit/orchestrator/narrative-tools.test.ts :: note_hypothesis > needs text or an id-plus-status, and says which",
+    "tests/unit/orchestrator/narrative-tools.test.ts :: note_hypothesis > raises a suspicion as `testing` and hands back its id",
+    "tests/unit/orchestrator/narrative-tools.test.ts :: note_hypothesis > refuses to settle a hypothesis nobody raised, and says why",
+    "tests/unit/orchestrator/narrative-tools.test.ts :: note_hypothesis > settles one it already raised, with the reason",
+    "tests/unit/orchestrator/narrative-tools.test.ts :: record_decision > an uncited decision is recorded AND told it is uncited",
+    "tests/unit/orchestrator/narrative-tools.test.ts :: record_decision > needs text",
+    "tests/unit/orchestrator/narrative-tools.test.ts :: record_decision > records the commitment with the evidence behind it",
+    "tests/unit/orchestrator/narrative-tools.test.ts :: the refusal reason a reader sees > a refusal with no instruction tail survives whole, bounded",
+    "tests/unit/orchestrator/narrative-tools.test.ts :: the refusal reason a reader sees > keeps what the check found and drops what the model was told to do",
+    "tests/unit/orchestrator/narrative-tools.test.ts :: the schemas cost what they claim > both are read-category and auto-permission — they touch nothing",
+    "tests/unit/orchestrator/narrative-tools.test.ts :: the schemas cost what they claim > neither offers the model a way to declare a conclusion proven"
+  ],
+  "p2p": [
+    "tests/unit/orchestrator/agent-loop-narrative.test.ts :: a step that closes on evidence confirms it > with the step itself as the evidence",
+    "tests/unit/orchestrator/agent-loop-narrative.test.ts :: a step whose check failed refutes the hypothesis it was testing > with the check's own summary as the reason",
+    "tests/unit/orchestrator/agent-loop-narrative.test.ts :: what the inference does NOT do > a failing command mid-step is a fix in progress, not a refutation",
+    "tests/unit/orchestrator/agent-loop-narrative.test.ts :: what the inference does NOT do > an already-settled hypothesis is not re-settled by the next step",
+    "tests/unit/orchestrator/agent-loop-narrative.test.ts :: what the inference does NOT do > with no hypothesis open, a failed step settles nothing"
+  ],
+  "impossible": [],
+  "typecheckPackages": ["packages/orchestrator"],
+  "typecheckBaseClean": {
+    "packages/orchestrator": true
+  },
+  "typecheckFixedClean": {
+    "packages/orchestrator": true
+  },
+  "timeLimit": "serious",
+  "hiddenFiles": [
+    "tests/unit/orchestrator/agent-loop-narrative.test.ts",
+    "tests/unit/orchestrator/narrative-tools.test.ts"
+  ],
+  "testFiles": [
+    "tests/unit/orchestrator/agent-loop-narrative.test.ts",
+    "tests/unit/orchestrator/narrative-tools.test.ts"
+  ],
+  "fixFiles": ["packages/orchestrator/src/agent-loop.ts"],
+  "mined": {
+    "at": "2026-09-28",
+    "bun": "1.3.14",
+    "baseWallMs": [120, 114],
+    "fixedWallMs": [119, 118]
+  }
+}

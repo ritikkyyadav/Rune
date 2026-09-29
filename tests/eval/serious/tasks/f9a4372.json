@@ -1,0 +1,57 @@
+{
+  "id": "f7-f9a4372-todo-write-flexible-inputs",
+  "sha": "f9a437297831b9be2ac23e586c4cc78ea271cafb",
+  "parent": "0f7a7b1b25511645bdaa2852d7ea56790d10eee6",
+  "subject": "fix(todo-write): normalise flexible inputs and improve validation",
+  "packages": ["tool-registry"],
+  "shape": "feature",
+  "family": "F7",
+  "prompt": "`todo_write` rejects plans that models commonly send, and the model then spends turns rewriting a plan that was perfectly clear. The handler in packages/tool-registry/src/tools/todo-write.ts accepts only objects with a non-empty `content`, an exact status and an exact kind.\n\nMake `todo_write` accept the following and normalise it to the canonical `{ content, status, kind? }` item, both when validating and in the items `execute` returns:\n- A plain string item is a step with that content, pending by default. A leading `- ` or `* ` bullet is stripped. A leading checkbox is stripped too: `[ ]` means pending and `[x]` / `[X]` means completed. So `[\"[x] Done thing\", \"- simple\"]` executes to `[{ content: \"Done thing\", status: \"completed\" }, { content: \"simple\", status: \"pending\" }]`.\n- A missing status means pending.\n- Common status synonyms map to the canonical statuses, case-insensitively — at least done / complete / finished → completed, doing / wip / active / in progress / in-progress → in_progress, todo / open / not started → pending.\n- When `content` is missing, a common synonym supplies it — at least `title`, `text`, `task`, `description`, `step`.\n- Common kind synonyms map to inspect / change / verify — at least review / read → inspect, edit / implement / fix → change, test / check → verify. An unknown kind is dropped instead of rejected.\n\nStill rejected, each with an error message that says why:\n- a missing, non-array or empty `items`;\n- an item with no usable content;\n- an item that looks like a read-back (an object that carries keys such as `done_when` or `reading` and no content): its error must contain the phrase \"read‑back shape\", spelled with a U+2011 NON-BREAKING HYPHEN between \"read\" and \"back\", not an ASCII hyphen — the existing test suite pins that exact character;\n- an item that is neither a string nor an object: its error must name the item's type, e.g. \"number\";\n- a status that is neither canonical nor a known synonym.\n\nKeep `createTodoWriteHandler` and the tool schema's name and metadata unchanged, and keep the existing tests for valid input passing.",
+  "f2p": [
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > accepts content synonym title",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > accepts item with status synonym 'done' as completed",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > accepts string shortcut items",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > adds missing status as pending",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > coerces string with completed checkbox",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > coerces string with dash prefix",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > coerces string with pending checkbox",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > drops unknown kind without error",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > execute normalises string shortcut to canonical shape",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > maps kind synonym to inspect",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > maps status synonyms to completed",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > maps status synonyms to in_progress",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > maps status synonyms to pending",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > rejects non‑object item like number",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > rejects read‑back shape with helpful message"
+  ],
+  "p2p": [
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > accepts a list with a single pending item",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > accepts items with all valid statuses",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > has correct schema name and metadata",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > rejects empty items array",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > rejects item with empty content string",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > rejects item with missing content",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > rejects missing items",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > rejects non-array items",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > result shape has exactly the items passed in",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > returns success with JSON result containing items"
+  ],
+  "impossible": [],
+  "typecheckPackages": ["packages/tool-registry"],
+  "typecheckBaseClean": {
+    "packages/tool-registry": true
+  },
+  "typecheckFixedClean": {
+    "packages/tool-registry": true
+  },
+  "timeLimit": "serious",
+  "hiddenFiles": ["tests/unit/tool-registry/todo-write.test.ts"],
+  "testFiles": ["tests/unit/tool-registry/todo-write.test.ts"],
+  "fixFiles": ["packages/tool-registry/src/tools/todo-write.ts"],
+  "mined": {
+    "at": "2026-09-28",
+    "bun": "1.3.14",
+    "baseWallMs": [23, 3284],
+    "fixedWallMs": [26, 25]
+  }
+}

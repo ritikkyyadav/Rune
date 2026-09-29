@@ -1,0 +1,53 @@
+{
+  "id": "f7-88758b3-missions-resume-race",
+  "sha": "88758b3dad82186752b71261b0ca62f083b2e0be",
+  "parent": "18dda21f330372cf75b14eb4396be4dd91c1cfa9",
+  "subject": "missions: one plan is resumed by one process, and a cancel holds",
+  "packages": ["orchestrator"],
+  "shape": "fix",
+  "family": "F7",
+  "prompt": "Headless missions can resume the same plan twice, and a cancel does not hold. The resume plans in rune.db (`ResumePlanStore`, packages/orchestrator/src/resume-store.ts) are read and then written back with no check that they are still what was read, so:\n\n1. A `-P` process waiting in memory for its plan's next attempt, and a scheduled `rune missions run` that finds the same plan due in rune.db, both resume the session: two processes continue one session and spend twice.\n2. `rune missions cancel <session>` while a `-P` process is waiting is overwritten when that process claims its in-memory copy, so a cancel never holds against a live process.\n3. A cancel issued while a run is in progress is undone by the save at the end of that run.\n4. Two `missions run` processes that list the same due plan both claim it.\n\nWhat should happen: whoever moves a stored plan first wins, and everyone else finds out they lost instead of overwriting it. The `-P` loop (`runWithResume` in packages/orchestrator/src/resume-loop.ts), on losing, adopts the plan as stored and stops; `missions run` skips a plan that was claimed or cancelled elsewhere. A cancelled plan stays cancelled. This must hold between processes sharing one rune.db, not only inside one process.\n\nKeep the existing exported APIs working, and keep the existing tests passing; tests that drive `runWithResume` with their own dependencies will supply the new members below.\n\nInterface the fix must provide:\n- `ResumePlanStore#transition(from: ResumePlan, to: ResumePlan, workspaceRoot: string, now?: number): boolean` — store `to` only if the stored plan still matches `from` (the same status at the same attempt count); otherwise write nothing and return false.\n- `ResumeLoopDeps.save(next: ResumePlan, prev: ResumePlan): boolean` replaces `save(plan)`: record `next` only if the stored plan is still `prev`; false when something else moved it first.\n- `ResumeLoopDeps.stored(sessionId: string): ResumePlan | null` — the plan as stored now, read when a save was refused.\n- `engineResumeDeps` (packages/orchestrator/src/bin/missions-cli.ts) provides both through the store.",
+  "interface": ["ResumePlanStore#transition", "ResumeLoopDeps.save", "ResumeLoopDeps.stored"],
+  "f2p": [
+    "tests/unit/orchestrator/resume-loop.test.ts :: a new process finds the plan the old one left waiting > claim, run, save: the restarted process continues the session and records the history",
+    "tests/unit/orchestrator/resume-loop.test.ts :: one plan, several processes > a -P loop that slept through another resume and its wall does not resume a stale plan",
+    "tests/unit/orchestrator/resume-loop.test.ts :: one plan, several processes > a cancel during a run is not undone when the run ends",
+    "tests/unit/orchestrator/resume-loop.test.ts :: one plan, several processes > a cancel while a -P loop waits holds",
+    "tests/unit/orchestrator/resume-loop.test.ts :: one plan, several processes > a waiting -P loop does not resume a plan a scheduled `missions run` claimed",
+    "tests/unit/orchestrator/resume-loop.test.ts :: one plan, several processes > two processes claim the same due plan: exactly one wins"
+  ],
+  "p2p": [
+    "tests/unit/orchestrator/resume-loop.test.ts :: a new process finds the plan the old one left waiting > due plans are this workspace's, soonest first; not-yet-due and finished ones are not",
+    "tests/unit/orchestrator/resume-loop.test.ts :: classifying how a headless run ended > carries the provider's window into the ending",
+    "tests/unit/orchestrator/resume-loop.test.ts :: classifying how a headless run ended > only a provider wall is resumable",
+    "tests/unit/orchestrator/resume-loop.test.ts :: the loop > a budget on an unpriced model is refused rather than run blind",
+    "tests/unit/orchestrator/resume-loop.test.ts :: the loop > a quota wall waits for the provider's window, then continues the session",
+    "tests/unit/orchestrator/resume-loop.test.ts :: the loop > a run that finishes is done, with no wait and no resume",
+    "tests/unit/orchestrator/resume-loop.test.ts :: the loop > a terminal plan runs nothing",
+    "tests/unit/orchestrator/resume-loop.test.ts :: the loop > every transition is saved, so a crash mid-wait leaves a plan to find",
+    "tests/unit/orchestrator/resume-loop.test.ts :: the opt-in flags > a duration or a time sets the deadline; nonsense and the past are refused in words",
+    "tests/unit/orchestrator/resume-loop.test.ts :: the opt-in flags > no --resume-until means no plan; a budget without a deadline is an error, not a no-op"
+  ],
+  "impossible": [],
+  "typecheckPackages": ["packages/orchestrator"],
+  "typecheckBaseClean": {
+    "packages/orchestrator": true
+  },
+  "typecheckFixedClean": {
+    "packages/orchestrator": true
+  },
+  "timeLimit": "serious",
+  "hiddenFiles": ["tests/unit/orchestrator/resume-loop.test.ts"],
+  "testFiles": ["tests/unit/orchestrator/resume-loop.test.ts"],
+  "fixFiles": [
+    "packages/orchestrator/src/bin/missions-cli.ts",
+    "packages/orchestrator/src/resume-loop.ts",
+    "packages/orchestrator/src/resume-store.ts"
+  ],
+  "mined": {
+    "at": "2026-09-28",
+    "bun": "1.3.14",
+    "baseWallMs": [76, 60],
+    "fixedWallMs": [52, 53]
+  }
+}

@@ -69,6 +69,19 @@ describe("what a fix introduces", () => {
     expect(literals).toEqual(["background shell outlived SIGKILL escalation"]);
   });
 
+  test("comment lines added without their opening /** open no string either", () => {
+    // A fix that adds lines INSIDE an existing doc comment: the `/**` is a
+    // context line, so the added run starts mid-comment and only the line's
+    // own leading `*` (or `//`) says it is prose.
+    const diff = [
+      "+++ b/packages/x/src/y.ts",
+      "+   * the manager's engine stops it — it's the engine's job, not a",
+      "+  // and the host's shells are the host's",
+      '+  const s = "a long enough literal";',
+    ].join("\n");
+    expect(addedNames(diff).literals).toEqual(["a long enough literal"]);
+  });
+
   test(`a literal needs ${MIN_LITERAL} characters`, () => {
     const at = (n: number) => addedNames(`+++ b/x.ts\n+const a = "${"x".repeat(n)}";`).literals;
     expect(at(MIN_LITERAL - 1)).toEqual([]);

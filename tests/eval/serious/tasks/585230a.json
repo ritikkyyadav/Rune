@@ -1,0 +1,45 @@
+{
+  "id": "f7-585230a-recursive-delete-breakers",
+  "sha": "585230a3b183ed49a826e7b8dc106b6f026278a0",
+  "parent": "049607c24e0008c81c32f1394fa55a84aeb86245",
+  "subject": "containment: recursive deletes are judged by what they reach, however they are spelled",
+  "packages": ["orchestrator"],
+  "shape": "fix",
+  "family": "F7",
+  "prompt": "Auto mode's mechanical breaker lets several destructive shell commands through with no screening at all. The breaker is `mechanicalBreaker` and the routing `routeContainment` in packages/orchestrator/src/auto-containment.ts; the risk rating is `assessActionRisk` in packages/orchestrator/src/auto-mode.ts. Each of these was reproduced through those three:\n\n1. Recursive deletion is recognised only when spelled as one flag cluster with `f` after `r` (`-rf`). `rm -fr ~/Documents`, `rm -r -f ~/Documents`, `rm --recursive --force ~/Documents`, `rm -r ~/Documents`, `rm -R ~/Documents` and `rm -vfr ~/Documents` are not seen as recursive deletes, so they run wherever the OS sandbox is not in the way (sandbox off, Windows).\n2. A delete that leaves the workspace without naming an outside path is not seen: `rm -rf ..`, `rm -rf ../`, `rm -rf ..; ls`, `cd .. && rm -rf sibling-project`, `cd ..; rm -rf sibling-project`, `pushd .. && rm -r sibling-project`, `cd / && rm -rf tmp`, `cd ../.. && rm -rf *`.\n3. Deleting the workspace itself or its history reads as ordinary cleanup: `rm -rf .`, `rm -rf ./`, `rm -rf *`, `rm -fr ./*`, `rm -rf -- *`, `rm -rf \"$(pwd)\"` (and `$(pwd)`, backquoted `pwd`, `$PWD`, `${PWD}`), `rm -rf \"$(git rev-parse --show-toplevel)\"`, the workspace's own absolute path, `rm -rf .git` or anything inside it, `rm -rf .*`, `find . -delete` (with or without filters such as `-type f`), and `cd .. && rm -rf <workspace-name>` (or `pushd ..`).\n4. A delete whose target only the shell can resolve runs on faith: `rm -rf $TARGET`, `rm -rf ${OUT_DIR}`, `rm -rf \"$BUILD/\"`, `rm -rf $(cat dirs.txt)`.\n5. Discarding uncommitted work is not screened — `git checkout -- .`, `git checkout .`, `git restore .` (also with `--source=…`), `git clean -f`, `-fd`, `-fdx`, `-fX`, `git stash clear`, `git stash drop` — although `git reset --hard`, the same class of loss, is already made recoverable by stashing first.\n\nWhat should happen: a delete is judged by what it would actually reach, resolving each operand the way the shell would and following `cd` / `pushd` from one command segment to the next.\n- A recursive delete, in any spelling, that reaches outside the workspace is the existing `recursive-delete-outside-workspace` breaker (halted as host destruction), exactly as `rm -rf ~/Documents` already is.\n- A recursive delete of the workspace root, of everything in it at once, or of its `.git` is a new breaker, `recursive-delete-of-workspace`, which `routeContainment` defers on the route `workspace-destruction`.\n- A recursive delete whose target cannot be resolved without running the shell (a variable, a command substitution, `xargs`) is a new breaker, `recursive-delete-unresolved-target`, deferred on the route `unresolved-delete-target` with an instruction asking for the target to be named as a literal path (the instruction must contain the words \"literal path\").\n- `git checkout -- .`, `git checkout .`, `git restore .`, `git clean -f` and `git clean -fd` are rated high and redirected to stash first, like `git reset --hard` (the substitute command starts with `git stash push -u -m gear-auto-safety && `). Discards a stash cannot bring back — `git clean -fdx`, `git clean -fX`, `git stash clear`, `git stash drop` — are rated high and deferred.\n- Build output stays ordinary: no breaker, no deferral, not rated high — `rm -rf ./build`, `rm -rf dist`, `rm -rf node_modules`, `rm -rf dist/*`, `rm -rf coverage .next`, a quoted path under the workspace (`rm -rf \"<workspace>/dist\"`), `rm -rf 'node_modules'`, `rm -rf src/generated`, `cd packages/web && rm -rf dist`, `find . -name '*.pyc' -delete`, `find build -delete`, `find . -empty -delete`, `rm -f package-lock.json`. A non-recursive delete (`rm -f build.log`), or a recursive listing after one (`rm -f notes.txt && ls -R src`), is not a recursive delete. Look-alike git stays ordinary too: `git checkout main`, `git checkout -b feature`, `git restore src/app.ts`, `git restore --staged .`, `git clean -n`, `git clean -fdxn`, `git stash`, `git stash pop`.\n\nThe existing breakers and routes keep their ids and behaviour. Keep the existing exported APIs working, and keep the existing tests passing.",
+  "f2p": [
+    "tests/unit/probes/t17-destructive-deletes.test.ts :: D1 — the parent directory is outside the workspace however it is reached > a bare `..`, and a relative delete after leaving the workspace",
+    "tests/unit/probes/t17-destructive-deletes.test.ts :: D2 — the workspace itself and its history are not build output > the root, every entry in it, and .git — by any spelling — are deferred",
+    "tests/unit/probes/t17-destructive-deletes.test.ts :: D3 — a delete Rune cannot resolve is not run on faith > a variable or command output as the target is deferred with an instruction",
+    "tests/unit/probes/t17-destructive-deletes.test.ts :: D4 — discarding uncommitted work keeps it retrievable, like a hard reset > rated high, not ordinary",
+    "tests/unit/probes/t17-destructive-deletes.test.ts :: D4 — discarding uncommitted work keeps it retrievable, like a hard reset > tracked and untracked discards stash first; ignored files and stashes are deferred",
+    "tests/unit/probes/t17-destructive-deletes.test.ts :: D5 — recursive deletion is recognised however its flag is spelled > every spelling of recursive, with or without force, reaching the home directory"
+  ],
+  "p2p": [
+    "tests/unit/probes/t17-destructive-deletes.test.ts :: D4 — discarding uncommitted work keeps it retrievable, like a hard reset > the ordinary git that looks similar stays ordinary",
+    "tests/unit/probes/t17-destructive-deletes.test.ts :: D5 — recursive deletion is recognised however its flag is spelled > a non-recursive delete, or a recursive listing after a delete, is not one",
+    "tests/unit/probes/t17-destructive-deletes.test.ts :: the negatives — build output is the job > ordinary cleanups name no breaker and are not deferred or halted"
+  ],
+  "impossible": [],
+  "typecheckPackages": ["packages/orchestrator"],
+  "typecheckBaseClean": {
+    "packages/orchestrator": true
+  },
+  "typecheckFixedClean": {
+    "packages/orchestrator": true
+  },
+  "timeLimit": "serious",
+  "hiddenFiles": ["tests/unit/probes/t17-destructive-deletes.test.ts"],
+  "testFiles": ["tests/unit/probes/t17-destructive-deletes.test.ts"],
+  "fixFiles": [
+    "packages/orchestrator/src/auto-containment.ts",
+    "packages/orchestrator/src/auto-mode.ts",
+    "packages/orchestrator/src/shell-safety.ts"
+  ],
+  "mined": {
+    "at": "2026-09-28",
+    "bun": "1.3.14",
+    "baseWallMs": [144, 114],
+    "fixedWallMs": [109, 105]
+  }
+}

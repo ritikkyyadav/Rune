@@ -1,0 +1,41 @@
+{
+  "id": "f7-4298d2c-meter-never-fails-request",
+  "sha": "4298d2c8438677a6875ed65df7fbb5af0c7463ca",
+  "parent": "21fdbc3b660cc5e3c5d3ab2db629ca487e320acb",
+  "subject": "fix(economics): the meter is never the reason a request fails",
+  "packages": ["orchestrator"],
+  "shape": "fix",
+  "family": "F7",
+  "prompt": "Measuring a request can kill the request. Before each completion the agent loop (packages/orchestrator/src/agent-loop.ts) measures the prompt's composition for the cost meter, and that measurement assumes the messages the context engine returned are an array. A context engine that hands back something else — a stub whose `buildPrompt` takes its arguments in a different order returns a string as `messages`, say — makes the measurement throw, and the turn dies with an error on a request that had nothing wrong with it.\n\nWhat should happen: the meter is never the reason a request fails. If the composition cannot be measured, the request still goes out (with its role, as usual) and simply carries no composition row — an absent composition already reads as \"not measured\" everywhere downstream. Do not substitute a made-up composition (for example an empty conversation), which would report a confident, false number. The turn completes without an error event.\n\n(The same mistake exists in the engine's helper-route resolution, which assumes the gateway implements its provider-health methods; a gateway without them should simply mean \"no cheaper helper route\" rather than a thrown error.)\n\nKeep the existing exported APIs working, and keep the existing tests passing.",
+  "f2p": [
+    "tests/unit/orchestrator/agent-loop-composition.test.ts :: the meter never breaks a request > a context engine that returns a non-array still sends the turn"
+  ],
+  "p2p": [
+    "tests/unit/orchestrator/agent-loop-composition.test.ts :: per-request composition > a delegated loop says so, and is still not governance",
+    "tests/unit/orchestrator/agent-loop-composition.test.ts :: per-request composition > every request carries a role and a composition",
+    "tests/unit/orchestrator/agent-loop-composition.test.ts :: per-request composition > the JIT doctrine's effect is visible in the doctrine bytes",
+    "tests/unit/orchestrator/agent-loop-composition.test.ts :: per-request composition > the doctrine's bytes are the system prompt's bytes",
+    "tests/unit/orchestrator/agent-loop-composition.test.ts :: per-request composition > the parts always sum to the total",
+    "tests/unit/orchestrator/agent-loop-composition.test.ts :: per-request composition > the plan ledger is attributed to itself, not to the conversation",
+    "tests/unit/orchestrator/agent-loop-composition.test.ts :: per-request composition > the tool surface is counted, and costs nothing when no tools are offered",
+    "tests/unit/orchestrator/agent-loop-composition.test.ts :: per-request composition > the turn-budget notice is task state, not conversation"
+  ],
+  "impossible": [],
+  "typecheckPackages": ["packages/orchestrator"],
+  "typecheckBaseClean": {
+    "packages/orchestrator": true
+  },
+  "typecheckFixedClean": {
+    "packages/orchestrator": true
+  },
+  "timeLimit": "serious",
+  "hiddenFiles": ["tests/unit/orchestrator/agent-loop-composition.test.ts"],
+  "testFiles": ["tests/unit/orchestrator/agent-loop-composition.test.ts"],
+  "fixFiles": ["packages/orchestrator/src/agent-loop.ts", "packages/orchestrator/src/engine.ts"],
+  "mined": {
+    "at": "2026-09-28",
+    "bun": "1.3.14",
+    "baseWallMs": [234, 198],
+    "fixedWallMs": [245, 246]
+  }
+}

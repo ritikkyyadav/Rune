@@ -1,0 +1,45 @@
+{
+  "id": "f7-57c0b9c-spine-writes-one-predicate",
+  "sha": "57c0b9c24571178a9df10291f84d492e0c823d53",
+  "parent": "7d6fc6af3c6f15a1346876771b37a7e80603641e",
+  "subject": "harness: what a call wrote comes from one predicate, apply_patch included",
+  "packages": ["orchestrator"],
+  "shape": "refactor",
+  "family": "F7",
+  "prompt": "A step whose writes came from `apply_patch` records no touched file on the task-state spine, so any unrelated check can close it. The agent loop (packages/orchestrator/src/agent-loop.ts) records a successful write as the call's `path` argument, but `apply_patch` has no `path` argument: it takes a `patch` and reports the files it changed in its RESULT (e.g. `{ \"files\": [{ \"path\": \"src/csv.ts\", \"action\": \"updated\" }] }`). Nothing is recorded, relatedness has no files to compare against, and the rule that an unrelated check cannot close a step stands down for exactly the tool that edits the most.\n\nThe codebase already has one definition of what a tool call wrote — `filesChangedFrom` in packages/orchestrator/src/lifecycle.ts, which the headless envelope, the auto-commit scope and the TUI read — and the spine does not use it. Two more places answer the same question privately: the TUI footer calls the predicate without the tool's result, so patched files are missing from the session's edited-files readout, and the retro's write counter keeps its own list of write tools and misses files a worker wrote.\n\nWhat should happen: the spine, the TUI footer and the retro's counter take what a call wrote from that one definition.\n- After an `apply_patch` that updated `src/csv.ts`, the task store's `writtenFiles` includes `src/csv.ts`, and an unrelated check (e.g. `bun test tests/unit/other.test.ts`) is set aside rather than closing the step — the step is marked unproven for lack of evidence, exactly as it is after a `write_file`.\n- For a worker, what the child reports it actually changed (`structured.filesChanged`) wins over what it declared, and a worker whose branch was retained wrote nothing into this tree.\n- A write-category tool the predicate does not know (a plugin or MCP tool) keeps its declared `path`.\n- Where only the call is known and not its result, an `apply_patch` is read from the patch's own file headers rather than answering \"nothing changed\".\n\nKeep the existing exported APIs working, and keep the existing tests passing.",
+  "f2p": [
+    "tests/unit/orchestrator/agent-loop-spine-writes.test.ts :: what the spine records a step as having TOUCHED > apply_patch records what it touched, so an unrelated check cannot close the step"
+  ],
+  "p2p": [
+    "tests/unit/orchestrator/agent-loop-spine-writes.test.ts :: a settled plan cannot waive evidence for a LATER write > a apply_patch after closure re-arms the finish gates",
+    "tests/unit/orchestrator/agent-loop-spine-writes.test.ts :: a settled plan cannot waive evidence for a LATER write > a check whose failure is MASKED by the shell leaves the waiver standing",
+    "tests/unit/orchestrator/agent-loop-spine-writes.test.ts :: a settled plan cannot waive evidence for a LATER write > a multi_edit after closure re-arms the finish gates",
+    "tests/unit/orchestrator/agent-loop-spine-writes.test.ts :: a settled plan cannot waive evidence for a LATER write > a plan whose only step is REPORT-shaped still waives the gate — pinned, not endorsed",
+    "tests/unit/orchestrator/agent-loop-spine-writes.test.ts :: a settled plan cannot waive evidence for a LATER write > a worker after closure re-arms the finish gates",
+    "tests/unit/orchestrator/agent-loop-spine-writes.test.ts :: a settled plan cannot waive evidence for a LATER write > no later write: the waiver legitimately stands",
+    "tests/unit/orchestrator/agent-loop-spine-writes.test.ts :: what the spine records a step as having TOUCHED > a check that runs NOTHING cannot close a step it never exercised",
+    "tests/unit/orchestrator/agent-loop-spine-writes.test.ts :: what the spine records a step as having TOUCHED > write_file: an unrelated check is set aside, as A2 claims"
+  ],
+  "impossible": [],
+  "typecheckPackages": ["packages/orchestrator"],
+  "typecheckBaseClean": {
+    "packages/orchestrator": true
+  },
+  "typecheckFixedClean": {
+    "packages/orchestrator": true
+  },
+  "timeLimit": "serious",
+  "hiddenFiles": ["tests/unit/orchestrator/agent-loop-spine-writes.test.ts"],
+  "testFiles": ["tests/unit/orchestrator/agent-loop-spine-writes.test.ts"],
+  "fixFiles": [
+    "packages/orchestrator/src/agent-loop.ts",
+    "packages/orchestrator/src/bin/ui/tui.ts",
+    "packages/orchestrator/src/retro.ts"
+  ],
+  "mined": {
+    "at": "2026-09-28",
+    "bun": "1.3.14",
+    "baseWallMs": [196, 195],
+    "fixedWallMs": [194, 203]
+  }
+}

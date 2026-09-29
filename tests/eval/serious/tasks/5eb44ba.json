@@ -1,0 +1,46 @@
+{
+  "id": "f7-5eb44ba-host-frame-writer",
+  "sha": "5eb44baf02e5914edb59edb29828c3c879976113",
+  "parent": "99551c93d1ae3718fd4c8a7c5a27aee23b79b817",
+  "subject": "feat(protocol,engine-host): P9.4 read the workspace, and stop truncating big answers",
+  "packages": ["orchestrator", "protocol"],
+  "shape": "fix",
+  "family": "F7",
+  "prompt": "The engine host truncates every response larger than the socket's buffer. Bun's socket `write` returns how many BYTES it accepted and queues nothing; the engine host (packages/orchestrator/src/bin/engine-host.ts) ignores that number. Every response bigger than the kernel buffer — `get_turn_context` carries the whole assembled system prompt, tens of kilobytes — goes out cut off mid-JSON, and the client waits until its request timeout for the end of a line that never arrives. Because the frames on one socket are handled in order, the first oversized response also wedges every later request on that connection.\n\nWhat should happen:\n- Every newline-delimited frame the host writes arrives whole and in order, however little each `write` accepts. Whatever a write does not accept is kept and sent when the socket drains, and a frame written while an earlier one is still queued goes out after it.\n- The queue holds BYTES, not characters: `write` counts UTF-8 bytes, and resuming a string at a byte offset would split a multi-byte character.\n- A socket whose `write` throws (the client went away) has its queue dropped instead of being retried forever. A socket that closes or errors has its queue forgotten. A `write` that returns something other than a number is taken to have accepted everything.\n- The writer lives in its own module with no side effects, so it can be tested without starting an engine, and the host uses it for all of its socket writes, flushing on `drain`.\n\nThe wire format (newline-delimited JSON) does not change. Keep the existing exported APIs working, and keep the existing tests passing.\n\nInterface the fix must provide — a new module `packages/orchestrator/src/bin/host-framing.ts` that exports:\n- `interface FramedSocket { write(data: string | Uint8Array): number }` — the part of a socket the writer needs.\n- `class FrameWriter` with `write(socket: FramedSocket, text: string): void` (send one frame, queueing whatever the socket does not accept), `flush(socket: FramedSocket): void` (send what is queued; writes nothing when nothing is queued), `backlog(socket: FramedSocket): number` (bytes still queued; 0 when caught up) and `forget(socket: FramedSocket): void` (drop that socket's queue).",
+  "interface": ["packages/orchestrator/src/bin/host-framing.ts", "FrameWriter", "FramedSocket"],
+  "f2p": [
+    "tests/unit/web/host-framing.test.ts :: frames that do not fit > are not truncated — the remainder is queued, not dropped",
+    "tests/unit/web/host-framing.test.ts :: frames that do not fit > keep their order when a second frame arrives mid-flush",
+    "tests/unit/web/host-framing.test.ts :: frames that do not fit > never split a multi-byte character",
+    "tests/unit/web/host-framing.test.ts :: frames that fit > go out in one piece and leave nothing queued",
+    "tests/unit/web/host-framing.test.ts :: sockets that go away > a throwing write drops the queue instead of retrying forever",
+    "tests/unit/web/host-framing.test.ts :: sockets that go away > a write that reports something other than a byte count is taken at its word",
+    "tests/unit/web/host-framing.test.ts :: sockets that go away > flushing a socket with nothing queued writes nothing",
+    "tests/unit/web/host-framing.test.ts :: sockets that go away > forget clears a closed socket's backlog"
+  ],
+  "p2p": [],
+  "impossible": [],
+  "typecheckPackages": ["packages/orchestrator", "packages/protocol"],
+  "typecheckBaseClean": {
+    "packages/orchestrator": true,
+    "packages/protocol": true
+  },
+  "typecheckFixedClean": {
+    "packages/orchestrator": true,
+    "packages/protocol": true
+  },
+  "timeLimit": "serious",
+  "hiddenFiles": ["tests/unit/web/host-framing.test.ts"],
+  "testFiles": ["tests/unit/web/host-framing.test.ts"],
+  "fixFiles": [
+    "packages/orchestrator/src/bin/engine-host.ts",
+    "packages/orchestrator/src/bin/host-framing.ts",
+    "packages/protocol/src/commands.ts"
+  ],
+  "mined": {
+    "at": "2026-09-28",
+    "bun": "1.3.14",
+    "baseWallMs": [33, 17],
+    "fixedWallMs": [38, 39]
+  }
+}

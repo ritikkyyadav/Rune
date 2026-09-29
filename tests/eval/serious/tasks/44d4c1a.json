@@ -1,0 +1,49 @@
+{
+  "id": "f7-44d4c1a-header-version-session",
+  "sha": "44d4c1a76bbadd049683d19b0880605a8c77625d",
+  "parent": "74ee8b90dcb92a86ffe192e2d56d0d3debdd8fb2",
+  "subject": "header: the product version and the session's tail, not the build marker",
+  "packages": ["orchestrator"],
+  "shape": "feature",
+  "family": "F7",
+  "prompt": "The pinned header shows the build marker, and nothing that identifies the session. It reads `v0.1.1-dev+6b9afcf`: that marker is for `--version`, `rune doctor` and the install guard, which compare builds, but the header names the product a person is using, so it should read `v0.1.1`. And there is no way to find the chat again from the frame.\n\nWhat should happen:\n- The header's version drops a `-dev` or `-dev+<sha>` suffix and keeps any other version as it is (`0.2.0-rc.1` stays `0.2.0-rc.1`), and `versionTag` renders the same thing (`v0.1.1`, not `v0.1.1-dev+6b9afcf`).\n- When the header is given the session id, it shows the id's LAST eight characters — the random part of a UUIDv7; the first eight are a timestamp that sessions opened in the same minute share — beside the version, before it, and never the id's first eight characters.\n- A person can use that tail to find the session: resolving a spelling of a session id tries the exact id first, then an id that starts with it, then (for four or more characters) an id that ends with it. A leading elision glyph (\"…\") copied from the header is ignored. An empty or unmatched spelling resolves to nothing, and when several sessions match, the first one listed wins. `rune resume`, `/resume`, `/sessions` and `rune list` should accept and show the same tail.\n\nKeep the existing exported APIs working, and keep the existing tests passing.\n\nInterface the fix must provide:\n- `displayVersion(version: string): string`, exported from packages/orchestrator/src/bin/ui/brand.ts.\n- `sessionTail(id: string): string` (the last eight characters), exported from packages/orchestrator/src/bin/ui/flow.ts, and an optional `session?: string` field on the options `header()` takes (`FlowHeader`).\n- A new module `packages/orchestrator/src/session-idish.ts` exporting `matchSessionIdish<T extends { id: string }>(sessions: readonly T[], idish: string): T | undefined`.",
+  "interface": [
+    "displayVersion",
+    "sessionTail",
+    "FlowHeader.session",
+    "packages/orchestrator/src/session-idish.ts",
+    "matchSessionIdish"
+  ],
+  "f2p": [
+    "tests/unit/orchestrator/ui-header-version-session.test.ts :: the header carries the session's tail > that tail resolves the session, as does the head or the whole id",
+    "tests/unit/orchestrator/ui-header-version-session.test.ts :: the header carries the session's tail > the last eight characters, elided, sit beside the version",
+    "tests/unit/orchestrator/ui-header-version-session.test.ts :: the header's version is the product number, not the build marker > displayVersion drops -dev and -dev+sha, keeps a release number",
+    "tests/unit/orchestrator/ui-header-version-session.test.ts :: the header's version is the product number, not the build marker > the pinned header reads v0.1.1 for a dev build"
+  ],
+  "p2p": [],
+  "impossible": [],
+  "typecheckPackages": ["packages/orchestrator"],
+  "typecheckBaseClean": {
+    "packages/orchestrator": true
+  },
+  "typecheckFixedClean": {
+    "packages/orchestrator": true
+  },
+  "timeLimit": "serious",
+  "hiddenFiles": ["tests/unit/orchestrator/ui-header-version-session.test.ts"],
+  "testFiles": ["tests/unit/orchestrator/ui-header-version-session.test.ts"],
+  "fixFiles": [
+    "packages/orchestrator/src/bin/rune-cli.ts",
+    "packages/orchestrator/src/bin/ui/banner.ts",
+    "packages/orchestrator/src/bin/ui/brand.ts",
+    "packages/orchestrator/src/bin/ui/flow.ts",
+    "packages/orchestrator/src/bin/ui/tui.ts",
+    "packages/orchestrator/src/session-idish.ts"
+  ],
+  "mined": {
+    "at": "2026-09-28",
+    "bun": "1.3.14",
+    "baseWallMs": [29, 24],
+    "fixedWallMs": [52, 50]
+  }
+}

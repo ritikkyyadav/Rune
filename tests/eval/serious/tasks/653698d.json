@@ -1,0 +1,39 @@
+{
+  "id": "f7-653698d-toml-config",
+  "sha": "653698dfbf36fef0ad629c2e5c9c416e7cfaa014",
+  "parent": "16ac7b134eb9faed16be2aa5019596622a398bec",
+  "subject": "config: config.toml is read as TOML, and a list written over several lines is kept",
+  "packages": ["shared"],
+  "shape": "fix",
+  "family": "F7",
+  "prompt": "`config.toml` is read by a line-at-a-time reader that only understands part of TOML, so valid files written the way people write TOML lose settings without any warning:\n\n- A list written over several lines is dropped. For example\n  ```\n  [permissions.autoMode]\n  denyRules = [\n    \"Bash(npm publish*)\",\n    \"Bash(git push*)\",\n  ]\n  ```\n  loads as if `denyRules` were not set.\n- A `#` inside a quoted value cuts the value: `endpoint = \"http://localhost:8080/#/ingest\" # local collector` under `[telemetry]` loads as `http://localhost:8080/`.\n- A comma inside a quoted list item splits the item: `allow = [\"Bash(git commit -m 'a, b')\", \"Read\"]` does not load as those two entries.\n- Escape sequences are not decoded, so a Windows path that Rune itself writes with `setConfigValue` (for example `engine.logDir = C:\\Users\\me\\rune-logs`) reads back with its backslashes doubled.\n\nWriting has a matching problem. `setConfigValue` replaces only the first line of a key's value, so setting a key whose current value is a list written over several lines (as `/sandbox` does for `sandbox.excludedCommands`) leaves the rest of the old list behind and the file is no longer valid TOML.\n\nWhat should happen:\n- `loadConfig` reads the global and project `config.toml` as real TOML: lists over several lines, `#` inside strings, commas inside quoted items and escape sequences all behave as TOML defines them.\n- `setConfigValue` replaces the whole of a value that spans several lines, the file stays valid TOML afterwards, and the returned `previousRaw` carries the old value in full. A value that never closes (an unterminated list followed by another section) must not make the writer delete the lines that follow it.\n- A file that a TOML parser refuses (for example one with a duplicate key) still applies every setting it can, as it does today, and now prints a warning with `console.warn` that names the file's path and says the file is \"not valid TOML\".\n\nKeep the existing exported APIs working, and keep the existing tests passing. The code is in packages/shared/src/config.ts.",
+  "f2p": [
+    "tests/unit/shared/config-toml.test.ts :: config.toml is read as TOML > a # inside a quoted value belongs to the value",
+    "tests/unit/shared/config-toml.test.ts :: config.toml is read as TOML > a comma inside a quoted list item stays in the item",
+    "tests/unit/shared/config-toml.test.ts :: config.toml is read as TOML > a file the parser refuses still applies what it can, and says so",
+    "tests/unit/shared/config-toml.test.ts :: config.toml is read as TOML > a list written over several lines is read whole",
+    "tests/unit/shared/config-toml.test.ts :: config.toml is read as TOML > a path Rune writes reads back as it was written",
+    "tests/unit/shared/config-toml.test.ts :: config.toml is read as TOML > replacing a list written over several lines replaces all of it"
+  ],
+  "p2p": [
+    "tests/unit/shared/config-toml.test.ts :: config.toml is read as TOML > a list that never closes does not license deleting what follows it"
+  ],
+  "impossible": [],
+  "typecheckPackages": ["packages/shared"],
+  "typecheckBaseClean": {
+    "packages/shared": true
+  },
+  "typecheckFixedClean": {
+    "packages/shared": true
+  },
+  "timeLimit": "serious",
+  "hiddenFiles": ["tests/unit/shared/config-toml.test.ts"],
+  "testFiles": ["tests/unit/shared/config-toml.test.ts"],
+  "fixFiles": ["packages/shared/src/config.ts"],
+  "mined": {
+    "at": "2026-09-28",
+    "bun": "1.3.14",
+    "baseWallMs": [45, 26],
+    "fixedWallMs": [33, 37]
+  }
+}

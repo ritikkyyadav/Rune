@@ -1,0 +1,58 @@
+{
+  "id": "f7-865950a-fixed-overhead-first-last",
+  "sha": "865950a2ab3dfcdc684793422a76862db8707beb",
+  "parent": "e94a6b9ebd93b7d302da6d0be5997bd3cf3a6a52",
+  "subject": "feat(cost): the meter says which way the fixed overhead moved",
+  "packages": ["llm-gateway", "orchestrator"],
+  "shape": "feature",
+  "family": "F7",
+  "prompt": "The run-economics composition row (`summarizeRunEconomics` in packages/llm-gateway/src/run-economics.ts, printed by `rune cost` and `/cost`) reports only averages over every measured completion. Now that the opening doctrine is sent only at the start of a run, the average describes no request that was ever sent: the opening completion carries more doctrine than the ones after it, and the tool-schema share grows as catalogued tools are loaded mid-run. Nobody can tell from the report which way the fixed overhead moved.\n\nCarry the fixed overhead — doctrine plus tool schemas — of the FIRST measured completion and of the LAST one in the composition economics, and show the pair in the cost report (packages/orchestrator/src/cost-report.ts) when they differ, e.g. `62.4KB → 56.0KB`, with a note saying whether the last call carried less or more than the first.\n\nRules:\n- Only completions that carry a composition count. A governance call (a classifier, say) measures nothing and must never be taken for the first or the last measured call.\n- With a single measured completion, both ends are the same value.\n\nKeep the existing exported APIs working, and keep the existing tests passing; the existing fields keep their meaning.\n\nInterface the fix must provide:\n- `CompositionEconomics.fixedFirst: number` and `CompositionEconomics.fixedLast: number` — bytes of doctrine plus tool schemas on the first and on the last measured completion.",
+  "interface": ["CompositionEconomics.fixedFirst", "CompositionEconomics.fixedLast"],
+  "f2p": [
+    "tests/unit/gateway/run-economics.test.ts :: summarizeRunEconomics > one measured completion reports the same value at both ends",
+    "tests/unit/gateway/run-economics.test.ts :: summarizeRunEconomics > the fixed overhead is reported first-to-last, not as an average"
+  ],
+  "p2p": [
+    "tests/unit/gateway/run-economics.test.ts :: CostTracker attribution > a caller that says nothing leaves both fields absent, not zeroed",
+    "tests/unit/gateway/run-economics.test.ts :: CostTracker attribution > role and composition ride onto the recorded entry",
+    "tests/unit/gateway/run-economics.test.ts :: completionsByProvider > counts calls and their governance share per provider",
+    "tests/unit/gateway/run-economics.test.ts :: governance roles > an absent role is NOT governance — pre-P12.1 rows are the work",
+    "tests/unit/gateway/run-economics.test.ts :: governance roles > the six overhead roles are governance; work roles are not",
+    "tests/unit/gateway/run-economics.test.ts :: prompt composition > a message counts tool arguments and tool results, not just prose",
+    "tests/unit/gateway/run-economics.test.ts :: prompt composition > no plan ledger and no tools cost nothing",
+    "tests/unit/gateway/run-economics.test.ts :: prompt composition > shares are null for an empty prompt and sum to one otherwise",
+    "tests/unit/gateway/run-economics.test.ts :: prompt composition > the five parts sum to the total",
+    "tests/unit/gateway/run-economics.test.ts :: prompt composition > utf8 bytes, not characters",
+    "tests/unit/gateway/run-economics.test.ts :: summarizeRunEconomics > a row with no role counts as the work",
+    "tests/unit/gateway/run-economics.test.ts :: summarizeRunEconomics > an empty ledger reports null shares rather than inventing zeros",
+    "tests/unit/gateway/run-economics.test.ts :: summarizeRunEconomics > an unpriced model is named so the list estimate is not read as complete",
+    "tests/unit/gateway/run-economics.test.ts :: summarizeRunEconomics > cache read ratio is null for no data, never zero",
+    "tests/unit/gateway/run-economics.test.ts :: summarizeRunEconomics > composition folds only over the calls that measured one",
+    "tests/unit/gateway/run-economics.test.ts :: summarizeRunEconomics > fresh tokens per completion is reported overall and for governance alone",
+    "tests/unit/gateway/run-economics.test.ts :: summarizeRunEconomics > governance list cost is attributed separately from the total",
+    "tests/unit/gateway/run-economics.test.ts :: summarizeRunEconomics > splits completions work vs governance and names each role"
+  ],
+  "impossible": [],
+  "typecheckPackages": ["packages/llm-gateway", "packages/orchestrator"],
+  "typecheckBaseClean": {
+    "packages/llm-gateway": true,
+    "packages/orchestrator": true
+  },
+  "typecheckFixedClean": {
+    "packages/llm-gateway": true,
+    "packages/orchestrator": true
+  },
+  "timeLimit": "serious",
+  "hiddenFiles": ["tests/unit/gateway/run-economics.test.ts"],
+  "testFiles": ["tests/unit/gateway/run-economics.test.ts"],
+  "fixFiles": [
+    "packages/llm-gateway/src/run-economics.ts",
+    "packages/orchestrator/src/cost-report.ts"
+  ],
+  "mined": {
+    "at": "2026-09-28",
+    "bun": "1.3.14",
+    "baseWallMs": [67, 58],
+    "fixedWallMs": [124, 98]
+  }
+}

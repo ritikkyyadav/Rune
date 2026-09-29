@@ -1,0 +1,39 @@
+{
+  "id": "f7-08d9beb-windows-path-candidates",
+  "sha": "08d9beb150c9c94d0df058f9366281e4074f85cd",
+  "parent": "23a0d3a9bd0472e3f56468827581ba1188165c55",
+  "subject": "containment: Windows drive and UNC paths are paths",
+  "packages": ["orchestrator"],
+  "shape": "fix",
+  "family": "F7",
+  "prompt": "On Windows the `bash` tool runs through Git Bash, whose `rm` deletes `\"C:\\Users\\<name>\\Documents\"` exactly as written, and there is no OS sandbox underneath. Auto mode's containment checks never see such a path: the path-candidate matcher (`pathCandidateRe(platform)` in packages/orchestrator/src/auto-containment.ts) finds nothing Windows-shaped even when asked for `\"win32\"`. On a Windows CI run, a recursive delete of the home's Documents and writes into `.rune/config.toml` and `.rune/memory/entries`, all named with drive paths, went uncaught.\n\nWhat should happen: `pathCandidateRe(\"win32\")` also yields Windows absolute paths as candidates:\n- drive paths with either separator, quoted or bare: `C:\\Users\\runneradmin\\Documents`, `C:/Users/runneradmin/Documents`, mixed `C:\\Users\\runneradmin/.rune/config.toml`, a lower-case drive (`d:\\build`) and a bare drive root (`C:\\`);\n- UNC paths: `\\\\server\\share\\dir`.\nA candidate ends where the shell would split the word — whitespace, a quote, a backtick, or a shell operator — so `rm -rf C:\\tmp\\x && echo done`, `type C:\\a\\b.txt|more` and `rm -rf C:\\tmp\\x;ls` yield `C:\\tmp\\x` and `C:\\a\\b.txt`. Nothing Windows-shaped may come out of a URL, a time, or a key:value (`https://example.com/a`, `12:30`, `--format=%H:%s`, `a:b`, `-v data:/data`); a drive-relative `C:x` is not a path.\n\nOn macOS and Linux nothing changes: the matcher there must stay byte-for-byte the same (`C:\\x` is a relative filename on POSIX). Keep the existing exported APIs working, and keep the existing tests passing.",
+  "f2p": [
+    "tests/unit/orchestrator/auto-containment-windows-paths.test.ts :: the win32 matcher reads Windows absolute paths > a UNC path",
+    "tests/unit/orchestrator/auto-containment-windows-paths.test.ts :: the win32 matcher reads Windows absolute paths > a candidate stops where the shell would split it",
+    "tests/unit/orchestrator/auto-containment-windows-paths.test.ts :: the win32 matcher reads Windows absolute paths > a drive path with either separator, quoted or bare",
+    "tests/unit/orchestrator/auto-containment-windows-paths.test.ts :: the win32 matcher reads Windows absolute paths > a lower-case drive, and a bare drive root",
+    "tests/unit/orchestrator/auto-containment-windows-paths.test.ts :: the win32 matcher reads Windows absolute paths > the three spellings the Windows CI run failed on"
+  ],
+  "p2p": [
+    "tests/unit/orchestrator/auto-containment-windows-paths.test.ts :: POSIX is untouched > the matcher adds nothing where C:\\x is a relative filename",
+    "tests/unit/orchestrator/auto-containment-windows-paths.test.ts :: the win32 matcher reads Windows absolute paths > nothing Windows-shaped comes out of a URL, a time, or a key:value"
+  ],
+  "impossible": [],
+  "typecheckPackages": ["packages/orchestrator"],
+  "typecheckBaseClean": {
+    "packages/orchestrator": true
+  },
+  "typecheckFixedClean": {
+    "packages/orchestrator": true
+  },
+  "timeLimit": "serious",
+  "hiddenFiles": ["tests/unit/orchestrator/auto-containment-windows-paths.test.ts"],
+  "testFiles": ["tests/unit/orchestrator/auto-containment-windows-paths.test.ts"],
+  "fixFiles": ["packages/orchestrator/src/auto-containment.ts"],
+  "mined": {
+    "at": "2026-09-28",
+    "bun": "1.3.14",
+    "baseWallMs": [21, 28],
+    "fixedWallMs": [25, 28]
+  }
+}

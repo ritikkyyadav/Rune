@@ -1,0 +1,88 @@
+{
+  "id": "f7-f2bb82e-codex-reasoning-effort",
+  "sha": "f2bb82e42e8ccf47bc25b34d7797c76675f57ad3",
+  "parent": "d7b446cbdcb96436a866042c1b11f59c806ee5b5",
+  "subject": "feat(effort): reach the reasoning dial that was never being sent",
+  "packages": ["llm-gateway", "orchestrator", "shared"],
+  "shape": "fix",
+  "family": "F7",
+  "prompt": "Codex (ChatGPT-subscription) sessions always run at the server's default reasoning depth. `toResponsesBody` (packages/llm-gateway/src/providers/codex.ts) sends `reasoning: { summary: \"auto\" }` and never sends `reasoning.effort`, on the belief that the backend rejects the field. It does not. Measured against the live backend, gpt-5.6-sol accepts `effort` values low, medium, high, xhigh and max; the backend only rejects a value the particular model does not support (gpt-5.6-sol rejects \"minimal\") — with a 400 for the whole request. Because the field is never sent, a caller's `thinking.effort` is ignored and the deepest settings are unreachable.\n\nWhat should happen:\n- Whenever the body carries a `reasoning` item it carries `effort` too, beside the existing `summary: \"auto\"`. With no effort requested, the effort is \"high\" rather than the server's choice.\n- A requested effort is honoured, including \"xhigh\", \"max\" and \"none\", except that a value the model does not accept is clamped to its nearest supported neighbour instead of being sent as-is: on the gpt-5.6 line, \"minimal\" is sent as \"low\".\n- With thinking explicitly disabled (`thinking: { enabled: false }`), the body still carries no reasoning item at all.\n- Nothing else in the body changes.\n\nKeep the existing exported APIs working, and keep the existing tests passing; assertions that pinned the old `reasoning: { summary: \"auto\" }` shape now expect the effort beside it.\n\nInterface the fix must provide:\n- `codexEffortFor(model: string, thinking?: { enabled: boolean; effort?: string }): string`, exported from packages/llm-gateway/src/providers/codex.ts — the effort to send for that model: \"none\" when thinking is explicitly disabled, otherwise the requested effort (default \"high\"), clamped as described above.",
+  "interface": ["codexEffortFor"],
+  "f2p": [
+    "tests/unit/gateway/classifier-params.test.ts :: Anthropic / Codex fast-classifier params > Codex omits the reasoning item when thinking is disabled",
+    "tests/unit/gateway/codex-reasoning-effort.test.ts :: codex reasoning.effort > a value the MODEL rejects is clamped, never sent as-is",
+    "tests/unit/gateway/codex-reasoning-effort.test.ts :: codex reasoning.effort > an unspecified effort defaults to high, not to the server's choice",
+    "tests/unit/gateway/codex-reasoning-effort.test.ts :: codex reasoning.effort > the caller's choice is honoured, including the values Gear could not reach",
+    "tests/unit/gateway/codex-reasoning-effort.test.ts :: codex reasoning.effort > the field is sent at all — it never used to be",
+    "tests/unit/gateway/codex-reasoning-effort.test.ts :: codex reasoning.effort > the rest of the body is unchanged — this was a one-field fix",
+    "tests/unit/gateway/codex-reasoning-effort.test.ts :: codex reasoning.effort > thinking explicitly off asks for none, not for the default",
+    "tests/unit/gateway/codex.test.ts :: toResponsesInput / toResponsesBody > puts the system prompt in instructions and sets reasoning for a codex model"
+  ],
+  "p2p": [
+    "tests/unit/gateway/classifier-params.test.ts :: Anthropic / Codex fast-classifier params > Anthropic sends no thinking block when thinking is disabled",
+    "tests/unit/gateway/classifier-params.test.ts :: Gemini fast-classifier params > models without a thinking dial get no thinkingConfig at all",
+    "tests/unit/gateway/classifier-params.test.ts :: Gemini fast-classifier params > the generateContent body carries thinkingConfig inside generationConfig",
+    "tests/unit/gateway/classifier-params.test.ts :: Gemini fast-classifier params > thinking disabled → thinkingBudget 0 on 2.5 Flash, 128 floor on 2.5 Pro, low level on 3.x",
+    "tests/unit/gateway/classifier-params.test.ts :: Ollama fast-classifier params > thinking disabled → top-level think:false with num_predict budget",
+    "tests/unit/gateway/classifier-params.test.ts :: Ollama fast-classifier params > without the flag no think field is sent (model default)",
+    "tests/unit/gateway/classifier-params.test.ts :: OpenAI fast-classifier params > OpenAI-compatible hosts keep classic params and never send reasoning_effort",
+    "tests/unit/gateway/classifier-params.test.ts :: OpenAI fast-classifier params > gpt-5 family with thinking disabled sends reasoning_effort minimal + max_completion_tokens",
+    "tests/unit/gateway/classifier-params.test.ts :: OpenAI fast-classifier params > gpt-5.x point releases use 'none', codex and o-series fall back to 'low'",
+    "tests/unit/gateway/classifier-params.test.ts :: OpenAI fast-classifier params > thinking enabled keeps the caller's effort (default high)",
+    "tests/unit/gateway/codex.test.ts :: codex id_token parsing > decodes a JWT payload",
+    "tests/unit/gateway/codex.test.ts :: codex id_token parsing > extracts the ChatGPT account id from the OpenAI auth claim",
+    "tests/unit/gateway/codex.test.ts :: codex id_token parsing > returns undefined for a token without the account claim",
+    "tests/unit/gateway/codex.test.ts :: codexErrorMessage > falls back to the raw body when it isn't JSON",
+    "tests/unit/gateway/codex.test.ts :: codexErrorMessage > unwraps an {error:{message}} body too",
+    "tests/unit/gateway/codex.test.ts :: codexErrorMessage > unwraps {detail} onto a single line (survives first-line truncation)",
+    "tests/unit/gateway/codex.test.ts :: codexOAuthFlow > exchanges a code for a bearer and captures the account id from the id_token",
+    "tests/unit/gateway/codex.test.ts :: codexOAuthFlow > throws with the HTTP status on a failed exchange",
+    "tests/unit/gateway/codex.test.ts :: codexOAuthFlow > uses a fixed loopback (:1455/auth/callback) and Codex authorize params",
+    "tests/unit/gateway/codex.test.ts :: parseResponsesStream > emits reasoning as thinking_delta and never as answer text",
+    "tests/unit/gateway/codex.test.ts :: parseResponsesStream > round-trips a reasoning item as a codex-tagged redacted_thinking block",
+    "tests/unit/gateway/codex.test.ts :: parseResponsesStream > stops a plain (no-tool) completion as end_turn",
+    "tests/unit/gateway/codex.test.ts :: parseResponsesStream > stops a truncated response as max_tokens",
+    "tests/unit/gateway/codex.test.ts :: parseResponsesStream > throws an ApiError when the stream reports a failure",
+    "tests/unit/gateway/codex.test.ts :: parseResponsesStream > translates a text + tool-call + completion stream into Gear events",
+    "tests/unit/gateway/codex.test.ts :: toResponsesInput / toResponsesBody > maps messages to Responses input items (message / function_call / output)",
+    "tests/unit/gateway/codex.test.ts :: toResponsesInput / toResponsesBody > omits reasoning when the model isn't a reasoning model",
+    "tests/unit/gateway/codex.test.ts :: toResponsesInput / toResponsesBody > replays a codex reasoning item before its call, and drops another provider's opaque block"
+  ],
+  "impossible": [],
+  "typecheckPackages": ["packages/llm-gateway", "packages/orchestrator", "packages/shared"],
+  "typecheckBaseClean": {
+    "packages/llm-gateway": true,
+    "packages/orchestrator": true,
+    "packages/shared": true
+  },
+  "typecheckFixedClean": {
+    "packages/llm-gateway": true,
+    "packages/orchestrator": true,
+    "packages/shared": true
+  },
+  "timeLimit": "serious",
+  "hiddenFiles": [
+    "tests/unit/gateway/classifier-params.test.ts",
+    "tests/unit/gateway/codex-reasoning-effort.test.ts",
+    "tests/unit/gateway/codex.test.ts"
+  ],
+  "testFiles": [
+    "tests/unit/gateway/classifier-params.test.ts",
+    "tests/unit/gateway/codex-reasoning-effort.test.ts",
+    "tests/unit/gateway/codex.test.ts"
+  ],
+  "fixFiles": [
+    "packages/llm-gateway/src/index.ts",
+    "packages/llm-gateway/src/providers/codex.ts",
+    "packages/llm-gateway/src/types.ts",
+    "packages/orchestrator/src/config-settings.ts",
+    "packages/shared/src/config.ts",
+    "packages/shared/src/providers.ts"
+  ],
+  "mined": {
+    "at": "2026-09-28",
+    "bun": "1.3.14",
+    "baseWallMs": [120, 59],
+    "fixedWallMs": [60, 59]
+  }
+}

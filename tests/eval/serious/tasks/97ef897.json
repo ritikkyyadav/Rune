@@ -1,0 +1,76 @@
+{
+  "id": "f7-97ef897-compaction-worth-round-trip",
+  "sha": "97ef8973b41cfe4deb8cf5177d4f4eee7e22da11",
+  "parent": "b4bf2477c51f12ee481e6785ebf3d1e2de3a9036",
+  "subject": "fix(context): P10.8 — a compaction has to be worth its round trip",
+  "packages": ["orchestrator", "protocol"],
+  "shape": "fix",
+  "family": "F7",
+  "prompt": "Context compaction (`ContextEngine.compactWorkingSet` in packages/orchestrator/src/context-engine.ts) can pay for a summarizer round trip and free almost nothing. The verbatim tail is sized in TOKENS against the real context window but floored by a MESSAGE COUNT (`recentK`), and the count defeats the budget:\n\n1. Six recent tool-heavy messages can be larger than the whole tail budget. Honouring `recentK` there kept 32,649 of 33,046 tokens verbatim: compaction \"succeeded\", summarized eleven small messages, freed 1.2%, and left the trigger hot for the next turn. (A parallel batch of reads arrives as one assistant message plus one tool message; when the budget lands between two such batches, snapping the cut backward to a pair-safe boundary walks past both and the budget is lost again.)\n2. A head that is a sliver of the working set is summarized anyway: 13 small messages of 387 tokens in front of a 20,938-token working set were folded, for the price of a round trip.\n3. A summary can be no smaller than what it replaces: an explicit compaction measured 16,929 → 16,931 tokens and was applied, losing the verbatim text as well.\n4. An explicit or forced compaction cuts to the conservative 30% tail, so against a tail budget larger than the whole conversation it can only nibble the oldest few messages (141 tokens of a 5,027-token set) — not what \"free up context now\" asks for.\n\nWhat should happen:\n- The count floor yields when honouring it would keep a tail well past the token budget (some overrun is fine — a tail of one message is not a conversation — but not several times the budget), and a pair-safe cut must not give the budget back by walking past large batches. In case 1 compaction must free a meaningful share of the working set.\n- A head that is a small fraction of the working set (under roughly 15%) is not summarized: the free tier (evicting old tool-result bodies) may still run, and otherwise the result is an honest no-op, with no summarizer call.\n- A summary that would not make the working set smaller is discarded: the transcript is returned unchanged, not compacted, marked as a no-op with a reason saying the summary is \"no smaller\" than what it would replace.\n- A forced compaction (the `force` option: the provider rejected the request as too large) and a requested one (`requestCompaction()`, behind the `compact_context` tool) keep only the recent exchange — the last `recentK` messages — and fold the rest into the summary. The automatic policy keeps its 30% tail.\n- The result says what asked for the compaction, and the loop surfaces a no-op as a notice rather than doing nothing silently. The compaction event may carry the tier and trigger as well (it is defined in packages/protocol/src/events.ts).\n\nKeep the existing exported APIs working, and keep the existing tests passing.\n\nInterface the fix must provide — on the object `compactWorkingSet` resolves to:\n- `noop?: boolean` and `noopReason?: string` — the compaction was considered and deliberately not applied.\n- `trigger?: \"auto\" | \"requested\" | \"overflow\"` — \"auto\" for the automatic high-water compaction, \"requested\" when `requestCompaction()` asked for it, \"overflow\" when the caller passed `force: true`. Present on every result that compacted.",
+  "interface": [
+    "compactWorkingSet.noop",
+    "compactWorkingSet.noopReason",
+    "compactWorkingSet.trigger"
+  ],
+  "f2p": [
+    "tests/unit/orchestrator/context-tiered-compaction.test.ts :: compactWorkingSet — tiered > a compaction that would grow the working set is not applied",
+    "tests/unit/orchestrator/context-tiered-compaction.test.ts :: compactWorkingSet — tiered > a head that is a sliver of the working set is not worth a round trip",
+    "tests/unit/orchestrator/context-tiered-compaction.test.ts :: compactWorkingSet — tiered > an explicit compaction cuts to the recent exchange, not to 30%",
+    "tests/unit/orchestrator/context-tiered-compaction.test.ts :: compactWorkingSet — tiered > six tool-heavy messages do not defeat the token budget",
+    "tests/unit/orchestrator/context-tiered-compaction.test.ts :: compactWorkingSet — tiered > the trigger says which policy produced the tail"
+  ],
+  "p2p": [
+    "tests/unit/orchestrator/compact-tool.test.ts :: ContextEngine.requestCompaction > forces shouldCompact and a below-threshold compaction, then is consumed",
+    "tests/unit/orchestrator/compact-tool.test.ts :: ContextEngine.requestCompaction > the flag is consumed even when there is nothing to compact",
+    "tests/unit/orchestrator/compact-tool.test.ts :: compact_context tool > a throwing dependency surfaces as a failed result, never a throw",
+    "tests/unit/orchestrator/compact-tool.test.ts :: compact_context tool > execute flags the engine and reports usage",
+    "tests/unit/orchestrator/compact-tool.test.ts :: compact_context tool > schema: auto-permission, instant, no args",
+    "tests/unit/orchestrator/context-force-compact.test.ts :: ContextEngine.compactWorkingSet > below threshold WITH force: compacts anyway (overflow recovery)",
+    "tests/unit/orchestrator/context-force-compact.test.ts :: ContextEngine.compactWorkingSet > below threshold without force: unchanged",
+    "tests/unit/orchestrator/context-force-compact.test.ts :: ContextEngine.compactWorkingSet > in-loop compaction requests the comprehensive resume-grade summary",
+    "tests/unit/orchestrator/context-tiered-compaction.test.ts :: compactWorkingSet — tiered > an already-evicted result is not re-evicted on a second pass",
+    "tests/unit/orchestrator/context-tiered-compaction.test.ts :: compactWorkingSet — tiered > recentK remains a hard floor on the tail",
+    "tests/unit/orchestrator/context-tiered-compaction.test.ts :: compactWorkingSet — tiered > tier 1 never orphans a tool_use, because the block survives",
+    "tests/unit/orchestrator/context-tiered-compaction.test.ts :: compactWorkingSet — tiered > tier 1: evicting old tool results alone avoids the summarizer entirely",
+    "tests/unit/orchestrator/context-tiered-compaction.test.ts :: compactWorkingSet — tiered > tier 2: the kept tail is sized in tokens, not in six messages",
+    "tests/unit/orchestrator/context-tiered-compaction.test.ts :: compactWorkingSet — tiered > tier 3: escalates to summarization when eviction cannot free enough",
+    "tests/unit/orchestrator/context-tiered-compaction.test.ts :: compactWorkingSet — tiered > without authoritative usage the historical count-based cut still applies",
+    "tests/unit/orchestrator/context-tiered-compaction.test.ts :: context-window discovery > a catalog-reported window outranks the static table",
+    "tests/unit/orchestrator/context-tiered-compaction.test.ts :: context-window discovery > a malformed catalog entry cannot shrink a window",
+    "tests/unit/orchestrator/context-tiered-compaction.test.ts :: context-window discovery > an unrecognized model falls back to the conservative default",
+    "tests/unit/orchestrator/context-tiered-compaction.test.ts :: replay: the run that motivated this > a 155k tool-heavy working set no longer collapses to under 1% of budget"
+  ],
+  "impossible": [],
+  "typecheckPackages": ["packages/orchestrator", "packages/protocol"],
+  "typecheckBaseClean": {
+    "packages/orchestrator": true,
+    "packages/protocol": true
+  },
+  "typecheckFixedClean": {
+    "packages/orchestrator": true,
+    "packages/protocol": true
+  },
+  "timeLimit": "serious",
+  "hiddenFiles": [
+    "tests/unit/orchestrator/compact-tool.test.ts",
+    "tests/unit/orchestrator/context-force-compact.test.ts",
+    "tests/unit/orchestrator/context-tiered-compaction.test.ts"
+  ],
+  "testFiles": [
+    "tests/unit/orchestrator/compact-tool.test.ts",
+    "tests/unit/orchestrator/context-force-compact.test.ts",
+    "tests/unit/orchestrator/context-tiered-compaction.test.ts"
+  ],
+  "fixFiles": [
+    "packages/orchestrator/src/agent-loop.ts",
+    "packages/orchestrator/src/context-engine.ts",
+    "packages/orchestrator/src/engine.ts",
+    "packages/protocol/src/events.ts"
+  ],
+  "mined": {
+    "at": "2026-09-28",
+    "bun": "1.3.14",
+    "baseWallMs": [95, 134],
+    "fixedWallMs": [83, 78]
+  }
+}

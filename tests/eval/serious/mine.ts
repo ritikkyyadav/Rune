@@ -389,15 +389,21 @@ function writeTasksCommand(args: string[]): void {
     ? String(JSON.parse(readFileSync(summaryFile, "utf8")).at ?? "").slice(0, 10) || undefined
     : undefined;
   mkdirSync(TASKS_DIR, { recursive: true });
-  let written = 0;
+  const written: string[] = [];
   for (const [sha, entry] of Object.entries(prompts)) {
     const result = results.find((r) => r.sha.startsWith(sha));
     if (!result) throw new Error(`no kept mining result for ${sha}`);
     const spec = specFrom(result, entry, minedAt);
-    writeFileSync(join(TASKS_DIR, `${sha.slice(0, 7)}.json`), JSON.stringify(spec, null, 2) + "\n");
-    written++;
+    const file = join(TASKS_DIR, `${sha.slice(0, 7)}.json`);
+    writeFileSync(file, JSON.stringify(spec, null, 2) + "\n");
+    written.push(file);
   }
-  console.log(`wrote ${written} task files to ${TASKS_DIR}`);
+  // The task files are committed, and the repository's format gate is
+  // `prettier --check .`, which lays short arrays out on one line.
+  const formatted = spawnSync("bunx", ["prettier", "--write", ...written], { encoding: "utf8" });
+  if (formatted.status !== 0)
+    console.error(`prettier --write failed; run it on ${TASKS_DIR} before committing`);
+  console.log(`wrote ${written.length} task files to ${TASKS_DIR}`);
 }
 
 function checkCommand(repoRoot: string): number {

@@ -1,0 +1,65 @@
+{
+  "id": "f7-93eca44-model-catalog-cache",
+  "sha": "93eca44391f8aa1d0dd42cdf093ccd776f5ef038",
+  "parent": "dacfd01c97a01d1d03a8df0e75573ee3662c1788",
+  "subject": "feat(cli): P10.5 — live model discovery, cached for an hour",
+  "packages": ["orchestrator", "shared"],
+  "shape": "feature",
+  "family": "F7",
+  "prompt": "`rune models <provider>` calls the provider's list endpoint every time it runs, which is a network round trip on a command people run just to look at a list. Add a cache for discovered model catalogues to the shared package, so a catalogue can be reused for an hour.\n\nWhat the cache must do:\n- Keep one catalogue per provider id in a single JSON file under the Rune home by default. Every function also takes an explicit `path` (and a `now` where time matters) so it can be tested in isolation.\n- Store model ids and labels only — no credential, endpoint, key or token. A model without a label is stored without a `label` key.\n- Use a versioned file format: `{ \"version\": 1, \"providers\": { \"<id>\": { \"fetchedAt\": <epoch ms>, \"models\": [{ \"id\": \"…\", \"label\": \"…\" }] } } }`. A file with any other version, a corrupt file and a missing file all read as empty.\n- Serve a saved catalogue while it is younger than the TTL (one hour), and not after. Saving a provider's catalogue replaces that provider's previous one (no merge) and leaves other providers alone. Providers never see each other's entries. An empty catalogue reads as no catalogue, so a caller falls back to its curated list.\n- Never break a command: reading never throws, and saving to a location that cannot be written is silently skipped.\n- Clear one provider's entry, or all of them.\n- Report how old a provider's cached catalogue is, and describe an age the way a person would say it (for a line such as \"cached 12 minutes ago\").\n\nKeep the existing exported APIs working, and keep the existing tests passing. Wiring the cache into the `models` command is welcome but not required.\n\nInterface the fix must provide — a new module `packages/shared/src/model-catalog.ts` that exports:\n- `MODEL_CACHE_TTL_MS`, equal to 3,600,000.\n- `saveCachedModels(provider: string, models: { id: string; label?: string }[], opts?: { path?: string; now?: number }): void`\n- `loadCachedModels(provider: string, opts?: { path?: string; now?: number }): { id: string; label?: string }[] | null` — null when absent, stale or empty.\n- `cachedModelsAge(provider: string, opts?: { path?: string; now?: number }): number | null` — milliseconds since the catalogue was fetched, or null when nothing is cached.\n- `clearCachedModels(provider?: string, opts?: { path?: string }): void` — one provider, or every provider when `provider` is undefined.\n- `describeAge(ms: number): string` — \"just now\" under a minute, otherwise whole minutes or hours: \"1 minute ago\", \"15 minutes ago\", \"1 hour ago\", \"3 hours ago\".",
+  "interface": [
+    "packages/shared/src/model-catalog.ts",
+    "MODEL_CACHE_TTL_MS",
+    "saveCachedModels",
+    "loadCachedModels",
+    "cachedModelsAge",
+    "clearCachedModels",
+    "describeAge"
+  ],
+  "f2p": [
+    "tests/unit/shared/model-catalog.test.ts :: a broken cache never breaks the command > a corrupt file reads as empty",
+    "tests/unit/shared/model-catalog.test.ts :: a broken cache never breaks the command > a file from a future version reads as empty",
+    "tests/unit/shared/model-catalog.test.ts :: a broken cache never breaks the command > a missing file reads as empty",
+    "tests/unit/shared/model-catalog.test.ts :: a broken cache never breaks the command > an empty catalogue is treated as no catalogue",
+    "tests/unit/shared/model-catalog.test.ts :: a broken cache never breaks the command > an unwritable location is swallowed",
+    "tests/unit/shared/model-catalog.test.ts :: clearing > all of them",
+    "tests/unit/shared/model-catalog.test.ts :: clearing > one provider",
+    "tests/unit/shared/model-catalog.test.ts :: describeAge > reads as a person would say it",
+    "tests/unit/shared/model-catalog.test.ts :: freshness > age is reported for the status line",
+    "tests/unit/shared/model-catalog.test.ts :: freshness > an entry inside the TTL is served",
+    "tests/unit/shared/model-catalog.test.ts :: freshness > an entry past the TTL is not",
+    "tests/unit/shared/model-catalog.test.ts :: freshness > the TTL is an hour",
+    "tests/unit/shared/model-catalog.test.ts :: round trip > a re-save replaces rather than merges",
+    "tests/unit/shared/model-catalog.test.ts :: round trip > a saved catalogue reads back",
+    "tests/unit/shared/model-catalog.test.ts :: round trip > providers do not see each other's entries",
+    "tests/unit/shared/model-catalog.test.ts :: what the cache holds > a model with no label stores no empty one",
+    "tests/unit/shared/model-catalog.test.ts :: what the cache holds > ids and labels only — no credential, no endpoint"
+  ],
+  "p2p": [],
+  "impossible": [],
+  "typecheckPackages": ["packages/orchestrator", "packages/shared"],
+  "typecheckBaseClean": {
+    "packages/orchestrator": true,
+    "packages/shared": true
+  },
+  "typecheckFixedClean": {
+    "packages/orchestrator": true,
+    "packages/shared": true
+  },
+  "timeLimit": "serious",
+  "hiddenFiles": ["tests/unit/shared/model-catalog.test.ts"],
+  "testFiles": ["tests/unit/shared/model-catalog.test.ts"],
+  "fixFiles": [
+    "packages/orchestrator/src/bin/engine-host.ts",
+    "packages/orchestrator/src/bin/gear-cli.ts",
+    "packages/orchestrator/src/bin/providers-cli.ts",
+    "packages/shared/src/index.ts",
+    "packages/shared/src/model-catalog.ts"
+  ],
+  "mined": {
+    "at": "2026-09-28",
+    "bun": "1.3.14",
+    "baseWallMs": [24, 27],
+    "fixedWallMs": [28, 26]
+  }
+}

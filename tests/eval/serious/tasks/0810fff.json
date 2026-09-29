@@ -1,0 +1,35 @@
+{
+  "id": "f7-0810fff-stranded-legacy-db",
+  "sha": "0810fff97c3b6d312470a9e66d68b2fcabb87505",
+  "parent": "63203f0a9d25c01d50630b08ba20bd4de8fa62b9",
+  "subject": "fix(paths): stop stranding a legacy database in silence",
+  "packages": ["shared"],
+  "shape": "fix",
+  "family": "F7",
+  "prompt": "A legacy database can be stranded without a word. `migrateLegacyHome` (packages/shared/src/paths.ts) renames the legacy `alan.db` to `gear.db` only when `gear.db` does not exist yet. Once both files exist, the rename can never happen again, and nothing tells the user: sessions that were written into `alan.db` (for example by an older build that resolved the home differently) are invisible to `/sessions` and one `rm` away from being lost. Today `migrateLegacyHome` returns null in that situation.\n\nWhat should happen: when both databases exist in the home, `migrateLegacyHome` returns a note that names `alan.db` and says its sessions are `NOT visible` to this build (that wording, with NOT in capitals). It must not delete, rename or merge either file — merging two live databases can interleave colliding ids and different schemas. The existing cases do not change: with only the legacy file present it is still renamed and the note says it was renamed; with no legacy file the result is still null.\n\nKeep the function's signature, and keep the existing tests passing.",
+  "f2p": [
+    "tests/unit/shared/legacy-db-orphan.test.ts :: legacy database left beside the current one > warns when both databases exist, and deletes neither"
+  ],
+  "p2p": [
+    "tests/unit/shared/legacy-db-orphan.test.ts :: legacy database left beside the current one > says nothing when there is no legacy database",
+    "tests/unit/shared/legacy-db-orphan.test.ts :: legacy database left beside the current one > still renames when only the legacy database exists"
+  ],
+  "impossible": [],
+  "typecheckPackages": ["packages/shared"],
+  "typecheckBaseClean": {
+    "packages/shared": true
+  },
+  "typecheckFixedClean": {
+    "packages/shared": true
+  },
+  "timeLimit": "serious",
+  "hiddenFiles": ["tests/unit/shared/legacy-db-orphan.test.ts"],
+  "testFiles": ["tests/unit/shared/legacy-db-orphan.test.ts"],
+  "fixFiles": ["packages/shared/src/paths.ts"],
+  "mined": {
+    "at": "2026-09-28",
+    "bun": "1.3.14",
+    "baseWallMs": [37, 40],
+    "fixedWallMs": [62, 51]
+  }
+}

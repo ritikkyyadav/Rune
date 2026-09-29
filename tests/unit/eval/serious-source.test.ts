@@ -13,9 +13,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { interfaceProblems, revisionText, taskLeaks } from "../../eval/serious/leak";
 import {
   INTERFACE_HEADING,
   loadSpecs,
+  repoRootOf,
   seriousTask,
   seriousTasks,
   specProblems,
@@ -236,4 +238,44 @@ describe("the committed serious corpus", () => {
       expect(task.prompt).toBe(specs.find((s) => s.id === task.id)!.prompt);
     }
   });
+
+  test("stratified: every package the miner found fixes in, and every shape", () => {
+    // The kept pool was 178 of 198 orchestrator tasks. A corpus drawn from it at
+    // random would say nothing about the other packages.
+    const packages = new Set(specs.flatMap((s) => s.packages));
+    for (const pkg of ["orchestrator", "shared", "tool-registry", "llm-gateway", "protocol"])
+      expect({ pkg, present: packages.has(pkg) }).toEqual({ pkg, present: true });
+    // …and not only riding along with an orchestrator change.
+    for (const pkg of ["shared", "tool-registry", "llm-gateway"])
+      expect({
+        pkg,
+        alone: specs.some((s) => s.packages.length === 1 && s.packages[0] === pkg),
+      }).toEqual({ pkg, alone: true });
+    const shapes = new Set(specs.map((s) => s.shape));
+    expect([...shapes].sort()).toEqual(["feature", "fix", "refactor"]);
+    const orchestratorOnly = specs.filter(
+      (s) => s.packages.length === 1 && s.packages[0] === "orchestrator",
+    ).length;
+    expect(orchestratorOnly).toBeLessThan(specs.length / 2);
+  });
+
+  const repoRoot = repoRootOf();
+  const hasHistory = specs.every(
+    (s) => spawnSync("git", ["-C", repoRoot, "cat-file", "-e", `${s.sha}^{commit}`]).status === 0,
+  );
+
+  test.skipIf(!hasHistory)(
+    "no prompt names what its fix added, and every interface entry is used and named",
+    () => {
+      for (const s of specs) {
+        const testText = revisionText(repoRoot, s.sha, s.hiddenFiles);
+        expect({
+          id: s.id,
+          leaks: taskLeaks(repoRoot, s).leaks,
+          interface: interfaceProblems(s.interface ?? [], s.prompt, testText),
+        }).toEqual({ id: s.id, leaks: [], interface: [] });
+      }
+    },
+    180_000,
+  );
 });

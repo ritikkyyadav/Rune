@@ -1,0 +1,57 @@
+{
+  "id": "f7-8b2033f-incident-cost-join",
+  "sha": "8b2033f94d8c9af77ff2d3089c202580f954bd78",
+  "parent": "ea6ba06831613c8a1c2635f94b351db37c8fc776",
+  "subject": "gateway: an incident names the completion that paid for it, and a row nobody attributed is counted rather than lost",
+  "packages": ["llm-gateway"],
+  "shape": "fix",
+  "family": "F7",
+  "prompt": "The gateway's incidents and its cost ledger cannot be joined for the requests that matter most: the retried ones.\n\nEvery incident the gateway raises (for example a `retry` incident for a 429 or a 500) carries `requestStartedAt`, and every cost row carries `startedAt`. They are meant to be the join key that answers \"what did this incident cost\". But both are stamped with the ATTEMPT's start, and within one attempt the stamp goes either to an incident (the attempt failed) or to the cost row (the attempt answered), never to both — so a request that was retried always records its incidents under a different stamp from its completion, and the rate-limited requests the join exists for can never be matched.\n\nWhat should happen, in both `infer` and `inferStream`:\n- One stamp per call, taken once before the first attempt. Every incident the call raises — however many retries, and across a fallback to another provider — and the cost row the call finally records carry the same value: `incident.requestStartedAt === entry.startedAt.toISOString()`. A call that exhausts its retries records its incidents, all under one stamp, and no cost row.\n- A cost row's `latencyMs` stays the answering attempt's own time, never the whole retry ladder with its back-off. When the answering attempt was not the first, the row also records when that attempt started, so that `latencyMs === timestamp - attemptStartedAt`. A call that went out once carries no second stamp, and `latencyMs === timestamp - startedAt`.\n\nSeparately, `CostTracker.record` throws when it is reached with no attribution, or with an attribution that has no role, and throwing loses the row — the row a budget cap is tested against. The type still requires an attribution; at runtime such a row must be kept and counted in the ledger's totals, tagged with the role \"unattributed\" (not dropped, and not filed as `primary`).\n\nKeep the existing exported APIs working, and keep the existing tests passing; the existing usage-attribution test that asserts `record` throws describes the old behaviour and is superseded by this.\n\nInterface the fix must provide:\n- `CostEntry.attemptStartedAt?: Date` — present only when the answering attempt was not the call's first.\n- `CallRole` gains the value `\"unattributed\"`.",
+  "interface": ["CostEntry.attemptStartedAt", "CallRole.unattributed"],
+  "f2p": [
+    "tests/unit/gateway/incident-completion-join.test.ts :: a rate-limited request's incident carries the stamp its cost row carries",
+    "tests/unit/gateway/incident-completion-join.test.ts :: a request that exhausts its retries records incidents and no completion",
+    "tests/unit/gateway/incident-completion-join.test.ts :: latency stays the answering attempt's own, not the whole retry ladder",
+    "tests/unit/gateway/incident-completion-join.test.ts :: two retries raise two incidents and both join to the one completion",
+    "tests/unit/gateway/usage-attribution.test.ts :: I1 — an unattributed row is TAGGED unattributed, not dropped and not primary"
+  ],
+  "p2p": [
+    "tests/unit/gateway/incident-completion-join.test.ts :: a call that went out once carries no second stamp to explain",
+    "tests/unit/gateway/usage-attribution.test.ts :: I1 — a request without a role does not compile",
+    "tests/unit/gateway/usage-attribution.test.ts :: I1 — a streamed completion is tagged the same as a blocking one",
+    "tests/unit/gateway/usage-attribution.test.ts :: I1 — every role the vocabulary names rides onto its row unchanged",
+    "tests/unit/gateway/usage-attribution.test.ts :: I3 — a concurrent caller's latency is its own, not the gap to the next row",
+    "tests/unit/gateway/usage-attribution.test.ts :: I3 — a recorded row carries the request's start and its own latency",
+    "tests/unit/gateway/usage-attribution.test.ts :: I5 — cache read and write tokens land on the row, per role",
+    "tests/unit/gateway/usage-attribution.test.ts :: I5 — the composition records the cache breakpoint the caller actually sent",
+    "tests/unit/gateway/usage-attribution.test.ts :: I5 — the prefix hash is stable across a growing tail and moves when history is rewritten"
+  ],
+  "impossible": [],
+  "typecheckPackages": ["packages/llm-gateway"],
+  "typecheckBaseClean": {
+    "packages/llm-gateway": true
+  },
+  "typecheckFixedClean": {
+    "packages/llm-gateway": true
+  },
+  "timeLimit": "serious",
+  "hiddenFiles": [
+    "tests/unit/gateway/incident-completion-join.test.ts",
+    "tests/unit/gateway/usage-attribution.test.ts"
+  ],
+  "testFiles": [
+    "tests/unit/gateway/incident-completion-join.test.ts",
+    "tests/unit/gateway/usage-attribution.test.ts"
+  ],
+  "fixFiles": [
+    "packages/llm-gateway/src/cost-tracker.ts",
+    "packages/llm-gateway/src/gateway.ts",
+    "packages/llm-gateway/src/types.ts"
+  ],
+  "mined": {
+    "at": "2026-09-28",
+    "bun": "1.3.14",
+    "baseWallMs": [154, 137],
+    "fixedWallMs": [137, 138]
+  }
+}

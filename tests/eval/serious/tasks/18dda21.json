@@ -1,0 +1,42 @@
+{
+  "id": "f7-18dda21-background-shell-recycled-group",
+  "sha": "18dda21f330372cf75b14eb4396be4dd91c1cfa9",
+  "parent": "653698dfbf36fef0ad629c2e5c9c416e7cfaa014",
+  "subject": "background shells: a stop signals a group only while it is still the shell's",
+  "packages": ["tool-registry"],
+  "shape": "fix",
+  "family": "F7",
+  "prompt": "Stopping background shells can signal somebody else's processes. `BackgroundShellManager` (packages/tool-registry/src/tools/background.ts) stops a shell by signalling its process group by number, and its exit path (and `stopAll`) sends SIGTERM and then SIGKILL to every group that still looks alive — including the groups of shells that finished hours ago. A process-group number is recycled once the group is empty, so on a long-lived Rune a finished shell's old number can come back leading an unrelated process group, and Rune's exit or an engine's close would TERM and KILL it.\n\nWhat should happen:\n- A shell's process group is signalled only while it can still be that shell's group. Once the group has been seen gone, it stays gone for that shell, even if the number is in use again later.\n- After a shell's leader has exited, a live process holding the leader's pid is a newcomer (a pid cannot be reused while its old group still exists), so the group that pid leads is not the shell's either.\n- Processes a finished shell left behind in its own group — the leader has exited, the group lives on, and no process holds the leader's pid — are still stopped: TERM, then KILL, to the group, as today.\n- Running shells are stopped exactly as they are today.\n\nKeep the manager's existing public methods and their behaviour, and keep the existing tests passing.\n\nInterface the fix must provide:\n- The constructor takes an optional second argument: `new BackgroundShellManager(binaryPath?: string, opts?: { signal?: (pid: number, signal: NodeJS.Signals | 0) => void })`. When `signal` is given, every signal and every liveness probe the manager sends goes through it instead of `process.kill`, with the same conventions: a negative pid addresses the process group, signal `0` only probes, and it throws (an error whose `code` is `\"ESRCH\"`) when there is no such process or group. Tests use it to play a kernel that recycles numbers, so nothing real is signalled.",
+  "interface": ["BackgroundShellManager.signal"],
+  "f2p": [
+    "tests/unit/probes/t20-background-lifecycle.test.ts :: T20 — a background shell ends with what started it > orphans a finished shell left in its group are still stopped"
+  ],
+  "p2p": [
+    "tests/unit/probes/t20-background-lifecycle.test.ts :: T20 — a background shell ends with what started it > a finished shell's recycled number is never signalled (its group left with it)",
+    "tests/unit/probes/t20-background-lifecycle.test.ts :: T20 — a background shell ends with what started it > a finished shell's recycled number is never signalled (its orphans left later)",
+    "tests/unit/probes/t20-background-lifecycle.test.ts :: T20 — a background shell ends with what started it > a group seen gone stays gone, even when a leaderless group holds its number later",
+    "tests/unit/probes/t20-background-lifecycle.test.ts :: T20 — a background shell ends with what started it > a process exit leaves no background shell behind, even one that ignores SIGTERM",
+    "tests/unit/probes/t20-background-lifecycle.test.ts :: T20 — a background shell ends with what started it > kill_shell does not report a shell killed while it still runs",
+    "tests/unit/probes/t20-background-lifecycle.test.ts :: T20 — a background shell ends with what started it > stopping a manager stops a shell that ignores SIGTERM"
+  ],
+  "impossible": [
+    "tests/unit/probes/t20-background-lifecycle.test.ts :: T20 — a background shell ends with what started it > closing an engine stops the background shells its bash started"
+  ],
+  "typecheckPackages": ["packages/tool-registry"],
+  "typecheckBaseClean": {
+    "packages/tool-registry": true
+  },
+  "typecheckFixedClean": {
+    "packages/tool-registry": true
+  },
+  "timeLimit": "serious",
+  "hiddenFiles": ["tests/unit/probes/t20-background-lifecycle.test.ts"],
+  "testFiles": ["tests/unit/probes/t20-background-lifecycle.test.ts"],
+  "fixFiles": ["packages/tool-registry/src/tools/background.ts"],
+  "mined": {
+    "at": "2026-09-28",
+    "bun": "1.3.14",
+    "baseWallMs": [2901, 4765],
+    "fixedWallMs": [3088, 4744]
+  }
+}

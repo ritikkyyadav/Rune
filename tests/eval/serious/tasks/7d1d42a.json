@@ -1,0 +1,60 @@
+{
+  "id": "f7-7d1d42a-todo-write-cleanup",
+  "sha": "7d1d42aa0dcc78f2873b95eec61ef7a940954a02",
+  "parent": "f9a437297831b9be2ac23e586c4cc78ea271cafb",
+  "subject": "fix(todo-write): keep a canonical kind, plain hyphens, no any-casts",
+  "packages": ["tool-registry"],
+  "shape": "refactor",
+  "family": "F7",
+  "prompt": "Clean up the todo-list normaliser in packages/tool-registry/src/tools/todo-write.ts (`normalizeTodoItems` and the `todo_write` handler that uses it). It was written by a model and has four problems:\n\n1. Its error messages and comments contain U+2011 NON-BREAKING HYPHEN characters instead of ASCII hyphens. For example, the error for an item shaped like a read-back says \"read‑back shape\" with U+2011, so anyone searching the message for \"read-back shape\" finds nothing. Use plain ASCII hyphens throughout the file, in messages and in comments.\n2. A canonical `kind` is thrown away: `\"inspect\"`, `\"change\"` and `\"verify\"` (in any case) are kept only if they also happen to be listed as synonyms. Keep canonical kinds, lower-cased. Synonyms keep mapping as they do now, and unknown kinds are still dropped.\n3. `execute` quietly produces an empty plan when the items do not normalise. It should fail the call with the normaliser's error instead.\n4. The file uses `any` casts to read its arguments. Remove them.\n\nChange nothing else: the exports and the tool schema stay the same, and the existing tests keep passing.",
+  "f2p": [
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > rejects read-back shape with helpful message"
+  ],
+  "p2p": [
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > accepts a list with a single pending item",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > accepts content synonym title",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > accepts item with status synonym 'done' as completed",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > accepts items with all valid statuses",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > accepts string shortcut items",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > adds missing status as pending",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > coerces string with completed checkbox",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > coerces string with dash prefix",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > coerces string with pending checkbox",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > drops unknown kind without error",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > execute normalises string shortcut to canonical shape",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > has correct schema name and metadata",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > maps kind synonym to inspect",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > maps status synonyms to completed",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > maps status synonyms to in_progress",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > maps status synonyms to pending",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > preserves canonical kind 'change' (case-insensitive)",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > preserves canonical kind 'inspect'",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > preserves canonical kind 'verify'",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > rejects empty items array",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > rejects item with empty content string",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > rejects item with missing content",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > rejects missing items",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > rejects non-array items",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > rejects non-object item like number",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > result shape has exactly the items passed in",
+    "tests/unit/tool-registry/todo-write.test.ts :: createTodoWriteHandler > returns success with JSON result containing items"
+  ],
+  "impossible": [],
+  "typecheckPackages": ["packages/tool-registry"],
+  "typecheckBaseClean": {
+    "packages/tool-registry": true
+  },
+  "typecheckFixedClean": {
+    "packages/tool-registry": true
+  },
+  "timeLimit": "serious",
+  "hiddenFiles": ["tests/unit/tool-registry/todo-write.test.ts"],
+  "testFiles": ["tests/unit/tool-registry/todo-write.test.ts"],
+  "fixFiles": ["packages/tool-registry/src/tools/todo-write.ts"],
+  "mined": {
+    "at": "2026-09-28",
+    "bun": "1.3.14",
+    "baseWallMs": [18, 19],
+    "fixedWallMs": [17, 17]
+  }
+}

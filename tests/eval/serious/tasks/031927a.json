@@ -1,0 +1,43 @@
+{
+  "id": "f7-031927a-plugin-host-enforcement",
+  "sha": "031927ae36f9ae473eb58a419367f8000bb2d4e4",
+  "parent": "c72569c3ee6a6d0573555104043cb9e981fcd6f0",
+  "subject": "sandbox: a toolchain root is judged where it resolves, and macOS says what it widened",
+  "packages": ["tool-registry"],
+  "shape": "fix",
+  "family": "F7",
+  "prompt": "A plugin tool that declares network endpoints can silently get wider network access than it declared.\n\nThe launch plan a sandbox backend returns for a plugin tool (`PluginToolSpawnPlan` in packages/tool-registry/src/tools/plugin-tools.ts) says in `host_enforcement` how the tool's declared endpoints will be enforced. On macOS, Seatbelt can filter outbound traffic by port but not by host, so a declared `api.example.com:443` can only be enforced as `*:443` — any host on port 443. For such a plan the backend reports `host_enforcement: \"port\"` plus a note describing the widening; when every declared endpoint can be enforced exactly as written (a loopback endpoint, say), it reports `\"host-and-port\"`. The plugin tool server currently treats `\"port\"` as enforced, so a named host runs as the whole port with no opt-in and nothing said — while it refuses a tool whose plan reports `\"host-and-port\"`, which should simply start.\n\nWhat should happen:\n- Only `host_enforcement: \"host-and-port\"` counts as enforcing the declared endpoints as written. Anything else (`\"port\"`, `\"all-or-nothing\"`, `\"none\"`) widens what the manifest asked for, and the tool is refused unless the plugin is listed in `[extensions] allowUnsandboxedTools` — the refusal Linux (bubblewrap) already gets.\n- The refusal notice keeps its current wording (\"… cannot enforce its declared network endpoints\", naming `allowUnsandboxedTools`), and it now also carries the plan's enforcement written as `host_enforcement: <value>` (e.g. `host_enforcement: port`) together with the plan's own notes, so the reader sees the widening itself (e.g. \"ANY host on port 443\").\n- When the opt-in is given, the tool starts, and its start notice says the declared endpoints \"are NOT enforced as written by <mechanism>\" (e.g. \"are NOT enforced as written by seatbelt\", \"… by bubblewrap\") and includes `host_enforcement: <value>`. The warning logged for the opt-in should likewise say the access is wider than declared.\n- A declaration the backend can enforce as written (`\"host-and-port\"`) starts with no refusal.\n\nKeep the plugin-tools exports and the plan's shape as they are, and keep the existing tests passing.",
+  "f2p": [
+    "tests/integration/plugin-tools-sandbox.test.ts :: a backend that filters by port but not by host > a loopback endpoint Seatbelt CAN express is not dragged into the refusal",
+    "tests/integration/plugin-tools-sandbox.test.ts :: a backend that filters by port but not by host > refuses a named host rather than silently widening it to the whole port",
+    "tests/integration/plugin-tools-sandbox.test.ts :: a backend that filters by port but not by host > runs it under the explicit opt-in, naming the enforcement it did not get",
+    "tests/integration/plugin-tools-sandbox.test.ts :: a backend that isolates but cannot filter endpoints > runs it under the explicit opt-in, and says the endpoints are unenforced"
+  ],
+  "p2p": [
+    "tests/integration/plugin-tools-sandbox.test.ts :: a backend that isolates but cannot filter endpoints > a network tool that declares no endpoints has nothing to lose, and still starts",
+    "tests/integration/plugin-tools-sandbox.test.ts :: a backend that isolates but cannot filter endpoints > another plugin's opt-in does not cover this one",
+    "tests/integration/plugin-tools-sandbox.test.ts :: a backend that isolates but cannot filter endpoints > refuses a host-restricted tool rather than quietly granting the whole network",
+    "tests/integration/plugin-tools-sandbox.test.ts :: a machine with no sandbox > another plugin's opt-in does not cover this one",
+    "tests/integration/plugin-tools-sandbox.test.ts :: a machine with no sandbox > plugin children receive explicit environment but never inherit parent secrets",
+    "tests/integration/plugin-tools-sandbox.test.ts :: a machine with no sandbox > refuses to run a plugin tool, and names the escape",
+    "tests/integration/plugin-tools-sandbox.test.ts :: a machine with no sandbox > runs it only when the user opted that plugin in, and says the capability is unenforced"
+  ],
+  "impossible": [],
+  "typecheckPackages": ["packages/tool-registry"],
+  "typecheckBaseClean": {
+    "packages/tool-registry": true
+  },
+  "typecheckFixedClean": {
+    "packages/tool-registry": true
+  },
+  "timeLimit": "serious",
+  "hiddenFiles": ["tests/integration/plugin-tools-sandbox.test.ts"],
+  "testFiles": ["tests/integration/plugin-tools-sandbox.test.ts"],
+  "fixFiles": ["packages/tool-registry/src/tools/plugin-tools.ts"],
+  "mined": {
+    "at": "2026-09-28",
+    "bun": "1.3.14",
+    "baseWallMs": [510, 374],
+    "fixedWallMs": [365, 328]
+  }
+}

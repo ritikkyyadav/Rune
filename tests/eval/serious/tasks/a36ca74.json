@@ -1,0 +1,44 @@
+{
+  "id": "f7-a36ca74-background-shell-stop",
+  "sha": "a36ca7485d00f937494f1e0675d5fde361107d0b",
+  "parent": "585230a3b183ed49a826e7b8dc106b6f026278a0",
+  "subject": "background shells: they end with the engine that started them, and a stop means stopped",
+  "packages": ["orchestrator", "tool-registry"],
+  "shape": "fix",
+  "family": "F7",
+  "prompt": "Background shells (the `bash` tool with `run_in_background: true`) outlive what started them.\n\n1. `Engine.close()` (packages/orchestrator/src/engine.ts) stops MCP servers, plugin processes and language servers, but not the background shells its own `bash` tool started. In a long-lived host (serve, ACP, engine-host session churn) a closed session's dev server keeps running for as long as the host does. Closing an engine should stop that engine's background shells — only that engine's, not those of another session in the same process.\n2. Every stop sends SIGTERM only. A shell that ignores SIGTERM (for example `trap '' TERM; while :; do sleep 0.2; done`) survives its engine, survives `kill_shell` — which still reports it \"killed\" — and survives Rune's own exit.\n\nWhat should happen: a stop escalates to SIGKILL for any of the shell's process group that is still alive after a short grace period, so a `kill_shell` that reports \"killed\" means the process is gone within a few seconds; and when the Rune process exits, where nothing can wait, no background shell is left behind, even one that ignores SIGTERM. POSIX only; Windows is out of scope.\n\nKeep the existing exported APIs working, and keep the existing tests passing.\n\nInterface the fix must provide:\n- `BackgroundShellManager#stopAll(graceMs?: number): Promise<void>` (packages/tool-registry/src/tools/background.ts) — stop every shell the manager started and resolve once they are gone: SIGTERM to each process group, then SIGKILL to any group still alive after `graceMs`.",
+  "interface": ["BackgroundShellManager#stopAll"],
+  "f2p": [
+    "tests/unit/probes/t20-background-lifecycle.test.ts :: T20 — a background shell ends with what started it > a process exit leaves no background shell behind, even one that ignores SIGTERM",
+    "tests/unit/probes/t20-background-lifecycle.test.ts :: T20 — a background shell ends with what started it > kill_shell does not report a shell killed while it still runs",
+    "tests/unit/probes/t20-background-lifecycle.test.ts :: T20 — a background shell ends with what started it > stopping a manager stops a shell that ignores SIGTERM"
+  ],
+  "p2p": [],
+  "impossible": [
+    "tests/unit/probes/t20-background-lifecycle.test.ts :: T20 — a background shell ends with what started it > closing an engine stops the background shells its bash started"
+  ],
+  "typecheckPackages": ["packages/orchestrator", "packages/tool-registry"],
+  "typecheckBaseClean": {
+    "packages/orchestrator": true,
+    "packages/tool-registry": true
+  },
+  "typecheckFixedClean": {
+    "packages/orchestrator": true,
+    "packages/tool-registry": true
+  },
+  "timeLimit": "serious",
+  "hiddenFiles": ["tests/unit/probes/t20-background-lifecycle.test.ts"],
+  "testFiles": ["tests/unit/probes/t20-background-lifecycle.test.ts"],
+  "fixFiles": [
+    "packages/orchestrator/src/engine.ts",
+    "packages/tool-registry/src/index.ts",
+    "packages/tool-registry/src/tools/background.ts",
+    "packages/tool-registry/src/tools/builtin.ts"
+  ],
+  "mined": {
+    "at": "2026-09-28",
+    "bun": "1.3.14",
+    "baseWallMs": [6443, 6425],
+    "fixedWallMs": [2732, 2741]
+  }
+}

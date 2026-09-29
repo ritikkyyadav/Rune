@@ -1,0 +1,38 @@
+{
+  "id": "f7-8ac55c5-openrouter-identity",
+  "sha": "8ac55c572bffa39cb4fee1ab9b36e6317c7fe907",
+  "parent": "2e57f1c70d91f643390db4e91a37f2dc25a8fa81",
+  "subject": "fix(openrouter): stop the adapter from identifying as first-party OpenAI",
+  "packages": ["llm-gateway"],
+  "shape": "fix",
+  "family": "F7",
+  "prompt": "OpenRouter traffic identifies itself as first-party OpenAI. `OpenRouterProvider` (packages/llm-gateway/src/providers/openrouter.ts) wraps the OpenAI-compatible adapter, and that adapter decides real behaviour from its provider name — which is \"openai\" for OpenRouter today. As a result:\n- telemetry records OpenRouter requests as provider \"openai\";\n- image parts are sent on to arbitrary routed models, instead of being omitted with the note the adapter adds for hosts it does not send images to (the note says the image(s) were omitted on this transport and names the openrouter transport);\n- a bare `gpt-5` (or o-series) model id sent through OpenRouter switches to the first-party reasoning parameters (`max_completion_tokens`, `reasoning_effort`) instead of the classic `max_tokens` / `temperature` that OpenRouter normalises itself.\n\nEvery other OpenAI-compatible host already identifies as itself. Make OpenRouter do the same: the adapter behind `new OpenRouterProvider(key)` must report the name \"openrouter\" and behave accordingly.\n\nKeep the exported classes and their constructors' signatures, and keep the existing tests passing.",
+  "f2p": [
+    "tests/unit/gateway/vision-translation.test.ts :: vision wire translation > OpenRouter keeps classic tuning params even for a bare reasoning id",
+    "tests/unit/gateway/vision-translation.test.ts :: vision wire translation > OpenRouterProvider forwards its name, so the real path omits pixels too"
+  ],
+  "p2p": [
+    "tests/unit/gateway/vision-translation.test.ts :: vision wire translation > Anthropic rides images as base64 image blocks (pre-existing path still alive)",
+    "tests/unit/gateway/vision-translation.test.ts :: vision wire translation > Gemini rides images as inlineData parts",
+    "tests/unit/gateway/vision-translation.test.ts :: vision wire translation > OpenAI-compatible hosts (unknown catalogs) omit pixels with an explicit note",
+    "tests/unit/gateway/vision-translation.test.ts :: vision wire translation > first-party OpenAI sends image_url data-URL parts before the text"
+  ],
+  "impossible": [],
+  "typecheckPackages": ["packages/llm-gateway"],
+  "typecheckBaseClean": {
+    "packages/llm-gateway": true
+  },
+  "typecheckFixedClean": {
+    "packages/llm-gateway": true
+  },
+  "timeLimit": "serious",
+  "hiddenFiles": ["tests/unit/gateway/vision-translation.test.ts"],
+  "testFiles": ["tests/unit/gateway/vision-translation.test.ts"],
+  "fixFiles": ["packages/llm-gateway/src/providers/openrouter.ts"],
+  "mined": {
+    "at": "2026-09-28",
+    "bun": "1.3.14",
+    "baseWallMs": [84, 90],
+    "fixedWallMs": [95, 114]
+  }
+}

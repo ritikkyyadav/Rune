@@ -1,0 +1,42 @@
+{
+  "id": "f7-d5c1536-silent-finish-after-writes",
+  "sha": "d5c1536f36005a260f9a3cc33431b7f300977eef",
+  "parent": "416b864699929426583a26e0ff0ad9e1033672f8",
+  "subject": "loop: a run that wrote its work finishes on silence instead of failing as lost",
+  "packages": ["orchestrator"],
+  "shape": "fix",
+  "family": "F7",
+  "prompt": "A run that did its work is failed as \"provider lost\" because the model never wrote a closing line. Free-route gpt-oss:120b does not write a final message: on one run it edited the parser, passed acceptance in 31 s, and the empty-completion guard in the agent loop (packages/orchestrator/src/agent-loop.ts) then retried its empty replies and ended the run with `provider_lost` — a passed task reported as a failure.\n\nThe guard is right to retry a run that has produced nothing, and it already accepts a silent finish from a run that narrated earlier: one nudge, then the finish stands with a notice. It does not do the same for a run that has already written files, which has a result the user can read even without a closing line.\n\nWhat should happen: a run that wrote files and then goes silent gets the same treatment as a run that narrated earlier — one nudge, then the run finishes on the work — with a notice saying that the edits are the result (the notice must contain \"the edits above are the result\"). The finish gates still run after that as they do today (a write with no check is still refused once), and the run ends with `end_turn`, not an error. A read-only run with no answer at all is still an error.\n\nKeep the existing exported APIs working, and keep the existing tests passing.",
+  "f2p": [
+    "tests/unit/orchestrator/agent-loop-empty-completion.test.ts :: AgentLoop — empty completions never end a run silently > a write followed by silence: nudged once, then the work stands as the finish"
+  ],
+  "p2p": [
+    "tests/unit/orchestrator/agent-loop-empty-completion.test.ts :: AgentLoop — empty completions never end a run silently > first-step end_turn with literal nothing is treated as a defect, not an answer",
+    "tests/unit/orchestrator/agent-loop-empty-completion.test.ts :: AgentLoop — empty completions never end a run silently > incidents are reported for empty completions",
+    "tests/unit/orchestrator/agent-loop-empty-completion.test.ts :: AgentLoop — empty completions never end a run silently > narration, tool results, then silence: one nudge, then the finish is accepted (answers=%s)",
+    "tests/unit/orchestrator/agent-loop-empty-completion.test.ts :: AgentLoop — empty completions never end a run silently > narration, tool results, then silence: one nudge, then the finish is accepted (answers=%s) #2",
+    "tests/unit/orchestrator/agent-loop-empty-completion.test.ts :: AgentLoop — empty completions never end a run silently > recovers when a retry produces real output",
+    "tests/unit/orchestrator/agent-loop-empty-completion.test.ts :: AgentLoop — empty completions never end a run silently > stopReason tool_use with zero tool calls: retries twice, then fails LOUDLY",
+    "tests/unit/orchestrator/agent-loop-empty-completion.test.ts :: AgentLoop — empty completions never end a run silently > text accompanying a missing promised tool call cannot reset the empty-response ceiling",
+    "tests/unit/orchestrator/agent-loop-empty-completion.test.ts :: AgentLoop — empty completions never end a run silently > tool-only work followed by silence recovers or fails explicitly (recover=%s)",
+    "tests/unit/orchestrator/agent-loop-empty-completion.test.ts :: AgentLoop — empty completions never end a run silently > tool-only work followed by silence recovers or fails explicitly (recover=%s) #2"
+  ],
+  "impossible": [],
+  "typecheckPackages": ["packages/orchestrator"],
+  "typecheckBaseClean": {
+    "packages/orchestrator": true
+  },
+  "typecheckFixedClean": {
+    "packages/orchestrator": true
+  },
+  "timeLimit": "serious",
+  "hiddenFiles": ["tests/unit/orchestrator/agent-loop-empty-completion.test.ts"],
+  "testFiles": ["tests/unit/orchestrator/agent-loop-empty-completion.test.ts"],
+  "fixFiles": ["packages/orchestrator/src/agent-loop.ts"],
+  "mined": {
+    "at": "2026-09-28",
+    "bun": "1.3.14",
+    "baseWallMs": [194, 147],
+    "fixedWallMs": [179, 201]
+  }
+}
