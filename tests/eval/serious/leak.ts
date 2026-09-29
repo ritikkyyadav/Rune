@@ -223,6 +223,13 @@ const METHOD_HEAD = new RegExp(
 const ARROW_PROPERTY = new RegExp(
   `^\\s*${MODIFIERS}#?(${IDENT})\\s*\\??\\s*[:=]\\s*(?:async\\s+)?(?:\\([^)]*\\)|${IDENT})\\s*(?::\\s*[^=]+)?=>`,
 );
+/**
+ * A member that opens its line: an interface or type field (`groupGone?: boolean;`),
+ * a class field, an object-literal key (`attemptStartedAt: stamp,`) or a
+ * parameter on a line of its own. A new field is fix vocabulary as much as a
+ * new function is ("add a `groupGone` flag" hands over the design).
+ */
+const MEMBER = new RegExp(`^\\s*${MODIFIERS}#?(${IDENT})\\s*[?!]?\\s*:(?!:)`);
 const NOT_A_NAME = new Set(
   "if for while switch catch return function typeof await new super import export with do else try finally throw delete void yield in of instanceof case default constructor".split(
     " ",
@@ -251,6 +258,8 @@ export function declarationsOn(line: string): string[] {
   }
   const arrow = ARROW_PROPERTY.exec(line);
   if (arrow && !NOT_A_NAME.has(arrow[1]!)) names.push(arrow[1]!);
+  const member = MEMBER.exec(line);
+  if (member && !NOT_A_NAME.has(member[1]!) && !names.includes(member[1]!)) names.push(member[1]!);
   return names.filter((name) => !NOT_A_NAME.has(name));
 }
 
@@ -280,6 +289,48 @@ export function mentions(text: string, name: string): boolean {
 /** Every identifier-shaped word in `text`. */
 export function wordsOf(text: string): Set<string> {
   return new Set(text.match(/[A-Za-z_$][\w$]*/g) ?? []);
+}
+
+/**
+ * What one entry of a task's `interface` list names. A module path
+ * (`packages/shared/src/model-catalog.ts`) names the module, without its
+ * extension; anything else names its last symbol, so `ResumePlanStore#transition`,
+ * `CostEntry.attemptStartedAt` and `reportCheckpoints(db, keep?)` name
+ * `transition`, `attemptStartedAt` and `reportCheckpoints`.
+ */
+export function interfaceSymbol(entry: string): { kind: "module" | "symbol"; name: string } {
+  const bare = entry.trim();
+  if (bare.includes("/")) return { kind: "module", name: bare.replace(/\.[cm]?tsx?$/, "") };
+  const head = bare.split("(")[0]!.split(":")[0]!.trim();
+  return { kind: "symbol", name: head.split(/[#.]/).pop()!.trim() };
+}
+
+/**
+ * Everything wrong with a task's interface list. An interface is the one place
+ * a prompt may name what the fix adds, so each entry must be something the
+ * hidden tests actually use (a symbol they reference, a module they import) and
+ * something the prompt actually names; anything else is either a leak with a
+ * licence or a promise the prompt does not keep.
+ */
+export function interfaceProblems(entries: string[], prompt: string, testText: string): string[] {
+  const problems: string[] = [];
+  for (const entry of entries) {
+    const { kind, name } = interfaceSymbol(entry);
+    if (kind === "module") {
+      if (!testText.includes(name))
+        problems.push(`interface ${entry} is not imported by the hidden tests`);
+      if (!prompt.includes(name)) problems.push(`interface ${entry} is not named in the prompt`);
+      continue;
+    }
+    if (!new RegExp(`^${IDENT}$`).test(name)) {
+      problems.push(`interface ${entry} names no symbol`);
+      continue;
+    }
+    if (!mentions(testText, name))
+      problems.push(`interface ${entry} is not referenced by the hidden tests`);
+    if (!mentions(prompt, name)) problems.push(`interface ${entry} is not named in the prompt`);
+  }
+  return problems;
 }
 
 export interface LeakInput {
@@ -421,7 +472,13 @@ export function presentIn(
   return found;
 }
 
-/** The leak report for one task, from the repository. */
+/**
+ * The leak report for one task, from the repository. Only what the prompt
+ * mentions is looked up at the parent, one early-exiting `git grep -q` per
+ * name: a name the parent has is found in milliseconds. (One `git grep -o -w`
+ * over a batch of names is far slower on common words, measured 25 s → 194 s
+ * over the committed corpus, so the batch form is kept for `newNames` only.)
+ */
 export function taskLeaks(
   repoRoot: string,
   task: { sha: string; parent: string; prompt: string; hiddenFiles: string[] },

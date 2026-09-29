@@ -27,7 +27,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { validateCandidate, type ValidationResult } from "./f2p";
-import { newNames, revisionText, taskLeaks } from "./leak";
+import { interfaceProblems, newNames, revisionText, taskLeaks } from "./leak";
 import {
   loadSpecs,
   repoRootOf,
@@ -336,7 +336,11 @@ export interface PromptEntry {
   interface?: string[];
 }
 
-export function specFrom(result: ValidationResult, entry: PromptEntry): SeriousTaskSpec {
+export function specFrom(
+  result: ValidationResult,
+  entry: PromptEntry,
+  minedAt: string = new Date().toISOString().slice(0, 10),
+): SeriousTaskSpec {
   const c = result.classification!;
   const typecheck = result.typecheck ?? {};
   const spec: SeriousTaskSpec = {
@@ -363,7 +367,7 @@ export function specFrom(result: ValidationResult, entry: PromptEntry): SeriousT
     fixFiles: result.fixFiles,
     ...(c.flaky.length ? { flaky: c.flaky } : {}),
     mined: {
-      at: new Date().toISOString().slice(0, 10),
+      at: minedAt,
       bun: result.bun,
       baseWallMs: result.runs.filter((r) => r.label.startsWith("base")).map((r) => r.wallMs),
       fixedWallMs: result.runs.filter((r) => r.label.startsWith("fixed")).map((r) => r.wallMs),
@@ -378,12 +382,18 @@ function writeTasksCommand(args: string[]): void {
   if (!promptsFile) throw new Error("write-tasks needs --prompts FILE");
   const prompts = JSON.parse(readFileSync(promptsFile, "utf8")) as Record<string, PromptEntry>;
   const results = readResults(mined).filter((r) => r.keep);
+  // The day the candidates were validated, which is what `mined.at` records —
+  // not the day the prompts were joined to them.
+  const summaryFile = join(mined, "summary.json");
+  const minedAt = existsSync(summaryFile)
+    ? String(JSON.parse(readFileSync(summaryFile, "utf8")).at ?? "").slice(0, 10) || undefined
+    : undefined;
   mkdirSync(TASKS_DIR, { recursive: true });
   let written = 0;
   for (const [sha, entry] of Object.entries(prompts)) {
     const result = results.find((r) => r.sha.startsWith(sha));
     if (!result) throw new Error(`no kept mining result for ${sha}`);
-    const spec = specFrom(result, entry);
+    const spec = specFrom(result, entry, minedAt);
     writeFileSync(join(TASKS_DIR, `${sha.slice(0, 7)}.json`), JSON.stringify(spec, null, 2) + "\n");
     written++;
   }
@@ -397,11 +407,7 @@ function checkCommand(repoRoot: string): number {
     const problems = specProblems(spec);
     const leaks = taskLeaks(repoRoot, spec);
     const testText = revisionText(repoRoot, spec.sha, spec.hiddenFiles);
-    for (const entry of spec.interface ?? []) {
-      const symbol = entry.split(/[#.]/).pop()!;
-      if (!new RegExp(`\\b${symbol}\\b`).test(testText))
-        problems.push(`interface ${entry} is not referenced by the hidden tests`);
-    }
+    problems.push(...interfaceProblems(spec.interface ?? [], spec.prompt, testText));
     for (const leak of leaks.leaks) problems.push(`leak: ${JSON.stringify(leak)}`);
     if (problems.length) failures++;
     console.log(

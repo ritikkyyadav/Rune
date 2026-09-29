@@ -13,6 +13,8 @@ import {
   addedNames,
   declarationsOn,
   findLeaks,
+  interfaceProblems,
+  interfaceSymbol,
   MIN_LITERAL,
   mentions,
   scan,
@@ -109,6 +111,78 @@ describe("what a fix introduces", () => {
     expect(declarationsOn("  await store.save(next);")).toEqual([]);
     expect(declarationsOn("  save(next);")).toEqual([]);
     expect(declarationsOn('  describe("x", () => {')).toEqual([]);
+  });
+
+  test("a new field is a name too: interface members, class fields, object keys", () => {
+    expect(declarationsOn("  groupGone: boolean;")).toEqual(["groupGone"]);
+    expect(declarationsOn("  leaderExited?: boolean;")).toEqual(["leaderExited"]);
+    expect(declarationsOn("  private readonly foldedTails!: WeakMap<Message, string>;")).toEqual([
+      "foldedTails",
+    ]);
+    expect(declarationsOn("      attemptStartedAt: stamp,")).toEqual(["attemptStartedAt"]);
+    // Not members: a case label, a default, a ternary's tail, a type-only colon pair.
+    expect(declarationsOn('    case "x":')).toEqual([]);
+    expect(declarationsOn("    default:")).toEqual([]);
+    expect(declarationsOn("      ? a : b")).toEqual([]);
+    expect(declarationsOn("  cond ? a : b")).toEqual([]);
+    expect(declarationsOn("  std::string name;")).toEqual([]);
+  });
+});
+
+describe("a task's interface list", () => {
+  test("an entry names its last symbol, or a module without its extension", () => {
+    expect(interfaceSymbol("ResumePlanStore#transition")).toEqual({
+      kind: "symbol",
+      name: "transition",
+    });
+    expect(interfaceSymbol("CostEntry.attemptStartedAt")).toEqual({
+      kind: "symbol",
+      name: "attemptStartedAt",
+    });
+    expect(interfaceSymbol("reportCheckpoints(db, keep?): Report")).toEqual({
+      kind: "symbol",
+      name: "reportCheckpoints",
+    });
+    expect(interfaceSymbol("packages/shared/src/model-catalog.ts")).toEqual({
+      kind: "module",
+      name: "packages/shared/src/model-catalog",
+    });
+  });
+
+  const tests = [
+    'import { describeAge } from "../../../packages/shared/src/model-catalog";',
+    "expect(store.transition(a, b, root)).toBe(true);",
+  ].join("\n");
+  const prompt =
+    "Provide `ResumePlanStore#transition` and `describeAge` in packages/shared/src/model-catalog.ts.";
+
+  test("every entry is used by the hidden tests and named in the prompt", () => {
+    expect(
+      interfaceProblems(
+        ["ResumePlanStore#transition", "describeAge", "packages/shared/src/model-catalog.ts"],
+        prompt,
+        tests,
+      ),
+    ).toEqual([]);
+  });
+
+  test("an entry the tests never use is a licence to leak, and is refused", () => {
+    expect(interfaceProblems(["escalateToKill"], "Use `escalateToKill`.", tests)).toEqual([
+      "interface escalateToKill is not referenced by the hidden tests",
+    ]);
+    expect(interfaceProblems(["packages/x/src/other.ts"], "packages/x/src/other", tests)).toEqual([
+      "interface packages/x/src/other.ts is not imported by the hidden tests",
+    ]);
+  });
+
+  test("an entry the prompt never names is a promise the prompt does not keep", () => {
+    expect(interfaceProblems(["describeAge"], "Cache the catalogue.", tests)).toEqual([
+      "interface describeAge is not named in the prompt",
+    ]);
+    // A whole word, not a substring of a longer one.
+    expect(interfaceProblems(["transition"], "Call transitionAll().", tests)).toEqual([
+      "interface transition is not named in the prompt",
+    ]);
   });
 });
 
