@@ -762,6 +762,19 @@ describe("the Claude Code arm's two modes", () => {
     expect(refusal({ [CLAUDE_PARITY_CONFIG_ENV]: tmpdir() })).toBeUndefined();
   });
 
+  test("product mode never falls back to a home or profile that happens to exist", () => {
+    // A HOME with a real `.claude` in it, and an inherited CLAUDE_CONFIG_DIR
+    // pointing at an existing directory: neither is the evaluation profile.
+    const home = temp("claude-home-");
+    mkdirSync(join(home, ".claude"));
+    const plan = claudeCodeArm.plan({ id: "t", prompt: PROMPT }, "/evidence/run", {
+      ...limits,
+      env: { PATH: "/usr/bin", HOME: home, CLAUDE_CONFIG_DIR: join(home, ".claude") },
+    });
+    expect(plan.refusal).toMatch(new RegExp(`${CLAUDE_PARITY_CONFIG_ENV} is not set`));
+    expect(plan.env.CLAUDE_CONFIG_DIR).toBeUndefined();
+  });
+
   test("harness mode refuses without a key; the scratch profile is inside the evidence", () => {
     const task = { id: "t", prompt: PROMPT };
     const plan = (env: NodeJS.ProcessEnv) =>
