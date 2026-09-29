@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="8" assertions="7" failures="3" skipped="1" time="0.011">
+  <testsuite name="tests/unit/a.test.ts" file="tests/unit/a.test.ts" tests="2" assertions="2" failures="0" skipped="0" time="0" hostname="host">
+    <testcase name="a test outside any describe" classname="" time="0.000101" file="tests/unit/a.test.ts" line="3" assertions="1" />
+    <testsuite name="outer" file="tests/unit/a.test.ts" line="5" tests="1" assertions="1" failures="0" skipped="0" time="0" hostname="host">
+      <testsuite name="inner &amp; &lt;deep&gt;" file="tests/unit/a.test.ts" line="6" tests="1" assertions="1" failures="0" skipped="0" time="0" hostname="host">
+        <testcase name="a &quot;quoted&quot; name" classname="inner &amp;amp; &amp;lt;deep&amp;gt;" time="0.000074" file="tests/unit/a.test.ts" line="7" assertions="1" />
+      </testsuite>
+    </testsuite>
+  </testsuite>
+  <testsuite name="tests/unit/b.test.ts" file="tests/unit/b.test.ts" tests="6" assertions="5" failures="3" skipped="1" time="0" hostname="host">
+    <testsuite name="d" file="tests/unit/b.test.ts" line="2" tests="6" assertions="5" failures="3" skipped="1" time="0" hostname="host">
+      <testcase name="fails" classname="d" time="0.000074" file="tests/unit/b.test.ts" line="3" assertions="1">
+        <failure type="AssertionError" />
+      </testcase>
+      <testcase name="errors" classname="d" time="0.000074" file="tests/unit/b.test.ts" line="4" assertions="0">
+        <error type="Error" />
+      </testcase>
+      <testcase name="is skipped" classname="d" time="0" file="tests/unit/b.test.ts" line="5" assertions="0">
+        <skipped />
+      </testcase>
+      <testcase name="same name" classname="d" time="0.000004" file="tests/unit/b.test.ts" line="6" assertions="1" />
+      <testcase name="same name" classname="d" time="0.000004" file="tests/unit/b.test.ts" line="7" assertions="1">
+        <failure type="AssertionError" />
+      </testcase>
+      <testcase name="an escaped &amp;lt; stays escaped" classname="d" time="0.000004" file="tests/unit/b.test.ts" line="8" assertions="1" />
+    </testsuite>
+  </testsuite>
+</testsuites>
