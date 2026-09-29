@@ -1,0 +1,22 @@
+[
+  {
+    "id": "c1",
+    "text": "the model prices a line by `quantity`, and a save writes `quantity`, never `qty`, and loads back unchanged",
+    "command": "bun .rune-acceptance/check.mjs model"
+  },
+  {
+    "id": "c2",
+    "text": "an order saved before the rename, with `qty`, still loads as `quantity`, under the same validation",
+    "command": "bun .rune-acceptance/check.mjs legacy"
+  },
+  {
+    "id": "c3",
+    "text": "the CSV report's header says `quantity` and its rows and total are priced from it",
+    "command": "bun .rune-acceptance/check.mjs report"
+  },
+  {
+    "id": "c4",
+    "text": "order.test.ts uses the new name and the whole suite passes with no test dropped",
+    "command": "bun .rune-acceptance/check.mjs suite"
+  }
+]

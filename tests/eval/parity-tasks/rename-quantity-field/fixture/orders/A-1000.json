@@ -1,0 +1,15 @@
+{
+  "id": "A-1000",
+  "items": [
+    {
+      "sku": "PEN-BLK",
+      "qty": 12,
+      "unitCents": 150
+    },
+    {
+      "sku": "INK-BLU",
+      "qty": 2,
+      "unitCents": 875
+    }
+  ]
+}

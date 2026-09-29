@@ -1,0 +1,15 @@
+{
+  "id": "rename-quantity-field",
+  "family": "migration",
+  "prompt": "Rename the `qty` field of LineItem to `quantity` throughout the order code: the model (order.ts), the serializer (serialize.ts), the reader (parse.ts) and the CSV report (report.ts), whose header column becomes `quantity` too. New saves must write `quantity`. Orders saved before this change say `qty` (orders/A-1000.json is one of them) and must keep loading, with the same validation. Update the existing tests in order.test.ts for the new name and keep the whole suite passing. Use only built-in Bun/Node libraries; no package installation is needed.",
+  "files": [
+    "order.test.ts",
+    "order.ts",
+    "orders/A-1000.json",
+    "package.json",
+    "parse.ts",
+    "report.ts",
+    "serialize.ts"
+  ],
+  "notes": "Four modules move together, and the type checker points at three of them. What it cannot point at is the saved files: an old order still says `qty`, and the rename's own tests, once updated, never load one. c2 is the criterion a careless rename fails with every test green. c3 pins the CSV header, a string no type follows."
+}

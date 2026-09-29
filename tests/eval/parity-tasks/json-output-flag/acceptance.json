@@ -1,0 +1,22 @@
+[
+  {
+    "id": "c1",
+    "text": "--json prints one JSON object with the total and all four level counts, combines with --level, and the table without --json is unchanged",
+    "command": "bun .rune-acceptance/check.mjs json"
+  },
+  {
+    "id": "c2",
+    "text": "the --help text lists the --json option",
+    "command": "bun .rune-acceptance/check.mjs help"
+  },
+  {
+    "id": "c3",
+    "text": "the Usage section of README.md documents --json",
+    "command": "bun .rune-acceptance/check.mjs readme"
+  },
+  {
+    "id": "c4",
+    "text": "a test exercises --json, and the whole suite passes with no test dropped",
+    "command": "bun .rune-acceptance/check.mjs tests"
+  }
+]

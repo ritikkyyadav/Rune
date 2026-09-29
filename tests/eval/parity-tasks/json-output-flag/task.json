@@ -1,0 +1,7 @@
+{
+  "id": "json-output-flag",
+  "family": "omission-prone-feature",
+  "prompt": "Add a `--json` option to the logstats CLI in cli.ts. With it, print the summary as one JSON object, {\"total\": <lines counted>, \"levels\": {\"DEBUG\": <n>, \"INFO\": <n>, \"WARN\": <n>, \"ERROR\": <n>}}, instead of the table. It must combine with --level, and the output without --json must not change. Also list the option in the --help text, document it in the Usage section of README.md, and add a test for it to cli.test.ts. Run the tests. Use only built-in Bun/Node libraries; no package installation is needed.",
+  "files": ["README.md", "cli.test.ts", "cli.ts", "package.json", "stats.ts"],
+  "notes": "Four requirements, two of which no test of the model's own ever exercises: the --help line and the README line. c3 reads the Usage section for the flag by name, so it checks that the option was documented where the prompt said, not that the documentation is any good. c4 counts passing tests, so a suite that shrank to make room fails it."
+}
