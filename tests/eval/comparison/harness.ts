@@ -93,11 +93,30 @@ export function openCodeBudgetWatcher(
     totalListCostUsd: () => monitor.getLedger().totalListCostUsd,
   };
 }
+/**
+ * How full the fullest subscription window is, 0–100, on anything that carries
+ * the provider's meter (`capacity`, since fae16ab: Codex reports a five-hour
+ * `primary` window and a weekly `secondary` one). The fuller of the two is the
+ * one that gates a series: stopping at the five-hour line while the week runs
+ * out would still strand the founder for days. Absent when nothing reported.
+ */
+export function fullestWindowPct(value: unknown): number | undefined {
+  const capacity = (value as { capacity?: unknown } | null | undefined)?.capacity;
+  if (!capacity || typeof capacity !== "object") return undefined;
+  const windows = capacity as Record<string, { usedPercent?: unknown } | undefined>;
+  const used = [windows.primary?.usedPercent, windows.secondary?.usedPercent].filter(
+    (n): n is number => typeof n === "number" && Number.isFinite(n),
+  );
+  return used.length ? Math.max(...used) : undefined;
+}
+
 export function runeCost(profile: string): {
   listUsd: number | null;
   models: string[];
   entries: number;
   estimated: boolean;
+  /** The fullest window any cost row reported; absent when none carried a meter. */
+  quotaPct?: number;
 } {
   const path = join(profile, "rune.db");
   if (!existsSync(path)) return { listUsd: null, models: [], entries: 0, estimated: false };
@@ -107,6 +126,9 @@ export function runeCost(profile: string): {
       .query("SELECT payload_json FROM events WHERE json_extract(payload_json,'$.type')='cost'")
       .all() as Array<{ payload_json: string }>;
     const entries = rows.map((row) => JSON.parse(row.payload_json).payload);
+    // The highest reading of the run, not the last: a window only fills within
+    // a run, and a capped request writes no row at all.
+    const readings = entries.map(fullestWindowPct).filter((n): n is number => n !== undefined);
     return {
       listUsd:
         entries.length && entries.every((e) => e.priced)
@@ -115,6 +137,7 @@ export function runeCost(profile: string): {
       models: [...new Set(entries.map((e) => `${e.provider}/${e.model}`))],
       entries: entries.length,
       estimated: entries.some((e) => e.estimated),
+      ...(readings.length ? { quotaPct: Math.max(...readings) } : {}),
     };
   } finally {
     db.close();

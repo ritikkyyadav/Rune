@@ -189,10 +189,11 @@ ceiling for the whole series) or `RUNE_EVAL_QUOTA_PCT` (a plain number from 1 to
 a Rune row reports that share of its subscription window used) is set. The first pair always
 runs; before each later one, the dollar gate stops the series if the spend so far plus the
 costliest pair so far would pass the ceiling, and the quota gate stops it at the share. A run
-whose cost nobody reported blinds the dollar gate, and **no Rune build reports its window
-yet**, so the quota gate is blind today: the series stops as soon as no authorisation it was
-given can still be enforced — on `RUNE_EVAL_QUOTA_PCT` alone, that is after the first pair.
-One pair can overshoot the dollar ceiling.
+whose cost nobody reported blinds the dollar gate. The quota gate reads the fullest window
+(five-hour or weekly) that the provider's meter put on Rune's cost rows; Codex sends one on
+every response. With a provider that sends none, the quota gate is blind, and the series stops
+as soon as no authorisation it was given can still be enforced — on `RUNE_EVAL_QUOTA_PCT`
+alone, that is after the first pair. One pair can overshoot the dollar ceiling.
 
 ```sh
 # The plan: every pair, argv, cwd and env names. Spawns nothing, not even --version.

@@ -229,7 +229,7 @@ export function gateBeforePair(auth: Authorisation, state: GateState): string | 
       sees = true;
     } else
       blind.push(
-        "Rune's last row reported no quotaPct, so RUNE_EVAL_QUOTA_PCT cannot be watched (no Rune build reports its window yet)",
+        "Rune's last row reported no quotaPct (its provider sent no window meter), so RUNE_EVAL_QUOTA_PCT cannot be watched",
       );
   }
   if (!sees)

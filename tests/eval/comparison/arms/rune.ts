@@ -38,7 +38,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { materialiseHarness, planParityHarness, runeCost, sourceDigest } from "../harness";
+import {
+  fullestWindowPct,
+  materialiseHarness,
+  planParityHarness,
+  runeCost,
+  sourceDigest,
+} from "../harness";
 import { runProcess } from "../process";
 import {
   type ArmCapture,
@@ -78,7 +84,7 @@ export const RUNE_NEEDS_MODEL =
 export const RUNE_PARITY_GAPS = [
   "shipped defaults: Rune runs with no config override — its own turn ceiling and second winds, its own effort, its OS sandbox on. The pilot profile's 24-turn cap is gone, because the comparator it now faces has no cap either.",
   "isolation: a fresh RUNE_HOME, database and config per run and --pristine (no learned tactics), with the founder's saved sign-ins read through the credential paths, never copied.",
-  "quota: Rune does not yet report what share of a subscription window a run used, so quotaPct is null on its rows unless a future build emits one — and a series authorised by RUNE_EVAL_QUOTA_PCT alone stops rather than run unmetered.",
+  "quota: quotaPct is the fullest subscription window (five-hour or weekly) any of the run's cost rows reported, from the provider's meter (Codex sends one on every response since fae16ab). A capped request writes no row, so the reading is the last successful response's; a provider that sends no meter leaves quotaPct null, and a series authorised by RUNE_EVAL_QUOTA_PCT alone then stops rather than run unmetered.",
 ];
 
 export type RuneLedger = ReturnType<typeof runeCost>;
@@ -103,11 +109,10 @@ export const RUNE_LIMIT_STOPS: Readonly<Record<string, "turns" | "budget">> = {
 /**
  * A share-of-window figure, if an event carries one.
  *
- * Rune at f29a771 emits none (nothing under packages/ reads a provider's
- * window headers) — this reads the field names a future build would most
- * plausibly use (`quotaPct`, `usedPercent`, on the event or its payload), so
- * the RUNE_EVAL_QUOTA_PCT gate starts working the day it does, and until then
- * the gate knows it is blind.
+ * Since fae16ab the gateway puts the provider's meter on its usage event as
+ * `capacity` (read here through `fullestWindowPct`, the same reading the
+ * ledger gets); a flat `quotaPct` / `usedPercent` on the event or its payload
+ * is read too. Without either, the RUNE_EVAL_QUOTA_PCT gate knows it is blind.
  */
 function quotaPctIn(value: unknown): number | undefined {
   if (!value || typeof value !== "object") return undefined;
@@ -119,6 +124,8 @@ function quotaPctIn(value: unknown): number | undefined {
       const n = h[key];
       if (typeof n === "number" && Number.isFinite(n)) return n;
     }
+    const fullest = fullestWindowPct(h);
+    if (fullest !== undefined) return fullest;
   }
   return undefined;
 }
@@ -209,7 +216,11 @@ export function parseRuneOutput(
     reportedCostUsd: ledger.listUsd,
     usage,
     models: ledger.models,
-    quotaPct: quotaPct ?? null,
+    // The stream and the ledger can each carry the meter; the fuller wins.
+    quotaPct:
+      quotaPct === undefined && ledger.quotaPct === undefined
+        ? null
+        : Math.max(quotaPct ?? 0, ledger.quotaPct ?? 0),
     ...(detail ? { detail } : {}),
   });
 }
