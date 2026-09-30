@@ -85,6 +85,21 @@ describe("mid-stream failures, by code", () => {
     });
     expect([err.status, err.code, err.retryAfterMs]).toEqual([429, "rate_limit", 1898]);
     expect(err.resetAt).toBeUndefined();
+
+    const short = await failureOf({
+      type: "error",
+      code: "rate_limit_exceeded",
+      message: "Please try again in 350ms.",
+    });
+    expect(short.retryAfterMs).toBe(350);
+  });
+
+  test("an exhausted quota is a cap too, even with no reset to give", async () => {
+    const err = await failureOf({
+      type: "response.failed",
+      response: { error: { code: "insufficient_quota", message: "You exceeded your quota." } },
+    });
+    expect([err.status, err.code, err.resetAt]).toEqual([429, "usage_cap", undefined]);
   });
 
   test("a context overflow is a 400 the agent loop's overflow recovery recognises", async () => {
@@ -131,6 +146,15 @@ describe("mid-stream failures, by code", () => {
     const bare = await failureOf({ type: "response.failed", response: {} });
     expect(bare.status).toBe(502);
     expect(bare.message).toContain("Codex responses stream failed");
+  });
+
+  test("a bare error event's own type is not mistaken for the error's name", async () => {
+    // `{"type":"error"}` names the EVENT. Read as the error's name it would
+    // print "(error)" and file "error" as the provider's code.
+    const err = await failureOf({ type: "error", message: "boom" });
+    expect(err.status).toBe(502);
+    expect(err.providerCode).toBeUndefined();
+    expect(err.message).toBe("Codex stream failed: boom");
   });
 });
 
@@ -185,6 +209,34 @@ describe("a watchdog that fires before the headers arrive", () => {
     expect(err).toBeInstanceOf(ApiError);
     expect(err.status).toBe(504); // >= 500: the gateway retries or falls back
     expect(err.message).toBe("stream stalled — no data for 300s");
+  });
+
+  test("a failure the backend described stands, even when its body stalls", async () => {
+    // The status arrived; only the error body hung until the watchdog fired.
+    // What the backend said (a 429) is worth more than "stream stalled".
+    jest.useFakeTimers();
+    globalThis.fetch = (async (_: unknown, init?: RequestInit) => ({
+      ok: false,
+      status: 429,
+      body: null,
+      headers: new Headers(),
+      text: () =>
+        new Promise<string>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(new DOMException("The operation was aborted.", "AbortError")),
+          );
+        }),
+    })) as unknown as typeof fetch;
+
+    const outcome = drain(new CodexProvider("tok").inferStream(request())).then(
+      () => null,
+      (err: unknown) => err,
+    );
+    await settle();
+    jest.advanceTimersByTime(300_001);
+    const err = (await outcome) as ApiError;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(429);
   });
 
   test("the caller's own Esc is still the caller's, never a 504", async () => {

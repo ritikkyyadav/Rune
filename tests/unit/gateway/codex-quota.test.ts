@@ -149,8 +149,11 @@ describe("where a cap's reset comes from, in order", () => {
   });
 
   test("an exhausted window that states no reset claims none, even beside one that does", async () => {
+    // Both windows spent; only the five-hour one says when it resets. Its
+    // hour would be a false promise — the week still binds, and nobody said
+    // until when.
     const weeklyUnstated = {
-      "x-codex-primary-used-percent": "40",
+      "x-codex-primary-used-percent": "100",
       "x-codex-primary-reset-after-seconds": "3600",
       "x-codex-secondary-used-percent": "100",
       "retry-after": "90",

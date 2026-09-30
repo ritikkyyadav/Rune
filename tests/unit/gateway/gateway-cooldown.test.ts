@@ -276,8 +276,11 @@ describe('under onQuotaExceeded = "degrade", with nothing left to degrade to', (
     // which the agent loop reads as a 90-second wait, then re-sends.
     setSystemTime(new Date(NOW));
     const gw = gateway({ quotaPolicy: "degrade" });
-    gw.registerProvider(new Stub("codex", capWith({ code: "usage_cap", resetAt: RESETS_AT_MS })));
+    const codex = new Stub("codex", capWith({ code: "usage_cap", resetAt: RESETS_AT_MS }));
+    gw.registerProvider(codex);
     const err = errorOf(await drain(gw.inferStream(request())))!;
+    // The sole provider's one short throttle retry is not spent on a cap.
+    expect(codex.calls).toBe(1);
     expect(err.error).toContain("Quota exceeded");
     expect(err.error).toContain("No provider is left to continue on.");
     expect(err.error).not.toContain("weaker model");
