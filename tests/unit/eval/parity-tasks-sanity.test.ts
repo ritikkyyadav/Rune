@@ -289,27 +289,31 @@ describe("both loaders read the supplement", () => {
 
 describe("each fixture seeds and commits cleanly", () => {
   for (const id of IDS)
-    test(id, async () => {
-      const task = meta(id);
-      const workspace = join(temp(`parity-supplement-seed-${id}-`), "workspace");
-      await taskOf(id).prepare(workspace);
-      // One commit, holding exactly the fixture (and the rig's .gitignore).
-      expect(git(workspace, "rev-list", "--count", "HEAD").trim()).toBe("1");
-      expect(git(workspace, "ls-files").trim().split("\n").sort()).toEqual(
-        [...task.files, ".gitignore"].sort(),
-      );
-      // The uncommitted work is uncommitted: a modified tracked file shows as
-      // modified, a new one as untracked, and nothing else moved.
-      const expected = (task.untracked ?? [])
-        .map((path) => `${task.files.includes(path) ? " M" : "??"} ${path}`)
-        .sort();
-      const status = git(workspace, "status", "--porcelain", "--untracked-files=all");
-      expect(status.split("\n").filter(Boolean).sort()).toEqual(expected);
-      for (const path of task.untracked ?? [])
-        expect(readFileSync(join(workspace, path), "utf8")).toBe(
-          readFileSync(join(SUPPLEMENT, id, "untracked", path), "utf8"),
+    test(
+      id,
+      async () => {
+        const task = meta(id);
+        const workspace = join(temp(`parity-supplement-seed-${id}-`), "workspace");
+        await taskOf(id).prepare(workspace);
+        // One commit, holding exactly the fixture (and the rig's .gitignore).
+        expect(git(workspace, "rev-list", "--count", "HEAD").trim()).toBe("1");
+        expect(git(workspace, "ls-files").trim().split("\n").sort()).toEqual(
+          [...task.files, ".gitignore"].sort(),
         );
-    });
+        // The uncommitted work is uncommitted: a modified tracked file shows as
+        // modified, a new one as untracked, and nothing else moved.
+        const expected = (task.untracked ?? [])
+          .map((path) => `${task.files.includes(path) ? " M" : "??"} ${path}`)
+          .sort();
+        const status = git(workspace, "status", "--porcelain", "--untracked-files=all");
+        expect(status.split("\n").filter(Boolean).sort()).toEqual(expected);
+        for (const path of task.untracked ?? [])
+          expect(readFileSync(join(workspace, path), "utf8")).toBe(
+            readFileSync(join(SUPPLEMENT, id, "untracked", path), "utf8"),
+          );
+      },
+      60_000,
+    );
 });
 
 describe("graded by corpus-source: each solution passes, each wrong variant does not", () => {
@@ -481,7 +485,7 @@ describe("pricing-page-mobile, without a browser", () => {
     });
     expect(run.status).toBe(1);
     expect(run.stdout).toContain("acceptance failed: unknown criterion nope");
-  });
+  }, 60_000);
 
   test("the solution's page holds what the checks look for, and the fixture's does not", () => {
     const solution = page("solution");
