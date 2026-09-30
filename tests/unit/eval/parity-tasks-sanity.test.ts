@@ -389,6 +389,39 @@ describe("review-invoice-rules reads what a review shows, not what it says", () 
     expect(failed(graded)).toEqual(["c2"]);
   }, 240_000);
 
+  test("a correct review passes as a table, or as a typed code block that declares its values", async () => {
+    const table = await grade(
+      id,
+      undefined,
+      reviewing(
+        "| Call | Returns now | The rules say |",
+        [
+          "| --- | --- | --- |",
+          '| `lineTotal({ description: "Pens", quantity: 0, unitCents: 150 })` | `0` | throws a `RangeError` |',
+          "| `applyDiscount(1005, 10)` | `905` | `904` |",
+          '| `invoiceTotal([{ description: "Desk", quantity: 1, unitCents: 10000 }], 10, 800)` | `9800` | `9720` |',
+        ].join("\n"),
+      ),
+    );
+    expect(explain(table)).toBe("");
+    const block = await grade(
+      id,
+      undefined,
+      reviewing(
+        [
+          "```ts",
+          'const desk: Line = { description: "Desk", quantity: 1, unitCents: 10_000 };',
+          "const lines: Line[] = [desk];",
+          "invoiceTotal(lines, 10, 800); // 9800 now; the rules give 9720",
+          'lineTotal({ description: "Pens", quantity: 1.5, unitCents: 150 } as Line); // 225 now; should throw',
+          "applyDiscount(1005, 10); // 905 now; should be 904",
+          "```",
+        ].join("\n"),
+      ),
+    );
+    expect(explain(block)).toBe("");
+  }, 240_000);
+
   test("the solution's review over a touched test file fails c3 alone", async () => {
     const graded = await grade(id, "solution", (workspace) =>
       appendFileSync(join(workspace, "invoice.test.ts"), "\n"),

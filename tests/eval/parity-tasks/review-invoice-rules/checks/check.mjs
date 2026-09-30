@@ -89,13 +89,60 @@ function closing(text, open) {
   return -1;
 }
 
+/** Where an expression starting at `start` ends: `;`, a line break or a code span's end, outside brackets. */
+function expressionEnd(text, start) {
+  let depth = 0;
+  let quote = null;
+  for (let i = start; i < text.length && i < start + 800; i++) {
+    const c = text[i];
+    if (quote) {
+      if (c === "\\") i++;
+      else if (c === quote) quote = null;
+    } else if (c === '"' || c === "'") quote = c;
+    else if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) depth--;
+    else if (depth === 0 && (c === ";" || c === "\n" || c === "`")) return i;
+  }
+  return -1;
+}
+
+// TypeScript a review may write around its values: `{ … } as Line`.
+const untyped = (source) =>
+  source.replace(/\s+(?:as|satisfies)\s+[A-Za-z_$][\w$.]*(?:<[^<>]*>)?(?:\[\])*/g, "");
+
+/** Evaluate an expression as data: a fresh context holding only what the review declared. */
+const evaluate = (source, scope) =>
+  vm.runInNewContext(untyped(source), { ...scope }, { timeout: 100 });
+
 /**
- * Every call of one of invoice.ts's functions that the review writes out with
- * literal arguments, wherever it appears. A call whose arguments are not
- * literals — a variable, a signature in a heading — cannot be evaluated and
- * is not counted.
+ * The values a review declares before it uses them — `const lines = [...]`,
+ * typed or not — in order, each evaluated with the ones before it in scope.
+ */
+function declared(text) {
+  const scope = Object.create(null);
+  for (const match of text.matchAll(
+    /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;\n]+)?=(?!=)\s*/g,
+  )) {
+    const start = match.index + match[0].length;
+    const end = expressionEnd(text, start);
+    if (end < 0) continue;
+    try {
+      scope[match[1]] = evaluate(`(${text.slice(start, end)})`, scope);
+    } catch {
+      // Not data (a call, a reference to something undeclared): not a binding.
+    }
+  }
+  return scope;
+}
+
+/**
+ * Every call of one of invoice.ts's functions that the review writes out,
+ * wherever it appears, with arguments that are data: literals, or values the
+ * review declared. A call whose arguments cannot be evaluated — a signature
+ * in a heading, a name never given a value — is not counted.
  */
 function callsIn(text) {
+  const scope = declared(text);
   const calls = [];
   for (const match of text.matchAll(
     /\b(lineTotal|applyDiscount|taxFor|invoiceTotal|formatCents)\s*\(/g,
@@ -105,10 +152,7 @@ function callsIn(text) {
     if (close < 0) continue;
     let args;
     try {
-      // A fresh context with nothing in it: the arguments are data.
-      args = vm.runInNewContext(`[${text.slice(open + 1, close)}]`, Object.create(null), {
-        timeout: 100,
-      });
+      args = evaluate(`[${text.slice(open + 1, close)}]`, scope);
     } catch {
       continue;
     }
