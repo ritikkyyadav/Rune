@@ -1,0 +1,17 @@
+[
+  {
+    "id": "c1",
+    "text": "REVIEW.md shows each of the three defects with a call on which the code breaks the rules",
+    "command": "bun .rune-acceptance/check.mjs found"
+  },
+  {
+    "id": "c2",
+    "text": "for each defect it shows, REVIEW.md states what the rules make that call return",
+    "command": "bun .rune-acceptance/check.mjs expected"
+  },
+  {
+    "id": "c3",
+    "text": "no source file was modified by a task that asked for a review",
+    "command": "bun .rune-acceptance/check.mjs sourceUntouched"
+  }
+]

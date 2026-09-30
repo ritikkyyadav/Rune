@@ -1,1 +1,7 @@
-["json-output-flag", "rename-quantity-field", "wip-due-dates", "finish-utils-split"]
+[
+  "json-output-flag",
+  "rename-quantity-field",
+  "review-invoice-rules",
+  "wip-due-dates",
+  "finish-utils-split"
+]

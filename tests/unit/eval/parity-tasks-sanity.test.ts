@@ -29,7 +29,15 @@
 
 import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import {
+  appendFileSync,
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 
@@ -49,6 +57,7 @@ const SUPPLEMENT = resolve(import.meta.dir, "../../eval/parity-tasks");
 const TASKS: Record<string, { family: Family; wrongFails: string[] }> = {
   "json-output-flag": { family: "F2", wrongFails: ["c3"] },
   "rename-quantity-field": { family: "F3", wrongFails: ["c2"] },
+  "review-invoice-rules": { family: "F5", wrongFails: ["c1", "c3"] },
   "wip-due-dates": { family: "F6", wrongFails: ["c2", "c3"] },
   "finish-utils-split": { family: "F6", wrongFails: ["c4"] },
 };
@@ -234,6 +243,15 @@ describe("both loaders read the supplement", () => {
         acceptance(task.id).map(({ id, text, command }) => ({ id, text, command })),
       );
     }
+    expect(parity.filter((task) => task.browser).map((task) => task.id)).toEqual(
+      IDS.filter((id) => meta(id).browser),
+    );
+    // No-code comes from the task's own constraint and the file it may create
+    // from its own prompt: the review task, and only it, with REVIEW.md alone.
+    expect(
+      parity.filter((task) => task.noCode).map((task) => [task.id, task.expectedNewFiles]),
+    ).toEqual([["review-invoice-rules", ["REVIEW.md"]]]);
+    expect(parity.filter((task) => task.expectedNewFiles && !task.noCode)).toEqual([]);
     // The ids are the supplement's own: none shadows a corpus task.
     const corpusIds = new Set(corpusParityTasks(CORPUS_DIR).map((task) => task.id));
     expect(IDS.filter((id) => corpusIds.has(id))).toEqual([]);
@@ -298,4 +316,54 @@ describe("graded by corpus-source: each solution passes, each wrong variant does
         expect(quality(graded.outcome)).toBeLessThan(1);
       }, 240_000);
   }
+});
+
+/**
+ * The review task's c1 and c2 read the review's CALLS, evaluated against the
+ * code as given and against that code with one defect repaired, never its
+ * words. Three reviews a keyword grader would pass, each pinned to the
+ * criterion that has to catch it.
+ */
+describe("review-invoice-rules reads what a review shows, not what it says", () => {
+  const id = "review-invoice-rules";
+  const reviewing =
+    (...lines: string[]) =>
+    (workspace: string) =>
+      writeFileSync(
+        join(workspace, "REVIEW.md"),
+        `# Review of invoice.ts\n\n${lines.join("\n\n")}\n`,
+      );
+
+  test("every function named, every rule quoted, and no call on which the code is wrong", async () => {
+    const graded = await grade(
+      id,
+      undefined,
+      reviewing(
+        '`lineTotal({ description: "Pens", quantity: 2, unitCents: 150 })` returns 300, but a quantity below 1 must throw.',
+        "`applyDiscount(1000, 10)` returns 900; the discount has to round half up, so it should return 900.",
+        '`invoiceTotal([{ description: "Desk", quantity: 1, unitCents: 10000 }], 0, 800)` taxes before the discount; it should return 10800.',
+      ),
+    );
+    expect(failed(graded)).toEqual(["c1", "c2"]);
+  }, 240_000);
+
+  test("the right calls with the wrong corrected results fail c2 alone", async () => {
+    const graded = await grade(
+      id,
+      undefined,
+      reviewing(
+        '`lineTotal({ description: "Pens", quantity: 0, unitCents: 150 })` returns 0; it should return 150.',
+        "`applyDiscount(1005, 10)` returns 905; the rules make it 906.",
+        '`invoiceTotal([{ description: "Desk", quantity: 1, unitCents: 10000 }], 10, 800)` returns 9800 and should be 9000.',
+      ),
+    );
+    expect(failed(graded)).toEqual(["c2"]);
+  }, 240_000);
+
+  test("the solution's review over a touched test file fails c3 alone", async () => {
+    const graded = await grade(id, "solution", (workspace) =>
+      appendFileSync(join(workspace, "invoice.test.ts"), "\n"),
+    );
+    expect(failed(graded)).toEqual(["c3"]);
+  }, 240_000);
 });
