@@ -133,15 +133,13 @@ formatted and typechecked with the rest of `tests/eval` (it has no
 
 ## What is not proven
 
-- **The frontend task has not run in a browser.** Chromium cannot start in the
-  sandbox these tasks were written in. Its checks are built on the corpus's own
-  `browser.mjs`, byte for byte, and use only Playwright calls the corpus's
-  checks already make; without a runtime every criterion comes back impossible,
-  never failed, and the sanity test pins that, the page's structure, the menu
-  script against a stub DOM, and that the wrong variant differs from the
-  solution only in the table. Whether the solution scores 1 and the wrong
-  variant fails exactly `c2` in real Chromium is unobserved until someone runs
-  the sanity test with `RUNE_BENCH_PLAYWRIGHT` set, which un-skips both.
+- **The frontend task ran in a browser once, on an older Playwright.** Chromium
+  cannot start in the sandbox these tasks were written in, so on 2026-09-30 the
+  sanity test was run outside it with Playwright 1.62.1 and its headless shell
+  (the corpus pins 1.63.0): the solution scored 1 and the wrong variant failed
+  exactly `c2`, and the corpus's own two browser tasks passed in the same run,
+  which is what makes the result mean something. Without a runtime every
+  criterion comes back impossible, never failed, and the sanity test pins that.
 - **No arm has run any of these tasks.** Every `wrong` is a failure the author
   thought of, as in the corpus.
 - **Windows.** The sanity test is in the unit gate, which also runs on
@@ -180,3 +178,9 @@ Every change to these tasks goes here, dated, with the reason.
   titles already say "quantity" in prose. `review-invoice-rules`' check binds
   the values a review declares and strips `as`/`satisfies`, because a correct
   review that wrote `const lines = [...]` failed `c1`.
+- **2026-09-30, verification** — the browser task observed in real Chromium,
+  outside the OS sandbox (Playwright 1.62.1, `PLAYWRIGHT_BROWSERS_PATH` at the
+  local cache): the solution scores quality 1 and the wrong variant fails
+  exactly `c2`; the corpus's `responsive-project-board` and
+  `signup-form-states` pass in the same run (58 pass, 1 skip, the skip being
+  the no-runtime test). Nothing in the tasks changed.
