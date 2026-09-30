@@ -49,6 +49,8 @@ const SUPPLEMENT = resolve(import.meta.dir, "../../eval/parity-tasks");
 const TASKS: Record<string, { family: Family; wrongFails: string[] }> = {
   "json-output-flag": { family: "F2", wrongFails: ["c3"] },
   "rename-quantity-field": { family: "F3", wrongFails: ["c2"] },
+  "wip-due-dates": { family: "F6", wrongFails: ["c2", "c3"] },
+  "finish-utils-split": { family: "F6", wrongFails: ["c4"] },
 };
 const IDS = Object.keys(TASKS);
 

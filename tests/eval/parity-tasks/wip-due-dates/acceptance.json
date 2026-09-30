@@ -1,0 +1,17 @@
+[
+  {
+    "id": "c1",
+    "text": "`due <id> <date>` saves the date, and `list` shows it after that todo and only that todo",
+    "command": "bun .rune-acceptance/check.mjs due"
+  },
+  {
+    "id": "c2",
+    "text": "a day that does not exist, a malformed date and an unknown id each exit 1 with an error and save nothing",
+    "command": "bun .rune-acceptance/check.mjs refuses"
+  },
+  {
+    "id": "c3",
+    "text": "todos.ts is byte-identical to the user's uncommitted version",
+    "command": "bun .rune-acceptance/check.mjs userWork"
+  }
+]

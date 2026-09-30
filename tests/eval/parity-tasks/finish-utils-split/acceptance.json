@@ -1,0 +1,22 @@
+[
+  {
+    "id": "c1",
+    "text": "utils.ts keeps groupBy and no longer holds formatAmount, padLeft or padRight",
+    "command": "bun .rune-acceptance/check.mjs slim"
+  },
+  {
+    "id": "c2",
+    "text": "every caller moved: nothing but money.ts and text.ts defines the three functions, and nothing imports them from utils",
+    "command": "bun .rune-acceptance/check.mjs callers"
+  },
+  {
+    "id": "c3",
+    "text": "the CLI prints the same table and CSV as before, and the test suite passes with no test dropped",
+    "command": "bun .rune-acceptance/check.mjs works"
+  },
+  {
+    "id": "c4",
+    "text": "money.ts, text.ts and report.ts are byte-identical to the user's uncommitted versions",
+    "command": "bun .rune-acceptance/check.mjs userWork"
+  }
+]
