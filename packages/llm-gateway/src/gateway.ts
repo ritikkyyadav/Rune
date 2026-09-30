@@ -12,6 +12,7 @@ import type {
   StreamOpts,
   TokenUsage,
 } from "./types";
+import { ApiError } from "./types";
 import { CostTracker } from "./cost-tracker";
 import { ProviderHealthStore } from "./provider-health";
 import { providerFallbackRank, PROVIDER_PRESETS } from "@rune/shared";
@@ -70,8 +71,65 @@ const USAGE_CAP_RE = /usage limit|quota|weekly|plan limit|credit/i;
 const USAGE_CAP_COOLDOWN_MS = 15 * 60_000;
 /** Cooldown for a plain rate-limited provider when no Retry-After is given. */
 const RATE_LIMIT_COOLDOWN_MS = 60_000;
-/** Never cool a provider longer than this, whatever Retry-After claims. */
+/**
+ * Never cool a provider longer than this on a GUESS — a missing or bare
+ * Retry-After. A reset the provider reported as a moment (`ApiError.resetAt`)
+ * is not a guess and is not clamped: a 2h42m wall cooled for 60m is simply
+ * walked into again at minute 61.
+ */
 const MAX_COOLDOWN_MS = 60 * 60_000;
+
+/** What a 429 decided, for either path. */
+interface RateLimitVerdict {
+  /** A plan/quota cap rather than a passing throttle. */
+  isCap: boolean;
+  /** Epoch ms the provider is usable again: exact when reported, else a clamped guess. */
+  until: number;
+}
+
+/** An error's HTTP status, whichever shape (ApiError, SDK error) it came in. */
+function statusOf(err: Error | undefined): number | undefined {
+  const status = (err as { status?: unknown } | undefined)?.status;
+  return typeof status === "number" ? status : undefined;
+}
+
+/** The provider's reported reset, when the error carries one that is still ahead. */
+function reportedResetAt(err: Error | undefined, now: number): number | undefined {
+  const at = err instanceof ApiError ? err.resetAt : undefined;
+  return at !== undefined && Number.isFinite(at) && at > now ? at : undefined;
+}
+
+/**
+ * A wait as a person reads it: "~42m", "~2h 42m", "~6d 21h". Minutes are
+ * rounded, never shown as zero. Under an hour it stays a bare "Nm", which the
+ * TUI's auto-resume parses (`resume this session in ~(\d+)m`).
+ */
+export function formatWait(ms: number): string {
+  const mins = Math.max(1, Math.round(ms / 60_000));
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return mins % 60 ? `${hours}h ${mins % 60}m` : `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return hours % 24 ? `${days}d ${hours % 24}h` : `${days}d`;
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/**
+ * The local wall-clock minute a reset lands in, rounded UP so "at 14:08" is
+ * never a minute the limit still holds. Another day gets its date ("Oct 5
+ * 14:08") — a bare time for a weekly cap would name the wrong day.
+ */
+export function formatClock(at: number, now: number): string {
+  const d = new Date(Math.ceil(at / 60_000) * 60_000);
+  const today = new Date(now);
+  const hhmm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const sameDay =
+    d.getFullYear() === today.getFullYear() &&
+    d.getMonth() === today.getMonth() &&
+    d.getDate() === today.getDate();
+  return sameDay ? hhmm : `${MONTHS[d.getMonth()]} ${d.getDate()} ${hhmm}`;
+}
 
 export class LlmGateway {
   private providers: Map<ProviderName, LlmProvider> = new Map();
@@ -143,33 +201,52 @@ export class LlmGateway {
     }
   }
 
-  /** Cool a provider down after a 429; usage-cap 429s cool much longer. */
-  private coolDown(provider: ProviderName, err: Error | undefined): number {
-    const retryAfter = this.getRetryAfterMs(err);
-    const isCap = USAGE_CAP_RE.test(err?.message ?? "");
-    const base = isCap ? USAGE_CAP_COOLDOWN_MS : RATE_LIMIT_COOLDOWN_MS;
-    const waitMs = Math.min(Math.max(retryAfter, base), MAX_COOLDOWN_MS);
-    const until = Date.now() + waitMs;
+  /**
+   * The one reading of a 429, shared by `infer()` and `inferStream()` so the
+   * two paths cannot drift apart again — `infer()` (the classifier, the
+   * summarizer, sub-agent repair) used to have no cooldown and no cap
+   * detection at all, and re-sent a capped request on every retry.
+   *
+   * Cools the provider down — until the provider's own reset when it reported
+   * one, otherwise for a clamped guess — and, for a cap, remembers it across
+   * sessions.
+   */
+  private onRateLimit(provider: ProviderName, err: Error | undefined): RateLimitVerdict {
+    const now = Date.now();
+    const isCap = this.isUsageCap(err);
+    const reported = reportedResetAt(err, now);
+    let until: number;
+    if (reported !== undefined) {
+      until = reported;
+    } else {
+      const retryAfter = this.getRetryAfterMs(err);
+      const base = isCap ? USAGE_CAP_COOLDOWN_MS : RATE_LIMIT_COOLDOWN_MS;
+      until = now + Math.min(Math.max(retryAfter, base), MAX_COOLDOWN_MS);
+    }
     this.cooldownUntil.set(provider, until);
     if (isCap) {
       // Persisted too: a plan cap outlives the session that hit it, and a new
       // session walking into the same wall is the single most common failure
       // in the incident log.
-      this.health.noteCapped(
-        provider,
-        until,
-        err?.message?.split("\n")[0]?.slice(0, 150) ?? "usage limit reached",
-      );
-      this.cappedUntil.set(provider, {
-        until,
-        message: err?.message?.split("\n")[0]?.slice(0, 150) ?? "usage limit reached",
-      });
+      const message = err?.message?.split("\n")[0]?.slice(0, 150) ?? "usage limit reached";
+      this.health.noteCapped(provider, until, message);
+      this.cappedUntil.set(provider, { until, message });
     }
-    return waitMs;
+    return { isCap, until };
   }
 
-  /** True when this failure is a plan/quota cap rather than a passing throttle. */
+  /**
+   * True when this failure is a plan/quota cap rather than a passing throttle.
+   *
+   * The structured field decides when a provider set one — `usage_cap` is a
+   * cap, `rate_limit` is explicitly NOT one, whatever its sentence says. Only
+   * when neither was said does the message regex get a vote, which is all the
+   * gateway had before providers could say it outright.
+   */
   private isUsageCap(err: Error | undefined): boolean {
+    const code = err instanceof ApiError ? err.code : undefined;
+    if (code === "usage_cap") return true;
+    if (code === "rate_limit") return false;
     return USAGE_CAP_RE.test(err?.message ?? "");
   }
 
@@ -212,7 +289,7 @@ export class LlmGateway {
     /** False when the chain simply ran out rather than a substitute being refused. */
     declinedSubstitute = true,
   ): string {
-    const mins = Math.max(1, Math.ceil((until - Date.now()) / 60_000));
+    const now = Date.now();
     // Only claim to have refused a handover when one was actually available and
     // refused. If the cap landed on a provider we had already fallen back to,
     // nothing was declined — saying otherwise would misdescribe the run in the
@@ -220,9 +297,11 @@ export class LlmGateway {
     const stance = declinedSubstitute
       ? "Stopped here instead of handing your task to a weaker model."
       : "No provider is left to continue on.";
+    // Both forms: the relative one says how long, the clock one says when to
+    // come back without doing arithmetic on a message read an hour later.
     return (
       `Quota exceeded on ${provider}/${model}${why ? ` — ${why}` : ""}. ${stance} ` +
-      `Your work is saved: resume this session in ~${mins}m, ` +
+      `Your work is saved: resume this session in ~${formatWait(until - now)} (at ${formatClock(until, now)}), ` +
       `switch now with /model, or set [fallback] onQuotaExceeded = "degrade" to allow automatic downgrade.`
     );
   }
@@ -303,6 +382,14 @@ export class LlmGateway {
         // An aborted request is a caller decision (timeout fail-closed, user
         // cancel) — retrying it would resurrect work the caller abandoned.
         if (request.signal?.aborted) break;
+        // The same reading of a 429 the stream path makes: the provider cools
+        // down (so the reviewer's fallback and the next call can see it), and
+        // a plan cap is never retried — every retry was another real request
+        // against a wall that stands for hours. The caller gets the
+        // provider's own error, `resetAt` and all.
+        if (statusOf(lastError) === 429 && this.onRateLimit(request.provider, lastError).isCap) {
+          break;
+        }
         if (!this.shouldRetry(err as Error, attempt)) break;
         // No stream to yield on here, but the retry is still not allowed to be
         // silent — `retryEvent` reports it to the black box on the way past.
@@ -339,7 +426,7 @@ export class LlmGateway {
       const until = this.cooldownUntil.get(request.provider) ?? 0;
       const why = this.prunedProviders.has(request.provider)
         ? "its model is no longer available (pick a new one with /model)"
-        : `it hit its usage/rate limit — retrying it in ~${Math.max(1, Math.ceil((until - Date.now()) / 60_000))}m`;
+        : `it hit its usage/rate limit — retrying it in ~${formatWait(until - Date.now())}`;
       yield {
         type: "notice",
         message: `Skipping ${request.provider} — ${why}. Using ${fallbackOrder[0]}/${
@@ -411,6 +498,8 @@ export class LlmGateway {
 
       let lastError: Error | undefined;
       let lastStatus: number | undefined;
+      /** What the last 429 on this provider decided; undefined after any other failure. */
+      let lastVerdict: RateLimitVerdict | undefined;
       let shouldFallback = false;
 
       for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
@@ -487,7 +576,8 @@ export class LlmGateway {
 
           // Rate/usage-limited: remember it so the NEXT turn skips this
           // provider instantly instead of re-walking a doomed cascade.
-          if (isRateLimit) this.coolDown(providerName, lastError);
+          lastVerdict = isRateLimit ? this.onRateLimit(providerName, lastError) : undefined;
+          const isCap = lastVerdict?.isCap === true;
 
           // ── A plan/quota cap on the provider the user CHOSE ends the run ──
           // Not a fallback: a frontier model halfway through an extensive task
@@ -500,12 +590,7 @@ export class LlmGateway {
           //
           // Scoped to the REQUESTED provider: once we are already on a
           // substitute, stopping buys nothing the first stop did not.
-          if (
-            isRateLimit &&
-            this.stopOnQuota &&
-            this.isUsageCap(lastError) &&
-            providerName === request.provider
-          ) {
+          if (isCap && this.stopOnQuota && providerName === request.provider) {
             break;
           }
 
@@ -524,11 +609,7 @@ export class LlmGateway {
           // A PLAN/QUOTA cap never gets that retry: "usage limit reached"
           // does not clear in seconds, so the retry is pure added latency.
           if (isRateLimit) {
-            if (
-              attempt >= 1 ||
-              USAGE_CAP_RE.test(lastError?.message ?? "") ||
-              this.getRetryAfterMs(lastError) > RATE_LIMIT_MAX_WAIT_MS
-            )
+            if (attempt >= 1 || isCap || this.getRetryAfterMs(lastError) > RATE_LIMIT_MAX_WAIT_MS)
               break;
             if (yieldedSinceReset) {
               yieldedSinceReset = false;
@@ -647,13 +728,17 @@ export class LlmGateway {
           error: `No credits on ${providerName}. Add billing or switch providers with /model.`,
           retryable: false,
         };
-      } else if (lastStatus === 429 && this.stopOnQuota && this.isUsageCap(lastError)) {
+      } else if (lastStatus === 429 && lastVerdict?.isCap) {
         // A CAP, not a throttle. Deliberately worded without "rate limit" and
         // in minutes, so the loop's rateLimitWaitSecs() cannot read it as a
         // short, waitable pause and sit on it — this run is over, and the
         // agent loop's retryable:false path writes the resume handoff.
-        const cap = this.activeCap(providerName);
-        const until = cap?.until ?? Date.now() + USAGE_CAP_COOLDOWN_MS;
+        //
+        // Under EITHER policy. "degrade" only changes whether a substitute is
+        // tried; once none is left, a cap is still a cap. Falling through to
+        // the throttle branch below printed "Retry in ~9731s", which the loop
+        // parses as a 90-second wait and re-sends into the wall.
+        const until = lastVerdict.until;
         yield {
           type: "error",
           error: this.quotaStopError(
@@ -661,9 +746,11 @@ export class LlmGateway {
             adjustedRequest.model,
             until,
             cleanMsg,
-            providerName === request.provider,
+            this.stopOnQuota && providerName === request.provider,
           ),
           retryable: false,
+          code: "usage_cap",
+          resetAt: until,
         };
       } else if (lastStatus === 429) {
         const waitMs = this.getRetryAfterMs(lastError);
