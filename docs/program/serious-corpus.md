@@ -248,3 +248,12 @@ pass), reference quality 1 (all pass), 0 regressions, no broken build.
   formats for the prettier gate. All 30 re-validated through the adapter. 47 mutants, one per
   rule, each turning a unit test red; the one that first survived (comment lines added inside
   an existing doc comment) got its own test.
+- **2026-09-30**: Second review, by the coordinator, of all 30 prompts. None describes its
+  fix: each states a symptom or a specification and names an interface only where the hidden
+  tests need one. Three give generously many cases (`585230a`, `08d9beb`, `5553813`), which
+  makes them easier but equally so for every arm, and they stand. `7d1d42a` asks for ASCII
+  hyphens where `f9a4372` asks for U+2011; they are consecutive commits, each graded on its own
+  parent, so both are right. Two checks by construction: a fix-only name planted in a prompt
+  (`KILL_GRACE_MS` in `a36ca74`) fails the leak check, and every symbol a hidden test imports
+  from `packages/` either exists at the parent or is named in the prompt (30 of 30), so no
+  task asks for a name it never gives. No prompt changed.
