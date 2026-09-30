@@ -6,6 +6,7 @@ import type {
   InferenceRequest,
   InferenceResponse,
   LlmProvider,
+  ProviderCapacity,
   ProviderName,
   StreamEvent,
   StreamOpts,
@@ -294,6 +295,7 @@ export class LlmGateway {
           request,
           callStartedAt,
           attemptStartedAt,
+          response.capacity,
         );
         return response;
       } catch (err) {
@@ -428,6 +430,7 @@ export class LlmGateway {
                 adjustedRequest,
                 callStartedAt,
                 attemptStartedAt,
+                event.capacity,
               );
             }
             yieldedSinceReset = true;
@@ -956,6 +959,8 @@ export class LlmGateway {
      *  `callStartedAt` on the overwhelming majority of calls — every one that
      *  was not retried. */
     attemptStartedAt: Date,
+    /** The plan's quota windows, when the response reported them. */
+    capacity?: ProviderCapacity,
   ): void {
     try {
       const landedAt = new Date();
@@ -972,6 +977,11 @@ export class LlmGateway {
         },
         landedAt,
       );
+      // The quota meter. CostTracker prices tokens and has no field for it,
+      // so it is attached here — and from here it reaches every usage
+      // listener, including the orchestrator's rune.db cost event, which
+      // spreads the entry.
+      if (capacity) entry.capacity = capacity;
       for (const listener of this.usageListeners) {
         try {
           listener(entry);

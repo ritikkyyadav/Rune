@@ -11,6 +11,8 @@
 
 import { randomUUID } from "crypto";
 import type {
+  ApiErrorCode,
+  CapacityWindow,
   ReasoningEffort,
   ContentBlock,
   InferenceRequest,
@@ -18,6 +20,7 @@ import type {
   LlmProvider,
   Message,
   ModelInfo,
+  ProviderCapacity,
   StopReason,
   StreamEvent,
   StreamOpts,
@@ -378,12 +381,8 @@ export async function* parseResponsesStream(body: ByteStream): AsyncGenerator<St
           return;
         }
         case "response.failed":
-        case "error": {
-          const resp = ev.response as { error?: { message?: string } } | undefined;
-          const message =
-            resp?.error?.message ?? (ev.message as string) ?? "Codex responses stream failed";
-          throw new ApiError({ status: 502, provider: "codex", message });
-        }
+        case "error":
+          throw codexStreamError(ev);
       }
     }
   }
@@ -393,27 +392,360 @@ export async function* parseResponsesStream(body: ByteStream): AsyncGenerator<St
   yield { type: "message_stop", stopReason: sawToolCall ? "tool_use" : "end_turn", usage };
 }
 
+// ─── Failures, classified by what the backend said rather than by prose ───
+//
+// Until 2026-09-29 every Codex failure reached the gateway as a status and a
+// sentence. A plan cap's 429 carried its exact reset in the body
+// (`resets_in_seconds`) and in the headers, and all of it was thrown away: the
+// gateway read "usage limit" out of the sentence, guessed fifteen minutes, and
+// told the user to come back then — against a wall that stood for 2h42m. And a
+// failure that arrived mid-stream was a 502 whatever it was, so a context
+// overflow was retried as an outage and a cap was retried as a blip.
+
+/** Anything headers can be read from: a fetch `Headers`, or a test's stand-in. */
+type HeaderSource = { get(name: string): string | null };
+
+const NO_HEADERS: HeaderSource = { get: () => null };
+
 /**
- * Turn a failed Codex HTTP response into a readable one-line message. The backend
- * returns `{"detail":"..."}` (often pretty-printed across lines) — collapse
- * whitespace so the reason survives a UI that only renders the first line, and
- * unwrap `detail`/`error.message` instead of dumping raw JSON.
+ * The furthest ahead a reported reset is believed. The longest window the
+ * backend states is a week; a month of margin means only a garbled value is
+ * refused — and a refused reset is merely a guessed cooldown, not an error.
  */
+const MAX_REPORTED_RESET_MS = 31 * 24 * 60 * 60_000;
+
+function headerNumber(h: HeaderSource, name: string): number | undefined {
+  const raw = h.get(name)?.trim();
+  if (!raw) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/** The backend spells booleans Python's way ("True"/"False"). */
+function headerBool(h: HeaderSource, name: string): boolean | undefined {
+  const raw = h.get(name)?.trim().toLowerCase();
+  if (raw === "true" || raw === "1") return true;
+  if (raw === "false" || raw === "0") return false;
+  return undefined;
+}
+
+function headerText(h: HeaderSource, name: string): string | undefined {
+  return h.get(name)?.trim() || undefined;
+}
+
+/** A reset moment, kept only when it is in the future and not absurdly far. */
+function plausibleReset(at: number | undefined, now: number): number | undefined {
+  return at !== undefined && at > now && at - now <= MAX_REPORTED_RESET_MS ? at : undefined;
+}
+
+/**
+ * The relative form wins over the absolute one, here and in error bodies: it
+ * does not depend on this machine's clock agreeing with the server's.
+ */
+function resetFrom(
+  afterSeconds: number | undefined,
+  atEpochSeconds: number | undefined,
+  now: number,
+): number | undefined {
+  return (
+    plausibleReset(afterSeconds !== undefined ? now + afterSeconds * 1000 : undefined, now) ??
+    plausibleReset(atEpochSeconds !== undefined ? atEpochSeconds * 1000 : undefined, now)
+  );
+}
+
+function capacityWindow(
+  h: HeaderSource,
+  which: "primary" | "secondary",
+  now: number,
+): CapacityWindow | undefined {
+  const usedPercent = headerNumber(h, `x-codex-${which}-used-percent`);
+  if (usedPercent === undefined || usedPercent < 0) return undefined;
+  const windowMinutes = headerNumber(h, `x-codex-${which}-window-minutes`);
+  const after = headerNumber(h, `x-codex-${which}-reset-after-seconds`);
+  const resetAfterSeconds = after !== undefined && after >= 0 ? after : undefined;
+  const resetAt = resetFrom(resetAfterSeconds, headerNumber(h, `x-codex-${which}-reset-at`), now);
+  return {
+    usedPercent,
+    ...(windowMinutes !== undefined && windowMinutes > 0 ? { windowMinutes } : {}),
+    ...(resetAfterSeconds !== undefined ? { resetAfterSeconds } : {}),
+    ...(resetAt !== undefined ? { resetAt } : {}),
+  };
+}
+
+/**
+ * The quota meter: the plan's windows as one Codex response reported them in
+ * its `x-codex-*` headers — on EVERY response, success or failure. Undefined
+ * when the response carried none of them, so an absent meter never reads as
+ * an empty one. Pure, exported for tests.
+ */
+export function parseCodexCapacity(
+  headers: HeaderSource,
+  now: number = Date.now(),
+): ProviderCapacity | undefined {
+  const primary = capacityWindow(headers, "primary", now);
+  const secondary = capacityWindow(headers, "secondary", now);
+  const hasCredits = headerBool(headers, "x-codex-credits-has-credits");
+  const unlimited = headerBool(headers, "x-codex-credits-unlimited");
+  const balance = headerNumber(headers, "x-codex-credits-balance");
+  const planType = headerText(headers, "x-codex-plan-type");
+  const activeLimit = headerText(headers, "x-codex-active-limit");
+  const hasCreditFacts =
+    hasCredits !== undefined || unlimited !== undefined || balance !== undefined;
+  if (!primary && !secondary && !hasCreditFacts && !planType && !activeLimit) return undefined;
+  return {
+    ...(primary ? { primary } : {}),
+    ...(secondary ? { secondary } : {}),
+    ...(hasCreditFacts
+      ? {
+          credits: {
+            ...(hasCredits !== undefined ? { hasCredits } : {}),
+            ...(unlimited !== undefined ? { unlimited } : {}),
+            ...(balance !== undefined ? { balance } : {}),
+          },
+        }
+      : {}),
+    ...(planType ? { planType } : {}),
+    ...(activeLimit ? { activeLimit } : {}),
+  };
+}
+
+/** What a Codex error body or failed-stream event says about itself. */
+interface CodexErrorFacts {
+  /** The human sentence (detail / error.message), or the raw body. */
+  detail: string;
+  /** The backend's machine name: `code` when present, else `type`. */
+  name?: string;
+  resetsInSeconds?: number;
+  /** Epoch SECONDS, as the backend writes it. */
+  resetsAt?: number;
+}
+
+function errorFacts(err: Record<string, unknown>, fallbackDetail: string): CodexErrorFacts {
+  const text = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+  const name = text(err.code) ?? text(err.type);
+  const resetsInSeconds = num(err.resets_in_seconds);
+  const resetsAt = num(err.resets_at);
+  return {
+    detail: text(err.detail) ?? text(err.message) ?? fallbackDetail,
+    ...(name ? { name } : {}),
+    ...(resetsInSeconds !== undefined ? { resetsInSeconds } : {}),
+    ...(resetsAt !== undefined ? { resetsAt } : {}),
+  };
+}
+
+/**
+ * Read a Codex HTTP error body: `{"detail": "..."}` (often pretty-printed) or
+ * `{"error": {"type", "code", "message", "resets_in_seconds", "resets_at", …}}`.
+ * Anything that is not JSON is its own detail.
+ */
+function parseCodexErrorBody(raw: string): CodexErrorFacts {
+  try {
+    const j = JSON.parse(raw) as { detail?: unknown; error?: unknown };
+    if (typeof j.detail === "string") return { detail: j.detail };
+    if (j.error && typeof j.error === "object") {
+      return errorFacts(j.error as Record<string, unknown>, raw);
+    }
+  } catch {
+    // not JSON — keep the raw body
+  }
+  return { detail: raw };
+}
+
+/**
+ * Which kind of failure a backend error name is. The names are OpenAI's
+ * (Responses `error.code` / `error.type`) plus the ChatGPT plan cap's own
+ * `usage_limit_reached`; anything unrecognised is left unclassified, which
+ * keeps the status-based handling that existed before.
+ */
+function classifyCodexError(name: string | undefined): ApiErrorCode | undefined {
+  switch (name) {
+    case "usage_limit_reached":
+    case "insufficient_quota":
+      return "usage_cap";
+    case "rate_limit_exceeded":
+      return "rate_limit";
+    case "context_length_exceeded":
+      return "context_overflow";
+    case "server_error":
+      return "server_error";
+  }
+  return name?.startsWith("invalid_") ? "invalid_request" : undefined;
+}
+
+/** "Please try again in 1.898s" / "in 350ms" — how a throttle names its wait. */
+function tryAgainInMs(message: string): number | undefined {
+  const m = /try again in\s*(\d+(?:\.\d+)?)\s*(ms|s|sec|seconds?)\b/i.exec(message);
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  return m[2]!.toLowerCase() === "ms" ? n : n * 1000;
+}
+
+/**
+ * The window whose reset lifts the cap: the exhausted one that resets last,
+ * or the primary when none reads as exhausted. An exhausted window that
+ * states no reset means nobody said when — so nothing exact is claimed.
+ */
+function bindingWindow(capacity: ProviderCapacity | undefined): CapacityWindow | undefined {
+  const exhausted = [capacity?.primary, capacity?.secondary].filter(
+    (w): w is CapacityWindow => !!w && w.usedPercent >= 100,
+  );
+  if (exhausted.length === 0) return capacity?.primary;
+  if (exhausted.some((w) => w.resetAt === undefined)) return undefined;
+  return exhausted.sort((a, b) => b.resetAt! - a.resetAt!)[0];
+}
+
+/**
+ * Build the ApiError a Codex failure stands for. A plan cap gets `code:
+ * "usage_cap"` and its exact `resetAt` — from the body's `resets_in_seconds`,
+ * else its `resets_at`, else the binding window's headers — so the gateway
+ * never has to guess what the backend already said.
+ */
+function codexApiError(opts: {
+  status: number;
+  message: string;
+  facts: CodexErrorFacts;
+  capacity?: ProviderCapacity;
+  retryAfterHeader?: number;
+  now: number;
+}): ApiError {
+  const { facts, capacity, now } = opts;
+  const code = classifyCodexError(facts.name);
+  let resetAt: number | undefined;
+  let retryAfterMs: number | undefined;
+  if (code === "usage_cap") {
+    const window = bindingWindow(capacity);
+    resetAt =
+      resetFrom(facts.resetsInSeconds, facts.resetsAt, now) ?? plausibleReset(window?.resetAt, now);
+    retryAfterMs = resetAt !== undefined ? resetAt - now : opts.retryAfterHeader;
+  } else if (opts.status === 429 || code === "rate_limit") {
+    // A throttle's wait. Only a 429 carries one: a 5xx that advertised
+    // Retry-After would otherwise hold the session for as long as it asked,
+    // where today it retries on the gateway's own short backoff.
+    const told =
+      facts.resetsInSeconds !== undefined && facts.resetsInSeconds > 0
+        ? facts.resetsInSeconds * 1000
+        : undefined;
+    retryAfterMs = told ?? opts.retryAfterHeader ?? tryAgainInMs(facts.detail);
+  }
+  return new ApiError({
+    status: opts.status,
+    provider: "codex",
+    message: opts.message,
+    ...(retryAfterMs !== undefined && retryAfterMs > 0 ? { retryAfterMs } : {}),
+    ...(code ? { code } : {}),
+    ...(resetAt !== undefined ? { resetAt } : {}),
+    ...(facts.name ? { providerCode: facts.name } : {}),
+    ...(capacity ? { capacity } : {}),
+  });
+}
+
+/**
+ * The one-line message for a failed Codex HTTP response. The backend returns
+ * `{"detail":"..."}` (often pretty-printed across lines) — collapse whitespace
+ * so the reason survives a UI that only renders the first line, and unwrap
+ * `detail`/`error.message` instead of dumping raw JSON. The error's machine
+ * name rides along ("429, usage_limit_reached"), because the sentence alone
+ * cannot tell a plan cap from a throttle.
+ */
+function codexErrorLine(status: number, facts: CodexErrorFacts): string {
+  const oneLine = facts.detail.replace(/\s+/g, " ").trim().slice(0, 300);
+  const kind = facts.name ? `, ${facts.name}` : "";
+  return `Codex request failed (${status}${kind}): ${oneLine || "(empty body)"}`;
+}
+
 export async function codexErrorMessage(res: {
   status: number;
   text(): Promise<string>;
 }): Promise<string> {
   const raw = await res.text().catch(() => "");
-  let detail = raw;
-  try {
-    const j = JSON.parse(raw) as { detail?: unknown; error?: { message?: string } };
-    if (typeof j.detail === "string") detail = j.detail;
-    else if (j.error?.message) detail = j.error.message;
-  } catch {
-    // not JSON — keep the raw body
-  }
-  const oneLine = detail.replace(/\s+/g, " ").trim().slice(0, 300);
-  return `Codex request failed (${res.status}): ${oneLine || "(empty body)"}`;
+  return codexErrorLine(res.status, parseCodexErrorBody(raw));
+}
+
+/** Retry-After in delta-seconds, as milliseconds. */
+function retryAfterHeaderMs(h: HeaderSource): number | undefined {
+  const secs = headerNumber(h, "retry-after");
+  return secs !== undefined && secs > 0 ? Math.round(secs * 1000) : undefined;
+}
+
+/**
+ * The structured error for a failed Codex HTTP response: the readable message,
+ * plus the cap/reset/meter facts the body and headers carry. Exported for tests.
+ */
+export async function codexHttpError(
+  res: { status: number; headers?: HeaderSource; text(): Promise<string> },
+  now: number = Date.now(),
+): Promise<ApiError> {
+  const raw = await res.text().catch(() => "");
+  const facts = parseCodexErrorBody(raw);
+  const headers = res.headers ?? NO_HEADERS;
+  const capacity = parseCodexCapacity(headers, now);
+  const retryAfterHeader = retryAfterHeaderMs(headers);
+  return codexApiError({
+    status: res.status || 502,
+    message: codexErrorLine(res.status, facts),
+    facts,
+    ...(capacity ? { capacity } : {}),
+    ...(retryAfterHeader !== undefined ? { retryAfterHeader } : {}),
+    now,
+  });
+}
+
+/**
+ * The status a mid-stream failure maps to, by its code. A stream that fails
+ * after the 200 used to be a 502 whatever it said, which retried a context
+ * overflow as an outage and a plan cap as a blip.
+ *
+ *   usage_cap / rate_limit → 429 (the gateway's cap and throttle handling)
+ *   context_overflow       → 400, worded so the agent loop's overflow
+ *                            recovery (isContextOverflowError) compacts
+ *   invalid_request        → 400: the request was refused; not retried
+ *   server_error, unknown  → 502: retryable, as before
+ */
+const STREAM_STATUS: Record<ApiErrorCode, number> = {
+  usage_cap: 429,
+  rate_limit: 429,
+  context_overflow: 400,
+  invalid_request: 400,
+  server_error: 502,
+};
+
+/**
+ * The ApiError a failed-stream event stands for (`response.failed`, or a
+ * bare `error` event). The error object sits under `response.error`, under
+ * `error`, or on the event itself. Exported for tests.
+ */
+export function codexStreamError(ev: Record<string, unknown>, now: number = Date.now()): ApiError {
+  const resp = ev.response as { error?: unknown } | undefined;
+  const nested =
+    resp?.error && typeof resp.error === "object"
+      ? resp.error
+      : ev.error && typeof ev.error === "object"
+        ? ev.error
+        : undefined;
+  // On a bare event, `type` is the event's own ("error"), not the error's.
+  const own = nested ? undefined : { ...ev, type: undefined };
+  const facts = errorFacts(
+    (nested ?? own) as Record<string, unknown>,
+    "Codex responses stream failed",
+  );
+  const code = classifyCodexError(facts.name);
+  const detail = facts.detail.replace(/\s+/g, " ").trim().slice(0, 300);
+  return codexApiError({
+    status: code ? STREAM_STATUS[code] : 502,
+    message: `Codex stream failed${facts.name ? ` (${facts.name})` : ""}: ${detail}`,
+    facts,
+    now,
+  });
+}
+
+/**
+ * A cache key fit to send: printable ASCII with no spaces, because it also
+ * rides in the `session_id` header, where anything else would make fetch
+ * throw before a byte was sent.
+ */
+function usableCacheKey(key: string | undefined): string | undefined {
+  return key && /^[\x21-\x7e]{1,256}$/.test(key) ? key : undefined;
 }
 
 // ─── Model catalogue ───
@@ -539,27 +871,33 @@ export class CodexProvider implements LlmProvider {
     // before the gateway was allowed to retry or fall back. 120s is still
     // twice any healthy gap observed, and halves the price of a dead socket.
     const guard = new IdleWatchdog(this.name, opts?.signal, 300_000, 120_000);
-    const res = await fetch(RESPONSES_URL, {
-      method: "POST",
-      headers: this.headers(),
-      body: JSON.stringify(toResponsesBody(request, true, this.sessionId)),
-      signal: guard.signal,
-    });
-    if (!res.ok || !res.body) {
-      guard.stop();
-      throw new ApiError({
-        status: res.status || 502,
-        provider: "codex",
-        message: await codexErrorMessage(res),
-      });
-    }
+    // The caller's stable key (the Rune session) when it gave one: a
+    // per-instance id changes every time the gateway is rebuilt, and the
+    // backend's prompt cache is keyed on it.
+    const cacheKey = usableCacheKey(opts?.cacheKey) ?? this.sessionId;
+    // The request itself sits INSIDE the try. It used to sit before it, so a
+    // watchdog that fired while the backend was still queueing (no headers
+    // yet) escaped as a raw AbortError instead of the retryable 504 below,
+    // and a failed connection left the watchdog's timer armed.
     try {
+      const res = await fetch(RESPONSES_URL, {
+        method: "POST",
+        headers: this.headers(cacheKey),
+        body: JSON.stringify(toResponsesBody(request, true, cacheKey)),
+        signal: guard.signal,
+      });
+      if (!res.ok || !res.body) throw await codexHttpError(res);
+      // The meter: read on every response, and carried on its usage event.
+      const capacity = parseCodexCapacity(res.headers);
       for await (const ev of parseResponsesStream(res.body)) {
         guard.beat();
-        yield ev;
+        yield capacity && ev.type === "message_stop" ? { ...ev, capacity } : ev;
       }
     } catch (err) {
-      // Watchdog stall (not the caller's Esc) → retryable 504 for the gateway.
+      // A failure the backend described stands as described. Anything else
+      // that ended because the watchdog fired (not the caller's Esc) is the
+      // retryable 504 the gateway knows how to retry or fall back on.
+      if (err instanceof ApiError) throw err;
       throw guard.timeoutError() ?? err;
     } finally {
       guard.stop();
@@ -572,6 +910,7 @@ export class CodexProvider implements LlmProvider {
     let text = "";
     let stopReason: StopReason = "end_turn";
     let usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
+    let capacity: ProviderCapacity | undefined;
     let id = "codex";
     const toolArgs = new Map<string, { name: string; json: string }>();
 
@@ -593,10 +932,18 @@ export class CodexProvider implements LlmProvider {
       } else if (ev.type === "message_stop") {
         stopReason = ev.stopReason;
         usage = ev.usage;
+        capacity = ev.capacity;
       }
     }
     if (text) content.unshift({ type: "text", text });
-    return { id, content, stopReason, usage, model: request.model };
+    return {
+      id,
+      content,
+      stopReason,
+      usage,
+      model: request.model,
+      ...(capacity ? { capacity } : {}),
+    };
   }
 
   async countTokens(messages: Message[]): Promise<number> {
@@ -647,13 +994,14 @@ export class CodexProvider implements LlmProvider {
     return h;
   }
 
-  private headers(): Record<string, string> {
+  /** The Codex CLI sends one conversation id as both `session_id` and the cache key. */
+  private headers(sessionId: string): Record<string, string> {
     return {
       ...this.identityHeaders(),
       "content-type": "application/json",
       accept: "text/event-stream",
       "openai-beta": "responses=experimental",
-      session_id: this.sessionId,
+      session_id: sessionId,
     };
   }
 }

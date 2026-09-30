@@ -468,12 +468,54 @@ export interface TokenUsage {
   cacheCreationTokens?: number;
 }
 
+// ─── The quota meter ───
+//
+// A subscription route is not metered in dollars, so the question a long run
+// has to answer is "how much of the plan's window is left". The ChatGPT Codex
+// backend states it on every response, success or failure, in `x-codex-*`
+// headers — and until these types existed nothing in Rune read them. The live
+// 429 of 2026-09-28 said "primary window 100% used, resets in 9732s" in its
+// headers while Rune guessed fifteen minutes.
+
+/** One quota window, as the provider reported it. */
+export interface CapacityWindow {
+  /** Share of the window already spent, in percent, as reported (100 = exhausted). */
+  usedPercent: number;
+  /** The window's length in minutes (Codex: 300 is the five-hour window, 10080 the week). */
+  windowMinutes?: number;
+  /** Seconds until the window resets, as reported. */
+  resetAfterSeconds?: number;
+  /** Epoch ms when the window resets. */
+  resetAt?: number;
+}
+
+/**
+ * How much of a plan's allowance a response says is left.
+ *
+ * `primary.usedPercent` is THE quota figure — the short window, the one a long
+ * run hits first. Every field is optional because providers state different
+ * subsets; an absent field means "not reported", never zero.
+ */
+export interface ProviderCapacity {
+  /** The short window (Codex: five hours). */
+  primary?: CapacityWindow;
+  /** The long window (Codex: the week). */
+  secondary?: CapacityWindow;
+  credits?: { hasCredits?: boolean; unlimited?: boolean; balance?: number };
+  /** The plan the provider named ("plus", "pro"). */
+  planType?: string;
+  /** Which of the plan's limits applies to this request, in the provider's words ("premium"). */
+  activeLimit?: string;
+}
+
 export interface InferenceResponse {
   id: string;
   content: ContentBlock[];
   stopReason: StopReason;
   usage: TokenUsage;
   model: string;
+  /** The plan's quota windows as this response reported them (see ProviderCapacity). */
+  capacity?: ProviderCapacity;
 }
 
 // ─── Streaming Events ───
@@ -497,7 +539,18 @@ export type StreamEvent =
   | { type: "tool_use_start"; toolCallId: string; toolName: string }
   | { type: "tool_use_delta"; toolCallId: string; partialJson: string }
   | { type: "tool_use_stop"; toolCallId: string; toolInput: Record<string, unknown> }
-  | { type: "message_stop"; stopReason: StopReason; usage: TokenUsage }
+  | {
+      type: "message_stop";
+      stopReason: StopReason;
+      usage: TokenUsage;
+      /**
+       * The plan's quota windows as this response reported them. Beside
+       * `usage`, not inside it: TokenUsage is token counts and nothing else,
+       * and this event is the one every response emits. Absent when the
+       * provider reported none.
+       */
+      capacity?: ProviderCapacity;
+    }
   | { type: "notice"; message: string }
   // The gateway abandoned `from` and is about to stream from `to` instead.
   // Structured (provider/model/status/backoff) so UIs can render a real
@@ -544,12 +597,32 @@ export type StreamEvent =
   // `retryable: false` marks a terminal failure (bad key, no credits, every
   // provider rate-limited) that re-running won't fix — the agent loop surfaces
   // it immediately instead of retrying through maxConsecutiveErrors.
-  | { type: "error"; error: string; retryable?: boolean };
+  | {
+      type: "error";
+      error: string;
+      retryable?: boolean;
+      /** The failure's kind, when the gateway knows it structurally (a plan cap is `usage_cap`). */
+      code?: ApiErrorCode;
+      /**
+       * Epoch ms when the limit that stopped this lifts: the provider's own
+       * reset when it reported one, the gateway's cooldown otherwise. For
+       * machine readers (auto-resume, the eval rig), so nobody has to parse
+       * the minutes back out of the sentence.
+       */
+      resetAt?: number;
+    };
 
 // ─── Provider Adapter Interface ───
 
 export interface StreamOpts {
   signal?: AbortSignal;
+  /**
+   * A stable key for the provider's prompt cache, e.g. the Rune session id.
+   * Codex sends it as `prompt_cache_key`; without it each provider instance
+   * uses its own random id, which changes whenever the gateway is rebuilt and
+   * so throws away a warm cache. Providers without the concept ignore it.
+   */
+  cacheKey?: string;
 }
 
 /** A model exposed by a provider's discovery endpoint (or its static preset list). */
@@ -1108,6 +1181,12 @@ export interface CostEntry {
    * back-off it waited through would hide the retry behind the provider.
    */
   latencyMs?: number;
+  /**
+   * The plan's quota windows as the response reported them (see
+   * ProviderCapacity). `capacity.primary.usedPercent` is the share of the
+   * subscription window spent so far. Absent when the provider reported none.
+   */
+  capacity?: ProviderCapacity;
   timestamp: Date;
 }
 
@@ -1220,17 +1299,56 @@ export interface ProviderConfig {
 
 // ─── Structured API Error ───
 
+/**
+ * What kind of failure an ApiError is, when the provider said so in a field
+ * rather than in prose. Absent means "read the status and the message", which
+ * is all the gateway had before these existed.
+ *
+ *   usage_cap        a plan/quota cap — waiting seconds will not clear it
+ *   rate_limit       a passing throttle
+ *   context_overflow the prompt is over the model's window (compact, then retry)
+ *   server_error     the provider failed; retrying may succeed
+ *   invalid_request  the request itself was refused; retrying cannot succeed
+ */
+export type ApiErrorCode =
+  "usage_cap" | "rate_limit" | "context_overflow" | "server_error" | "invalid_request";
+
 export class ApiError extends Error {
   readonly status: number;
   readonly provider: string;
   readonly retryAfterMs: number | null;
+  /** The structured classification, when the provider gave one. */
+  readonly code?: ApiErrorCode;
+  /**
+   * Epoch ms when the provider says the limit lifts. Only ever a reported
+   * moment, never a guess: the gateway cools a provider down EXACTLY until
+   * it, where a guessed cooldown is clamped.
+   */
+  readonly resetAt?: number;
+  /** The provider's own name for the error, verbatim ("usage_limit_reached"). */
+  readonly providerCode?: string;
+  /** The quota windows the failing response reported. */
+  readonly capacity?: ProviderCapacity;
 
-  constructor(opts: { status: number; provider: string; message: string; retryAfterMs?: number }) {
+  constructor(opts: {
+    status: number;
+    provider: string;
+    message: string;
+    retryAfterMs?: number;
+    code?: ApiErrorCode;
+    resetAt?: number;
+    providerCode?: string;
+    capacity?: ProviderCapacity;
+  }) {
     super(opts.message);
     this.name = "ApiError";
     this.status = opts.status;
     this.provider = opts.provider;
     this.retryAfterMs = opts.retryAfterMs ?? null;
+    if (opts.code) this.code = opts.code;
+    if (opts.resetAt !== undefined) this.resetAt = opts.resetAt;
+    if (opts.providerCode) this.providerCode = opts.providerCode;
+    if (opts.capacity) this.capacity = opts.capacity;
   }
 }
 
