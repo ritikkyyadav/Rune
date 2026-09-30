@@ -1,0 +1,20 @@
+[
+  {
+    "id": "c1",
+    "text": "at 1280 the three plan cards sit side by side in order, the header links show, and there is no Menu button",
+    "command": "bun .rune-acceptance/check.mjs desktop",
+    "files": [".rune-acceptance"]
+  },
+  {
+    "id": "c2",
+    "text": "at 390 the plan cards stack in order, the comparison table stays, nothing scrolls sideways, and the console is clean",
+    "command": "bun .rune-acceptance/check.mjs mobile",
+    "files": [".rune-acceptance"]
+  },
+  {
+    "id": "c3",
+    "text": "at 390 a Menu button hides the links, opens and closes them from the keyboard, and keeps aria-expanded and aria-controls true",
+    "command": "bun .rune-acceptance/check.mjs menu",
+    "files": [".rune-acceptance"]
+  }
+]

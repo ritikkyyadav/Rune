@@ -57,6 +57,9 @@ const SUPPLEMENT = resolve(import.meta.dir, "../../eval/parity-tasks");
 const TASKS: Record<string, { family: Family; wrongFails: string[] }> = {
   "json-output-flag": { family: "F2", wrongFails: ["c3"] },
   "rename-quantity-field": { family: "F3", wrongFails: ["c2"] },
+  // Its wrong variant differs from the solution only in the comparison table
+  // (pinned below without a browser), so in one it fails the 390 layout alone.
+  "pricing-page-mobile": { family: "F4", wrongFails: ["c2"] },
   "review-invoice-rules": { family: "F5", wrongFails: ["c1", "c3"] },
   "wip-due-dates": { family: "F6", wrongFails: ["c2", "c3"] },
   "finish-utils-split": { family: "F6", wrongFails: ["c4"] },
@@ -256,6 +259,32 @@ describe("both loaders read the supplement", () => {
     const corpusIds = new Set(corpusParityTasks(CORPUS_DIR).map((task) => task.id));
     expect(IDS.filter((id) => corpusIds.has(id))).toEqual([]);
   });
+
+  test("with the frozen corpus, every family the two share has three tasks", () => {
+    const count = (tasks: Array<{ family: Family }>) => {
+      const counts: Partial<Record<Family, number>> = {};
+      for (const task of tasks) counts[task.family] = (counts[task.family] ?? 0) + 1;
+      return counts;
+    };
+    // The corpus as frozen, then the supplement's one F2–F5 and two F6.
+    expect(count(corpusParityTasks(CORPUS_DIR))).toEqual({
+      F1: 3,
+      F2: 2,
+      F3: 2,
+      F4: 2,
+      F5: 2,
+      F6: 1,
+    });
+    expect(count(parity)).toEqual({ F2: 1, F3: 1, F4: 1, F5: 1, F6: 2 });
+    expect(count([...corpusParityTasks(CORPUS_DIR), ...parity])).toEqual({
+      F1: 3,
+      F2: 3,
+      F3: 3,
+      F4: 3,
+      F5: 3,
+      F6: 3,
+    });
+  });
 });
 
 describe("each fixture seeds and commits cleanly", () => {
@@ -366,4 +395,136 @@ describe("review-invoice-rules reads what a review shows, not what it says", () 
     );
     expect(failed(graded)).toEqual(["c3"]);
   }, 240_000);
+});
+
+/**
+ * The frontend task, without a browser.
+ *
+ * Chromium could not start where the supplement was written, so its solution
+ * and wrong trees have not been graded in one: the tests above SKIP them until
+ * `RUNE_BENCH_PLAYWRIGHT` names a runtime. What needs no browser is pinned here:
+ * the plumbing is the corpus's proven helper; with no runtime every criterion is
+ * IMPOSSIBLE (so the pair leaves the denominator) rather than failed; the page
+ * holds what the checks look for and its script opens and closes the menu; and
+ * the wrong variant is the solution with only the comparison table left at
+ * desktop width, which is the argument that in a browser it fails c2 alone.
+ */
+describe("pricing-page-mobile, without a browser", () => {
+  const id = "pricing-page-mobile";
+  const dir = join(SUPPLEMENT, id);
+  const page = (tree: string) => readFileSync(join(dir, tree, "index.html"), "utf8");
+
+  test("its browser helper is the corpus's, byte for byte", () => {
+    const helper = readFileSync(join(dir, "checks", "browser.mjs"), "utf8");
+    for (const corpusTask of ["signup-form-states", "responsive-project-board"])
+      expect(helper).toBe(
+        readFileSync(join(CORPUS_DIR, corpusTask, "checks", "browser.mjs"), "utf8"),
+      );
+  });
+
+  test.skipIf(hasBrowser)(
+    "with no runtime, every criterion is impossible for every tree, never failed",
+    async () => {
+      for (const tree of [undefined, "solution", "variants/wrong"] as const) {
+        const graded = await grade(id, tree);
+        expect(graded.outcome).toEqual({
+          hiddenPassed: 0,
+          hiddenTotal: 0,
+          regressionsIntroduced: 0,
+          buildBroken: false,
+          impossible: ["c1", "c2", "c3"],
+        });
+        expect(quality(graded.outcome)).toBeNull();
+        for (const check of graded.checks) expect(check.tail).toContain(IMPOSSIBLE_MARKER);
+      }
+    },
+    240_000,
+  );
+
+  test("an unknown criterion fails rather than passing", () => {
+    const run = spawnSync(process.execPath, [join(dir, "checks", "check.mjs"), "nope"], {
+      cwd: temp("parity-supplement-unknown-"),
+      encoding: "utf8",
+    });
+    expect(run.status).toBe(1);
+    expect(run.stdout).toContain("acceptance failed: unknown criterion nope");
+  });
+
+  test("the solution's page holds what the checks look for, and the fixture's does not", () => {
+    const solution = page("solution");
+    expect([...solution.matchAll(/data-plan="(\w+)"/g)].map((match) => match[1])).toEqual([
+      "starter",
+      "team",
+      "enterprise",
+    ]);
+    const button = /<button\b([^>]*)>\s*Menu\s*<\/button>/.exec(solution)?.[1] ?? "";
+    expect(button).toContain('aria-expanded="false"');
+    const controls = /aria-controls="([^"]+)"/.exec(button)?.[1] ?? "";
+    // The element the button names exists, and holds the header's links.
+    const panel = new RegExp(`<(\\w+)[^>]*\\bid="${controls}"[^>]*>([\\s\\S]*?)</\\1>`).exec(
+      solution,
+    );
+    expect(panel?.[2] ?? "").toContain(">Docs</a>");
+    expect(solution).toMatch(/@media \(max-width: 719px\)/);
+    const fixture = page("fixture");
+    expect(fixture).not.toContain("<button");
+    expect(fixture).not.toContain("@media");
+  });
+
+  test("the solution's script opens and closes the menu, run against a stub DOM", () => {
+    const script = /<script>([\s\S]*?)<\/script>/.exec(page("solution"))?.[1] ?? "";
+    const attributes = new Map([
+      ["aria-expanded", "false"],
+      ["aria-controls", "site-links"],
+    ]);
+    const classes = new Set<string>();
+    let onClick: (() => void) | undefined;
+    const button = {
+      getAttribute: (name: string) => attributes.get(name) ?? null,
+      setAttribute: (name: string, value: string) => {
+        attributes.set(name, value);
+      },
+      addEventListener: (type: string, handler: () => void) => {
+        if (type === "click") onClick = handler;
+      },
+    };
+    const links = {
+      classList: {
+        toggle: (name: string, on: boolean) => {
+          if (on) classes.add(name);
+          else classes.delete(name);
+          return on;
+        },
+      },
+    };
+    const stubDocument = {
+      querySelector: (selector: string) => (selector === ".menu-toggle" ? button : null),
+      getElementById: (name: string) => (name === "site-links" ? links : null),
+    };
+    new Function("document", script)(stubDocument);
+    expect(onClick).toBeDefined();
+    onClick!();
+    expect([attributes.get("aria-expanded"), classes.has("open")]).toEqual(["true", true]);
+    onClick!();
+    expect([attributes.get("aria-expanded"), classes.has("open")]).toEqual(["false", false]);
+  });
+
+  test("the wrong variant is the solution with the comparison table left at desktop width", () => {
+    const solution = page("solution");
+    const wrong = page("variants/wrong");
+    const part = (html: string, pattern: RegExp) => pattern.exec(html)?.[0] ?? `(no ${pattern})`;
+    // What c1 and c3 read is byte-identical: the header and its menu, the
+    // script, the small-screen rules and the plan cards…
+    for (const pattern of [
+      /<header>[\s\S]*?<\/header>/,
+      /<script>[\s\S]*?<\/script>/,
+      /@media[\s\S]*?\n {6}\}\n/,
+      /<section class="plans"[\s\S]*?<\/section>/,
+    ])
+      expect(part(wrong, pattern)).toBe(part(solution, pattern));
+    // …and what c2 reads is not: a 1052px table with nothing to scroll it in.
+    expect(wrong).toMatch(/\.compare table \{\s*width: 1052px;/);
+    expect(wrong).not.toContain("overflow-x");
+    expect(solution).toContain("overflow-x: auto");
+  });
 });

@@ -1,6 +1,7 @@
 [
   "json-output-flag",
   "rename-quantity-field",
+  "pricing-page-mobile",
   "review-invoice-rules",
   "wip-due-dates",
   "finish-utils-split"

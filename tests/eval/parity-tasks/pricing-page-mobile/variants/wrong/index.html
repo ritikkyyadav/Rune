@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Pricing · Ledgerline</title>
+    <style>
+      :root {
+        --ink: #1d2327;
+        --muted: #4b5358;
+        --paper: #fbfaf7;
+        --line: #dcd8cf;
+        --accent: #2f6f4f;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font:
+          16px/1.5 system-ui,
+          sans-serif;
+      }
+      .page {
+        width: 100%;
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 0 24px;
+      }
+      header .page {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 72px;
+      }
+      .brand {
+        color: var(--ink);
+        font-size: 20px;
+        font-weight: 700;
+        text-decoration: none;
+      }
+      nav ul {
+        display: flex;
+        gap: 28px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      nav a {
+        color: var(--ink);
+        text-decoration: none;
+      }
+      nav a:hover {
+        color: var(--accent);
+      }
+      a:focus-visible,
+      button:focus-visible {
+        outline: 3px solid var(--accent);
+        outline-offset: 3px;
+      }
+      .menu-toggle {
+        display: none;
+        padding: 8px 14px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        color: var(--ink);
+        font: inherit;
+        cursor: pointer;
+      }
+      h1 {
+        margin: 48px 0 8px;
+        font-size: 40px;
+      }
+      .lede {
+        margin: 0 0 40px;
+        color: var(--muted);
+      }
+      .plans {
+        display: flex;
+        gap: 24px;
+      }
+      .plan {
+        flex: 0 0 330px;
+        padding: 28px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #fff;
+      }
+      .plan h2 {
+        margin: 0;
+        font-size: 22px;
+      }
+      .price {
+        margin: 12px 0;
+        font-size: 36px;
+        font-weight: 700;
+      }
+      .price small {
+        color: var(--muted);
+        font-size: 16px;
+        font-weight: 400;
+      }
+      .plan ul {
+        margin: 16px 0 24px;
+        padding-left: 20px;
+      }
+      .cta {
+        display: inline-block;
+        padding: 10px 18px;
+        border-radius: 8px;
+        background: var(--accent);
+        color: #fff;
+        text-decoration: none;
+      }
+      .compare {
+        margin: 64px 0;
+      }
+      .compare table {
+        width: 1052px;
+        border-collapse: collapse;
+      }
+      .compare th,
+      .compare td {
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        white-space: nowrap;
+      }
+      footer {
+        padding: 32px 0 48px;
+        color: var(--muted);
+      }
+      @media (max-width: 719px) {
+        .menu-toggle {
+          display: inline-block;
+        }
+        nav ul {
+          display: none;
+          position: absolute;
+          top: 64px;
+          right: 24px;
+          left: 24px;
+          z-index: 10;
+          flex-direction: column;
+          gap: 4px;
+          padding: 12px 16px;
+          border: 1px solid var(--line);
+          border-radius: 10px;
+          background: #fff;
+        }
+        nav ul.open {
+          display: flex;
+        }
+        nav a {
+          display: block;
+          padding: 8px 0;
+        }
+        h1 {
+          margin-top: 32px;
+          font-size: 32px;
+        }
+        .plans {
+          flex-direction: column;
+        }
+        .plan {
+          flex: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="page">
+        <a class="brand" href="#top">Ledgerline</a>
+        <nav aria-label="Main">
+          <ul id="site-links">
+            <li><a href="#features">Features</a></li>
+            <li><a href="#pricing">Pricing</a></li>
+            <li><a href="#docs">Docs</a></li>
+            <li><a href="#sign-in">Sign in</a></li>
+          </ul>
+        </nav>
+        <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="site-links">
+          Menu
+        </button>
+      </div>
+    </header>
+    <main class="page" id="pricing">
+      <h1>Pricing</h1>
+      <p class="lede">One ledger for the whole team. Every plan includes unlimited invoices.</p>
+      <section class="plans" aria-label="Plans">
+        <article class="plan" data-plan="starter">
+          <h2>Starter</h2>
+          <p class="price">$0 <small>per month</small></p>
+          <ul>
+            <li>1 user</li>
+            <li>50 clients</li>
+            <li>Email support</li>
+          </ul>
+          <a class="cta" href="#start-starter">Start free</a>
+        </article>
+        <article class="plan" data-plan="team">
+          <h2>Team</h2>
+          <p class="price">$24 <small>per user, per month</small></p>
+          <ul>
+            <li>Up to 25 users</li>
+            <li>Unlimited clients</li>
+            <li>Recurring invoices</li>
+          </ul>
+          <a class="cta" href="#start-team">Start a trial</a>
+        </article>
+        <article class="plan" data-plan="enterprise">
+          <h2>Enterprise</h2>
+          <p class="price">Custom <small>billed yearly</small></p>
+          <ul>
+            <li>Unlimited users</li>
+            <li>Single sign-on</li>
+            <li>A dedicated manager</li>
+          </ul>
+          <a class="cta" href="#talk-to-sales">Talk to sales</a>
+        </article>
+      </section>
+      <section class="compare" aria-labelledby="compare-title">
+        <h2 id="compare-title">Compare plans</h2>
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Feature</th>
+              <th scope="col">Starter</th>
+              <th scope="col">Team</th>
+              <th scope="col">Enterprise</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Users</th>
+              <td>1</td>
+              <td>Up to 25</td>
+              <td>Unlimited</td>
+            </tr>
+            <tr>
+              <th scope="row">Clients</th>
+              <td>50</td>
+              <td>Unlimited</td>
+              <td>Unlimited</td>
+            </tr>
+            <tr>
+              <th scope="row">Recurring invoices</th>
+              <td>No</td>
+              <td>Yes</td>
+              <td>Yes</td>
+            </tr>
+            <tr>
+              <th scope="row">Single sign-on</th>
+              <td>No</td>
+              <td>No</td>
+              <td>Yes</td>
+            </tr>
+            <tr>
+              <th scope="row">Audit log retention</th>
+              <td>None</td>
+              <td>90 days</td>
+              <td>7 years</td>
+            </tr>
+            <tr>
+              <th scope="row">Support</th>
+              <td>Email</td>
+              <td>Priority email</td>
+              <td>Dedicated manager</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
+    <footer>
+      <div class="page">© 2026 Ledgerline</div>
+    </footer>
+    <script>
+      const toggle = document.querySelector(".menu-toggle");
+      const links = document.getElementById(toggle.getAttribute("aria-controls"));
+      toggle.addEventListener("click", () => {
+        const open = toggle.getAttribute("aria-expanded") !== "true";
+        toggle.setAttribute("aria-expanded", String(open));
+        links.classList.toggle("open", open);
+      });
+    </script>
+  </body>
+</html>
