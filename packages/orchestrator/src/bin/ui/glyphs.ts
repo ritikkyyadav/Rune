@@ -64,6 +64,17 @@ export const GLYPH_DEFINITIONS = {
   reproduced: { utf8: "=", ascii: "=", role: "dim" },
   elision: { utf8: "…", ascii: ".", role: "dim" },
   retry: { utf8: "↻", ascii: "r", role: "warn" },
+  // The block inside the tab title's pill (./title.ts) -- the two marks here
+  // that are never painted on the grid. They are marks rather than a level of
+  // the pulse ramp because of where they sit: every level of a ramp is anchored
+  // to the bottom of its cell, and the founder's word on the block that was
+  // drawn from the ramp was "not aligned to the centre". `titlePill` is for a
+  // macOS title bar, where it is the one thick solid shape drawn on the centre
+  // line of the brackets either side of it. `titleBlock` is for every other tab
+  // strip: a square that every font has. Their seven-bit twin is the densest
+  // ASCII cell -- not `=`, which the founder threw out by name, twice.
+  titlePill: { utf8: "⬬", ascii: "#", role: "accent" },
+  titleBlock: { utf8: "■", ascii: "#", role: "accent" },
 } as const satisfies Record<string, GlyphDefinition>;
 
 export type GlyphName = keyof typeof GLYPH_DEFINITIONS;

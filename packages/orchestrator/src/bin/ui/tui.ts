@@ -112,7 +112,7 @@ import {
 import { RUNE_MARK, renderBanner } from "./banner";
 import { FRAME_MS, createPaintClock, workingRow } from "./working";
 import { notifyWarp } from "./warp";
-import { setTitle, clearTitle } from "./title";
+import { Glide, setTitle, clearTitle, type TitleBeat } from "./title";
 import { renderReadBack, renderClose } from "./read-back";
 import * as F from "./flow";
 import { questionAction, QUESTION_SKIPPED, QUESTION_UNANSWERED } from "./question";
@@ -423,9 +423,12 @@ export class Tui {
   // -- which is the event that means the answer landed and work resumed. Kept
   // as a flag so a fifty-call turn writes one sequence, not fifty.
   warpBlocked = false;
-  // Advanced by the turn tick, but only while output is actually arriving --
-  // see ./title.ts. Not a clock.
-  titleFrame = 0;
+  // The tab's pill. Advanced by the turn tick at a pace the work sets, and only
+  // while output is actually arriving -- see ./title.ts. Not a clock.
+  titleGlide = new Glide();
+  // The turn that glide belongs to, by its start stamp: a new turn launches
+  // from rest at the left edge rather than from wherever the last one stopped.
+  titleGlideTurn = 0;
 
   /**
    * Redirect console.* to ~/.rune/logs/tui-console.log for the life of the
@@ -473,10 +476,17 @@ export class Tui {
 
   /** Paint the tab for an in-flight turn. Warp will not badge a pane it has not
    *  classified as an agent, but it renames one on OSC 0 like any terminal. */
-  paintTitle(turn: { beat(): { quietMs: number } }): void {
-    const { quietMs } = turn.beat();
-    if (quietMs < 4000) this.titleFrame++;
-    setTitle({ kind: "working", frame: this.titleFrame, quietMs }, this.titleProject());
+  paintTitle(turn: { beat(): TitleBeat }): void {
+    const beat = turn.beat();
+    if (this.titleGlideTurn !== this.turnStart) {
+      this.titleGlide = new Glide();
+      this.titleGlideTurn = this.turnStart;
+    }
+    this.titleGlide.advance(beat);
+    setTitle(
+      { kind: "working", phase: this.titleGlide.phase, quietMs: beat.quietMs },
+      this.titleProject(),
+    );
   }
   turnPreview: string[] | null = null; // one live intent row + one evidence row
   filesEdited = new Set<string>(); // session-wide, shown on the footer readout

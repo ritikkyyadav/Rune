@@ -36,6 +36,7 @@ import type {
 import { assertNeverSoft } from "@rune/protocol";
 import { formatError, formatEvent, fmtTokens } from "./events";
 import { Pulse, PULSE_WEIGHT, quietLabel } from "./pulse";
+import type { TitleBeat } from "./title";
 import {
   elapsedWord,
   isBareKind,
@@ -826,10 +827,14 @@ export class TurnRenderer {
    * Nothing here slows the work down. Only the reporting is paced -- the elapsed
    * receipt beside the mark is the honest clock, and it never waits.
    */
-  /** What the tab title needs from the pulse: how long since real output. The
-   *  title turns on this rather than on a timer -- see ./title.ts and ./pulse.ts. */
-  beat(): { quietMs: number } {
-    return { quietMs: this.pulse.sample().quietMs };
+  /** What the tab title needs from the turn: how long since real output, how
+   *  fast it is arriving, and how many sub-agents are running. The title's pill
+   *  is paced by these rather than by a timer -- see ./title.ts and ./pulse.ts. */
+  beat(): TitleBeat {
+    const { quietMs, level } = this.pulse.sample();
+    let agents = 0;
+    for (const agent of this.fleet.values()) if (agent.card.state === "running") agents++;
+    return { quietMs, level, agents };
   }
 
   /** The working state as the rung is currently holding it -- exported shape

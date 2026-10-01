@@ -11,6 +11,19 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+### Changed
+
+- **The tab's working mark is a pill, paced by the work.** The four-frame `| / - \` in the tab
+  title is now `[⬬  ]`: a small solid pill centred inside a pill, gathering speed to the right and
+  coming back in from the left. How fast it crosses follows the run — about once every 4.3
+  seconds when little is arriving, down to about 1.4 seconds under heavy output, back-to-back
+  tool calls or running sub-agents — and the change between paces is eased. After four seconds of
+  silence it parks as a line, `[-  ]`, beside `quiet 12s`. In Terminal.app, iTerm and Ghostty on
+  macOS, whose title bars are drawn in the system font, the pill glides about a quarter of a
+  space at a time; elsewhere, and inside tmux or screen, it is a square, `[■  ]`, that moves in
+  three steps (`RUNE_TITLE_STRIP=smooth|cells` overrides the choice). A seven-bit terminal
+  (`RUNE_ASCII=1`, or a locale that is not UTF-8) gets `[#  ]` and `[-  ]`.
+
 ### Removed
 
 - **Signing in with a Claude Pro or Max plan.** Anthropic's terms do not permit third-party apps to
