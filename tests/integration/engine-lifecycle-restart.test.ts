@@ -28,7 +28,21 @@ import { checkpointRunId } from "../../packages/orchestrator/src/lifecycle";
 import { SqliteCheckpointStore } from "../../packages/shared/src/state";
 import type { SessionManager } from "../../packages/shared/src/session";
 import type { AgentTurnEvent } from "../../packages/protocol/src/index";
+import { describeNativeBinary, resolveRuneToolsBinary } from "../helpers/native-binary";
 import { UsageProvider } from "../helpers/usage-provider";
+
+// The engine runs every tool through the native binary. These tests named it
+// `rune-tools` and left the finding to $PATH, so their tools ran on a machine
+// with Rune installed and nowhere else — CI's integration job included, where
+// the binary is built and named by RUNE_TOOLS_BIN and was never looked for
+// there. They use the checkout's own binary now, and the tests that need a
+// tool to really run say so when there is none.
+const native = resolveRuneToolsBinary();
+if (!native.exists) {
+  console.warn(
+    `[engine-lifecycle-restart] tests that run a tool are skipped: ${describeNativeBinary(native)}`,
+  );
+}
 
 const cleanup: Array<() => void> = [];
 afterEach(() => {
@@ -60,7 +74,7 @@ function makeEngine(dir: string, opts: { checkpoints?: boolean } = {}): Engine {
     provider: "anthropic",
     workspaceRoot: dir,
     dbPath: join(process.env.RUNE_HOME!, "rune.db"),
-    toolsBinaryPath: "rune-tools",
+    toolsBinaryPath: native.path,
     permissionMode: "gear-4",
     enableCheckpoints: opts.checkpoints === true,
     enableSecurity: false,
@@ -97,32 +111,35 @@ async function drain(engine: Engine, sessionId: string, message: string) {
 }
 
 describe("checkpoints", () => {
-  test("rotation keeps EXACTLY two, and the id is distinct per session", async () => {
-    const dir = tempWorkspace("v2-ckpt-");
-    const engine = makeEngine(dir, { checkpoints: true });
-    script(engine, [
-      [tool("write_file", { path: "a.txt", content: "1" })],
-      [tool("write_file", { path: "b.txt", content: "2" })],
-      [tool("write_file", { path: "c.txt", content: "3" })],
-      [tool("write_file", { path: "d.txt", content: "4" })],
-      [{ type: "text", text: "Wrote four files." }],
-    ]);
-    const s1 = engine.createSession();
-    const events = await drain(engine, s1, "Write four small files.");
-    const saves = events.filter((e) => e.type === "checkpoint_saved");
-    expect(saves.length).toBeGreaterThanOrEqual(3);
+  test.skipIf(!native.exists)(
+    "rotation keeps EXACTLY two, and the id is distinct per session",
+    async () => {
+      const dir = tempWorkspace("v2-ckpt-");
+      const engine = makeEngine(dir, { checkpoints: true });
+      script(engine, [
+        [tool("write_file", { path: "a.txt", content: "1" })],
+        [tool("write_file", { path: "b.txt", content: "2" })],
+        [tool("write_file", { path: "c.txt", content: "3" })],
+        [tool("write_file", { path: "d.txt", content: "4" })],
+        [{ type: "text", text: "Wrote four files." }],
+      ]);
+      const s1 = engine.createSession();
+      const events = await drain(engine, s1, "Write four small files.");
+      const saves = events.filter((e) => e.type === "checkpoint_saved");
+      expect(saves.length).toBeGreaterThanOrEqual(3);
 
-    const db = new Database(join(process.env.RUNE_HOME!, "rune.db"));
-    const store = new SqliteCheckpointStore(db);
-    // ≤ 2 is satisfied by a store that saved nothing. Exactly 2 is the claim.
-    expect(store.listCheckpoints(checkpointRunId(s1, 1))).toHaveLength(2);
+      const db = new Database(join(process.env.RUNE_HOME!, "rune.db"));
+      const store = new SqliteCheckpointStore(db);
+      // ≤ 2 is satisfied by a store that saved nothing. Exactly 2 is the claim.
+      expect(store.listCheckpoints(checkpointRunId(s1, 1))).toHaveLength(2);
 
-    // A second session on the same database must not share the run id.
-    const s2 = engine.createSession();
-    expect(checkpointRunId(s2, 1)).not.toBe(checkpointRunId(s1, 1));
-    expect(store.listCheckpoints(checkpointRunId(s2, 1))).toHaveLength(0);
-    db.close();
-  });
+      // A second session on the same database must not share the run id.
+      const s2 = engine.createSession();
+      expect(checkpointRunId(s2, 1)).not.toBe(checkpointRunId(s1, 1));
+      expect(store.listCheckpoints(checkpointRunId(s2, 1))).toHaveLength(0);
+      db.close();
+    },
+  );
 });
 
 describe("what a CLEAN end hands forward", () => {

@@ -106,6 +106,45 @@ function makeLoop(gateway: unknown, browser: boolean) {
   );
 }
 
+/**
+ * Whether a mounted browser can launch is read from the machine: a Playwright
+ * module, or a Chromium in Playwright's cache under the home directory. A
+ * laptop that has run `playwright install` has one and a CI runner does not,
+ * so "a browser is mounted" meant something different on each — and the two
+ * tests that mount one passed on the first and failed on the second.
+ *
+ * This says which machine a test means. `true` names a Playwright through
+ * `RUNE_TEST_PLAYWRIGHT`, which the probe takes at its word. `false` leaves
+ * the probe nothing to find: no named module, and an empty home.
+ */
+async function withBrowserRuntime<T>(present: boolean, body: () => Promise<T>): Promise<T> {
+  const names = [
+    "RUNE_TEST_PLAYWRIGHT",
+    "RUNE_BENCH_PLAYWRIGHT",
+    "PLAYWRIGHT_BROWSERS_PATH",
+    "HOME",
+  ] as const;
+  const saved = names.map((name) => [name, process.env[name]] as const);
+  const emptyHome = mkdtempSync(join(tmpdir(), "rune-no-browser-home-"));
+  try {
+    delete process.env.RUNE_BENCH_PLAYWRIGHT;
+    delete process.env.PLAYWRIGHT_BROWSERS_PATH;
+    if (present) {
+      process.env.RUNE_TEST_PLAYWRIGHT = import.meta.path;
+    } else {
+      delete process.env.RUNE_TEST_PLAYWRIGHT;
+      process.env.HOME = emptyHome;
+    }
+    return await body();
+  } finally {
+    for (const [name, value] of saved) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    rmSync(emptyHome, { recursive: true, force: true });
+  }
+}
+
 describe("F2 — a run without a browser says so before it spends", () => {
   test("the limit is a first-turn notice and reaches the model before its first decision", async () => {
     const gw = makeGateway([{ text: "done" }]) as { inferStream: unknown };
@@ -125,11 +164,25 @@ describe("F2 — a run without a browser says so before it spends", () => {
   });
 
   test("a run WITH the browser mounted pays nothing for the pre-flight", async () => {
-    const loop = makeLoop(makeGateway([{ text: "done" }]), true);
-    const events = await collect(loop.run("Build the settings screen", "withBrowser", "/tmp"));
-    const notices = events.filter((e) => e.type === "notice") as Array<{ message: string }>;
-    expect(notices.some((n) => n.message.includes(NO_BROWSER_PREFLIGHT))).toBe(false);
-    expect(JSON.stringify(loop.getMessages())).not.toContain(NO_BROWSER_PREFLIGHT);
+    await withBrowserRuntime(true, async () => {
+      const loop = makeLoop(makeGateway([{ text: "done" }]), true);
+      const events = await collect(loop.run("Build the settings screen", "withBrowser", "/tmp"));
+      const notices = events.filter((e) => e.type === "notice") as Array<{ message: string }>;
+      expect(notices.some((n) => n.message.includes(NO_BROWSER_PREFLIGHT))).toBe(false);
+      expect(JSON.stringify(loop.getMessages())).not.toContain(NO_BROWSER_PREFLIGHT);
+    });
+  });
+
+  test("a browser that is mounted but has nothing to launch is said too, with the reason", async () => {
+    // What a CI runner is: the tools are registered, and there is no Chromium.
+    await withBrowserRuntime(false, async () => {
+      const loop = makeLoop(makeGateway([{ text: "done" }]), true);
+      const events = await collect(loop.run("Build the settings screen", "noChromium", "/tmp"));
+      const notices = events.filter((e) => e.type === "notice") as Array<{ message: string }>;
+      const said = notices.find((n) => n.message.includes(NO_BROWSER_PREFLIGHT));
+      expect(said).toBeDefined();
+      expect(said!.message).toContain("no Chromium to launch");
+    });
   });
 
   test("a backend run with no browser pays nothing either", async () => {
@@ -398,14 +451,16 @@ describe("F2 through the real Engine — the pre-flight lands in the persisted b
   });
 
   test("a browser IS mounted: nothing is appended", async () => {
-    const dir = screenRepo();
-    const engine = makeEngine(dir);
-    mountBrowser(engine);
-    await runReadBack(engine, FRONTEND_REQUEST);
+    await withBrowserRuntime(true, async () => {
+      const dir = screenRepo();
+      const engine = makeEngine(dir);
+      mountBrowser(engine);
+      await runReadBack(engine, FRONTEND_REQUEST);
 
-    const brief = engine.currentBrief();
-    expect(brief!.leave).toEqual(["the API layer"]);
-    expect(JSON.stringify(brief)).not.toContain(NO_BROWSER_PREFLIGHT);
+      const brief = engine.currentBrief();
+      expect(brief!.leave).toEqual(["the API layer"]);
+      expect(JSON.stringify(brief)).not.toContain(NO_BROWSER_PREFLIGHT);
+    });
   });
 
   test("a backend request with no browser: nothing is appended either", async () => {

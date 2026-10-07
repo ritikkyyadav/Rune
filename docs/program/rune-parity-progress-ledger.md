@@ -1610,7 +1610,7 @@ finished" to the rig whatever the process exited with.
 and two Gradle build-cache folders under a test fixture. Everything else in the tree
 is in it.
 
-## CI after the release, 2026-10-07 · **diagnosed and fixed in the tree; not pushed, Windows unproven**
+## CI after the release, 2026-10-07 · **fixed on `lane/ci-green`; `main` waits for a green run**
 
 **The release itself is out and checked.** Four commits (`6d9c6e4`, `74e4ef6`,
 `e561fa9`, `c15baeb`), `main` and the branch at `c15baeb`, tag `v1.3.2` there. Release
@@ -1696,6 +1696,33 @@ the unit tests, and the build, integration and eval jobs wait on them. None of t
 has run since late September. Integration has therefore never run on Linux with this
 release's tests in it. CI installs the newest Bun (1.4.2 that day); this Mac has 1.3.14.
 
-**Next.** Push needs the founder's word: the release go-ahead covered v1.3.2. A branch
-named `lane/…` runs the whole of CI without touching `main`, which is the way to prove
-the Windows half. Whether the reader fix ships as 1.3.3 is the founder's decision.
+**The founder's word, 2026-10-07: the lane branch first.** Commit, push to
+`lane/ci-green`, fix there until CI is green, then fast-forward `main` and the working
+branch to it. Commits `75dc589` (the reader) and `4b09d54` (the tests).
+
+**The lane, first run (`37608603220`).** Every job that had been red passed: unit on
+Linux, macOS and Windows, and the Rust tests on Windows. The real-model eval job
+skipped itself, as it does with no key configured; nothing was spent. Then the jobs
+behind the unit tests ran for the first time since late September, and integration on
+Linux failed 5 tests. None is a fault in Rune:
+
+- 3 in `engine-lifecycle-restart` and `engine-lifecycle-projection` named `rune-tools`
+  by bare name, as T20 did. CI builds the binary and names it in a variable; these
+  never looked there. They now use the checkout's own binary.
+- 2 in `frontend-loop` mounted a browser and expected no warning. That holds only on a
+  machine with a Chromium in Playwright's cache, which this Mac has and the runner does
+  not. Each now says which machine it means, and the runner's case — mounted, nothing
+  to launch — is a test of its own.
+
+**Why the first simulation missed them.** It took `~/.rune/bin` off the path. This Mac
+also has `~/.alan/bin`, with a `rune-tools` from before the rename, and a Playwright
+cache in the home folder. A bare-machine run — fresh clone, empty home, neither folder
+on the path, the runner's variables — reproduced the same 5. After the fix it passes:
+454 pass, 7 skip, 0 fail. Integration on macOS was cancelled in CI when Linux failed,
+so that run is the only evidence for it so far.
+
+**A second session resumed in this checkout at about 16:13**, after these commits. It
+has uncommitted edits to `brief.ts`, `contract.ts`, `roundtrips.ts`, the parity rig and
+three unit-test files. They are not in these commits and were not gated here.
+
+**Still open.** Whether the reader fix ships as 1.3.3 is the founder's decision.

@@ -41,7 +41,21 @@ import {
   UNFINISHED_STOP,
 } from "../../packages/orchestrator/src/headless";
 import { formatCompaction } from "../../packages/orchestrator/src/bin/ui/events";
+import { describeNativeBinary, resolveRuneToolsBinary } from "../helpers/native-binary";
 import { UsageProvider } from "../helpers/usage-provider";
+
+// The engine runs every tool through the native binary. These tests named it
+// `rune-tools` and left the finding to $PATH, so their tools ran on a machine
+// with Rune installed and nowhere else — CI's integration job included, where
+// the binary is built and named by RUNE_TOOLS_BIN and was never looked for
+// there. They use the checkout's own binary now, and the tests that need a
+// tool to really run say so when there is none.
+const native = resolveRuneToolsBinary();
+if (!native.exists) {
+  console.warn(
+    `[engine-lifecycle-projection] tests that run a tool are skipped: ${describeNativeBinary(native)}`,
+  );
+}
 
 const cleanup: Array<() => void> = [];
 afterEach(() => {
@@ -78,7 +92,7 @@ function makeEngine(dir: string, opts: { checkpoints?: boolean } = {}): Engine {
     // In the profile, not the workspace: an untracked rune.db inside the tree
     // is itself a dirty file, and the revision assertions are about the tree.
     dbPath: join(process.env.RUNE_HOME!, "rune.db"),
-    toolsBinaryPath: "rune-tools",
+    toolsBinaryPath: native.path,
     permissionMode: "gear-4",
     enableCheckpoints: opts.checkpoints === true,
     enableSecurity: false,
@@ -386,59 +400,62 @@ describe("an interrupted run hands its budget forward", () => {
 });
 
 describe("checkpoints are addressable, bounded and prunable", () => {
-  test("the run id is stable, the payload is a pointer, and old versions rotate", async () => {
-    const dir = tempWorkspace("rune-checkpoint-");
-    const engine = makeEngine(dir, { checkpoints: true });
-    script(engine, [
-      [tool("write_file", { path: "one.txt", content: "1" })],
-      [tool("write_file", { path: "two.txt", content: "2" })],
-      [tool("write_file", { path: "three.txt", content: "3" })],
-      [{ type: "text", text: "Wrote three files." }],
-    ]);
-    const session = engine.createSession();
-    const events = await drain(engine, session, "Write three small files.");
-    const saves = events.filter((e) => e.type === "checkpoint_saved");
-    expect(saves.length).toBeGreaterThanOrEqual(2);
-    expect(saves.every((s) => s.type === "checkpoint_saved" && s.runId === `${session}#1`)).toBe(
-      true,
-    );
+  test.skipIf(!native.exists)(
+    "the run id is stable, the payload is a pointer, and old versions rotate",
+    async () => {
+      const dir = tempWorkspace("rune-checkpoint-");
+      const engine = makeEngine(dir, { checkpoints: true });
+      script(engine, [
+        [tool("write_file", { path: "one.txt", content: "1" })],
+        [tool("write_file", { path: "two.txt", content: "2" })],
+        [tool("write_file", { path: "three.txt", content: "3" })],
+        [{ type: "text", text: "Wrote three files." }],
+      ]);
+      const session = engine.createSession();
+      const events = await drain(engine, session, "Write three small files.");
+      const saves = events.filter((e) => e.type === "checkpoint_saved");
+      expect(saves.length).toBeGreaterThanOrEqual(2);
+      expect(saves.every((s) => s.type === "checkpoint_saved" && s.runId === `${session}#1`)).toBe(
+        true,
+      );
 
-    const db = new Database(join(process.env.RUNE_HOME!, "rune.db"));
-    const store = new SqliteCheckpointStore(db);
-    // Rotation: at most `keepVersions` rows survive for one run.
-    expect(store.listCheckpoints(`${session}#1`).length).toBeLessThanOrEqual(2);
+      const db = new Database(join(process.env.RUNE_HOME!, "rune.db"));
+      const store = new SqliteCheckpointStore(db);
+      // Rotation: at most `keepVersions` rows survive for one run.
+      expect(store.listCheckpoints(`${session}#1`).length).toBeLessThanOrEqual(2);
 
-    // The payload is a pointer. This is the whole 184-MiB fix: the messages
-    // are in the `events` table and were never worth a second copy.
-    const latest = resumeFromCheckpoint(checkpointRunId(session, 1), store)!;
-    expect(latest).toBeTruthy();
-    expect(latest.sessionId).toBe(session);
-    expect(latest.lastSeq).toBeGreaterThan(0);
-    expect(latest.budget.turnsUsed).toBeGreaterThan(0);
-    expect(Object.keys(latest)).not.toContain("messages");
-    expect(JSON.stringify(latest).length).toBeLessThan(2000);
+      // The payload is a pointer. This is the whole 184-MiB fix: the messages
+      // are in the `events` table and were never worth a second copy.
+      const latest = resumeFromCheckpoint(checkpointRunId(session, 1), store)!;
+      expect(latest).toBeTruthy();
+      expect(latest.sessionId).toBe(session);
+      expect(latest.lastSeq).toBeGreaterThan(0);
+      expect(latest.budget.turnsUsed).toBeGreaterThan(0);
+      expect(Object.keys(latest)).not.toContain("messages");
+      expect(JSON.stringify(latest).length).toBeLessThan(2000);
 
-    // And the doctor can report and prune what accumulated.
-    const report = reportCheckpoints(db);
-    expect(report.rows).toBeGreaterThan(0);
-    const dry = pruneCheckpoints(db, {});
-    expect(dry.applied).toBe(false);
-    expect(reportCheckpoints(db).rows).toBe(report.rows);
+      // And the doctor can report and prune what accumulated.
+      const report = reportCheckpoints(db);
+      expect(report.rows).toBeGreaterThan(0);
+      const dry = pruneCheckpoints(db, {});
+      expect(dry.applied).toBe(false);
+      expect(reportCheckpoints(db).rows).toBe(report.rows);
 
-    // The advisory must promise exactly what the command delivers. Measured on
-    // the founder's own database on 2026-09-11, `rune doctor` offered "552
-    // superseded or orphaned rows, 136 MB — rune doctor prune-checkpoints" and
-    // that command then removed 428 rows / 106 MB: the report counted every row
-    // with ANY newer version, the prune kept the newest two. Same predicate,
-    // same keep rule, now pinned in both directions and at a non-default keep.
-    expect(report.reclaimableRows).toBe(dry.removedRows);
-    expect(report.reclaimableBytes).toBe(dry.removedBytes);
-    const keep1 = pruneCheckpoints(db, { keep: 1 });
-    expect(keep1.applied).toBe(false);
-    expect(reportCheckpoints(db, 1).reclaimableRows).toBe(keep1.removedRows);
-    expect(reportCheckpoints(db, 1).reclaimableBytes).toBe(keep1.removedBytes);
-    db.close();
-  });
+      // The advisory must promise exactly what the command delivers. Measured on
+      // the founder's own database on 2026-09-11, `rune doctor` offered "552
+      // superseded or orphaned rows, 136 MB — rune doctor prune-checkpoints" and
+      // that command then removed 428 rows / 106 MB: the report counted every row
+      // with ANY newer version, the prune kept the newest two. Same predicate,
+      // same keep rule, now pinned in both directions and at a non-default keep.
+      expect(report.reclaimableRows).toBe(dry.removedRows);
+      expect(report.reclaimableBytes).toBe(dry.removedBytes);
+      const keep1 = pruneCheckpoints(db, { keep: 1 });
+      expect(keep1.applied).toBe(false);
+      expect(reportCheckpoints(db, 1).reclaimableRows).toBe(keep1.removedRows);
+      expect(reportCheckpoints(db, 1).reclaimableBytes).toBe(keep1.removedBytes);
+      db.close();
+    },
+  );
 });
 
 describe("one definition of what a run changed", () => {
@@ -462,48 +479,51 @@ describe("one definition of what a run changed", () => {
 });
 
 describe("the terminal result reaches a machine consumer", () => {
-  test("open steps are ok:false, and the envelope carries the lifecycle", async () => {
-    const dir = tempWorkspace("rune-open-steps-");
-    const engine = makeEngine(dir);
-    script(engine, [
-      [
-        tool("todo_write", {
-          items: [
-            { content: "Write the module", kind: "edit", status: "in_progress" },
-            { content: "Write its tests", kind: "verify", status: "pending" },
-          ],
-        }),
-      ],
-      [tool("write_file", { path: "mod.ts", content: "export const a = 1;\n" })],
-      [{ type: "text", text: "That is the module." }],
-      [{ type: "text", text: "Still the module." }],
-    ]);
-    const session = engine.createSession();
-    const result = await runHeadless(engine, session, "Write a module and its tests.");
+  test.skipIf(!native.exists)(
+    "open steps are ok:false, and the envelope carries the lifecycle",
+    async () => {
+      const dir = tempWorkspace("rune-open-steps-");
+      const engine = makeEngine(dir);
+      script(engine, [
+        [
+          tool("todo_write", {
+            items: [
+              { content: "Write the module", kind: "edit", status: "in_progress" },
+              { content: "Write its tests", kind: "verify", status: "pending" },
+            ],
+          }),
+        ],
+        [tool("write_file", { path: "mod.ts", content: "export const a = 1;\n" })],
+        [{ type: "text", text: "That is the module." }],
+        [{ type: "text", text: "Still the module." }],
+      ]);
+      const session = engine.createSession();
+      const result = await runHeadless(engine, session, "Write a module and its tests.");
 
-    // Gap 1.8c: this returned ok:true and exit 0 for a run that abandoned
-    // half its plan, after the gate had already refused the finish once.
-    expect(result.stopReason).toBe("open_steps");
-    expect(result.ok).toBe(false);
-    expect(result.error).toContain("planned steps still open");
-    expect(headlessExitCode(result)).toBe(1);
+      // Gap 1.8c: this returned ok:true and exit 0 for a run that abandoned
+      // half its plan, after the gate had already refused the finish once.
+      expect(result.stopReason).toBe("open_steps");
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("planned steps still open");
+      expect(headlessExitCode(result)).toBe(1);
 
-    // The projection travels with it: the plan, the budget and the ending.
-    expect(result.lifecycle).toBeDefined();
-    expect(result.lifecycle!.status).toBe("open_steps");
-    expect(result.lifecycle!.evidence.todos).toHaveLength(2);
-    expect(result.filesChanged).toContain("mod.ts");
+      // The projection travels with it: the plan, the budget and the ending.
+      expect(result.lifecycle).toBeDefined();
+      expect(result.lifecycle!.status).toBe("open_steps");
+      expect(result.lifecycle!.evidence.todos).toHaveLength(2);
+      expect(result.filesChanged).toContain("mod.ts");
 
-    const envelope = JSON.parse(headlessEnvelope(result, { sessionId: session })) as {
-      ok: boolean;
-      stopReason: string;
-      lifecycle?: { status: string; budget: { turnsUsed: number } };
-    };
-    expect(envelope.ok).toBe(false);
-    expect(envelope.stopReason).toBe("open_steps");
-    expect(envelope.lifecycle?.status).toBe("open_steps");
-    expect(envelope.lifecycle?.budget.turnsUsed).toBeGreaterThan(0);
-  });
+      const envelope = JSON.parse(headlessEnvelope(result, { sessionId: session })) as {
+        ok: boolean;
+        stopReason: string;
+        lifecycle?: { status: string; budget: { turnsUsed: number } };
+      };
+      expect(envelope.ok).toBe(false);
+      expect(envelope.stopReason).toBe("open_steps");
+      expect(envelope.lifecycle?.status).toBe("open_steps");
+      expect(envelope.lifecycle?.budget.turnsUsed).toBeGreaterThan(0);
+    },
+  );
 
   test("every unfinished verdict has a line, and end_turn stays the only finish", () => {
     // Gap 1.8c/1.8d/G18: four of seven reasons reported `ok: true`.

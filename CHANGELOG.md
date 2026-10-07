@@ -23,11 +23,11 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
   without the prefix and with `/`.
 
 - **The tests hold on Linux and Windows, not only on a Mac.** CI had been red since late September
-  on two tests, and 1.3.2 added thirty-four more that had only ever been run on a Mac. Apart from
+  on two tests, and 1.3.2 added thirty-nine more that had only ever been run on a Mac. Apart from
   the fault above, none was a fault in Rune: the tests assumed `/` in paths, a file system that can
-  clone, a `#!` script, LF line endings, a `rune-tools` on the path, or a sub-agent list no earlier
-  test file had written to. Each now holds on every platform, or says what it needs and is skipped
-  by name where the platform cannot give it.
+  clone, a `#!` script, LF line endings, a `rune-tools` on the path, a Chromium in the home folder,
+  or a sub-agent list no earlier test file had written to. Each now holds on every platform, or
+  says what it needs and is skipped by name where the platform cannot give it.
 
 ## [1.3.2] - 2026-10-07
 
