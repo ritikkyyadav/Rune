@@ -1862,3 +1862,66 @@ checkout on the same hard task, with its own rig changes uncommitted and a one-p
 manifest for a Claude Code arm on disk. Whether a headless run waits for its supervisor
 is still the founder's decision. `rune doctor` on this machine gives one fact for it:
 of 116 background screens, 15 raised a flag and none was confirmed.
+
+## A run that ends before its reviewer answers, 2026-10-07 · **built and gated on this Mac; committed locally, not pushed**
+
+**The founder's decision.** Asked what a headless run should do about a background
+reviewer it does not wait for, the founder chose "Record it, don't wait": at exit, an
+audit row for every action the reviewer never answered for; no added exit time and no
+extra reviewer calls.
+
+**What changed.**
+
+- `supervisor-queue.ts`: the queue knows which batch is with the reviewer, and
+  `abandon()` hands back that batch and everything still waiting, then admits nothing.
+- `auto-mode.ts`: `abandonSupervisor()` turns those into one `supervisor_skipped` row
+  each, joined to the action by `callId`, reason "the run ended before the reviewer
+  answered for this action". An action whose screen has answered is left out. A verdict
+  that lands after the abandon is not recorded and latches no halt.
+- `engine.ts`: `close()` writes those rows before the store closes, for runs that ended
+  with observations outstanding and for a run still in its turn (quitting mid-run).
+- `auto-metrics.ts`, `bin/audit-cli.ts`: `rune doctor` and `rune audit` print "actions
+  that ran with no background review: N" when N is above zero. **The count had been
+  taken and never printed**: until now a skipped review could be found by SQL only.
+- Docs: `docs/auto-mode.md` ("A run that ends first"), `CHANGELOG.md` (Unreleased).
+
+**Verification, exact.**
+
+- Orchestrator type-check: exit 0. Format check on the twelve changed files: clean.
+- `supervisor-queue.test.ts` 12 pass; `auto-metrics.test.ts` 11 pass;
+  `engine-auto-mode.test.ts` 14 pass; the seven Auto-mode unit files together 180 pass,
+  0 fail.
+- `tests/integration/reviewer-cost.test.ts` (six real `rune -P` runs against the mock):
+  10 pass, 0 fail. Its new arm: five commands, a reviewer that takes thirty seconds, the
+  run not held up; the reviewer asked once; five `supervisor_skipped` rows whose calls are
+  exactly the five commands, and they are the last rows the run wrote.
+- Mutations, nineteen, all caught in the end. Thirteen in the queue and Auto mode: four
+  survived the first pass (an answered action reported again, a batch never cleared, the
+  wrong reason after the abandon, the confirm stage ignoring it); two tests were added
+  for them and one made stricter. Two on the printed line. Four in the engine: three caught by the
+  real-process test; "close ignores the run still in its turn" survived until an
+  engine-level test was added.
+- **Not run:** the full unit and integration suites, and anything on Linux or Windows.
+  The live sitting below was measuring wall time on this machine, and nothing is pushed,
+  so the lane has not run it.
+
+**What the real-process arms showed, beyond the change.**
+
+- It happens on an ordinary fast run, not only a slow reviewer: in the `reverted` arm
+  (five commands, a mock reviewer that answers at once) the process was gone before the
+  answer for the fifth command was back. That arm now ends with one unanswered row, and
+  an older test that counted every `bash` row as a decision had to be taught the
+  difference.
+- **A background review that fails leaves no row either, and that is not changed.** In
+  the `all` arm the reviewer is called six times and its answer cannot be read as a
+  screen verdict; six actions keep "allowed under supervision" and nothing says the
+  review came to nothing. The same holds for a reviewer that is unreachable or times
+  out. Only an in-process counter moves. Recording it would be the same kind of row;
+  it was not the question the founder was asked.
+
+**Limitations.** A killed process writes nothing. v1.3.3's release note lists this gap
+as open, which is true of 1.3.3: the change is unreleased.
+
+**Next step.** The founder's word to push: lane first, then `main`, as before. Then the
+full suites in a fresh clone. Whether to record a failed background review the same
+way is theirs to decide.

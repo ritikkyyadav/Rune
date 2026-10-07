@@ -1527,6 +1527,13 @@ export class Engine {
    * action resolve in conversation instead of a modal prompt.
    */
   private activeAutoRun: AutoModeRun | null = null;
+  /**
+   * Runs that have ended while their supervisor still had observations to
+   * read, with the session each belonged to. The reads go on in the background
+   * for as long as the process lives; `close()` is where the ones that never
+   * finished are written down.
+   */
+  private readonly draining = new Map<AutoModeRun, string>();
   /** The session the in-flight run belongs to; supervisor rows land late and need it. */
   private activeAutoSessionId: string | null = null;
   /** Opt-in raw-argument store for eval labelling. Null unless collectForEval is on. */
@@ -7316,8 +7323,10 @@ export class Engine {
       // on the user's next unrelated message.
       const endedRun = this.activeAutoRun;
       if (endedRun) {
+        this.draining.set(endedRun, sessionId);
         void endedRun
           .drainSupervisor()
+          .finally(() => this.draining.delete(endedRun))
           .then(() => {
             const late = endedRun.takePendingSupervisorHalt();
             if (!late) return;
@@ -9276,7 +9285,35 @@ export class Engine {
       this.recorder.close();
     }
     this.notebookStore?.close();
+    // Last, and before the log closes: what the supervisor never answered for.
+    this.recordUnansweredSupervision();
     this.sessions.close();
+  }
+
+  /**
+   * Write down every action the background supervisor admitted and did not
+   * answer before this engine closed.
+   *
+   * A headless run exits when its work is done and does not wait for the
+   * supervisor; neither does a session the user quits. Whatever was still
+   * queued, or with the reviewer, is never answered for — and each of those actions
+   * kept a row saying it was allowed under supervision. This adds the row that
+   * says the supervision did not happen. It waits for nothing and calls no
+   * model, so closing costs what it did before.
+   */
+  private recordUnansweredSupervision(): void {
+    const runs = new Map(this.draining);
+    if (this.activeAutoRun && this.activeAutoSessionId) {
+      runs.set(this.activeAutoRun, this.activeAutoSessionId);
+    }
+    this.draining.clear();
+    for (const [run, sessionId] of runs) {
+      for (const { action, review } of run.abandonSupervisor()) {
+        this.recordAutoModeDecision(sessionId, action.toolName, action.args, review, {
+          auditChain: false,
+        });
+      }
+    }
   }
 }
 

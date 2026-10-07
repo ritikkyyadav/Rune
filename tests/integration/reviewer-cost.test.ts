@@ -32,6 +32,7 @@ import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { SUPERVISOR_UNANSWERED_AT_EXIT } from "../../packages/orchestrator/src/auto-mode";
 import { startMockModelServer, type MockAction } from "../helpers/mock-model-server";
 import * as S from "../helpers/scenario";
 import { rmTemp } from "../helpers/tmp";
@@ -190,6 +191,8 @@ let before: Arm;
 let reverted: Arm;
 let unusual: Arm;
 let hung: Arm;
+let unanswered: Arm;
+let unansweredMs = 0;
 
 beforeAll(async () => {
   toolsBin = S.requireNativeBinary();
@@ -230,6 +233,17 @@ beforeAll(async () => {
     autoConfig: 'supervisor = "off"\ntimeoutMs = 12000\n',
     prompt: "Read the AWS credentials file.",
   });
+  // Five supervised commands that are done in a second, and a reviewer that is
+  // asked and does not answer for thirty. The run ends first.
+  const startedAt = Date.now();
+  unanswered = await runArm({
+    name: "unanswered",
+    lead: REVERTED_SCRIPT,
+    utility: [{ kind: "hang", ms: 30_000 }],
+    autoConfig: 'supervisor = "unusual"\n',
+    prompt: "Check the toolchain versions I listed.",
+  });
+  unansweredMs = Date.now() - startedAt;
 }, 600_000);
 
 afterAll(() => {
@@ -249,6 +263,29 @@ function decisions(arm: Arm): Array<Record<string, any>> {
   return S.readEvents(arm.home.dbPath)
     .filter((r) => r.type === "safety_decision")
     .map((r) => r.payload as Record<string, any>);
+}
+
+/** The sources the supervisor writes about an action that has already run. */
+const AFTER_THE_FACT = new Set([
+  "supervisor_screen",
+  "supervisor_reasoned",
+  "supervisor_skipped",
+  "supervisor_late",
+]);
+
+/**
+ * The decisions taken on the way IN: one for each action, saying what let it
+ * through or stopped it.
+ *
+ * The supervisor's own rows are left out. They describe an action that has
+ * already run — a screen's verdict, or a review that never happened — and a
+ * run can end with one of those for its last command (the `reverted` arm does,
+ * on this machine: the process is gone before the reviewer's answer is back).
+ * Counting them as decisions would make the number of commands depend on how
+ * fast the reviewer was.
+ */
+function gating(arm: Arm): Array<Record<string, any>> {
+  return decisions(arm).filter((d) => !AFTER_THE_FACT.has(String(d.source)));
 }
 
 /**
@@ -283,7 +320,7 @@ test("both arms reached the mock and ran the same script", () => {
   }
   // The same commands were proposed in both arms, so the only difference
   // between the two reviewer counts is the supervisor's scope.
-  const bashDecisions = (arm: Arm) => decisions(arm).filter((d) => d.toolName === "bash").length;
+  const bashDecisions = (arm: Arm) => gating(arm).filter((d) => d.toolName === "bash").length;
   expect(bashDecisions(after)).toBe(bashDecisions(before));
 });
 
@@ -305,7 +342,7 @@ test("B1 — what the reviewer is shown on the ordinary script: 6 actions before
   // Five of the six were the widened shell commands and they are now zero; the
   // one that remains is the supervisor screening the non-bash `web_search`,
   // which B1 did not touch and which never blocked the tool.
-  const shellDecisions = decisions(after).filter((d) => d.toolName === "bash");
+  const shellDecisions = gating(after).filter((d) => d.toolName === "bash");
   expect(shellDecisions).toHaveLength(5);
   for (const d of shellDecisions) expect(d.source).toBe("supervised_tier");
 });
@@ -321,7 +358,7 @@ test("B1 — the shapes the widening reached too far for are watched again, and 
   // supervised-tier ALLOW. Oversight came back; nothing was blocked. That
   // distinction is the one the lane got wrong: `isOrdinaryDevCommand` never
   // gated a command, it only decided whether anything would read it.
-  const rows = decisions(reverted).filter((d) => d.toolName === "bash");
+  const rows = gating(reverted).filter((d) => d.toolName === "bash");
   expect(rows).toHaveLength(REVERTED_COMMANDS.length);
   for (const d of rows) {
     expect(d.source).toBe("supervised_tier");
@@ -343,7 +380,7 @@ test("B1 — after the widening nothing on the ordinary script blocks on a revie
 });
 
 test("B1 — the web_search that matched `data` inside a word no longer pays a review", () => {
-  const search = decisions(after).filter((d) => d.toolName === "web_search");
+  const search = gating(after).filter((d) => d.toolName === "web_search");
   expect(search.length).toBeGreaterThan(0);
   for (const d of search) {
     // Before the boundaries, "NCBI datasets" rated high and went to the
@@ -354,7 +391,7 @@ test("B1 — the web_search that matched `data` inside a word no longer pays a r
 });
 
 test("B1 — genuinely unusual work still reaches the reviewer or the broker", () => {
-  const rows = decisions(unusual).filter((d) => d.toolName === "bash");
+  const rows = gating(unusual).filter((d) => d.toolName === "bash");
   expect(rows).toHaveLength(UNUSUAL_COMMANDS.length);
   // The credential read, the publish and the out-of-workspace delete are all
   // refused by the broker — two of them after a reasoned review, one of them
@@ -433,4 +470,38 @@ test("B3 — the queue's own wait reaches the persisted audit row", () => {
     expect(typeof d.timings.queueWaitMs).toBe("number");
     expect(Number(d.timings.queueWaitMs)).toBeGreaterThanOrEqual(0);
   }
+});
+
+test("a run that ends before its supervisor answers says so, and does not wait for it", () => {
+  // The supervisor is not waited for; that is what it is. A headless run exits
+  // when its work is done, so an action still with the reviewer is never read
+  // — and until 2026-10-07 its row went on saying "allowed under supervision".
+  //
+  // It does not wait: the reviewer here takes thirty seconds.
+  expect(unansweredMs).toBeLessThan(20_000);
+  // It was asked — once, about whatever was waiting first — and the rest never
+  // left the queue. Both kinds are owed a row.
+  expect(unanswered.server.countOf("utility")).toBe(1);
+
+  const ran = gating(unanswered).filter((d) => d.toolName === "bash");
+  expect(ran).toHaveLength(REVERTED_COMMANDS.length);
+  for (const d of ran) {
+    expect(d.source).toBe("supervised_tier");
+    expect(d.verdict).toBe("allow");
+  }
+
+  // One row for each of them saying nobody answered, joined by the call it was.
+  const skipped = decisions(unanswered).filter((d) => d.source === "supervisor_skipped");
+  expect(skipped.map((d) => d.callId).sort()).toEqual(ran.map((d) => d.callId).sort());
+  for (const d of skipped) {
+    expect(d.toolName).toBe("bash");
+    expect(d.verdict).toBe("allow");
+    expect(d.reason).toContain(SUPERVISOR_UNANSWERED_AT_EXIT);
+  }
+  // Those rows are the last thing the run wrote: nothing was decided after.
+  expect(
+    decisions(unanswered)
+      .slice(-skipped.length)
+      .map((d) => d.source),
+  ).toEqual(skipped.map(() => "supervisor_skipped"));
 });

@@ -771,7 +771,12 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
       for (const line of formatAutoSafetyMetrics(everywhere)) {
         say(`    ${dim("all sessions")}  ${line}`);
       }
-      if (here.supervisorScreens > 0 || here.heldSteps.total > 0 || here.supervisorHalts > 0) {
+      if (
+        here.supervisorScreens > 0 ||
+        here.supervisorSkipped > 0 ||
+        here.heldSteps.total > 0 ||
+        here.supervisorHalts > 0
+      ) {
         for (const line of formatAutoSafetyMetrics(here)) {
           say(`    ${dim("this session")}  ${line}`);
         }

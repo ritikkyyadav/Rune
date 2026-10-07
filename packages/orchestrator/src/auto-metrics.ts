@@ -39,7 +39,10 @@ export interface AutoSafetyMetrics {
   supervisorScreens: number;
   /** Screens that fired. */
   supervisorFlags: number;
-  /** Allowed actions the supervisor could not take on: queue full, input limit, halt pending. */
+  /**
+   * Allowed actions the supervisor did not review: queue full, input limit,
+   * halt pending, or the run ended before the reviewer answered.
+   */
   supervisorSkipped: number;
   /** Reasoned confirmations recorded. */
   supervisorConfirmations: number;
@@ -221,6 +224,16 @@ export function formatAutoSafetyMetrics(m: AutoSafetyMetrics): string[] {
       `(${m.heldSteps.ran} run unchanged, ${m.heldSteps.skipped} left unrun, ` +
       `${m.heldSteps.refused} refused by policy, ${m.heldSteps.failed} failed on their own terms)`,
   ];
+  // Only when there is something to say: a store with every action reviewed
+  // reads as it always did. Until 2026-10-07 this count was taken and never
+  // printed, so a skipped review could be found by SQL and by nothing else.
+  if (m.supervisorSkipped > 0) {
+    lines.push(
+      `actions that ran with no background review: ${m.supervisorSkipped} ` +
+        `(the reviewer was behind, over its input limit, or the run ended before it answered; ` +
+        `the mechanical checks applied to each)`,
+    );
+  }
   if (m.legacyOnly) {
     lines.push(
       "these rows predate the P6A.1 recording change: supervisor verdicts and held-step outcomes " +

@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,6 +10,7 @@ import {
   AutoModeSafetyController,
   resolveAutoModeConfig,
   shouldRecordAutoModeDecision,
+  SUPERVISOR_UNANSWERED_AT_EXIT,
   type ActionClassifier,
   type AutoModeReview,
   type ClassifierCall,
@@ -353,6 +355,59 @@ describe("Engine Auto-mode wiring", () => {
     ).activeAutoRun.drainSupervisor();
     const trusted = classifier.calls[0]!.prompt;
     expect(trusted).toContain("yes, push the branch once tests pass");
+  });
+
+  test("closing with a turn still open writes down what the supervisor had not answered", async () => {
+    // Quitting mid-run. The run never reached its teardown, so it is not among
+    // the runs left draining: it is the one still in its turn, and its
+    // unanswered observations are owed the same row.
+    const sessionId = engine.createSession();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    internals.autoModeSafety = new AutoModeSafetyController(
+      // "all": the default supervisor scope leaves `bun test` unscreened.
+      resolveAutoModeConfig({ supervisor: "all" }),
+      {
+        classify: async () => {
+          await gate; // a reviewer that has not come back
+          return "ALLOW";
+        },
+      },
+      () => ({ gateway: {} as LlmGateway, provider: "anthropic", model: "isolated-reviewer" }),
+    );
+    const check = internals.buildPermissionCheck({
+      sessionId,
+      userMessages: ["Get the branch green."],
+    });
+    const decision = await check({
+      callId: "test-1",
+      toolName: "bash",
+      args: { command: "bun test tests/unit" },
+    });
+    expect(decision.allowed).toBe(true);
+
+    engine.close();
+    release();
+
+    const db = new Database(join(root, "rune.db"), { readonly: true });
+    const rows = (
+      db
+        .query("SELECT payload_json FROM events WHERE type = 'safety_decision' ORDER BY id")
+        .all() as Array<{ payload_json: string }>
+    ).map((r) => (JSON.parse(r.payload_json) as { payload: Record<string, unknown> }).payload);
+    db.close();
+    expect(rows.filter((r) => r.source === "supervisor_skipped")).toMatchObject([
+      {
+        toolName: "bash",
+        callId: "test-1",
+        verdict: "allow",
+        reason: SUPERVISOR_UNANSWERED_AT_EXIT,
+      },
+    ]);
+    // No verdict beside it: the answer came after the store had closed.
+    expect(rows.filter((r) => r.source === "supervisor_screen")).toEqual([]);
   });
 
   test("a flagged probe finding arms heightened review for the session's next run", async () => {

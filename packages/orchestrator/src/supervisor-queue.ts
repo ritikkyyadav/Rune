@@ -54,6 +54,10 @@ export interface SupervisedItem {
 export class SupervisorQueue<T extends SupervisedItem> {
   private readonly pending: T[] = [];
   private running: Promise<void> | undefined;
+  /** The batch a review is in flight for. Empty between reviews. */
+  private reviewing: T[] = [];
+  /** Set once by `abandon`: nothing is admitted or reviewed after it. */
+  private abandoned = false;
 
   private lastWait = 0;
 
@@ -64,6 +68,7 @@ export class SupervisorQueue<T extends SupervisedItem> {
   ) {}
 
   enqueue(item: T): boolean {
+    if (this.abandoned) return false;
     if (this.pending.length >= this.maxPending) {
       const repeat = this.pending.some((waiting) => waiting.key === item.key);
       if (!repeat || this.pending.length >= this.maxPending * 4) return false;
@@ -130,15 +135,38 @@ export class SupervisorQueue<T extends SupervisedItem> {
       }
       // The caller records classifier outages; one failed review must not strand
       // later admitted observations or create an unhandled rejected promise.
+      this.reviewing = batch;
       try {
         await this.review(batch);
       } catch {
         /* recorded by the reviewer */
+      } finally {
+        // Only if it is still this batch: `abandon` may have taken it back.
+        if (this.reviewing === batch) this.reviewing = [];
       }
     }
   }
 
   async drain(): Promise<void> {
     while (this.running) await this.running;
+  }
+
+  /**
+   * Stop, and hand back what was admitted and never answered.
+   *
+   * A queue is abandoned when the process that owns it is leaving: a headless
+   * run exits as soon as its work is done, and a review that has not come back
+   * by then never will. What is returned is the batch a review is in flight
+   * for, then everything still waiting, oldest first — every observation that
+   * was promised a reviewer and did not get one. The caller writes that down;
+   * this only makes sure the list is complete and that nothing is admitted or
+   * started afterwards. Nothing is waited for.
+   */
+  abandon(): T[] {
+    const unanswered = [...this.reviewing, ...this.pending];
+    this.reviewing = [];
+    this.pending.length = 0;
+    this.abandoned = true;
+    return unanswered;
   }
 }

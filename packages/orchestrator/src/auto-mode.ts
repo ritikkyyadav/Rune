@@ -436,10 +436,11 @@ export type AutoModeDecisionSource =
   | "classifier_recall"
   | "classifier_unavailable"
   /**
-   * An allowed action the supervisor could not take on: its queue was full
+   * An allowed action the supervisor did not review: its queue was full
    * behind a slow reviewer, the transcript was at the reviewer's input limit,
-   * or a halt was already pending. Recorded so unsupervised actions are
-   * countable; it gated nothing, and the mechanical breakers still applied.
+   * a halt was already pending, or the run ended before the reviewer answered
+   * (`abandonSupervisor`). Recorded so unsupervised actions are countable; it
+   * gated nothing, and the mechanical breakers still applied.
    */
   | "supervisor_skipped"
   /** A mechanical breaker tripped and Auto routed around it instead of asking. */
@@ -1068,8 +1069,21 @@ const MAX_ANSWER_CHARS = 2_000;
 interface SupervisorAction extends SupervisedItem {
   action: AutoModeAction;
   risk: AutoModeRisk;
+  /** The tier the action was allowed under, for the row that says nobody answered for it. */
+  tier: AutoModeTier;
   prompt: string;
+  /** Set in the same tick its screen's verdict is recorded. */
+  answered?: boolean;
 }
+
+/**
+ * What the audit says of an action the supervisor admitted and never answered
+ * because the run's process left first. The same shape as every other
+ * `supervisor_skipped` row, so the same count finds it.
+ */
+export const SUPERVISOR_UNANSWERED_AT_EXIT =
+  "Background safety review skipped: the run ended before the reviewer answered for this action. " +
+  "The mechanical breakers applied; nothing was blocked.";
 
 export class AutoModeRun {
   private readonly userMessages: string[];
@@ -1122,6 +1136,8 @@ export class AutoModeRun {
    * human — so a bad call costs one executed action, not a whole run.
    */
   private pendingSupervisorHalt: string | null = null;
+  /** Set by `abandonSupervisor`: a verdict that lands after it is not recorded. */
+  private supervisorAbandoned = false;
   private supervisorEpoch = 0;
   private readonly supervisor = new SupervisorQueue<SupervisorAction>((batch) =>
     this.reviewSupervisedBatch(batch),
@@ -1522,7 +1538,7 @@ export class AutoModeRun {
     if (risk === "low" || risk === "medium") {
       this.consecutiveClassifierDenials = 0;
       if (rules.enabled) {
-        const unsupervised = this.superviseInBackground(action, risk);
+        const unsupervised = this.superviseInBackground(action, risk, tier);
         if (unsupervised?.record) {
           // The supervisor is a watcher, not a gate. When it cannot watch —
           // its queue is full behind a reviewer that takes a minute per
@@ -1998,6 +2014,7 @@ export class AutoModeRun {
   private superviseInBackground(
     action: AutoModeAction,
     risk: AutoModeRisk,
+    tier: AutoModeTier,
   ): { reason: string; record: boolean; queueWaitMs?: number } | null {
     const config = this.controller.getConfig();
     if (config.supervisor === "off") {
@@ -2043,9 +2060,13 @@ export class AutoModeRun {
         queueWaitMs: this.supervisor.oldestWaitMs(),
       };
     const key = `${action.workspaceRoot}:${action.toolName}:${serializeAction(action)}`;
+    if (this.supervisorAbandoned) {
+      return { reason: "the run was ending and its reviewer had been let go", record: true };
+    }
     const queued = this.supervisor.enqueue({
       action,
       risk,
+      tier,
       prompt,
       key,
       epoch: this.supervisorEpoch,
@@ -2102,6 +2123,13 @@ export class AutoModeRun {
           { supervisorBatch: true },
         );
         const screenMs = elapsed(screenAt);
+        // The process was leaving when this came back. These actions are
+        // already written down as unanswered, and a verdict nobody can act on
+        // must not be recorded beside that.
+        if (this.supervisorAbandoned) return;
+        // From here the batch has its answer — marked before the row is
+        // written, in the same tick, so an exit cannot count it as unanswered too.
+        for (const item of batch) item.answered = true;
         const flagged = parseFastDecision(text) === "block";
         // Every screen verdict is written down, not just the ones that fire.
         // A false-positive RATE needs the denominator, and the denominator is
@@ -2154,6 +2182,9 @@ export class AutoModeRun {
           return;
         }
         const confirmMs = elapsed(confirmAt);
+        // Let go while confirming: the screen's row stands, and a halt that
+        // would latch on a run already gone is not raised.
+        if (this.supervisorAbandoned) return;
         const confirmed =
           parsed.verdict === "deny" && (parsed.risk === "high" || parsed.risk === "critical");
         // The row that makes a caught false positive countable from the DB
@@ -2201,6 +2232,51 @@ export class AutoModeRun {
    *  by the engine at turn teardown to hear a verdict that lands late. */
   async drainSupervisor(): Promise<void> {
     await this.supervisor.drain();
+  }
+
+  /**
+   * The process is leaving: let the supervisor go, and say what it never answered.
+   *
+   * The supervisor reviews in the background and is not waited for — that is
+   * the point of it. So when a headless run finishes, whatever is still in the
+   * queue, or with the reviewer and not yet answered, never will be: the
+   * run exits. Until this existed those actions kept the row they were given
+   * when they ran, "allowed under supervision", and nothing said the
+   * supervision had not happened (measured 2026-10-07: five quick commands
+   * and a reviewer that took 400 ms, one shown to it, none answered, five rows
+   * unchanged).
+   *
+   * One row per unanswered action is returned for the caller to persist, in the
+   * shape of every other skipped review so the same count finds it. Nothing
+   * is waited for, no reviewer is called, and no verdict that lands later is
+   * recorded.
+   */
+  abandonSupervisor(): Array<{ action: AutoModeAction; review: AutoModeReview }> {
+    this.supervisorAbandoned = true;
+    const now = performance.now();
+    return this.supervisor
+      .abandon()
+      .filter((item) => !item.answered)
+      .map((item) => ({
+        action: item.action,
+        review: {
+          verdict: "allow" as const,
+          tier: item.tier,
+          risk: item.risk,
+          source: "supervisor_skipped" as const,
+          reason: SUPERVISOR_UNANSWERED_AT_EXIT,
+          stage: 0 as const,
+          durationMs: 0,
+          callId: item.action.callId,
+          timings: {
+            mechanicalMs: 0,
+            classifierMs: 0,
+            retryMs: 0,
+            queueWaitMs:
+              item.enqueuedAt === undefined ? 0 : Math.max(0, Math.round(now - item.enqueuedAt)),
+          },
+        },
+      }));
   }
 
   /**

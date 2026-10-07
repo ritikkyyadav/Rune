@@ -19,6 +19,17 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
   build was older than its source tree and gave the command to rebuild it. The record is now moved
   aside with the build it described, as `rune-compiled.meta.backup`.
 
+- **A run that ends before its background reviewer answers now says so.** In Auto mode ordinary
+  actions run at once and a reviewer reads them in the background. `rune -P` exits when its work is
+  done and does not wait for that reviewer, so an action still waiting was never answered for,
+  while its audit row went on saying it was allowed under supervision. When Rune closes it now
+  writes one `supervisor_skipped` row for each such action, joined to it by its call, with the
+  reason "the run ended before the reviewer answered for this action". Quitting a session mid-run
+  does the same. Nothing is waited for and no reviewer is called, so exit takes no longer.
+  `rune doctor` and `rune audit` now print how many actions ran with no background review; that
+  count had been taken and never shown. Still not recorded: a background review that failed —
+  reviewer unreachable, timed out, or an answer that could not be read — leaves no row.
+
 ## [1.3.3] - 2026-10-07
 
 **The rule for whose failure it is holds in CI and on Windows, and the tests have now run on all

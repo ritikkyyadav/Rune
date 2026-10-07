@@ -104,6 +104,27 @@ describe("P6A.4 — supervisor false positives, sourced from the DB", () => {
     expect(formatAutoSafetyMetrics(m)[1]).toContain("no data");
   });
 
+  test("an action nobody reviewed is counted, and the count is printed", () => {
+    // The supervisor's promise is "allowed, and read afterwards". When the
+    // reading did not happen the row says so — and until 2026-10-07 nothing
+    // printed how many such rows there were.
+    const skipped = (callId: string) => ({
+      type: "safety_decision",
+      payload: { source: "supervisor_skipped", verdict: "allow", toolName: "bash", callId },
+    });
+    const m = readAutoSafetyMetrics(makeDb([screen("allow"), skipped("c2"), skipped("c3")]));
+    expect(m.supervisorSkipped).toBe(2);
+    const lines = formatAutoSafetyMetrics(m);
+    expect(lines).toHaveLength(4);
+    expect(lines[3]).toContain("actions that ran with no background review: 2 ");
+
+    // With none there is no fourth line: a store where every action was
+    // reviewed reads exactly as it did.
+    const clean = formatAutoSafetyMetrics(readAutoSafetyMetrics(makeDb([screen("allow")])));
+    expect(clean).toHaveLength(3);
+    expect(clean.join("\n")).not.toContain("no background review");
+  });
+
   test("halts per 100 runs is computed over sessions, not over decisions", () => {
     const path = makeDb(
       [

@@ -1,6 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import {
   AutoModeSafetyController,
+  SUPERVISOR_UNANSWERED_AT_EXIT,
   resolveAutoModeConfig,
   type ClassifierCall,
 } from "../../../packages/orchestrator/src/auto-mode";
@@ -234,4 +235,208 @@ test("a repeat of a shape already waiting rides along at capacity; a new shape d
   expect(queue.enqueue({ key: "c", epoch: 0, chars: 1 })).toBe(false);
   expect(queue.enqueue({ key: "a", epoch: 0, chars: 1 })).toBe(true);
   expect(queue.size).toBe(3);
+});
+
+// ─── What the supervisor never read ───
+//
+// The supervisor is not waited for. A headless run exits when its work is
+// done, so whatever is still queued, or with the reviewer and unanswered, is
+// never read — and until 2026-10-07 nothing said so: each of those actions
+// kept the row it was given when it ran, "allowed under supervision".
+
+test("an abandoned queue hands back the batch in flight and everything waiting, and takes nothing more", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const reviewed: string[][] = [];
+  const queue = new SupervisorQueue<SupervisedItem>(async (batch) => {
+    reviewed.push(batch.map((item) => item.key));
+    await gate;
+  });
+  // Two epochs, so the first review takes two and three are left waiting.
+  for (const [key, epoch] of [
+    ["a", 0],
+    ["b", 0],
+    ["c", 1],
+    ["d", 1],
+    ["e", 1],
+  ] as const)
+    expect(queue.enqueue({ key, epoch, chars: 1 })).toBe(true);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  expect(reviewed).toEqual([["a", "b"]]);
+
+  // In flight first, then waiting, oldest first: all five, and none twice.
+  expect(queue.abandon().map((item) => item.key)).toEqual(["a", "b", "c", "d", "e"]);
+  expect(queue.size).toBe(0);
+  expect(queue.abandon()).toEqual([]);
+  // Nothing is admitted after, and what was waiting is never sent.
+  expect(queue.enqueue({ key: "late", epoch: 1, chars: 1 })).toBe(false);
+  release();
+  await queue.drain();
+  expect(reviewed).toEqual([["a", "b"]]);
+});
+
+function supervisedRun(classify: (call: ClassifierCall) => Promise<string>) {
+  const controller = new AutoModeSafetyController(
+    resolveAutoModeConfig({ supervisor: "all" }),
+    { classify },
+    () => ({ gateway: {} as LlmGateway, provider: "anthropic", model: "mock" }),
+  );
+  const rows: Array<{ source: string; verdict: string; callId?: string; reason: string }> = [];
+  controller.setDecisionObserver((review) =>
+    rows.push({
+      source: review.source,
+      verdict: review.verdict,
+      callId: review.callId,
+      reason: review.reason,
+    }),
+  );
+  const action = (id: number) => ({
+    callId: `lint-${id}`,
+    toolName: "bash",
+    // A script per file, not a bare read: pure reads take the safe tier and
+    // are never queued for the supervisor at all.
+    args: { command: `python3 lint.py file-${id}.ts` },
+    workspaceRoot: "/tmp/rune-review-tests",
+    schema: {
+      name: "bash",
+      version: "1",
+      description: "shell",
+      inputSchema: { type: "object" },
+      category: "execute" as const,
+      permissionLevel: "sandbox" as const,
+    },
+  });
+  return { run: controller.startRun(["Lint the tree."]), rows, action };
+}
+
+test("when the process leaves, every action the supervisor had not answered is handed back as unanswered", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const calls: ClassifierCall[] = [];
+  const { run, rows, action } = supervisedRun(async (call) => {
+    calls.push(call);
+    await gate; // a reviewer that has not come back yet
+    return "ALLOW";
+  });
+  for (let i = 0; i < 5; i++) {
+    expect((await run.review(action(i))).verdict).toBe("allow");
+    await new Promise((resolve) => setTimeout(resolve, 15)); // each lands after the last batch left
+  }
+  // The premise: the reviewer was asked, and has answered nothing.
+  expect(calls.length).toBeGreaterThan(0);
+  expect(rows.filter((r) => r.source.startsWith("supervisor_"))).toEqual([]);
+
+  const unanswered = run.abandonSupervisor();
+  // One row per action — the one with the reviewer and the four behind it.
+  expect(unanswered.map((u) => u.review.callId).sort()).toEqual([
+    "lint-0",
+    "lint-1",
+    "lint-2",
+    "lint-3",
+    "lint-4",
+  ]);
+  for (const { action: a, review } of unanswered) {
+    expect(a.callId).toBe(review.callId);
+    expect(review).toMatchObject({
+      verdict: "allow",
+      source: "supervisor_skipped",
+      reason: SUPERVISOR_UNANSWERED_AT_EXIT,
+      stage: 0,
+      durationMs: 0,
+    });
+    expect(review.tier).toBeDefined();
+    expect(review.risk).toBeDefined();
+    expect(review.timings!.queueWaitMs).toBeGreaterThanOrEqual(0);
+  }
+  // Asked twice, it has nothing more to say.
+  expect(run.abandonSupervisor()).toEqual([]);
+
+  // The reviewer answers after all. Nothing can act on it now, and the
+  // actions are already written down as unanswered: no verdict is recorded
+  // beside that, and nothing that was waiting is sent.
+  const asked = calls.length;
+  release();
+  await run.drainSupervisor();
+  expect(rows.filter((r) => r.source.startsWith("supervisor_"))).toEqual([]);
+  expect(calls.length).toBe(asked);
+  expect(run.takePendingSupervisorHalt()).toBeNull();
+});
+
+test("an action the supervisor did answer is not also called unanswered", async () => {
+  const { run, rows, action } = supervisedRun(async () => "ALLOW");
+  expect((await run.review(action(0))).verdict).toBe("allow");
+  await run.drainSupervisor();
+  expect(rows.filter((r) => r.source === "supervisor_screen")).toHaveLength(1);
+  expect(run.abandonSupervisor()).toEqual([]);
+});
+
+test("after it is let go, an action that still runs is recorded as unwatched, not queued", async () => {
+  const { run, rows, action } = supervisedRun(async () => "ALLOW");
+  run.abandonSupervisor();
+  expect((await run.review(action(7))).verdict).toBe("allow");
+  await run.drainSupervisor();
+  const skipped = rows.filter((r) => r.source === "supervisor_skipped");
+  expect(skipped).toHaveLength(1);
+  expect(skipped[0]!.callId).toBe("lint-7");
+  // For the reason it was: not a full queue, which is what a refused
+  // observation is called everywhere else.
+  expect(skipped[0]!.reason).toContain("its reviewer had been let go");
+  expect(skipped[0]!.reason).not.toContain("waiting on the reviewer");
+  expect(rows.filter((r) => r.source === "supervisor_screen")).toEqual([]);
+});
+
+test("a review that failed before the exit is not blamed on the exit", async () => {
+  const { run, rows, action } = supervisedRun(async () => {
+    throw new Error("reviewer unreachable");
+  });
+  expect((await run.review(action(0))).verdict).toBe("allow");
+  await run.drainSupervisor();
+  // The premise. A reviewer that cannot be reached leaves no row of its own
+  // today — a gap of its own, and not this test's. What is pinned here is that
+  // the exit does not claim it: that row says the run ended first, and this
+  // review had failed while the run was still going.
+  expect(rows.filter((r) => r.source.startsWith("supervisor_"))).toEqual([]);
+  expect(run.abandonSupervisor()).toEqual([]);
+});
+
+test("an action the screen flagged is not called unanswered while its confirmation is out", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let confirming = false;
+  const { run, rows, action } = supervisedRun(async (call) => {
+    if (call.stage === "fast") return "BLOCK";
+    confirming = true;
+    await gate; // the confirmation that would latch a halt, not back yet
+    return JSON.stringify({
+      verdict: "deny",
+      risk: "critical",
+      confidence: "high",
+      reason: "It sends the workspace somewhere the user never named.",
+    });
+  });
+  expect((await run.review(action(0))).verdict).toBe("allow");
+  for (let i = 0; i < 300 && !confirming; i++) await new Promise((r) => setTimeout(r, 10));
+  // The premise: the screen answered, on the record, and the second opinion
+  // is still with the reviewer.
+  expect(confirming).toBe(true);
+  expect(rows.filter((r) => r.source.startsWith("supervisor_"))).toMatchObject([
+    { source: "supervisor_screen", verdict: "deny", callId: "lint-0" },
+  ]);
+
+  // The process leaves. This action HAS an answer — a flag — so it is not
+  // among the unanswered, and its row is the flag.
+  expect(run.abandonSupervisor()).toEqual([]);
+
+  // The confirmation lands on a run that is gone: not recorded, and no halt
+  // is latched for a next action there will never be.
+  release();
+  await run.drainSupervisor();
+  expect(rows.filter((r) => r.source === "supervisor_reasoned")).toEqual([]);
+  expect(run.takePendingSupervisorHalt()).toBeNull();
 });

@@ -460,16 +460,38 @@ rows under their own sources:
 - `supervisor_reasoned` — the careful confirmation. A screen that fires and a reasoned pass that
   refuses to confirm it _is_ a caught false positive, and that pair is the measurement.
 - `supervisor_late` — a confirmed halt that landed after the run ended.
-- `supervisor_skipped` — an allowed action the supervisor could not take on: its queue was full
-  behind a slow reviewer, the transcript was at the reviewer's input limit, or a halt was already
-  pending. The action still ran under the mechanical breakers; the row makes unsupervised actions
-  countable. (A full queue used to _deny_ the action, which turned a cost saving into a
-  run-stopper on a free-tier reviewer.)
+- `supervisor_skipped` — an allowed action the supervisor did not review: its queue was full
+  behind a slow reviewer, the transcript was at the reviewer's input limit, a halt was already
+  pending, or the run ended before the reviewer answered. The action still ran under the mechanical
+  breakers; the row makes unsupervised actions countable. (A full queue used to _deny_ the action,
+  which turned a cost saving into a run-stopper on a free-tier reviewer.)
 
 These rows gate nothing, so they do not enter the tamper-evident chain of approvals and do not move
 the decision counters. Before this, the "screen fired, review disagreed" event incremented a
 process-local counter that reset on restart — the risk that now matters most was, in practice,
 unmeasured.
+
+### A run that ends first
+
+The supervisor is not waited for. A headless run (`rune -P`) exits when its work is done, and
+quitting a session closes it at once, so an action still in the supervisor's queue, or with the
+reviewer and not yet answered, is never answered for. Until 2026-10-07 such an action kept the row
+it was given when it ran — allowed under supervision — and nothing said the supervision had not
+happened. Measured that day through a real process: five quick commands and a reviewer that took
+400 ms, one shown to it, none answered, five rows unchanged.
+
+Now, when the engine closes, each of those actions gets one `supervisor_skipped` row, joined to the
+action by its `callId`, with the reason "the run ended before the reviewer answered for this
+action". Closing waits for nothing and calls no model, so it takes no longer and costs nothing. A
+verdict that would have landed afterwards is not recorded: nothing could act on it.
+
+`rune audit <session>` lists the rows by source, and `rune doctor` and `rune audit` print how many
+actions ran with no background review whenever that number is above zero.
+
+What this does **not** cover: a background review that _failed_ — the reviewer could not be
+reached, timed out, or gave an answer that could not be read — still leaves no row of its own. That
+is counted in the process (`classifierFailures`) and not in the log. A process that is killed
+writes nothing either.
 
 ## Held steps are the ground truth
 
