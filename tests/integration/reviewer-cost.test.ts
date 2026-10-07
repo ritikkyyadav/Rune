@@ -251,6 +251,31 @@ function decisions(arm: Arm): Array<Record<string, any>> {
     .map((r) => r.payload as Record<string, any>);
 }
 
+/**
+ * Every action the reviewer was shown, across however many calls it took.
+ *
+ * The supervisor batches: observations that are waiting together go to the
+ * reviewer in ONE call (`SupervisorQueue.flush`, `reviewSupervisedBatch`). How
+ * many calls six actions take therefore depends on how the run and the
+ * reviewer are timed against each other: six here, and once five on a CI
+ * runner, where this file pinned six and failed. Which ACTIONS the reviewer is
+ * shown does not depend on batching, and each request says which it carries.
+ *
+ * It does depend on the run lasting long enough: a headless run exits when it
+ * is done, and an observation still waiting then is never read. Both arms
+ * below end on a search, which gives the last screen its time.
+ */
+function screened(arm: Arm): Array<{ toolName: string; args: string; callIds: string[] }> {
+  return arm.server
+    .matching((r) => r.role === "utility")
+    .flatMap((r) => {
+      const block = r.text.match(/<supervised_batch>\n([\s\S]*?)\n<\/supervised_batch>/);
+      if (!block)
+        throw new Error(`a reviewer request with no supervised_batch: ${r.text.slice(-200)}`);
+      return JSON.parse(block[1]!) as Array<{ toolName: string; args: string; callIds: string[] }>;
+    });
+}
+
 test("both arms reached the mock and ran the same script", () => {
   for (const arm of [after, before]) {
     expect(arm.server.countOf("lead")).toBeGreaterThan(0);
@@ -262,11 +287,21 @@ test("both arms reached the mock and ran the same script", () => {
   expect(bashDecisions(after)).toBe(bashDecisions(before));
 });
 
-test("B1 — the reviewer-call count on the ordinary script: 6 before, 1 after", () => {
+test("B1 — what the reviewer is shown on the ordinary script: 6 actions before, 1 after", () => {
   // The number this whole lane is about, both halves of it, pinned as integers
   // so a widening that regresses shows up here rather than in a ratio.
-  expect(before.server.countOf("utility")).toBe(6);
+  expect(
+    screened(before)
+      .map((a) => a.toolName)
+      .sort(),
+  ).toEqual(["bash", "bash", "bash", "bash", "bash", "web_search"]);
+  expect(screened(after).map((a) => a.toolName)).toEqual(["web_search"]);
+  // Calls are what is paid for. One action is one call. Six are six at most,
+  // and fewer whenever two were waiting together and went in one batch — so
+  // the count of calls is bounded here, not pinned.
   expect(after.server.countOf("utility")).toBe(1);
+  expect(before.server.countOf("utility")).toBeGreaterThanOrEqual(1);
+  expect(before.server.countOf("utility")).toBeLessThanOrEqual(6);
   // Five of the six were the widened shell commands and they are now zero; the
   // one that remains is the supervisor screening the non-bash `web_search`,
   // which B1 did not touch and which never blocked the tool.

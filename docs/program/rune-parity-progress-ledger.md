@@ -1746,6 +1746,28 @@ The product's own cleanup deletes without `force`. Under the same race that call
 removed. It did not once return normally with the folder still there. A delete with
 `force`, in product or test, can leave what it was asked to remove and say nothing.
 
+**The lane, third run (`37616314179`, `6203c44`): all 22 jobs passed**, and `main` was
+fast-forwarded again. **`main`'s run of it (`37617563689`) failed a different test**, on
+Linux, in integration: `reviewer-cost.test.ts` pins the Auto reviewer's calls on a
+six-action script at six, and counted five.
+
+The pin was the fault. The background supervisor batches: observations waiting
+together go to the reviewer in one call. With the reviewer scripted to take 400 ms,
+six actions took three calls — and were all six shown. The test now holds what the
+reviewer is shown (six actions before the widening, one after), which the requests
+themselves say, and bounds the calls instead of pinning them.
+
+**Seen in that experiment, and not changed: a headless run does not wait for its
+supervisor.** `rune -P` ends with `process.exit`, and the queue is drained in the
+background of a process that is leaving. With the same 400 ms reviewer, a script of
+five supervised commands that finish at once had one of the five shown to the
+reviewer, and no answer was recorded for it. The audit rows for all five read "allowed under
+supervision"; no row says that nobody looked. A real reviewer takes seconds, so the
+last seconds of any headless run are in this position. An interactive session is not:
+it stays up and hears the verdict. Whether a headless run should wait a bounded time,
+or write down what it left unread, is a decision about cost and exit time, and it is
+the founder's.
+
 **A second session resumed in this checkout at about 16:13**, after these commits. It
 has uncommitted edits to `brief.ts`, `contract.ts`, `roundtrips.ts`, the parity rig and
 three unit-test files. They are not in these commits and were not gated here.
