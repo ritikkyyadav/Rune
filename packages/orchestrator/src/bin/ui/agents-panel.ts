@@ -22,8 +22,10 @@
 // goes null a moment later, and the idle panel still has to be able to say
 // "4 finished this turn".
 //
-// Terminal invariants, per the keel skill: no spinner (one pulse cell per
-// child, fed by that child's own events — §pulse.ts); nothing carried by colour
+// Terminal invariants, per the keel skill: no spinner, and since 2026-10-02 no
+// per-member animation of any kind -- a member's cell is one static mark, and
+// the one thing that moves is the rung's glyph, struck by every member's
+// output together (turn.ts `heard`, ./waveform.ts); nothing carried by colour
 // alone (the stall is the word `quiet 9s`, the failure is `✗` AND the word);
 // every glyph from the closed budget with a one-cell ASCII twin; body text
 // uncoloured. The panel is CHROME and therefore right-aligns its headings
@@ -31,19 +33,15 @@
 // one-left-edge law (ui-grammar.test) binds `flow.flowRow` and the rail, and
 // this column is neither.
 
+import type { StoredDelegation } from "../../delegation-replay";
+import { deriveChildName } from "../../subagent-events";
+import { ChildLog, ChildTranscript } from "./child-transcript";
 import * as F from "./flow";
 import { PULSE_GLYPHS, TERMINAL_GLYPH_MODE, glyph } from "./glyphs";
+import type { Key } from "./keys";
 import { Pulse, QUIET_AFTER_MS } from "./pulse";
-import {
-  breathFrame,
-  rampGlyph,
-  rampIndex,
-  workingMark,
-  workingRestGlyph,
-  workingRestMark,
-} from "./working";
 import { clampVisible, truncate, visLen } from "./render";
-import { accent, danger, faint, muted, ok, text } from "./theme";
+import { accent, danger, faint, muted, ok, speakerSurface, text } from "./theme";
 
 // ─── The card ───
 
@@ -113,11 +111,11 @@ export interface AgentCard {
    * The decayed output level (0…7) and how long since this child last said
    * anything. Sampled by the FEEDER, not by the renderer.
    *
-   * No cell draws the level as a ramp any more -- the card's mark is fixed and
-   * breathes by colour (see `cardBeat`) -- but the measurement is not
-   * decoration and has not gone away: a level of 0 past the quiet threshold is
-   * what stops the mark breathing, which is the one thing the ramp did that a
-   * timer-driven mark could never do.
+   * No cell draws the level as a ramp any more -- the card's mark is one static
+   * glyph (see `liveMark`) -- but the measurement is not decoration and has not
+   * gone away: a level of 0 past the quiet threshold is what turns the mark
+   * faint, which is the one thing the ramp did that a timer-driven mark could
+   * never do.
    */
   pulseStep: number;
   quietMs: number;
@@ -128,6 +126,24 @@ export interface AgentCard {
    *  (the transcript is reporting them now); the panel keeps them, in its own
    *  section, until `c`. */
   retired: boolean;
+  /**
+   * The durable id of this member's record in the session log (`task_<uuid>`).
+   *
+   * The card's own `id` is the call that dispatched it, which is how the
+   * stream names it and means nothing once the process ends. This is how the
+   * same member is found again: its whole conversation is stored under it, and
+   * a transcript that was never held in memory -- or was trimmed -- is read
+   * back by it. Known once the call returns; absent before that.
+   */
+  taskId?: string;
+  /**
+   * True for a card read back from the log rather than run in this process.
+   *
+   * Its state, its name and its span are the record's. Its token and tool
+   * counts were never measured HERE, and a card that drew `0 tok` for it would
+   * be stating a measurement nobody made -- so those rows are left out.
+   */
+  restored?: boolean;
 }
 
 /** How a session's agents and its readout reach the panel. */
@@ -269,7 +285,28 @@ function spanOf(card: AgentCard, now: number): string {
 // ─── The card's four rows ───
 
 /**
- * Row one: `› 1  planner    ▆  2m 04s`.
+ * A running member's cell: one mark, and it does not move.
+ *
+ * It was a bar on this member's byte rate (nine of them in a column was a
+ * graphic equaliser), then the same bar eased on a timer phased on `startedAt`
+ * -- and the founder's reading of that, 2026-10-02, is why it is neither now:
+ * "the pulses of those sub agents ... not tightly coordinated to those agents'
+ * realtime operation, just follows a deterministic behaviour. I don't want that
+ * in Rune, just that one Glyph as the animation." A timer is not the member.
+ *
+ * So the member's cell says only what is measured and only when it changes: in
+ * the text ink while its own output is arriving, faint once it has said nothing
+ * for the quiet threshold -- beside the word `quiet 9s`, so a mono terminal
+ * loses nothing. What the fleet is DOING is the rung's glyph, which every
+ * member's output strikes.
+ */
+function liveMark(card: AgentCard): string {
+  const silent = card.quietMs >= QUIET_AFTER_MS && card.pulseStep === 0;
+  return silent ? faint(glyph("live")) : text(glyph("live"));
+}
+
+/**
+ * Row one: `› 1  planner    ◇  2m 04s`.
  *
  * Three fixed cells before the name — the selection mark, the open-pane mark,
  * and the ordinal — so the name column starts in the same place on every row
@@ -277,45 +314,6 @@ function spanOf(card: AgentCard, now: number): string {
  * scans: a list whose names start one cell apart reads as ragged rather than
  * as a list.
  */
-/**
- * The card's live cell: the same eased breath the rung runs, on this member's
- * own clock.
- *
- * It was one cell off this ramp sized by the member's BYTE RATE. Nine of those
- * in a column, each jumping between `▁` and `█` several times a second, is not
- * a panel reporting a fan-out -- it is a graphic equaliser. The shape is the
- * same; what changed is that it is now eased along a 2.16s raised cosine
- * phased on `startedAt`, so two cards that began a minute apart breathe out of
- * step with each other and neither of them strobes. The rate is not lost: it
- * was never what a reader acted on, and the thing they do act on -- a member
- * that has stopped saying anything -- is carried by the word `quiet 9s`.
- */
-function cardBeat(card: AgentCard, now: number): string {
-  // A member that has said nothing for the quiet threshold, and whose measured
-  // output level has decayed to the floor, does not breathe. This is the one
-  // property the byte-fed ramp had that was worth keeping: the mark cannot
-  // report life where there is none. It rests at the mid bar, dim, beside the
-  // word `quiet 9s`, so a mono terminal loses nothing.
-  if (card.quietMs >= QUIET_AFTER_MS && card.pulseStep === 0) return workingRestMark();
-  const elapsed = card.startedAt == null ? 0 : Math.max(0, now - card.startedAt);
-  return workingMark({ kind: "running" }, breathFrame(elapsed));
-}
-
-/**
- * The bare ramp cell for a running member, unpainted, at this member's own
- * frame of the breath.
- *
- * The denser rungs of the ladder (the paired rows, the initials strip, the
- * one-line agents strip) tint the WHOLE cell -- selected or faint -- so they
- * cannot take `cardBeat`'s painted mark without nesting two colours in one
- * cell. They still get the motion, which is the point: the same curve, the
- * same phase, at every density the panel can draw.
- */
-function rampAt(card: AgentCard, now: number): string {
-  const elapsed = card.startedAt == null ? 0 : Math.max(0, now - card.startedAt);
-  return rampGlyph(rampIndex(breathFrame(elapsed)));
-}
-
 function headRow(card: AgentCard, index: number, view: PanelView, now: number, width: number) {
   const selected = view.focused && view.selectedId === card.id;
   const mark = selected ? glyph("selection") : " ";
@@ -332,8 +330,8 @@ function headRow(card: AgentCard, index: number, view: PanelView, now: number, w
         : card.state === "skipped"
           ? faint(glyph("observed"))
           : card.state === "queued"
-            ? faint(workingRestGlyph())
-            : cardBeat(card, now);
+            ? faint(glyph("live"))
+            : liveMark(card);
   // The stall is STATED. Past the quiet threshold the row swaps its clock's
   // tail for the word, because a flat pulse and a dead pulse are the same cell.
   const quiet =
@@ -424,7 +422,9 @@ export function renderCard(
   // Bookkeeping, last and quiet. Absent is not zero: a member that ran no
   // checks says nothing about checks.
   const parts = [
-    `${tokenWord(card.tokens)} tok`,
+    // A card read back from the log was not metered by this process. It says
+    // where it came from instead of a zero it did not measure.
+    card.restored ? "from the session log" : `${tokenWord(card.tokens)} tok`,
     card.tools > 0 ? `${card.tools} tool${card.tools === 1 ? "" : "s"}` : "",
     card.checks > 0 ? `${card.checksPassed}/${card.checks} checks` : "",
     card.reroutes > 0 ? `${card.reroutes} reroute${card.reroutes === 1 ? "" : "s"}` : "",
@@ -447,7 +447,7 @@ function heading(title: string, right: string, width: number): string[] {
 /**
  * Two cards on one row, for a fan-out too wide to give each of them four.
  *
- *     › 1 planner  ▆ 2m04   2 builder ▃ 1m12
+ *     › 1 planner  ◇ 2m04   2 builder ◇ 1m12
  */
 function pairRow(
   cards: Array<{ card: AgentCard; index: number }>,
@@ -463,7 +463,7 @@ function pairRow(
         ? glyph("verified")
         : card.state === "failed"
           ? glyph("failure")
-          : workingRestGlyph();
+          : glyph("live");
     const span =
       card.startedAt == null ? "" : compactElapsed((card.endedAt ?? now) - card.startedAt);
     const name = truncate(card.name, Math.max(4, cell - 8));
@@ -474,14 +474,14 @@ function pairRow(
 }
 
 /**
- * Everybody, one cell each: `P▆ B▃ V▁ S▂ M▅ T▁ D· R· C·      +3`.
+ * Everybody, one cell each: `P◇ B◇ V◇ S✓ M✓ T✗ D· R· C·      +3`.
  *
  * The floor of the ladder, and the point at which the panel stops pretending to
- * be a list. The pulse rides beside each initial so the row still says who is
- * moving; the full roster stays reachable by `ctrl+f` and the arrows, which
+ * be a list. A mark rides beside each initial so the row still says who is
+ * running and who is back; the full roster stays reachable by `ctrl+f` and the arrows, which
  * walk every member regardless of what the panel can draw.
  */
-function initialsRow(cards: AgentCard[], view: PanelView, width: number, now: number): string {
+function initialsRow(cards: AgentCard[], view: PanelView, width: number): string {
   const marks = initialsFor(cards.map((c) => c.name));
   const cells = cards.map((card, i) => {
     const beat =
@@ -490,7 +490,7 @@ function initialsRow(cards: AgentCard[], view: PanelView, width: number, now: nu
         : card.state === "failed"
           ? glyph("failure")
           : card.state === "running"
-            ? rampAt(card, now)
+            ? glyph("live")
             : glyph("observed");
     const cell = `${marks[i]}${beat}`;
     return view.focused && view.selectedId === card.id ? accent(cell) : faint(cell);
@@ -585,7 +585,7 @@ export function renderAgentsPanel(
   }
   if (plan.initials) {
     out.push(faint(glyph("rule").repeat(Math.max(1, width))));
-    out.push(initialsRow([...running, ...finished], view, width, now));
+    out.push(initialsRow([...running, ...finished], view, width));
   }
   // The budget is a budget. Past it the column says how many it could not
   // draw rather than cutting a card off mid-way and leaving the reader to
@@ -717,19 +717,320 @@ export function renderSessionPanel(
   return out;
 }
 
-// ─── The collapsed strip ───
+// ─── The members on the rung ───
 
 /**
- * Below 100 columns the right column is worth less than the cells it costs, so
- * it becomes one row directly above the composer — always current, and naming
- * the key that opens the full panel.
+ * One block per member in flight, set down after the rung's own words:
  *
- *     ◆ 3 running · 1 done · planner ▆ · builder ▃ · verifier ▁    ctrl+f open
+ *     ▁▂▅▂▁▁▁▂▄▂▁▁ looking · 18s  [planner] [builder] [verifier ✓]
  *
- * It names the members it has room for and then stops naming them; it never
- * renders a count with no names, because a count is the thing this phase exists
- * to replace.
+ * The founder's sketch (2026-10-02): the glyph, and then a box for each agent
+ * "to showcase that an agent is live ... but there should be one universal
+ * glyph which would showcase the full work". So a block is a NAME in a box and
+ * nothing else. It does not animate -- the glyph before it is the animation,
+ * and it is struck by all of them together -- and what it says changes only
+ * when something measured changes: in the text ink while the member's own
+ * output is arriving, faint while it is queued or has gone quiet, a tick or a
+ * cross once it is back and before its call has landed in the transcript.
+ *
+ * This replaces the collapsed strip, which took the rung's place whenever a
+ * member existed -- hiding the glyph at exactly the moment the most was
+ * happening -- and drew each member a bar breathing on a timer.
+ *
+ * It names the members it has room for and counts the rest (`+2`); with room
+ * for none it is a count with a noun (`4 agents`), never a bare number.
+ *
+ * With `selectedId` the same blocks are the SELECTOR: the keys are on the row,
+ * one block carries the selection, and the window follows it.
+ *
+ *     ▁▂▅▂▁ looking · 18s  [planner]›[builder] [verifier ✓] +2
+ *
+ * The selection is the `›` in the cell before the block and the product's one
+ * selection ink on the block itself (`F.band`'s, at the width of a block) --
+ * the mark where there is no colour at all, the ink where there is. Nothing
+ * else about a block changes when it is selected, and the row does not grow:
+ * the members it cannot draw are counted on the side they are on.
  */
+export function agentBlocks(
+  cards: readonly AgentCard[],
+  room: number,
+  marks: { selectedId?: string | null } = {},
+): string {
+  if (cards.length === 0) return "";
+  const selected = marks.selectedId ? cards.findIndex((c) => c.id === marks.selectedId) : -1;
+  if (selected >= 0) return selectorBlocks(cards, selected, room);
+  const blocks: string[] = [];
+  let spent = 0;
+  for (const [i, card] of cards.entries()) {
+    const block = blockText(card);
+    const rest = cards.length - i - 1;
+    // Room for this block, its gap, and the `+N` it would leave owing.
+    const owing = rest > 0 ? visLen(`+${rest}`) + 1 : 0;
+    if (spent + visLen(block) + (blocks.length > 0 ? 1 : 0) + owing > room) break;
+    spent += visLen(block) + (blocks.length > 0 ? 1 : 0);
+    blocks.push(blockInk(card)(block));
+  }
+  if (blocks.length === 0)
+    return faint(`${cards.length} ${cards.length === 1 ? "agent" : "agents"}`);
+  const left = cards.length - blocks.length;
+  return left > 0 ? `${blocks.join(" ")} ${faint(`+${left}`)}` : blocks.join(" ");
+}
+
+/** `[planner]`, `[builder ✓]`, `[verifier ✗]`: a name in a box, and how it
+ *  ended once it has. */
+function blockText(card: AgentCard): string {
+  const settled =
+    card.state === "done"
+      ? ` ${glyph("verified")}`
+      : card.state === "failed"
+        ? ` ${glyph("failure")}`
+        : card.state === "skipped"
+          ? ` ${glyph("observed")}`
+          : "";
+  return `[${card.name}${settled}]`;
+}
+
+/** In the text ink while its own output is arriving, faint while it is queued,
+ *  quiet or back, and the failure ink when it failed. */
+function blockInk(card: AgentCard): (value: string) => string {
+  if (card.state === "failed") return danger;
+  const silent =
+    card.state !== "running" || (card.quietMs >= QUIET_AFTER_MS && card.pulseStep === 0);
+  return silent ? faint : text;
+}
+
+/**
+ * The blocks with one of them selected, windowed so the selection is drawn.
+ *
+ * Each block is preceded by one cell: `›` before the selected one, a space
+ * before the rest -- so moving the selection changes two cells and nothing
+ * shifts. The window grows outward from the selection, right then left, and
+ * what falls outside it is counted where it fell: `+2 [c]›[d] [e] +3`.
+ */
+function selectorBlocks(cards: readonly AgentCard[], selected: number, room: number): string {
+  const cells = cards.map(blockText);
+  const cost = (i: number): number => visLen(cells[i]!) + 1;
+  // What a count costs on its side, the cell that separates it included.
+  const owing = (hidden: number): number => (hidden > 0 ? String(hidden).length + 2 : 0);
+  let start = selected;
+  let end = selected + 1;
+  let used = cost(selected);
+  for (;;) {
+    let grew = false;
+    if (
+      end < cards.length &&
+      used + cost(end) + owing(start) + owing(cards.length - end - 1) <= room
+    ) {
+      used += cost(end);
+      end++;
+      grew = true;
+    }
+    if (
+      start > 0 &&
+      used + cost(start - 1) + owing(start - 1) + owing(cards.length - end) <= room
+    ) {
+      used += cost(start - 1);
+      start--;
+      grew = true;
+    }
+    if (!grew) break;
+  }
+  let out = "";
+  for (let i = start; i < end; i++) {
+    const card = cards[i]!;
+    out +=
+      i === selected
+        ? `${accent(glyph("selection"))}${speakerSurface(cells[i]!)}`
+        : ` ${blockInk(card)(cells[i]!)}`;
+  }
+  // The first block's lead is a space unless it is the selected one; dropped,
+  // so the row keeps its ordinary two-space gap before the blocks.
+  if (out.startsWith(" ")) out = out.slice(1);
+  const before = start > 0 ? `${faint(`+${start}`)} ` : "";
+  const after = end < cards.length ? ` ${faint(`+${cards.length - end}`)}` : "";
+  return `${before}${out}${after}`;
+}
+
+/**
+ * What the row above the composer says about members that are no longer in
+ * flight: how many came back, in words. Their cards, tokens and transcripts are
+ * the panel's (`ctrl+f`); the rung only says they are there to be read.
+ */
+export function agentsBack(view: PanelView): string {
+  const back = view.finished.length;
+  return back === 0 ? "" : `${back} ${back === 1 ? "agent" : "agents"} back`;
+}
+
+/**
+ * The key that reaches the agents, said on the rung wherever there is one to
+ * reach.
+ *
+ * `->` is the right arrow, spelled the way the product already spells an arrow
+ * (the reroute row, the steer receipt): the glyph itself is outside the closed
+ * alphabet and has no one-cell ASCII twin. It replaced `ctrl+f agents`, which
+ * named a key that did nothing for the whole of a running turn -- the only time
+ * a sub-agent is live to be looked at.
+ */
+export const AGENTS_KEY_HINT = "-> agents";
+
+// ─── The keys ───
+
+/**
+ * Where the agents keys currently go.
+ *
+ *   composer  nowhere: the field has them, as always.
+ *   row       the blocks on the rung, in place. Arrows move, enter opens.
+ *   cards     the full roster (`ctrl+f`): a card per member, with what each
+ *             proved and what it spent.
+ *   view      one member's transcript is open in the workspace.
+ */
+export type AgentFocus = "composer" | "row" | "cards" | "view";
+
+export interface AgentKeyState {
+  focus: AgentFocus;
+  /** Members in the ledger, running or back. */
+  members: number;
+  /** Nothing is typed in the composer. */
+  empty: boolean;
+  /** A turn is in flight, as opposed to the surface being at rest. */
+  streaming: boolean;
+}
+
+/** What an agents key asks for. `none` means it is not one: it belongs to the
+ *  composer or the turn, and falls through to them untouched. */
+export type AgentKeyAction =
+  | { kind: "none" }
+  /** Claimed, and nothing happens: the key is the agents' here, with nowhere
+   *  to go. It must not fall through to mean something else underneath. */
+  | { kind: "stay" }
+  | { kind: "focus" }
+  | { kind: "move"; delta: -1 | 1 }
+  | { kind: "jump"; ordinal: number }
+  | { kind: "open" }
+  | { kind: "back" }
+  | { kind: "cards" }
+  | { kind: "clear" };
+
+const NONE: AgentKeyAction = { kind: "none" };
+
+/**
+ * Does this key, pressed with the keys on the COMPOSER, step onto the agents
+ * row?
+ *
+ * This is the one decision in the feature that is a matter of taste rather
+ * than of correctness, and it is isolated here so changing it is one line and
+ * one test.
+ *
+ * TODO(human): the entry gesture. Today it is the right arrow on an empty
+ * composer -- a key that otherwise does nothing there, that a scroll wheel
+ * never sends (alternate-scroll mode delivers the wheel as UP and DOWN, so
+ * either of those would focus the row every time a trackpad overshot the
+ * bottom of the transcript), and that points the way the blocks run. Left is
+ * not an entry: at rest, left on an empty composer already opens the sessions
+ * panel. If you want left to enter too while a turn is streaming (it is free
+ * there), or `tab`, add it here; `state.streaming` tells the two apart.
+ * Whatever is chosen must be a key that cannot be typed by accident, because
+ * the next enter opens a transcript instead of sending a message.
+ */
+export function entersAgentRow(key: Key, state: AgentKeyState): boolean {
+  return key.type === "right" && state.empty && state.members > 0;
+}
+
+/**
+ * What a key means to the agents, given where the keys currently go.
+ *
+ * Pure, so the whole table is a unit test and none of it needs a terminal.
+ * Three properties it is built to keep:
+ *
+ *   Typing is never swallowed. On the row and in a transcript no printable key
+ *   is an agents key -- not even a digit -- so a message typed with the row
+ *   focused arrives whole, and the caller hands the keys back to the composer
+ *   on the first character.
+ *
+ *   `esc` is always one step back and never further. With the keys on the
+ *   agents it returns them; only with the keys on the composer does it reach
+ *   the turn, where it interrupts. Before this, `esc` on the panel during a
+ *   running turn aborted the run it was being used to look at.
+ *
+ *   Every focus has the same two keys out: `esc`, and `ctrl+f` for the cards.
+ */
+export function agentKeyAction(key: Key, state: AgentKeyState): AgentKeyAction {
+  // `ctrl+f` is the cards from anywhere, and the way back from them.
+  if (key.type === "ctrl" && key.name === "f") return { kind: "cards" };
+  if (state.focus === "composer") {
+    return entersAgentRow(key, state) ? { kind: "focus" } : NONE;
+  }
+  if (key.type === "esc") return { kind: "back" };
+  switch (state.focus) {
+    case "row":
+      if (state.members === 0) return NONE;
+      if (key.type === "left") return { kind: "move", delta: -1 };
+      if (key.type === "right") return { kind: "move", delta: 1 };
+      if (key.type === "enter" && state.empty) return { kind: "open" };
+      return NONE;
+    case "cards":
+      if (state.members === 0) return NONE;
+      if (key.type === "up") return { kind: "move", delta: -1 };
+      if (key.type === "down") return { kind: "move", delta: 1 };
+      if (key.type === "enter") return { kind: "open" };
+      if (key.type === "char" && /^[1-9]$/.test(key.value)) {
+        return { kind: "jump", ordinal: Number(key.value) };
+      }
+      if (key.type === "char" && key.value === "c") return { kind: "clear" };
+      return NONE;
+    case "view":
+      // The arrows switch transcripts only while nothing is typed: over a
+      // draft they are the caret's, as they are everywhere else.
+      if (!state.empty) return NONE;
+      if (key.type !== "left" && key.type !== "right") return NONE;
+      // With one agent there is no neighbour -- and the key still belongs to
+      // the transcript. Let through, `left` on an empty composer would open
+      // the sessions panel over the transcript being read.
+      if (state.members < 2) return { kind: "stay" };
+      return { kind: "move", delta: key.type === "left" ? -1 : 1 };
+  }
+}
+
+/**
+ * The key legend for wherever the agents keys are, in the composer's hint row.
+ *
+ * Each legend is a ladder: the tail is given up first when the row is narrow,
+ * and the way out is the last thing to go.
+ */
+export function agentsHint(focus: AgentFocus, view: PanelView, max = 200): string {
+  const sep = ` ${glyph("observed")} `;
+  const members = view.running.length + view.finished.length;
+  const tiers = ((): string[][] => {
+    switch (focus) {
+      case "row":
+        return [
+          ["left/right select", "enter open", "ctrl+f cards", "esc back"],
+          ["left/right select", "enter open", "esc back"],
+          ["enter open", "esc back"],
+        ];
+      case "view":
+        return members > 1
+          ? [
+              ["left/right switch", "up/down scroll", "esc back"],
+              ["left/right switch", "esc back"],
+              ["esc back"],
+            ]
+          : [["up/down scroll", "esc back"], ["esc back"]];
+      case "cards": {
+        const keys = panelHint(view);
+        return [[keys, "esc back"], [keys], ["esc back"]];
+      }
+      case "composer":
+        return [[]];
+    }
+  })();
+  for (const tier of tiers) {
+    const line = tier.filter((part) => part !== "").join(sep);
+    if (visLen(line) <= max) return line;
+  }
+  return "";
+}
+
 /**
  * The most recent verdict in a roster, with the card that earned it.
  *
@@ -746,49 +1047,6 @@ export function newestReceipt(
     if (!best || card.receipt.at > best.receipt.at) best = { card, receipt: card.receipt };
   }
   return best;
-}
-
-export function renderAgentsStrip(
-  view: PanelView,
-  width: number,
-  now: number = Date.now(),
-): string {
-  const { running, finished } = view;
-  if (running.length === 0 && finished.length === 0) {
-    return F.row(
-      `${accent(glyph("phase"))} ${faint("no agents this session")}`,
-      faint("ctrl+f open"),
-      width,
-    );
-  }
-  // The last verdict anybody produced, FIRST -- the strip follows the card's
-  // rule (founder review, 2026-09-14): what was proved outranks who is busy.
-  // It is one row for a whole fan-out, so it carries the newest receipt and
-  // names its owner, which is the least a reader needs to go find it.
-  const latest = newestReceipt([...running, ...finished]);
-  const head = F.receiptOf([
-    latest ? `${glyph(latest.receipt.rung)} ${latest.card.name} ${latest.receipt.text}` : "",
-    running.length > 0 ? `${running.length} running` : "",
-    finished.length > 0 ? `${finished.length} done` : "",
-  ]);
-  const right = faint("ctrl+f agents");
-  const names: string[] = [];
-  // Budget: the head, the key hint, and the separators between the names.
-  let room = width - visLen(head) - visLen("ctrl+f agents") - 6;
-  for (const card of [...running, ...finished]) {
-    const beat =
-      card.state === "running"
-        ? rampAt(card, now)
-        : card.state === "failed"
-          ? glyph("failure")
-          : glyph("verified");
-    const cell = `${card.name} ${beat}`;
-    if (visLen(cell) + 3 > room) break;
-    room -= visLen(cell) + 3;
-    names.push(cell);
-  }
-  const left = `${accent(glyph("phase"))} ${faint(F.receiptOf([head, ...names]))}`;
-  return F.row(left, right, width);
 }
 
 /** The key legend the composer's hint row carries while the panel has focus. */
@@ -812,10 +1070,6 @@ export function panelHint(view: PanelView): string {
 }
 
 // ─── The ledger ───
-
-/** How many rendered rows one child's transcript keeps. A pane is a window on
- *  a run, not an archive of it; the work log is the archive. */
-const CHILD_BUFFER_ROWS = 800;
 
 /** What a card carries when it is first registered. */
 export interface RegisterInput {
@@ -844,7 +1098,10 @@ export interface RegisterInput {
  */
 export class FleetLedger {
   private cards = new Map<string, AgentCard>();
-  private buffers = new Map<string, string[]>();
+  /** Each child's transcript rows, and the writer a RUNNING child's events go
+   *  through. See ./child-transcript.ts. */
+  private logs = new Map<string, ChildLog>();
+  private writers = new Map<string, ChildTranscript>();
   /**
    * One accumulator per child, fed by that child's own events.
    *
@@ -862,6 +1119,15 @@ export class FleetLedger {
   private selected: string | null = null;
   /** The open pane, so a card's header can be refreshed in place. */
   private pane: { id: string; name: string; note?: string; lines: string[] } | null = null;
+  /**
+   * Where the agents keys currently go.
+   *
+   * Written by the frame, which owns focus, and read by the rung, which has to
+   * draw it: the renderer that builds the rung's row is rebuilt every turn and
+   * knows nothing about the frame, and this ledger is the one object both
+   * already share. Held here for the same reason the selection is.
+   */
+  private focus: AgentFocus = "composer";
 
   register(input: RegisterInput): AgentCard {
     const existing = this.cards.get(input.id);
@@ -982,6 +1248,27 @@ export class FleetLedger {
     return order[0]!.id;
   }
 
+  /** Tell the ledger where the keys are. Returns whether that changed, so the
+   *  frame knows the rung has to be drawn again. */
+  setFocus(focus: AgentFocus): boolean {
+    if (focus === this.focus) return false;
+    this.focus = focus;
+    return true;
+  }
+
+  /**
+   * The member the rung should mark, or null when the keys are elsewhere.
+   *
+   * On the row it is the selection. In a transcript it is the member whose
+   * transcript is open -- the block that says which one you are reading -- so
+   * the arrows that switch transcripts move the same mark the row's did.
+   */
+  marked(): string | null {
+    if (this.focus === "row") return this.selectedId();
+    if (this.focus === "view") return this.pane?.id ?? null;
+    return null;
+  }
+
   /** Move the selection by `delta`, wrapping. Survives a repaint because it is
    *  held here, not rebuilt from the frame. */
   move(delta: number): void {
@@ -994,6 +1281,13 @@ export class FleetLedger {
     this.selected = order[(at + delta + order.length) % order.length]!.id;
   }
 
+  /** Put the selection on one card by id. Returns false when it is not here. */
+  select(id: string): boolean {
+    if (!this.cards.has(id)) return false;
+    this.selected = id;
+    return true;
+  }
+
   /** `1`–`9`: select that agent directly. Returns false when there is no Nth. */
   selectIndex(n: number): boolean {
     const card = this.order()[n - 1];
@@ -1002,46 +1296,104 @@ export class FleetLedger {
     return true;
   }
 
-  /** The child transcript buffer, by id. Handed to the pane BY REFERENCE so a
-   *  pane opened mid-run keeps filling as the child reports. */
-  buffer(id: string): string[] {
-    let buf = this.buffers.get(id);
-    if (!buf) {
-      buf = [];
-      this.buffers.set(id, buf);
+  /** One child's transcript, by id. Created on first use, and the same object
+   *  for the life of the card. */
+  log(id: string): ChildLog {
+    let log = this.logs.get(id);
+    if (!log) {
+      log = new ChildLog();
+      this.logs.set(id, log);
     }
-    return buf;
+    return log;
   }
 
-  /** Append rendered rows to a child's transcript, bounded. */
-  append(id: string, rows: string[]): void {
-    if (rows.length === 0) return;
-    const buf = this.buffer(id);
-    buf.push(...rows);
-    if (buf.length > CHILD_BUFFER_ROWS) buf.splice(0, buf.length - CHILD_BUFFER_ROWS);
+  /** The writer a running child's own events go through. One per child, so an
+   *  open paragraph and the calls in flight survive between events. */
+  transcript(id: string): ChildTranscript {
+    let writer = this.writers.get(id);
+    if (!writer) {
+      writer = new ChildTranscript(this.log(id));
+      this.writers.set(id, writer);
+    }
+    return writer;
   }
 
-  /** Replace the last row of a child's transcript — how streamed prose grows
-   *  in place rather than one row per token. */
-  amendLast(id: string, rows: string[]): void {
-    const buf = this.buffer(id);
-    buf.pop();
-    this.append(id, rows);
+  /** The child's transcript rows. Handed to the pane BY REFERENCE so a pane
+   *  opened mid-run keeps filling as the child reports. */
+  buffer(id: string): string[] {
+    return this.log(id).lines;
+  }
+
+  /** How many times the open pane's transcript has changed. The frame compares
+   *  it between ticks, so a transcript that is growing repaints and one that is
+   *  not costs nothing. Zero when no pane is open. */
+  paneRevision(): number {
+    return this.pane ? (this.logs.get(this.pane.id)?.revision ?? 0) : 0;
+  }
+
+  /** The card whose transcript is open, when one is. */
+  openId(): string | null {
+    return this.pane?.id ?? null;
   }
 
   /**
-   * Replace the last `count` rows with `rows` — a growing paragraph, re-wrapped.
+   * Bring back the children a session's log records.
    *
-   * `count` rather than one, because a paragraph that has reached its fourth
-   * line is four rows and amending only the last would leave three frozen at
-   * the width they were first wrapped to. Committing partial text is the one
-   * thing a streaming surface must not do (keel §5.4), and this is the shape
-   * that avoids it: nothing is final until the paragraph closes.
+   * Called when a session is opened with history. Each stored child becomes a
+   * FINISHED card under the name it ran as -- its state and its span are the
+   * record's -- and its transcript is left empty: that is read back from the
+   * log only when the card is opened, because it is the child's whole
+   * conversation and most cards are never opened.
+   *
+   * A child with no terminal status in the record is one whose process ended
+   * mid-run. It is drawn as failed, with that said on the card, rather than as
+   * `running`: nothing is running in a log that is being read back.
    */
-  replaceTail(id: string, count: number, rows: string[]): void {
-    const buf = this.buffer(id);
-    if (count > 0) buf.splice(Math.max(0, buf.length - count), count);
-    this.append(id, rows);
+  restore(stored: readonly StoredDelegation[]): number {
+    let restored = 0;
+    for (const child of stored) {
+      const id = child.callId ?? child.id;
+      if (this.cards.has(id)) continue;
+      const brief = truncate((child.label ?? child.promptHead ?? "").trim(), 44);
+      const card = this.register({
+        id,
+        kind: child.kind,
+        brief,
+        written: child.name,
+        // The same derivation a live card falls back to, so a child from a
+        // build that stored no name is still `scout-auth` and not `agent-3`.
+        derived: brief ? deriveChildName(child.kind, brief) : undefined,
+        state: "done",
+      });
+      // The same reading a live card gets. A child that returned -- even one
+      // that ran out of turns and handed back what it had -- is `done`, and
+      // the card says how it stopped. Only a child that never returned, or one
+      // the harness gave up on, is `failed`.
+      const status = child.status ?? "";
+      const clean = status === "end_turn" || status === "completed";
+      const failed =
+        status === "" || status === "stalled" || status === "provider_lost" || status === "error";
+      card.state = failed ? "failed" : "done";
+      card.retired = true;
+      card.restored = true;
+      card.taskId = child.id;
+      const ended = Date.parse(child.at);
+      if (Number.isFinite(ended)) {
+        card.endedAt = ended;
+        const started = child.startedAt ? Date.parse(child.startedAt) : NaN;
+        if (Number.isFinite(started)) card.startedAt = started;
+        else if (child.elapsedMs != null) card.startedAt = ended - child.elapsedMs;
+      }
+      if (!clean) {
+        card.receipt = {
+          rung: failed ? "failure" : "observed",
+          text: status ? `stopped: ${status.replace(/_/g, " ")}` : "ended mid-run",
+          at: Number.isFinite(ended) ? ended : 0,
+        };
+      }
+      restored++;
+    }
+    return restored;
   }
 
   attachPane(pane: { id: string; name: string; note?: string; lines: string[] }): void {
@@ -1068,9 +1420,11 @@ export class FleetLedger {
     const ordinal = this.order().findIndex((c) => c.id === card.id) + 1;
     pane.name = ordinal > 0 ? `${ordinal}  ${card.name}` : card.name;
     pane.note = F.receiptOf([
-      card.state === "running" ? `running ${spanOf(card, now)}`.trim() : card.state,
-      `${tokenWord(card.tokens)} tok`,
-      card.tools > 0 ? `${card.tools} tools` : "",
+      // How it stands and for how long: a settled member keeps its span, since
+      // "done" beside a transcript says nothing about how much run it holds.
+      `${card.state} ${spanOf(card, now)}`.trim(),
+      card.restored ? "from the session log" : `${tokenWord(card.tokens)} tok`,
+      card.tools > 0 ? `${card.tools} tool${card.tools === 1 ? "" : "s"}` : "",
     ]);
   }
 
@@ -1080,7 +1434,8 @@ export class FleetLedger {
     for (const card of this.all()) {
       if (!card.retired) continue;
       this.cards.delete(card.id);
-      this.buffers.delete(card.id);
+      this.logs.delete(card.id);
+      this.writers.delete(card.id);
       this.pulses.delete(card.id);
       this.names.delete(card.name);
       cleared++;
@@ -1095,12 +1450,14 @@ export class FleetLedger {
   /** A fresh session (or `/clear`): everything goes, including the ordinals. */
   reset(): void {
     this.cards.clear();
-    this.buffers.clear();
+    this.logs.clear();
+    this.writers.clear();
     this.pulses.clear();
     this.names.clear();
     this.ordinal = 0;
     this.selected = null;
     this.pane = null;
+    this.focus = "composer";
   }
 }
 

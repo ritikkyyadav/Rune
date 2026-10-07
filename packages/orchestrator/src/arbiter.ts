@@ -538,7 +538,17 @@ function propose(state: RunState | undefined, event: ShadowEvent): Proposal {
       if (errors === undefined || max === undefined || planClosed === undefined) {
         return missing("consecutiveErrors", "maxConsecutiveErrors", "planClosed");
       }
-      if (errors < max) return { transition: "working", reason: "inside the error budget" };
+      // The same two bounds `REPAIR_TRANSPORT` reads: the count, and the clock.
+      const outageMs = num(i, "outageMs");
+      const deadlineMs = num(i, "deadlineMs");
+      const timedOut =
+        outageMs !== undefined &&
+        deadlineMs !== undefined &&
+        deadlineMs > 0 &&
+        outageMs >= deadlineMs;
+      if (errors < max && !timedOut) {
+        return { transition: "working", reason: "inside the error budget" };
+      }
       return planClosed
         ? {
             transition: complete("end_turn"),
@@ -709,6 +719,26 @@ function propose(state: RunState | undefined, event: ShadowEvent): Proposal {
       const attempts = num(i, "attempts");
       const max = num(i, "maxAttempts");
       if (attempts === undefined || max === undefined) return missing("attempts", "maxAttempts");
+      // The clock beside the count (T1). The count bounds how many times a
+      // request is re-sent, not how long that takes, and a provider that
+      // stalls rather than fails makes each one long. Both inputs are the
+      // site's; a row with neither — every row written before there was a
+      // deadline — is decided by the count, as it was.
+      const outageMs = num(i, "outageMs");
+      const deadlineMs = num(i, "deadlineMs");
+      if (
+        outageMs !== undefined &&
+        deadlineMs !== undefined &&
+        deadlineMs > 0 &&
+        outageMs >= deadlineMs
+      ) {
+        return {
+          transition: abandoned("environment"),
+          reason:
+            `no answer from the provider for ${Math.round(outageMs / 1000)}s — past the ` +
+            `${Math.round(deadlineMs / 1000)}s outage deadline; the work is not what failed`,
+        };
+      }
       if (attempts < max) {
         return {
           transition: "working",

@@ -1,5 +1,13 @@
 import { DelegatedSessions } from "./delegated-sessions";
 import {
+  DELEGATION_CLIP,
+  DELEGATION_PATHS,
+  delegationEntries,
+  listStoredDelegations,
+  type DelegationEntry,
+  type StoredDelegation,
+} from "./delegation-replay";
+import {
   reasoningEffortsFor,
   LlmGateway,
   CostTracker,
@@ -66,7 +74,7 @@ import type {
   SkillSearchHit,
   ToolCallOutput,
 } from "@rune/tool-registry";
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 
@@ -245,6 +253,7 @@ import {
   envFingerprint,
   type Brief,
   type BriefHandler,
+  type ParentRun,
 } from "./brief";
 import {
   acceptanceCriteria,
@@ -270,7 +279,9 @@ import {
 import { interpretIntent } from "./intent";
 import { createNoteHypothesisTool, createRecordDecisionTool } from "./narrative-tools";
 import { buildDecisionRecord, hasRecord } from "./decision-record";
-import { runOnParentCommit } from "./parent-check";
+import { replayExistingCheck, replayWitness, witnessFor } from "./parent-check";
+import type { TaskBaseline } from "./baseline";
+import { sessionCacheKey } from "./session-cache-key";
 import { isGitRepo } from "./worktree";
 import type { QuestionHandler } from "./ask-user";
 export type { QuestionHandler, UserQuestion } from "./ask-user";
@@ -312,6 +323,7 @@ import {
 import { buildRepoMap } from "./repo-map";
 import { browserPreflightNote, browserUsable } from "./visual-verification";
 import { CommandVerifier, detectVerifyCommands, fastCheckCommands } from "./verifier";
+import { MISSION_ROUTE, withMissionRoute, writeMission } from "./mission-file";
 import type { EcosystemSetting } from "./verifier";
 import type { Verifier } from "./verifier";
 import { autoCommitPaths, undoLastRuneCommit, type UndoResult } from "./git-undo";
@@ -1069,6 +1081,12 @@ export interface EngineConfig {
    */
   verifyPerStep?: boolean;
   /**
+   * Leave what the harness's checks generate in the workspace. Default false:
+   * the git-ignored paths a pass of checks created are removed when it ends.
+   * `[verify] keepGenerated = true` turns that off.
+   */
+  verifyKeepGenerated?: boolean;
+  /**
    * Per-ecosystem enable/disable and command overrides (`[verify.ecosystems]`).
    * Narrower than `verifyCommand`, which replaces detection wholesale.
    */
@@ -1532,6 +1550,14 @@ export class Engine {
   private checkpointPolicy: CheckpointPolicy;
   private autoVerifier: ReturnType<typeof createAutoVerifier> | null = null;
   private currentAbort: AbortController | null = null;
+  /**
+   * The signal the PROCESS is being stopped by, while the run in flight winds
+   * up. Not a cancel: a run stopped this way stays open on the log, so the
+   * next process continues it. See `interrupt`.
+   */
+  private interruptedBy: string | null = null;
+  /** Resolves when the run in flight has written how it ended. Null between runs. */
+  private runSettled: Promise<void> | null = null;
   private hookRunner: HookRunner | null = null;
   private hooksLoaded = false;
   private verifier: Verifier | null = null;
@@ -1608,6 +1634,11 @@ export class Engine {
    * `activeAutoRun` already uses, and it is null between runs.
    */
   private liveSpine: TaskStateStore | null = null;
+  /**
+   * Whether the task had written a file before THIS run began — read once, as
+   * the spine is published, because every write after that is this run's.
+   */
+  private wroteBeforeThisRun = false;
   /** Narrative events raised by the round-trip handlers, drained by the loop. */
   private pendingNarrative: AgentTurnEvent[] = [];
   // Struggle nudges remaining for the CURRENT run (reset each chat()).
@@ -1744,6 +1775,10 @@ export class Engine {
     // (the pre-P4.1 behaviour). An escape, not a recommendation.
     if (this.config.mcp?.deferTools === false) this.registry.setDeferralEnabled(false);
     this.builtinTools.push(registerBuiltinTools(this.registry, this.config.toolsBinaryPath));
+    // The mission file lives in the session's own directory, not in the
+    // workspace. `read_file` answers the one route the model is given for it.
+    const readFile = this.registry.get("read_file");
+    if (readFile) this.registry.register(withMissionRoute(readFile));
 
     // Clear the checkouts of workers whose process is gone, at process start
     // rather than on the first dispatch. Lane W had to hang the reaper off the
@@ -1912,19 +1947,28 @@ export class Engine {
         // This is what makes `verified` a measurement instead of an inference
         // — see parent-check.ts. Non-git workspaces get no probe and simply
         // cannot reach `verified`, which is the honest outcome.
-        (command) => {
+        //
+        // A check the run WROTE takes the other road (R1): it is replayed as a
+        // pinned witness on the tree the run started from, with only its test
+        // files laid over it. See `replayAuthoredCheck`.
+        (command, cited) => {
           if (!isGitRepo(this.config.workspaceRoot)) return undefined;
-          const result = runOnParentCommit(
-            this.config.workspaceRoot,
+          if (cited?.authoredBy) return this.replayAuthoredCheck(command, cited.signal);
+          // At the commit — and, when the run began on uncommitted work, on
+          // the tree it began from too: what the person had already fixed is
+          // not this run's to be credited with.
+          return replayExistingCheck({
+            workspaceRoot: this.config.workspaceRoot,
             command,
-            this.config.verifyTimeoutMs ?? 120_000,
-          );
-          return {
+            baseline: this.personsStartingTree(),
+            timeoutMs: this.config.verifyTimeoutMs ?? 120_000,
+            ...(cited?.signal ? { signal: cited.signal } : {}),
+          }).then((result) => ({
             command,
             status: result.status,
             ...(result.commit ? { commit: result.commit } : {}),
             ...(result.reason ? { reason: result.reason } : {}),
-          };
+          }));
         },
         // With no brief in play the citation lands against the plan instead
         // of being refused: a plan step by index, or the criterion in the
@@ -2266,6 +2310,7 @@ export class Engine {
         commands: this.config.verifyCommand,
         timeoutMs: this.config.verifyTimeoutMs,
         ecosystems: this.config.verifyEcosystems,
+        keepGenerated: this.config.verifyKeepGenerated,
         // One log, two sources: checks the model ran through `bash` and checks
         // the harness ran on its behalf both settle criteria now.
         onCheck: (run) =>
@@ -3989,6 +4034,52 @@ export class Engine {
   }
 
   /**
+   * Every child this session delegated, one entry each, from the log.
+   *
+   * A `task` or `worker` call has always left its conversation in the parent's
+   * event log, and nothing but its own resume ever read it back -- so a
+   * finished sub-agent could be inspected for as long as the process that ran
+   * it stayed up and not a second longer. This lists them from a projection of
+   * their checkpoint rows: a few scalars each, never the conversations, which
+   * is what makes it cheap enough to ask on every resume.
+   *
+   * Never throws: a surface asks this while it is opening a session, and a
+   * log it cannot read is a session with no children to show, not a session
+   * that cannot be opened.
+   */
+  listDelegations(sessionId: string): StoredDelegation[] {
+    try {
+      return listStoredDelegations(
+        this.sessions.projectEvents(
+          sessionId,
+          "delegation_checkpoint",
+          DELEGATION_PATHS,
+          DELEGATION_CLIP,
+        ),
+      );
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * One delegated child's stored conversation, as display entries.
+   *
+   * Loaded on demand and one child at a time, because this IS the conversation
+   * -- up to a quarter of a megabyte of it. Null when the session holds no
+   * record under that id, which a surface reports as that rather than as an
+   * empty transcript.
+   */
+  getDelegationTranscript(sessionId: string, taskId: string): DelegationEntry[] | null {
+    try {
+      const checkpoint = this.delegatedSessions.load(sessionId, taskId);
+      return checkpoint ? delegationEntries(checkpoint.messages) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * The prompt assembly for a session's most recent turn (P3.4).
    *
    * Fuel for the desktop inspector's "why is the answer what it is": the exact
@@ -5553,6 +5644,7 @@ export class Engine {
     // Publish this run's spine for the round-trip handlers, which are called
     // from tool execution and have no session in scope. Cleared in the finally.
     this.liveSpine = taskState;
+    this.wroteBeforeThisRun = taskState.writtenFiles.length > 0;
     this.liveSessionId = sessionId;
 
     // ── The workspace revision (Phase 2 G4/G5) ──
@@ -5589,10 +5681,18 @@ export class Engine {
     const priorTaskState = taskState.snapshot();
     // The mission dossier: the same state at full fidelity, on disk, where it
     // survives everything — and where the model can read it back with an
-    // ordinary read_file. The injected block names this path when it had to
-    // truncate. Workspace-relative on purpose: the path is FOR the model.
-    const missionRelPath = join(".rune", "mission.md");
-    taskState.setMissionPath(missionRelPath);
+    // ordinary read_file. The injected block names the route when it had to
+    // truncate. The FILE is this session's own, under the Rune home: written
+    // into the workspace it was shared by every session in the repository and
+    // made the run's own tree dirty (mission-file.ts).
+    taskState.setMissionPath(MISSION_ROUTE);
+    const writeMissionFile = (): void => {
+      try {
+        writeMission(sessionId, taskState.renderMissionFile());
+      } catch {
+        // the dossier is best-effort; the event log remains the source of truth
+      }
+    };
     const persistTaskState = (): void => {
       try {
         this.sessions.appendEvent(sessionId, {
@@ -5602,13 +5702,7 @@ export class Engine {
       } catch {
         // persistence of the spine must never break the run
       }
-      try {
-        const missionAbs = join(this.config.workspaceRoot, missionRelPath);
-        mkdirSync(join(this.config.workspaceRoot, ".rune"), { recursive: true });
-        writeFileSync(missionAbs, taskState.renderMissionFile(), "utf8");
-      } catch {
-        // the dossier is best-effort; the event log remains the source of truth
-      }
+      writeMissionFile();
     };
 
     /**
@@ -6106,6 +6200,9 @@ export class Engine {
     const abortController = new AbortController();
     this.currentAbort = abortController;
     const signal = abortController.signal;
+    let settled: () => void = () => {};
+    const settling = new Promise<void>((resolve) => (settled = resolve));
+    this.runSettled = settling;
 
     // ONE loop. (The separate opt-in PlanRunner mode was retired in the task-
     // spine work: it was default-off, untested, replaced the doctrine with
@@ -6135,6 +6232,9 @@ export class Engine {
         // record. It was written from the tool_call_end event before, which
         // arrives after the whole batch: a same-response citation then read
         // "nothing on record" and cost the model another completion.
+        // The turn's calls, on the log before the first one runs: a process
+        // killed inside a tool otherwise leaves no record the call was made.
+        onBeforeTools: () => persistPending(),
         onToolExecuted: ({ toolName, args, output }) => {
           if (toolName !== CHECK_SOURCE_TOOL) return;
           const command = String(args.command ?? "");
@@ -6164,6 +6264,10 @@ export class Engine {
         maxConsecutiveErrors: reliability.maxConsecutiveErrors,
         maxStuckNudges: reliability.maxStuckNudges,
         maxRateWaits: reliability.maxRateWaits,
+        providerDeadlineMs: reliability.providerDeadlineSecs * 1000,
+        // The provider's prompt cache is keyed on this. The session's, so it
+        // survives a rebuilt gateway and a resumed process (session-cache-key.ts).
+        cacheKey: sessionCacheKey(sessionId),
         maxOverflowCompactions: reliability.maxOverflowCompactions,
         maxEmptyCompletionRetries: reliability.maxEmptyCompletionRetries,
         maxTruncationRetries: reliability.maxTruncationRetries,
@@ -6189,6 +6293,7 @@ export class Engine {
         ledgerStatus: () => {
           if (!this.ledger || !this.brief) return null;
           if (this.brief.request && this.brief.request !== this.currentGoal()) return null;
+          this.demoteEditedWitnesses();
           return { total: this.ledger.total, verified: this.ledger.met };
         },
         // What every terminal event computes its verdict from. Unlike
@@ -6198,7 +6303,7 @@ export class Engine {
         contractRecord: () =>
           this.contract
             ? {
-                criteria: this.ledger?.criteria ?? [],
+                criteria: this.currentCriteria(),
                 checks: this.checkLog.all,
                 shape: this.contract.shape,
                 wrote: taskState.writtenFiles.length > 0,
@@ -6882,7 +6987,7 @@ export class Engine {
           const verdict =
             this.liveVerdict ??
             computeVerdict({
-              criteria: this.ledger?.criteria ?? [],
+              criteria: this.currentCriteria(),
               checks: this.checkLog.all,
               openSteps: counts.open,
               totalSteps: counts.total,
@@ -6921,11 +7026,24 @@ export class Engine {
       this.persistBrief();
       this.persistContract();
 
-      // Mark session as cleanly ended
+      // Mark the session as cleanly ended — unless the PROCESS is being
+      // stopped. `session_ended` is what tells the next run that this one
+      // finished and it starts fresh (lifecycle.ts); a run cut by SIGTERM did
+      // not finish. It is left open, exactly as a killed one is, so the next
+      // process inherits its contract, its budgets and its repair counts —
+      // and the row says what stopped it, which a kill never could.
+      const stoppedBy = this.interruptedBy;
       this.sessions.appendEvent(sessionId, {
         type: "checkpoint",
-        payload: { summary: "session_ended", runId },
+        payload: stoppedBy
+          ? { summary: "session_interrupted", runId, signal: stoppedBy }
+          : { summary: "session_ended", runId },
       });
+      // How the run ended is on the log: whoever is waiting to stop may. The
+      // mark was this run's; an engine that lives on starts its next one clean.
+      this.interruptedBy = null;
+      if (this.runSettled === settling) this.runSettled = null;
+      settled();
 
       // Behavioral signals that only resolve at run end.
       this.struggles?.onRunEnd(lastTodos);
@@ -7082,7 +7200,7 @@ export class Engine {
             severity: "debug",
             component: "engine",
             where: "engine#chat.finally",
-            message: "run aborted by the user",
+            message: stoppedBy ? `run stopped by ${stoppedBy}` : "run aborted by the user",
           });
           this.recorder.endRun("user_interrupted");
         } else if (runError) {
@@ -7264,6 +7382,29 @@ export class Engine {
   abort(): void {
     if (this.currentAbort) this.struggles?.onAbort();
     this.currentAbort?.abort();
+  }
+
+  /**
+   * The process is being stopped — SIGTERM, SIGHUP, a harness's deadline.
+   *
+   * The run in flight is cancelled the way a person's cancel does it, so the
+   * stream, the tool children and any check being run or replayed all hear it
+   * and stop. What differs is what the log says afterwards: not
+   * `session_ended` but `session_interrupted`, which leaves the run OPEN — the
+   * next process continues it with its criteria and budgets, as it would after
+   * a kill, instead of starting fresh as it does after a cancel.
+   *
+   * Resolves once the run has written how it ended; at once when nothing is
+   * running. The caller bounds the wait: a run that will not wind up is not a
+   * reason to stay alive.
+   */
+  interrupt(by: string): Promise<void> {
+    if (!this.currentAbort) return Promise.resolve();
+    this.interruptedBy = by;
+    // Not `abort()`: that counts a person losing patience with the run, which
+    // a shutdown is not.
+    this.currentAbort.abort();
+    return this.runSettled ?? Promise.resolve();
   }
 
   /**
@@ -7667,6 +7808,115 @@ export class Engine {
     }
     this.persistBrief();
     if (this.contract) this.persistContract();
+  }
+
+  /**
+   * The tree this run started from — when what was uncommitted in it can only
+   * have been the PERSON's.
+   *
+   * A run that continues a task (a resume after a kill, a "continue" after the
+   * turn ceiling) starts on uncommitted work too, and that work is the task's
+   * own: asking "did the check already pass where this run began?" of it would
+   * take a rung away from a fix the task made one run earlier. So the question
+   * is asked only when the write ledger was empty as this run began. With
+   * anything on it, the starting tree may hold Rune's earlier work, nothing
+   * here can tell that work from the person's, and the commit is the only
+   * "before" there is — which is what it was before this tree was asked at all.
+   */
+  private personsStartingTree(): TaskBaseline | null {
+    if (this.wroteBeforeThisRun) return null;
+    return this.verifier?.baselineForReplay?.() ?? null;
+  }
+
+  /** Witness replays this session has an answer for, by what each was a replay OF. */
+  private readonly witnessReplays = new Map<string, ParentRun>();
+
+  /**
+   * A check the run wrote, replayed as a pinned witness on the tree the run
+   * started from (parent-check.ts).
+   *
+   * Undefined when there is no such tree to replay on — verification is off, or
+   * nothing was written yet — which leaves the citation priced as it always
+   * was. A command with no witness comes back saying why, so the model is told
+   * the one shape that is replayed rather than left to guess at it.
+   *
+   * Kept by baseline, witness and toolchain, and by nothing else: the same test
+   * over the same starting tree is not run again, and a test that was edited is
+   * a witness nobody has an answer for yet. An answer nobody could give
+   * (`inconclusive`) is not kept at all.
+   */
+  private async replayAuthoredCheck(
+    command: string,
+    signal?: AbortSignal,
+  ): Promise<ParentRun | undefined> {
+    const baseline = this.verifier?.baselineForReplay?.() ?? null;
+    if (!baseline) return undefined;
+    const witness = witnessFor(this.config.workspaceRoot, command);
+    if ("ineligible" in witness) {
+      return {
+        command,
+        status: "not-applicable-on-parent",
+        reason: `none — ${witness.ineligible}`,
+      };
+    }
+    const key = `${baseline.tree}|${witness.digest}|${envFingerprint()}`;
+    const known = this.witnessReplays.get(key);
+    if (known) return { ...known, command };
+    const result = await replayWitness({
+      workspaceRoot: this.config.workspaceRoot,
+      baseline,
+      witness,
+      timeoutMs: this.config.verifyTimeoutMs ?? 120_000,
+      ...(signal ? { signal } : {}),
+    });
+    const run: ParentRun = {
+      command,
+      status: result.status,
+      ...(result.commit ? { commit: result.commit } : {}),
+      ...(result.reason ? { reason: result.reason } : {}),
+      witness: result.witness,
+      witnessFiles: witness.files,
+    };
+    if (result.status !== "inconclusive") this.witnessReplays.set(key, run);
+    return run;
+  }
+
+  /**
+   * A rung earned by a witness is a claim about THAT witness. If its test has
+   * been edited since — or is gone, or is no longer a plain test file — the
+   * claim is about a test that is not in the tree any more, and the criterion
+   * goes back to what a check the run wrote is worth until it is cited again.
+   */
+  private currentCriteria(): NonNullable<Engine["ledger"]>["criteria"] | [] {
+    this.demoteEditedWitnesses();
+    return this.ledger?.criteria ?? [];
+  }
+
+  private demoteEditedWitnesses(): void {
+    if (!this.ledger) return;
+    let moved = false;
+    for (const criterion of this.ledger.criteria) {
+      const evidence = criterion.evidence;
+      if (
+        criterion.rung !== "verified" ||
+        evidence?.verifier !== "witness-replay@1" ||
+        !evidence.witness
+      )
+        continue;
+      const now = witnessFor(this.config.workspaceRoot, evidence.source);
+      if (!("ineligible" in now) && now.digest === evidence.witness) continue;
+      const { parentCommitFailed: _failed, parentCommit: _commit, ...rest } = evidence;
+      criterion.rung = "observed";
+      criterion.evidence = {
+        ...rest,
+        verifier: "self-authored-check@1",
+        detail:
+          `${evidence.detail ? `${evidence.detail}; ` : ""}its test was edited after it was replayed, ` +
+          `so that replay is not about the test in the tree now — cite it again to have this one replayed`,
+      };
+      moved = true;
+    }
+    if (moved) this.persistBrief();
   }
 
   /**

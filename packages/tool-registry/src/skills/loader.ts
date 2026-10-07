@@ -119,7 +119,7 @@ export class SkillLoader {
     lines.push("");
     lines.push(
       `You have ${total} skills (reusable expert playbooks) across ${groups.length} domains. ` +
-        "When a request matches one, call the `skill` tool to load its full step-by-step " +
+        "When a request clearly matches one, call the `skill` tool to load its full step-by-step " +
         'instructions BEFORE starting the task — e.g. skill(name: "engineering:code-review"). ' +
         'Use skill(search: "keywords") to find a skill, or skill() with no arguments to list them. ' +
         "Skill ids are `<plugin>:<name>`.",

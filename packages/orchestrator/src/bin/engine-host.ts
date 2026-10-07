@@ -836,16 +836,27 @@ async function dispatch(cmd: HostCommandName, args: Record<string, unknown>): Pr
       // The project's OWN checks, detected the same way the agent's verifier
       // detects them, so the button and the run agree on what "the checks"
       // are. `ran: false` means the project has none — reported, not faked.
-      const { CommandVerifier } = await import("../verifier");
+      const { CommandVerifier, verifyOutcome } = await import("../verifier");
       const verifier = new CommandVerifier({
         workspaceRoot: workspaceRootOf(),
         commands: undefined,
         timeoutMs: 300_000,
+        // A person asked for these, as they would at a shell: what they build stays.
+        keepGenerated: true,
       });
       const fast = optionalBoolean(args, "fast") === true;
       const result =
         fast && verifier.verifyFast ? await verifier.verifyFast() : await verifier.verify();
-      return { ran: result.ran, passed: result.passed, report: result.report };
+      // `status` is the answer. `ran` and `passed` stay for a client that
+      // reads them, and are derived from it: `passed` is true only for a pass.
+      const outcome = verifyOutcome(result);
+      return {
+        status: outcome.status,
+        ...(outcome.reason ? { reason: outcome.reason } : {}),
+        ran: outcome.status !== "inconclusive",
+        passed: outcome.status === "passed",
+        report: result.report,
+      };
     }
 
     case "open_path": {

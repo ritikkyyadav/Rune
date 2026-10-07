@@ -35,6 +35,13 @@ export interface ToolCallInput {
   args: Record<string, unknown>;
   sessionId: string;
   workspaceRoot: string;
+  /**
+   * Paths a shell may not write under for THIS call, on top of the sandbox
+   * policy. Set by the runtime from the request's own boundary ("change no
+   * code") and never read from `args`: a call cannot loosen it, and there is
+   * no path from the model to this field.
+   */
+  denyWrite?: string[];
   /** Aborts the in-flight call when the turn is cancelled. Honored by tools that
    *  support cooperative cancellation (e.g. MCP sends notifications/cancelled). */
   signal?: AbortSignal;

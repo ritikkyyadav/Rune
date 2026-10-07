@@ -4,6 +4,14 @@ Prepared 2026-09-10 in `~/Project/Alan`.
 
 ## Start here
 
+**2026-09-30 plan review:** before choosing new work, read
+[the evidence-based parity review and revised order](program/rune-parity-review-20260930.md)
+and [its bounded work cards](program/rune-parity-work-cards-20260930.md).
+They reconcile the September 28 parity program with current implementation and
+recommend starting with the reproduced verifier defects. They are a proposal, not
+a new live-benchmark or publishing authorization. The snapshots below are historical;
+preserve completed work and recheck the current tree instead of restarting old phases.
+
 The founder wants a cohesive, reliable, affordable coding harness: download Rune, configure intelligence and internet access in the terminal, and start working. Priorities are dependable Auto mode, useful subagents, durable compaction and planning, strong sandboxing, better frontend work, and bounded self-evolution. The immediate request is a handoff because the founder has approximately 5% of their Codex weekly allowance left. This document is a plan, not a claim that the remaining work has been completed.
 
 **Continue the existing implementation. Start with Phase 0 below. Do not restart the entire audit or rewrite the product.** Complete a phase, preserve its evidence, and update the progress table before moving on. Routine local engineering is already requested; do not repeatedly ask permission to inspect, fix, or test. This document does not authorize new provider spending, external messages, publishing, or changing the license.

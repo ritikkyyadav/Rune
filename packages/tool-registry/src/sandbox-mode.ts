@@ -163,7 +163,18 @@ export function canContainCommand(command: string): boolean {
   return isExcludedCommand(command, current.excludedCommands) === undefined;
 }
 
-/** The absolute path lists `rune-tools` enforces for this workspace. */
-export function sandboxPathsFor(workspaceRoot: string): SandboxPathLists {
-  return effectiveSandboxPaths(current, workspaceRoot);
+/**
+ * The absolute path lists `rune-tools` enforces for this workspace.
+ *
+ * `denyWrite` is the runtime's own addition for one call — a request that said
+ * to change no code makes the workspace itself unwritable to the shell. It can
+ * only ever ADD to what is denied.
+ */
+export function sandboxPathsFor(
+  workspaceRoot: string,
+  denyWrite: readonly string[] = [],
+): SandboxPathLists {
+  const lists = effectiveSandboxPaths(current, workspaceRoot);
+  if (denyWrite.length === 0) return lists;
+  return { ...lists, deny_write: [...lists.deny_write, ...denyWrite] };
 }

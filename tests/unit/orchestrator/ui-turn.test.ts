@@ -207,7 +207,9 @@ describe("TurnRenderer — customizer activity stream", () => {
     expect(h.output()).toContain("│ o Run checks");
     await sleep(SETTLE + 60);
     expect(h.rung()).toContain("Fix the branch");
-    expect(h.rung()).toContain("1/3 steps");
+    expect(h.rung()).toContain("step 2 of 3");
+    // The stage is the rung's first word, and it follows the work.
+    expect(h.rung()).toContain("planning");
 
     h.turn.onEvent({ type: "tool_call_start", callId: "e1", toolName: "edit_file" });
     h.turn.onEvent({
@@ -221,10 +223,15 @@ describe("TurnRenderer — customizer activity stream", () => {
     expect(h.rung()).toContain("Fix the branch");
     await sleep(DWELL + 60);
     expect(h.rung()).toContain("updating src/auth/session.ts");
+    expect(h.rung()).toContain("building");
+    // The step number stays while a call is in flight; the step's name gives
+    // way to the call.
+    expect(h.rung()).toContain("step 2 of 3");
 
     h.turn.onEvent({ type: "verification_started", attempt: 1 });
     await sleep(DWELL + 60);
-    // `checking` was a label; `running checks` is what is happening.
+    // The stage says where the turn is; the fact says what is happening.
+    expect(h.rung()).toContain("checking");
     expect(h.rung()).toContain("running checks");
   });
 
@@ -592,7 +599,8 @@ describe("TurnRenderer — the plan is set down once, not on every tick", () => 
     const h = harness();
     h.turn.onEvent(plan(["completed", "in_progress", "pending"]));
     expect(h.rung()).toContain("Audit the backend");
-    expect(h.rung()).toContain("1/3 steps");
+    // The step's number is the receipt's now, and it counts the open step.
+    expect(h.rung()).toContain("step 2 of 3");
   });
 });
 

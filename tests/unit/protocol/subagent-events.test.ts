@@ -17,7 +17,9 @@ import { describe, expect, test } from "bun:test";
 
 import { AGENT_TURN_EVENT_TYPES, type AgentTurnEvent } from "../../../packages/protocol/src/index";
 import {
+  childArgsMeter,
   childEventCarriesSurface,
+  CHILD_ARGS_FORWARD_BYTES,
   childLabel,
   deriveChildName,
   projectChildEvent,
@@ -239,14 +241,42 @@ describe("what crosses the child boundary", () => {
     }
   });
 
-  test("still drops the two nobody reads", () => {
-    // Argument JSON arriving one fragment at a time is the one channel that
-    // genuinely scales with the size of a tool call, and a pane shows the
-    // call's NAME when it opens and its RESULT when it lands.
-    expect(childEventCarriesSurface(sample("tool_call_args_delta"))).toBe(false);
+  test("still drops the one nobody reads", () => {
     // A nested tool_progress is already a projection; carrying it is how a
     // grandchild's heartbeat arrives twice, wearing two names.
     expect(childEventCarriesSurface(sample("tool_progress"))).toBe(false);
+  });
+
+  test("a child's call arguments cross, so a running call can be named", () => {
+    // They used to be dropped beside tool_progress, on the reasoning that a
+    // pane shows a call's NAME when it opens and its RESULT when it lands. That
+    // left the question a person opens a transcript to ask -- what is it
+    // running right now -- unanswerable for exactly the calls slow enough to
+    // ask it about: a two-minute test run sat in the pane as the word `run`.
+    expect(childEventCarriesSurface(sample("tool_call_args_delta"))).toBe(true);
+    // Still silent on the rung: one line that strobed per token is a flicker.
+    expect(projectChildEvent("w1", sample("tool_call_args_delta"))).toBeNull();
+  });
+
+  test("but only the head of each call's arguments, metered per call", () => {
+    // The channel that scales with the size of a call is bounded by a ceiling
+    // rather than by a refusal. A write_file carries the whole file as an
+    // argument; the pane needs the path, which is in the first few tokens.
+    const carries = childArgsMeter();
+    const delta = (agentId: string, callId: string, partialJson: string) => ({
+      agentId,
+      event: { type: "tool_call_args_delta" as const, callId, partialJson },
+    });
+    const chunk = "x".repeat(1024);
+    let crossed = 0;
+    for (let i = 0; i < 64; i++) if (carries(delta("w1", "t1", chunk))) crossed++;
+    // Exactly the ceiling's worth of this call got through, and no more.
+    expect(crossed * chunk.length).toBe(CHILD_ARGS_FORWARD_BYTES);
+    // The ceiling is PER CALL and PER CHILD: a spent one starves nobody else.
+    expect(carries(delta("w1", "t2", chunk))).toBe(true);
+    expect(carries(delta("w2", "t1", chunk))).toBe(true);
+    // And it meters nothing but argument deltas.
+    expect(carries({ agentId: "w1", event: { type: "text_delta", text: chunk } })).toBe(true);
   });
 
   test("has an answer for every member of the union", () => {

@@ -131,7 +131,10 @@ export function createRustToolHandler(
               };
             }
             args.push("--sandbox");
-            payload = { ...payload, sandbox_paths: sandboxPathsFor(input.workspaceRoot) };
+            payload = {
+              ...payload,
+              sandbox_paths: sandboxPathsFor(input.workspaceRoot, input.denyWrite),
+            };
           }
         }
         args.push(subcommand);

@@ -19,10 +19,26 @@ That is the CI form, and every part of it is load-bearing:
 ## The exit-code contract
 
 ```
-0   the turn completed
-1   the turn raised a terminal error
+0   execution completed, and no verdict made it a failure
+1   execution failed, or a change was held to criteria it did not satisfy
 3   the run needed permission and had nobody to ask
 ```
+
+An `end_turn` event describes the model stopping, not whether it satisfied the
+request. A `partial` or `unmet` verdict produces `ok: false` in the JSON envelope
+and exit 1 in two cases; the run's text and evidence remain available either way.
+
+- The run stated what done means (a read-back) **and changed files**, and did not
+  show all of it.
+- The run was held to a criterion from outside itself — the person's, or an
+  `--acceptance` check — whether or not anything changed.
+
+Everything else is judged by whether it ran, as it always was: a run that stated no
+criteria (a greeting, a question, a first prompt — these end `unmet` with "no criteria
+stated" by construction), and a run that only read back its own terms and changed
+nothing (a review, a plan, an answer), for which `partial` is the best verdict there
+is. A conversational `none` exits 0. Older hosts without a verdict retain their
+execution status.
 
 `3` is separate from `1` on purpose: the fix is a flag, not a retry. A headless
 run **denies every permission request by default**, because the alternative is

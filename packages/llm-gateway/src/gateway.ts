@@ -45,6 +45,12 @@ export function defaultModelForProvider(provider: string): string | undefined {
 // providers or surfacing a clear, actionable error.
 const RATE_LIMIT_MAX_WAIT_MS = 8_000;
 
+// The longest ONE back-off may be for anything else. Only a throttle's wait
+// was capped: a 503 carrying `Retry-After: 600` slept ten minutes in line, and
+// a long ladder kept doubling. A failing server does not get to hold the call
+// — what bounds the whole outage is the caller's deadline, not its advice.
+const RETRY_MAX_WAIT_MS = 30_000;
+
 // A model that no longer exists (retired, renamed, never valid). Retrying it
 // can only fail identically, so the provider is pruned for the session.
 const MODEL_GONE_RE =
@@ -401,7 +407,8 @@ export class LlmGateway {
           request,
           callStartedAt,
         );
-        await this.backoff(lastError, attempt);
+        await this.backoff(lastError, attempt, request.signal);
+        if (request.signal?.aborted) break;
       } finally {
         release?.();
       }
@@ -623,7 +630,9 @@ export class LlmGateway {
               adjustedRequest,
               callStartedAt,
             );
-            await this.backoff(lastError, attempt);
+            await this.backoff(lastError, attempt, opts?.signal);
+            // Cancelled in the wait: stop where the attempt that failed stopped.
+            if (opts?.signal?.aborted) throw lastError;
             continue;
           }
 
@@ -641,7 +650,8 @@ export class LlmGateway {
             adjustedRequest,
             callStartedAt,
           );
-          await this.backoff(lastError, attempt);
+          await this.backoff(lastError, attempt, opts?.signal);
+          if (opts?.signal?.aborted) throw lastError;
         } finally {
           release?.();
         }
@@ -945,10 +955,10 @@ export class LlmGateway {
       this.getRetryAfterMs(err),
       this.config.retryBaseMs * Math.pow(2, attempt),
     );
-    // Never hang on a long server-advised delay for rate limits — better to fall
-    // back or fail fast with guidance than freeze the session.
+    // Never hang on a long server-advised delay — better to fall back or fail
+    // fast with guidance than freeze the session.
     const status = (err as unknown as { status?: number } | undefined)?.status;
-    return status === 429 ? Math.min(waitMs, RATE_LIMIT_MAX_WAIT_MS) : waitMs;
+    return Math.min(waitMs, status === 429 ? RATE_LIMIT_MAX_WAIT_MS : RETRY_MAX_WAIT_MS);
   }
 
   /**
@@ -996,10 +1006,25 @@ export class LlmGateway {
     };
   }
 
-  private async backoff(err: Error | undefined, attempt: number): Promise<void> {
+  /**
+   * Wait before the next attempt — or until the caller cancels, whichever is
+   * first. It used to ignore the signal: a cancel that landed in the wait was
+   * honoured only after all of it, and after one more request had gone out.
+   * Every caller checks the signal when this returns.
+   */
+  private backoff(err: Error | undefined, attempt: number, signal?: AbortSignal): Promise<void> {
     const waitMs = this.retryWaitMs(err, attempt);
     const jitter = Math.random() * waitMs * 0.1;
-    await new Promise((resolve) => setTimeout(resolve, waitMs + jitter));
+    return new Promise((resolve) => {
+      if (signal?.aborted) return resolve();
+      const done = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", done);
+        resolve();
+      };
+      const timer = setTimeout(done, waitMs + jitter);
+      signal?.addEventListener("abort", done, { once: true });
+    });
   }
 
   /**

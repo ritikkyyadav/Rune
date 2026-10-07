@@ -353,6 +353,37 @@ export function splitPanes(workspaceRows: number, open: boolean): Panes {
 }
 
 /**
+ * One child's transcript in a ONE-COLUMN frame: the whole workspace, under a
+ * single header row.
+ *
+ * The stacked split above was drawn for the four-region frame, where the
+ * workspace is the tall left column and the cards stand beside it. In one
+ * column there is nothing beside it, and a 40/60 stack of an 80x24 window gives
+ * the transcript you opened nine rows -- two tool boxes -- with six rows of the
+ * lead's above them that you were not reading. Opening an agent there is
+ * switching to its transcript, the way a tab is switched: it takes the
+ * workspace, the header says whose it is and how to get back, and the lead's
+ * transcript is one key away and exactly where it was left.
+ *
+ * The lead is not hidden by this. The rung -- its mark, its stage and every
+ * member's block -- is outside the workspace, directly above the composer, and
+ * stays on screen the whole time.
+ *
+ * It also has no refusal. A split needs fourteen rows to be worth drawing; this
+ * needs two, and the workspace is never shorter than three.
+ */
+export function zoomPane(workspaceRows: number): Panes {
+  const rows = Math.max(1, Math.floor(workspaceRows));
+  return {
+    open: true,
+    refused: false,
+    mainRows: 0,
+    headerRows: 1,
+    childRows: Math.max(0, rows - 1),
+  };
+}
+
+/**
  * What the frame says instead of drawing itself.
  *
  * At 44 columns a diff row is 38 cells wide after the rail, below flow's

@@ -161,8 +161,10 @@ describe.skipIf(!POSIX_SHELL)("what the verifier records about each command", ()
       });
       const r = await v.verify();
       // Nothing ran, so nothing is proven — but the run is not a failure, and
-      // the reason is on the record.
-      expect(r.passed).toBe(true);
+      // the reason is on the record. (This asserted `passed: true` while the
+      // result was two booleans; "nothing is proven" is its own outcome now.)
+      expect(r.status).toBe("inconclusive");
+      expect(r.reason).toBe("missing_runner");
       expect(r.ran).toBe(false);
       expect(r.runs![0]!.skipped).toContain("rune-no-such-compiler-xyz");
       expect(r.report).toContain("not installed");
@@ -184,7 +186,8 @@ describe.skipIf(!POSIX_SHELL)("what the verifier records about each command", ()
         ],
       });
       const r = await v.verify();
-      expect(r.passed).toBe(true);
+      expect(r.status).toBe("inconclusive");
+      expect(r.reason).toBe("missing_runner");
       expect(r.ran).toBe(false);
       expect(r.runs![0]!.skipped).toContain("no JDK");
     } finally {
@@ -254,7 +257,7 @@ describe("the evidence ledger keeps the command, the code and the clock", () => 
   test("the end-of-run verifier's commands land there too, skips excluded", () => {
     const ts = new TaskStateStore();
     ts.beginTurn("g");
-    ts.noteVerification(true, true, "$ go build ./...  (ok)", [
+    ts.noteVerification({ status: "passed" }, "$ go build ./...  (ok)", [
       { command: "go build ./...", passed: true, exitCode: 0, durationMs: 900 },
       {
         command: "cargo check --quiet",

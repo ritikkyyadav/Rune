@@ -885,6 +885,7 @@ import {
   shouldOfferInteractive,
 } from "./ui/interactive";
 import { PRODUCT_VERSION, PRODUCT_LABEL } from "./ui/brand";
+import { createSignalShutdown, type SignalShutdown } from "./signal-shutdown";
 import { glyph, terminalText } from "./ui/glyphs";
 
 /** A compact "2h ago" style age for the session list and pickers. */
@@ -1334,6 +1335,7 @@ async function main() {
     enableVerification: config.verify?.enabled,
     verifyCommand: config.verify?.commands,
     verifyPerStep: config.verify?.perStep,
+    verifyKeepGenerated: config.verify?.keepGenerated,
     verifyEcosystems: config.verify?.ecosystems,
     verifyTimeoutMs:
       typeof config.verify?.timeoutSecs === "number" && config.verify.timeoutSecs > 0
@@ -1713,20 +1715,9 @@ async function main() {
     // apart. Registered here, next to the arming, so BOTH front ends get it
     // (the classic-readline path had a SIGTERM handler; the TUI — the default
     // UI — had none). Conventional 128+signo exit codes; process.exit runs the
-    // "exit" hooks above, which disarm the sentinel and drop the spool.
-    const exitOnSignal = (signal: "SIGHUP" | "SIGTERM", code: number) => {
-      process.on(signal, () => {
-        try {
-          discardSessionIfEmpty(engine, sessionId);
-          engine.close();
-        } catch {
-          // Shutting down anyway — never let cleanup keep the process alive.
-        }
-        process.exit(code);
-      });
-    };
-    exitOnSignal("SIGHUP", 129);
-    exitOnSignal("SIGTERM", 143);
+    // "exit" hooks above, which disarm the sentinel and drop the spool. The
+    // handlers themselves are below this block (`signalShutdown`): a process
+    // with no black box is told to stop the same way.
 
     process.on("uncaughtException", (err: Error) => {
       recorder.recordFatal({
@@ -1759,6 +1750,29 @@ async function main() {
     if (telemetryReporter) void telemetryReporter.flush().catch(() => {});
   }
 
+  // ─── Told to stop: SIGHUP, SIGTERM, and SIGINT with nobody at the keyboard ───
+  // It used to close the engine and exit on the spot, and only when a black
+  // box was configured. Now the run in flight is told first — its stream, its
+  // tool children and any check being replayed stop, and it writes how it
+  // ended — and the process leaves when it has, or after five seconds if it
+  // has not. See `signal-shutdown.ts`.
+  let exitsByItself = false;
+  const signalShutdown: SignalShutdown = createSignalShutdown({
+    stop: (signal) => {
+      const wound = engine.interrupt(signal);
+      // A headless run prints its envelope and exits by itself once the run
+      // returns; leaving the moment the run has wound up would race that.
+      return exitsByItself ? new Promise<void>(() => {}) : wound;
+    },
+    close: () => {
+      discardSessionIfEmpty(engine, sessionId);
+      engine.close();
+    },
+    exit: (code) => process.exit(code),
+  });
+  process.on("SIGHUP", () => signalShutdown.handle("SIGHUP"));
+  process.on("SIGTERM", () => signalShutdown.handle("SIGTERM"));
+
   // ─── Headless: one prompt in, an answer and an exit code out ───
   // Placed before the TUI branch because it must never touch the alternate
   // screen: stdout is the answer, and a benchmark harness or a shell pipeline
@@ -1766,6 +1780,11 @@ async function main() {
   // captures the answer alone.
   if (typeof values.print === "string") {
     const { runHeadless, headlessExitCode, headlessEnvelope } = await import("../headless");
+    // Nobody is at a keyboard to cancel one turn and keep the session: Ctrl-C
+    // on a headless run is the same request SIGTERM is. It had no handler at
+    // all here, so it killed the process where it stood.
+    exitsByItself = true;
+    process.on("SIGINT", () => signalShutdown.handle("SIGINT"));
     // `--stream-json`: NDJSON on stdout, one typed event per line, the final
     // envelope LAST. A headless run used to report one envelope after minutes
     // of silence, so "still working" and "wedged" looked identical to CI, to a
@@ -1849,7 +1868,9 @@ async function main() {
       );
     }
     engine.close();
-    process.exit(headlessExitCode(result));
+    // Stopped by a signal: the envelope above says how the run ended, and the
+    // exit code is the signal's, as a supervisor expects.
+    process.exit(signalShutdown.owedExitCode() ?? headlessExitCode(result));
   }
 
   if (useTui) {
@@ -1934,13 +1955,9 @@ async function main() {
         /* nothing useful to do while exiting */
       }
     };
+    // SIGTERM is `signalShutdown`'s: it stops the run and then exits, and the
+    // exit is where the terminal is restored.
     process.on("exit", restore);
-    process.on("SIGTERM", () => {
-      restore();
-      discardSessionIfEmpty(engine, sessionId);
-      engine.close();
-      process.exit(143);
-    });
   }
 
   // ─── Welcome Screen ───

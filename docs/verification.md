@@ -5,10 +5,10 @@ at every plan step that wrote files, and feeds any failure back so the agent
 self-corrects. This page says what it detects, what it refuses to guess, and how
 to override it.
 
-The rule underneath all of it: **if no check can be detected, verification
-passes trivially with `ran: false`.** A task is never failed because Rune could
-not work out how to verify it. The corollary matters just as much — `ran: false`
-is not a green tick, and the plan ledger cannot close a step on it.
+Verification has three outcomes: **passed, failed, or inconclusive**. An absent
+runner, timeout, cancellation or lack of executable checks is inconclusive,
+with a reason. It is neither a green check nor a code failure, and does not
+buy a repair turn. A real negative check still triggers bounded repair.
 
 ## What is detected
 
@@ -114,6 +114,39 @@ fabricated `exit 0` beside a failure would be worse than no number.
     09:18 ✓ bun test tests/unit/                      ok           —  model
 ```
 
+## What a check leaves in the tree
+
+A check Rune chose to run leaves the tree as it found it. Cargo's and Python's
+generated state is sent elsewhere through the environment when the project has
+none of its own yet (`CARGO_TARGET_DIR`, `PYTHONPYCACHEPREFIX` and the like — a
+`target/` that already exists is used as it is). A JavaScript build has no such
+switch: `turbo typecheck` writes `.turbo/` and a `dist/` in every package. So
+when a pass of detected checks ends — passed, failed, cut at its deadline or
+cancelled — the git-ignored paths it created are removed again.
+
+Only these, and only in a git repository:
+
+- a path git ignores now, that git listed neither as ignored nor as untracked
+  before the pass, and that the file system says was created during it. A
+  folder an ignore rule names is one path to git: if `dist/` was already
+  there, it keeps whatever the check put in it;
+- never installed dependencies (`node_modules`, `.venv`, `venv`, `vendor`,
+  `Pods`, `*.egg-info`), environment files (`.env*`), an editor's or another
+  agent's folder (`.idea`, `.vscode`, `.claude`), `.DS_Store`, or Rune's own
+  `.rune/`;
+- never a new file git does **not** ignore. That is a visible change, and it is
+  left for you to see.
+
+What was removed is on the `verification_completed` / `step_check` event
+(`removed`) and on the run's audit trail; the check's report is not touched.
+
+Two things it does not do. It does not follow what a command **you** wrote in
+`[verify] commands` builds — that command is yours, and so is its output. And it
+cannot tell its own checks' output from something else that first wrote an
+ignored path in the same seconds: a watcher the run started, or a second agent
+working in the same tree. If either matters, or if the next check is much
+slower without the build it would have reused, set `keepGenerated = true`.
+
 ## Configuration
 
 ```toml
@@ -122,6 +155,7 @@ enabled = true                                   # false skips verification enti
 commands = ["bun run lint", "bun test tests/unit/"]  # replaces detection wholesale
 timeoutSecs = 120
 perStep = true
+keepGenerated = false                            # true leaves what detected checks build
 
 # Narrower than `commands`: one stack at a time, detection intact for the rest.
 [verify.ecosystems]
@@ -143,6 +177,8 @@ name the JS one. Unlisted ecosystems stay enabled.
   fixture layout, with no toolchain installed.
 - `tests/unit/orchestrator/verifier-step-check.test.ts` — project scoping and
   the evidence record.
+- `tests/unit/orchestrator/verifier-generated-state.test.ts` — what a pass of
+  checks may remove from the tree, in real repositories.
 - `tests/integration/verifier-ecosystems.test.ts` — runs the real commands, and
   skips with a printed reason when the toolchain is absent on the machine. On a
   laptop a skip is fine; in CI it would be a hole in the gate, so

@@ -47,7 +47,8 @@ import type { ContextEngine } from "./context-engine";
 import { buildUserContent, MAX_IMAGES_PER_MESSAGE } from "./image-attach";
 import type { RetrievedChunk } from "./context-engine";
 import { getMaxOutputTokens } from "./tokenizer";
-import type { Verifier, VerifyResult } from "./verifier";
+import { removedNote, verifyOutcome, type Verifier, type VerifyResult } from "./verifier";
+import { scopeNote, scopeRefusal, taskScope, writeAllowed, type TaskScope } from "./task-scope";
 import type { HandoffReason, TaskStateStore, TodoItem } from "./task-state";
 import { evidenceWeight, TASK_STATE_BLOCK_BUDGET_AFTER_COMPACTION } from "./task-state";
 import type { ArtifactKind } from "@rune/protocol";
@@ -79,6 +80,7 @@ import { filesChangedFrom, isFileChangingTool } from "./lifecycle";
 
 import type { AgentTurnEvent, ChildAgentEvent } from "@rune/protocol";
 import {
+  childArgsMeter,
   childEventCarriesSurface,
   projectChildEvent,
   projectWorkflowNode,
@@ -315,8 +317,25 @@ export interface AgentLoopConfig {
     args: Record<string, unknown>;
     output: ToolCallOutput;
   }) => void;
+  /**
+   * Called once a turn's tool calls are decided and before the first one runs.
+   * The engine writes the run's appended messages here — see "The calls go on
+   * record before they run" in `run`.
+   */
+  onBeforeTools?: () => void;
+  /**
+   * The key the provider's prompt cache is asked to use for this loop's
+   * requests (`StreamOpts.cacheKey`). Absent: the provider uses its own.
+   */
+  cacheKey?: string;
   /** Bounded all-providers-throttled waits per run. Default 2. */
   maxRateWaits?: number;
+  /**
+   * How long the run may go without an answer from its provider before it
+   * ends as `provider_lost`, in ms. Default `DEFAULT_PROVIDER_DEADLINE_MS`;
+   * 0 turns it off. See "The outage clock" in `run`.
+   */
+  providerDeadlineMs?: number;
   /** Forced compactions after provider over-limit rejections. Default 2. */
   maxOverflowCompactions?: number;
   /** Retries of an empty (no text, no tools) completion. Default 3. */
@@ -461,6 +480,30 @@ const EMPTY_COMPLETION_TRANSITIONS: readonly Transition[] = [
 
 const TRANSPORT_TRANSITIONS: readonly Transition[] = ["working", abandoned("environment")];
 
+/** `[reliability] providerDeadlineSecs`, for a loop built with no policy. */
+export const DEFAULT_PROVIDER_DEADLINE_MS = 600_000;
+
+/**
+ * Stream events the GATEWAY writes about a call. Every other event is the
+ * provider's own, and the provider saying anything at all ends an outage.
+ */
+const GATEWAY_OWN_EVENTS: ReadonlySet<string> = new Set([
+  "retry",
+  "fallback",
+  "notice",
+  "stream_reset",
+  "error",
+]);
+
+/** How long a request has gone unanswered, against the deadline for it. */
+interface Outage {
+  ms: number;
+  deadlineMs: number;
+}
+
+const pastDeadline = (outage: Outage): boolean =>
+  outage.deadlineMs > 0 && outage.ms >= outage.deadlineMs;
+
 const CHECK_REPAIR_TRANSITIONS: readonly Transition[] = ["working", "repairing", "verifying"];
 
 const ACCEPTANCE_TRANSITIONS: readonly Transition[] = [
@@ -484,6 +527,51 @@ const NO_PROGRESS_TRANSITIONS: readonly Transition[] = ["working", abandoned("no
  * applies only when `check_failed` is in `[controller] authority`.
  */
 const MAX_CHECK_REPAIR_TURNS = 1;
+
+/**
+ * The paths a file tool was aimed at that the request's boundary does not
+ * allow — or `null` when the call is not a write, or every target is allowed.
+ *
+ * A write-category tool that names NO target (a plugin whose schema this does
+ * not know) is refused whole under a boundary: "it may have written
+ * somewhere" is not a thing to find out afterwards.
+ */
+function scopeRefuses(
+  scope: TaskScope,
+  workspaceRoot: string,
+  toolName: string,
+  category: string | undefined,
+  args: Record<string, unknown>,
+): string[] | null {
+  if (scope.mode !== "no_code") return null;
+  if (category !== "write" && !isFileChangingTool(toolName)) return null;
+  const targets = filesChangedFrom(toolName, args);
+  if (targets.length === 0 && typeof args.path === "string" && args.path) targets.push(args.path);
+  if (targets.length === 0) return [toolName];
+  const refused = targets.filter((t) => !writeAllowed(scope, workspaceRoot, t));
+  return refused.length > 0 ? refused : null;
+}
+
+/**
+ * For a repair turn: which of the failing tests are the run's to fix.
+ *
+ * Only said when the verifier established it and some failures predate the
+ * run — a mixed result, where the report alone would send the model after
+ * every red line in it. Empty otherwise, so the message is what it always was.
+ */
+function failureOwnership(attribution: VerifyResult["attribution"]): string {
+  if (!attribution?.known || attribution.existing.length === 0) return "";
+  const list = (names: string[]): string =>
+    names
+      .slice(0, 10)
+      .map((n) => `- ${n}`)
+      .join("\n") + (names.length > 10 ? `\n- …and ${names.length - 10} more` : "");
+  return (
+    `New since this run began — these are yours to fix:\n${list(attribution.introduced)}\n\n` +
+    "Already failing before this run began — not caused by it; leave them unless the " +
+    `task asks otherwise:\n${list(attribution.existing)}\n\n`
+  );
+}
 
 /** One acceptance re-prompt per run, then `partial` whatever happens (M3's second branch). */
 const MAX_ACCEPTANCE_REPROMPTS = 1;
@@ -1903,6 +1991,7 @@ export class AgentLoop {
     attempts: number,
     retryable: boolean | undefined,
     state: () => RunState,
+    outage: Outage,
   ): Transition {
     const max = this.config.maxConsecutiveErrors;
     const cls = this.classifyFailure({
@@ -1915,9 +2004,16 @@ export class AgentLoop {
     return this.decideWithAuthority(
       "transport",
       "REPAIR_TRANSPORT",
-      { attempts, maxAttempts: max, ...this.repairInputs(cls) },
+      {
+        attempts,
+        maxAttempts: max,
+        outageMs: outage.ms,
+        deadlineMs: outage.deadlineMs,
+        ...this.repairInputs(cls),
+      },
       TRANSPORT_TRANSITIONS,
-      () => (attempts < max ? "working" : abandoned("environment")),
+      // The count, and the clock beside it: either one spent ends the run.
+      () => (attempts < max && !pastDeadline(outage) ? "working" : abandoned("environment")),
       state,
     );
   }
@@ -2077,9 +2173,14 @@ export class AgentLoop {
   private *providerLostEnd(
     errors: number,
     turn: number,
+    outage: Outage,
     state?: RunState,
   ): Generator<AgentTurnEvent> {
     const ts = this.config.taskState;
+    // Which bound ended it. The count's words are unchanged; the clock's name
+    // the time, because "1 consecutive error" would explain nothing.
+    const timedOut = pastDeadline(outage);
+    const silence = `${Math.round(outage.ms / 1000)}s`;
     // Observed HERE rather than at the two call sites, because the branch
     // below is what the guard actually did and only this function knows it.
     if (state) {
@@ -2089,6 +2190,8 @@ export class AgentLoop {
         {
           consecutiveErrors: errors,
           maxConsecutiveErrors: this.config.maxConsecutiveErrors,
+          outageMs: outage.ms,
+          deadlineMs: outage.deadlineMs,
           planClosed,
           // M4: what KIND of failure this was. A dead provider is a transport
           // failure whatever the plan looked like, and the row says so.
@@ -2103,7 +2206,7 @@ export class AgentLoop {
       this.state = "done";
       yield {
         type: "notice",
-        message: `The provider stopped answering (${errors} consecutive errors) after every planned step was done — ending the run as finished; only the closing report is missing.`,
+        message: `The provider stopped answering (${timedOut ? `no answer for ${silence}` : `${errors} consecutive errors`}) after every planned step was done — ending the run as finished; only the closing report is missing.`,
       };
       yield this.terminal("end_turn", turn);
       return;
@@ -2112,7 +2215,10 @@ export class AgentLoop {
     yield* this.handoffEvents("provider_lost");
     yield {
       type: "error",
-      error: `Too many consecutive errors (${errors})`,
+      error: timedOut
+        ? `No answer from the provider for ${silence} — past the outage deadline ` +
+          `(${Math.round(outage.deadlineMs / 1000)}s). The work so far is kept; resume when it is back.`
+        : `Too many consecutive errors (${errors})`,
       recoverable: false,
     };
     // The terminal event goes LAST, after the error it explains. A consumer
@@ -2198,6 +2304,23 @@ export class AgentLoop {
     // over open todos (or a pending handoff) is mid-task steering.
     this.config.taskState?.beginTurn(userMessage);
 
+    // ── What this request allows to be written ──
+    //
+    // Read from the user's own words and from nothing else (task-scope.ts). A
+    // message that sets no boundary of its own — "continue", a steer — keeps
+    // the one the task it belongs to was given: the spine's current request is
+    // what "is this a fix?" is judged on, and it is what this is judged on.
+    const scope: TaskScope = ((): TaskScope => {
+      const own = taskScope(userMessage);
+      if (own.mode === "no_code") return own;
+      const standing = this.config.taskState?.currentRequest();
+      return standing ? taskScope(standing) : own;
+    })();
+    const boundary = scopeNote(scope);
+    if (boundary) this.injectHarnessNote(boundary);
+    /** Refusals spent on changes outside the request's boundary. */
+    let scopeNudges = 0;
+
     // Add user message. Image files the user references become real image
     // blocks here (vision), so the model sees pixels — not a path to guess at.
     this.appendMessage({
@@ -2211,8 +2334,33 @@ export class AgentLoop {
     // clean stream still resets it to zero below, so a resumed run that works
     // is not put on probation — the rule is "failures IN A ROW".
     let consecutiveErrors = this.inheritedRepair("transport");
+    // ── The outage clock (T1) ──
+    // The count above bounds how many times a request is re-sent and says
+    // nothing of how long that takes. A provider that stalls instead of
+    // failing costs a first-byte timeout per attempt, under a gateway that
+    // retries each one — sixteen minutes, once (evolab7). This is the bound on
+    // the time: when the provider last said anything, or when the request that
+    // first went unanswered was sent, whichever is later. Monotonic, so a
+    // clock change or a laptop that slept cannot move it. It stops at the
+    // provider's next word — a slow answer is an answer — and it is not
+    // carried across a restart: a resumed run asks afresh.
+    const providerDeadlineMs = this.config.providerDeadlineMs ?? DEFAULT_PROVIDER_DEADLINE_MS;
+    let unansweredSince: number | null = null;
+    const outageNow = (hit = false): Outage => {
+      const ms = unansweredSince === null ? 0 : Math.round(performance.now() - unansweredSince);
+      // A timer can fire a hair before the clock it was set from reads the
+      // same number; the deadline that cut a call has been reached.
+      return { ms: hit ? Math.max(ms, providerDeadlineMs) : ms, deadlineMs: providerDeadlineMs };
+    };
     let verifyAttempts = 0;
     let editsSinceVerify = false;
+    /** Whether the verifier has been told the run is about to change the tree. */
+    let changesAnnounced = false;
+    /**
+     * The verifier DECIDED no check is bound to what changed: documentation
+     * only, confirmed against the tree. Cleared by the next write.
+     */
+    let noCheckRequired = false;
     let stuckNudges = this.inheritedRepair("no_progress");
     let truncationRetries = 0;
     // Task-spine discipline: one plan nudge when multi-step work proceeds with
@@ -2954,9 +3102,48 @@ export class AgentLoop {
         argsJson: string;
       }> = [];
 
+      // The call's own cancel: the person's, forwarded, and the deadline's.
+      // Kept apart from `signal` so the two are never mistaken for each other —
+      // a cancel ends the run `aborted`, the deadline ends it `provider_lost`.
+      const call = new AbortController();
+      const cancelCall = () => call.abort();
+      if (signal?.aborted) call.abort();
+      else signal?.addEventListener("abort", cancelCall, { once: true });
+      let heardAt = performance.now();
+      let deadlineHit = false;
+      let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+      // The request is going unanswered: start the clock if it is not running,
+      // and hold the call to it.
+      const unanswered = () => {
+        if (providerDeadlineMs <= 0) return;
+        unansweredSince ??= heardAt;
+        deadlineTimer ??= setTimeout(
+          () => {
+            deadlineHit = true;
+            call.abort();
+          },
+          Math.max(0, providerDeadlineMs - outageNow().ms),
+        );
+      };
+      // The provider said something: whatever outage there was is over.
+      const answered = () => {
+        heardAt = performance.now();
+        if (unansweredSince === null) return;
+        unansweredSince = null;
+        clearTimeout(deadlineTimer);
+        deadlineTimer = undefined;
+      };
+      // An outage already running holds this request to what is left of it.
+      if (unansweredSince !== null) unanswered();
+
       try {
-        const streamOpts: StreamOpts = signal ? { signal } : {};
+        const streamOpts: StreamOpts = {
+          signal: call.signal,
+          ...(this.config.cacheKey ? { cacheKey: this.config.cacheKey } : {}),
+        };
         for await (const event of this.gateway.inferStream(request, streamOpts)) {
+          if (event.type === "retry" || event.type === "fallback") unanswered();
+          else if (!GATEWAY_OWN_EVENTS.has(event.type)) answered();
           if (event.type === "fallback") activeRequestModel = event.to.model;
           const result = this.processStreamEvent(event, contentBlocks, pendingToolCalls);
           if (result.event) yield result.event;
@@ -3001,9 +3188,16 @@ export class AgentLoop {
               // per run, abortable) and resume the turn instead of failing the
               // whole task at the finish line.
               const waitSecs = rateLimitWaitSecs(result.error);
+              // A throttle is not an answer: the wait is on the outage clock,
+              // and one that would outlast the deadline is not sat through —
+              // the run ends now, resumable, instead of after it.
+              unanswered();
               if (
                 waitSecs != null &&
                 rateWaits < (this.config.maxRateWaits ?? 2) &&
+                !(
+                  providerDeadlineMs > 0 && outageNow().ms + waitSecs * 1000 >= providerDeadlineMs
+                ) &&
                 !signal?.aborted
               ) {
                 rateWaits++;
@@ -3142,6 +3336,7 @@ export class AgentLoop {
               }
               // Compaction found nothing to cut — fall through to normal error handling.
             }
+            unanswered();
             consecutiveErrors++;
             this.report("provider.stream_error", "warn", "inferStream", result.error);
             yield { type: "error", error: result.error, recoverable: true };
@@ -3154,18 +3349,21 @@ export class AgentLoop {
             // files and evidence intact. It never reaches for a different
             // provider: that is `[fallback]`'s decision, made elsewhere, from
             // a configuration a person wrote.
+            const outage = outageNow();
             if (
-              this.decideTransport(consecutiveErrors, result.retryable, shadowState) !== "working"
+              this.decideTransport(consecutiveErrors, result.retryable, shadowState, outage) !==
+              "working"
             ) {
               this.report(
                 "loop.consecutive_errors",
                 "error",
                 "inferStream",
-                `run failed after ${consecutiveErrors} consecutive errors: ${result.error}`,
+                `run failed after ${consecutiveErrors} consecutive errors, ${Math.round(outage.ms / 1000)}s unanswered: ${result.error}`,
               );
               yield* this.providerLostEnd(
                 consecutiveErrors,
                 turn,
+                outage,
                 this.snapshotOrNone(shadowState),
               );
               return;
@@ -3173,6 +3371,12 @@ export class AgentLoop {
             streamErrored = true;
             break;
           }
+        }
+        // A call the deadline cut can also simply END, if whatever streamed it
+        // swallowed the cancel. It was cut all the same, and an empty stream
+        // must not be read as an empty answer.
+        if (deadlineHit && !streamErrored && !signal?.aborted) {
+          throw new Error("no answer before the outage deadline");
         }
       } catch (err) {
         // Admission failures need a changed budget/configuration, not another
@@ -3195,21 +3399,36 @@ export class AgentLoop {
           yield this.terminal("aborted", turn);
           return;
         }
+        unanswered();
         consecutiveErrors++;
         const msg = err instanceof Error ? err.message : String(err);
-        this.report("provider.stream_error", "warn", "inferStream.catch", msg);
-        yield { type: "error", error: msg, recoverable: true };
-        if (this.decideTransport(consecutiveErrors, undefined, shadowState) !== "working") {
+        // A call the deadline cut threw because it was cut: what it threw is
+        // this loop's own cancel coming back, not a thing the provider said.
+        if (!deadlineHit) {
+          this.report("provider.stream_error", "warn", "inferStream.catch", msg);
+          yield { type: "error", error: msg, recoverable: true };
+        }
+        const outage = outageNow(deadlineHit);
+        if (this.decideTransport(consecutiveErrors, undefined, shadowState, outage) !== "working") {
           this.report(
             "loop.consecutive_errors",
             "error",
             "inferStream.catch",
-            `run failed after ${consecutiveErrors} consecutive errors: ${msg}`,
+            `run failed after ${consecutiveErrors} consecutive errors, ${Math.round(outage.ms / 1000)}s unanswered: ${msg}`,
           );
-          yield* this.providerLostEnd(consecutiveErrors, turn, this.snapshotOrNone(shadowState));
+          yield* this.providerLostEnd(
+            consecutiveErrors,
+            turn,
+            outage,
+            this.snapshotOrNone(shadowState),
+          );
           return;
         }
         continue;
+      } finally {
+        // Every way out of the call: the timer and the listener go with it.
+        clearTimeout(deadlineTimer);
+        signal?.removeEventListener("abort", cancelCall);
       }
 
       // A stream that completed cleanly means the provider is healthy again —
@@ -3558,29 +3777,141 @@ export class AgentLoop {
                 ? impactedChecks
                 : undefined,
             );
+            // ── Three outcomes, read once ──
+            //
+            // `passed`, `failed`, or `inconclusive` with its reason. Everything
+            // below branches on this and on nothing else: the result's two old
+            // booleans put a check killed at its deadline in the same cell as
+            // a red assertion, and that cell bought a repair turn.
+            const outcome = verifyOutcome(result);
+            // Red, and every failing test was already failing on the tree the
+            // run started from. Established by the verifier or not at all:
+            // anything short of a named, matched, unchanged test is `known:
+            // false`, and this stays false with it.
+            const attribution = outcome.status === "failed" ? result.attribution : undefined;
+            const preexistingOnly =
+              attribution?.known === true &&
+              attribution.introduced.length === 0 &&
+              attribution.existing.length > 0;
             yield {
               type: "verification_completed",
               attempt: verifyAttempts,
-              ran: result.ran,
-              passed: result.passed,
+              status: outcome.status,
+              ...(outcome.reason ? { reason: outcome.reason } : {}),
+              ...(preexistingOnly ? { preexisting: true } : {}),
+              // For a client that predates `status`, derived from it and never
+              // copied from the verifier: `passed` only for a pass, `ran` only
+              // for a verdict.
+              ran: outcome.status !== "inconclusive",
+              passed: outcome.status === "passed",
               report: result.report,
+              ...(result.removed?.length ? { removed: result.removed } : {}),
             };
+            if (result.removed?.length) {
+              this.config.taskState?.logEvent("check", removedNote(result.removed));
+            }
             editsSinceVerify = false;
             this.config.taskState?.noteVerification(
-              result.ran,
-              result.passed,
+              outcome,
               result.report,
               // Which commands ran, their exit codes and durations — the same
               // record the step check writes, so `rune audit` reports the
               // end-of-run checks as specifically as the per-step ones.
               result.runs,
+              { selection: result.selection, attribution },
             );
-            if (result.ran && result.passed) {
+            noCheckRequired =
+              outcome.status === "inconclusive" && outcome.reason === "not_required";
+            if (outcome.status === "passed") {
               projectChecksPassed = true;
               verifyStillFailing = false;
               releaseEffortLatch("project checks passed");
             }
-            if (result.ran && !result.passed) {
+            if (
+              outcome.status === "inconclusive" &&
+              (outcome.reason === "timeout" || outcome.reason === "cancelled")
+            ) {
+              // ── No verdict is not a red check ──
+              //
+              // The checks were started and did not finish. Nothing was
+              // measured, so there is nothing to repair: no repair turn, no
+              // effort escalation, no replan. This is decided HERE, before the
+              // repair classes and outside `[controller] authority`, because a
+              // class the controller may or may not own is the wrong place for
+              // a rule that has to hold either way — with every key absent the
+              // legacy answer to any failure class is "repair".
+              //
+              // It is not a pass either. `projectChecksPassed` stays false, so
+              // the execution-evidence gate below still asks for a real run if
+              // nothing else was ever executed. And what was known before is
+              // no longer known: a replan must not be demanded on a failure
+              // this verification could not confirm.
+              verifyStillFailing = false;
+              if (outcome.reason === "cancelled" && signal?.aborted) {
+                // Cancelled while the checks were running: cancellation wins.
+                // The run ends as aborted, exactly as it does when the abort
+                // lands between two tool calls. It used to get here only by
+                // accident — the killed command read as a failed check, bought
+                // a repair `continue`, and the abort check at the top of the
+                // loop caught it — after first telling the model its work had
+                // failed and writing the kill down as a red check.
+                this.state = "done";
+                this.watch("E2", { aborted: true }, "abandoned(user_abort)", () => shadowState());
+                yield* this.handoffEvents("aborted");
+                yield this.terminal("aborted", turn);
+                return;
+              }
+              if (outcome.reason === "timeout") {
+                const undone = (result.runs ?? []).find((r) => r.timedOut)?.command;
+                this.report(
+                  "loop.verification_inconclusive",
+                  "warn",
+                  "verify.inconclusive",
+                  `a project check did not finish${undone ? ` (\`${undone}\`)` : ""} — ` +
+                    "nothing was measured and no repair turn was bought",
+                );
+                yield {
+                  type: "notice",
+                  message:
+                    "A project check hit its time limit before finishing. Nothing was " +
+                    "measured — the work is unverified by that check, not failed by it.",
+                };
+              }
+            }
+            if (outcome.status === "failed" && preexistingOnly && attribution?.known) {
+              // ── Red, and not this run's doing ──
+              //
+              // The same tests, in files nobody changed, failing with the same
+              // assertions on the tree the run was handed. Telling the model
+              // "verification failed after your changes" here is false, and
+              // the repair turn it buys is spent on a suite the run never
+              // touched. So nothing is repaired — and nothing is called green:
+              // the check is recorded red, the verdict names it, and the
+              // failures are listed for the reader as what they are.
+              //
+              // Decided here, before the repair classes and outside
+              // `[controller] authority`, for the reason an inconclusive
+              // result is: the legacy answer to any failure class is "repair".
+              verifyStillFailing = false;
+              const names = attribution.existing;
+              const shown = names.slice(0, 5).join("; ");
+              const more = names.length > 5 ? ` (+${names.length - 5} more)` : "";
+              this.report(
+                "loop.verification_preexisting",
+                "warn",
+                "verify.preexisting",
+                `${names.length} failing test${names.length === 1 ? "" : "s"} predate this run — ` +
+                  "none are new, and no repair turn was bought",
+              );
+              yield {
+                type: "notice",
+                message:
+                  `The project's checks are red, but not because of this run: ${names.length} ` +
+                  `test${names.length === 1 ? " was" : "s were"} already failing before it began ` +
+                  `and still ${names.length === 1 ? "is" : "are"} — ${shown}${more}. ` +
+                  "Nothing new failed. They were left as found.",
+              };
+            } else if (outcome.status === "failed") {
               verifyStillFailing = true;
               // Same rule as a model-run check going red: a settled plan
               // cannot waive a failure recorded after it settled.
@@ -3682,7 +4013,9 @@ export class AgentLoop {
                         type: "text",
                         text:
                           "Automated verification failed after your changes. Fix the " +
-                          `problems below, then finish.\n\n${this.checkRepairBody(result.report, impactedChecks)}`,
+                          "problems below, then finish.\n\n" +
+                          failureOwnership(attribution) +
+                          this.checkRepairBody(result.report, impactedChecks),
                       },
                     ],
                   },
@@ -3855,11 +4188,21 @@ export class AgentLoop {
             `plan complete with evidence on all ${planCounts.total} steps — evidence gates stood down`,
           );
         }
+        // ── Nothing executable was written ──
+        //
+        // Two ways that is known, and neither is a guess about the request:
+        // the user SAID to change no code (and the run is held to it), or the
+        // verifier confirmed against the tree that only documentation changed.
+        // "You never executed anything to prove it works" is not a thing to
+        // say about a review, and "write a test that fails on the parent" is
+        // an instruction to break the boundary the request set.
+        const nothingExecutable = scope.mode === "no_code" || noCheckRequired;
         if (
           !planSettled &&
           anyWritesThisRun &&
           !executedSinceWrite &&
           !projectChecksPassed &&
+          !nothingExecutable &&
           executionNudges < 1 &&
           !signal?.aborted
         ) {
@@ -3927,6 +4270,7 @@ export class AgentLoop {
           ledger.total > 0 &&
           ledger.verified === 0 &&
           anyWritesThisRun &&
+          !nothingExecutable &&
           fixVerifiedNudges < 1 &&
           !signal?.aborted &&
           isFixShaped(this.config.taskState?.currentRequest() ?? "")
@@ -4254,6 +4598,51 @@ export class AgentLoop {
           this.watch("G0", { pending: true }, "working", () => shadowState());
           continue;
         }
+        // ── The request's boundary, at the finish ──
+        //
+        // The run's own tools were held to it as they went: a file tool by
+        // path, a contained shell by the sandbox. What is said here is what
+        // those two cannot say — that something ELSE in the workspace differs
+        // from when the run began. It is reported and not acted on: a shell
+        // the person chose to run uncontained may have written it, and so may
+        // the person, or another session in the same tree. Telling the model
+        // to "put it back" would be telling it to overwrite work that may not
+        // be its own.
+        if (scope.mode === "no_code" && scopeNudges < 1 && !signal?.aborted) {
+          let outside: string[] = [];
+          try {
+            outside = (this.config.verifier?.changedThisRun?.() ?? []).filter(
+              (path) => !writeAllowed(scope, workspaceRoot, path),
+            );
+          } catch {
+            outside = []; // a report that cannot be made is not a reason to fail the finish
+          }
+          if (outside.length > 0) {
+            scopeNudges++;
+            const shown = outside.slice(0, 8).join(", ");
+            const more = outside.length > 8 ? ` (+${outside.length - 8} more)` : "";
+            this.report(
+              "loop.scope_outside_changes",
+              "warn",
+              "taskScope",
+              `${outside.length} path${outside.length === 1 ? "" : "s"} outside the request's boundary ` +
+                "differ from when the run began",
+            );
+            this.config.taskState?.logEvent(
+              "gate",
+              `outside the request's boundary ("${scope.because ?? "change no code"}"), ` +
+                `changed since the run began: ${shown}${more}`.slice(0, 400),
+            );
+            yield {
+              type: "notice",
+              message:
+                `The request said "${scope.because ?? "change no code"}". Since this run began, these ` +
+                `also changed in the workspace: ${shown}${more}. This run's file tools and its contained ` +
+                "shell could not have written them; an uncontained command, or someone else working " +
+                "in the same tree, could have. Check them before relying on the result.",
+            };
+          }
+        }
         this.state = "done";
         yield this.terminal(stopReason, turn, verdict);
         return;
@@ -4455,6 +4844,36 @@ export class AgentLoop {
       const OMITTED_CHILD_TEXT = "[earlier live output omitted]\n";
       const mergeQueuedDelta = (item: ProgressItem): boolean => {
         const incoming = item.child?.event;
+        // A child's argument JSON coalesces the same way its prose does, and
+        // for the same reason: fragments of ONE call are one fact to a reader,
+        // and a consumer that is busy painting must not find a thousand of
+        // them waiting. Only the same call of the same child joins, and never
+        // across another event from that child. The total is bounded upstream
+        // (`childArgsMeter`), so there is nothing to trim here.
+        if (incoming?.type === "tool_call_args_delta") {
+          for (let i = progressQueue.length - 1; i >= 0; i--) {
+            const queued = progressQueue[i]?.child;
+            if (!queued || queued.agentId !== item.child?.agentId) continue;
+            if (
+              queued.event.type !== "tool_call_args_delta" ||
+              queued.event.callId !== incoming.callId
+            ) {
+              return false;
+            }
+            progressQueue[i] = {
+              ...progressQueue[i]!,
+              child: {
+                ...queued,
+                event: {
+                  ...incoming,
+                  partialJson: queued.event.partialJson + incoming.partialJson,
+                },
+              },
+            };
+            return true;
+          }
+          return false;
+        }
         if (incoming?.type !== "text_delta" && incoming?.type !== "thinking_delta") return false;
         // Execution continues while this generator is suspended in its
         // consumer. Keep one unread delta per child and phase so a slow
@@ -4507,7 +4926,12 @@ export class AgentLoop {
       // through with an EMPTY note: the rung reads `note` and therefore still
       // never sees a token delta, and the panel reads `child` and sees
       // everything. `note` is the projection, not the gate (P4 §1.4, §4.1 B).
+      //
+      // One meter for the batch: a child's argument JSON crosses up to a
+      // ceiling per call and no further (subagent-events.ts).
+      const carriesArgs = childArgsMeter();
       const eventFor = (callId: string) => (child: ChildAgentEvent) => {
+        if (!carriesArgs(child)) return;
         // A workflow node is known by its node id everywhere else — the graph,
         // the cache key, the state file — so the rung calls it that too. Its
         // raw agentId is a call-scoped compound nobody has ever seen.
@@ -4532,6 +4956,11 @@ export class AgentLoop {
           args: parsedArgs,
           sessionId,
           workspaceRoot,
+          // Under a boundary that says to change no code, a shell cannot write
+          // inside the workspace at all: the named output goes through the
+          // file tools, which are checked by path, and a throwaway
+          // reproduction goes in $TMPDIR.
+          ...(scope.mode === "no_code" ? { denyWrite: [workspaceRoot] } : {}),
           signal,
           onProgress: progressFor(tc.callId),
           onEvent: eventFor(tc.callId),
@@ -4548,6 +4977,14 @@ export class AgentLoop {
         let allowed = true;
         let denied: ToolCallOutput | undefined;
         let refusedByPerson = false;
+        /** File-tool targets outside what the request allowed; null when there are none. */
+        const outOfScope = scopeRefuses(
+          scope,
+          workspaceRoot,
+          tc.toolName,
+          schema?.category,
+          parsedArgs,
+        );
         if (missingArgs.length > 0) {
           allowed = false;
           this.report(
@@ -4564,6 +5001,30 @@ export class AgentLoop {
             success: false,
             result: "",
             error: malformedCallMessage(tc.toolName, missingArgs),
+            durationMs: 0,
+          };
+        } else if (outOfScope) {
+          // ── Outside what the request allowed ──
+          //
+          // The user said to change no code and named where the answer goes.
+          // A file tool aimed anywhere else is refused here, by path, before
+          // the permission gate: this is not a question for a person or a
+          // reviewer, the request already answered it.
+          allowed = false;
+          const refused = outOfScope;
+          this.report(
+            "loop.scope_refused",
+            "warn",
+            "taskScope",
+            `${tc.toolName} refused: ${refused.join(", ")} is outside what the request allowed`,
+            { tool: tc.toolName },
+          );
+          denied = {
+            callId: tc.callId,
+            toolName: tc.toolName,
+            success: false,
+            result: "",
+            error: scopeRefusal(scope, refused),
             durationMs: 0,
           };
         } else if (this.permissionCheck) {
@@ -4740,6 +5201,44 @@ export class AgentLoop {
         planned.every((p) =>
           checksLastCompletion.includes(normalizeCommand(String(p.parsedArgs.command ?? ""))),
         );
+
+      // ── The tree as this run found it ──
+      //
+      // Before the first call that can write — a file tool, a shell command, a
+      // delegation — the verifier is told to note the workspace as it stands.
+      // That snapshot is what "already failing before this run" is measured
+      // against later. Lazily, here, rather than at the top of the run: a run
+      // that only reads never pays for it, and nothing a read-only tool does
+      // can have moved the tree in between.
+      if (
+        !changesAnnounced &&
+        this.config.verifier?.beginChanges &&
+        planned.some(
+          (p) =>
+            p.allowed && !p.output && this.registry.get(p.tc.toolName)?.schema.category !== "read",
+        )
+      ) {
+        changesAnnounced = true;
+        try {
+          this.config.verifier.beginChanges();
+        } catch {
+          // No baseline is an answer the verifier already knows how to give.
+        }
+      }
+
+      // ── The calls go on record before they run (T1) ──
+      // Nothing is yielded between here and the first tool's return, and the
+      // engine writes what the run appended only when an event passes through
+      // it. So a process killed INSIDE a tool left no record that the call was
+      // ever made: the next run saw the request and not the command, and a
+      // model in that position issues the command again — a publish, a push,
+      // a migration, twice. With the call on the log and no result beside it,
+      // the replay says exactly that (`unansweredCall`, session-replay.ts).
+      try {
+        this.config.onBeforeTools?.();
+      } catch {
+        // Persistence is the engine's; it must never break a tool batch.
+      }
 
       // ── Phase B: execute — in call order; runs of parallel-safe reads concurrently (bounded) ──
       // Execution runs as one background task while this generator pumps the
@@ -4927,7 +5426,24 @@ export class AgentLoop {
               } catch {
                 check = null; // a broken checker must never block the plan
               }
-              if (check?.ran) {
+              if (check?.removed?.length) ts.logEvent("check", removedNote(check.removed));
+              // A step check that reached no verdict — killed at its deadline
+              // (a minute, here), or cancelled — is not a failed step. It is
+              // read exactly like a step that had no check to run: nothing is
+              // noted against it and the ledger decides on what it does hold.
+              const stepOutcome = check ? verifyOutcome(check) : null;
+              if (
+                stepOutcome?.status === "inconclusive" &&
+                (stepOutcome.reason === "timeout" || stepOutcome.reason === "cancelled")
+              ) {
+                ts.logEvent(
+                  "check",
+                  `step check did not finish (${stepOutcome.reason === "timeout" ? "timed out" : "cancelled"}) ` +
+                    `closing "${step.slice(0, 80)}" — nothing was measured`,
+                );
+              }
+              if (check && stepOutcome && stepOutcome.status !== "inconclusive") {
+                const stepPassed = stepOutcome.status === "passed";
                 // What ran, and what it exited with, from the verifier's own
                 // record. This used to be a regex over `$ ` lines in the
                 // report, which could name a command but never its exit code
@@ -4940,9 +5456,9 @@ export class AgentLoop {
                   (check.report.split("\n").find((l) => l.startsWith("$ ")) ?? "")
                     .replace(/^\$ /, "")
                     .replace(/\s+\((ok|exit \d+)\)$/, "");
-                ts.noteEffect(check.passed ? "check_pass" : "check_fail", {
+                ts.noteEffect(stepPassed ? "check_pass" : "check_fail", {
                   command: cmd || "project check",
-                  summary: check.passed ? "ok" : lastNonEmptyLine(check.report),
+                  summary: stepPassed ? "ok" : lastNonEmptyLine(check.report),
                   exitCode: decisive?.exitCode ?? undefined,
                   durationMs: decisive?.durationMs,
                   source: "harness",
@@ -4954,20 +5470,21 @@ export class AgentLoop {
                     : "";
                 ts.logEvent(
                   "check",
-                  `${cmd || "project check"} ${check.passed ? "passed" : "FAILED"}${code}${timing} closing "${step.slice(0, 80)}"`,
+                  `${cmd || "project check"} ${stepPassed ? "passed" : "FAILED"}${code}${timing} closing "${step.slice(0, 80)}"`,
                 );
                 this.report(
-                  check.passed ? "loop.step_check_passed" : "loop.step_check_failed",
-                  check.passed ? "debug" : "warn",
+                  stepPassed ? "loop.step_check_passed" : "loop.step_check_failed",
+                  stepPassed ? "debug" : "warn",
                   "stepCheck",
-                  `${cmd || "project check"} ${check.passed ? "passed" : "failed"}${code}${timing} at the close of "${step.slice(0, 80)}"`,
+                  `${cmd || "project check"} ${stepPassed ? "passed" : "failed"}${code}${timing} at the close of "${step.slice(0, 80)}"`,
                 );
                 yield {
                   type: "step_check",
                   step,
                   ran: true,
-                  passed: check.passed,
+                  passed: stepPassed,
                   report: check.report,
+                  ...(check.removed?.length ? { removed: check.removed } : {}),
                 };
                 // ── The late architectural inconsistency (Phase 5 F4) ──
                 // The step that just failed its check is built on an earlier
@@ -4978,7 +5495,7 @@ export class AgentLoop {
                 // replan path a repeatedly-failing verification does — the
                 // interface is fixed at its own step, and the plan is
                 // restated. One per run, like every other nudge.
-                if (!check.passed && interfaceReplans < 1) {
+                if (!stepPassed && interfaceReplans < 1) {
                   // Every step this submission is closing, not just the one
                   // the check was scoped to: the model closes several at once,
                   // and the one resting on an interface is rarely the first.
@@ -5443,6 +5960,7 @@ export class AgentLoop {
           output.structured?.integration !== "retained"
         ) {
           editsSinceVerify = true;
+          noCheckRequired = false;
           anyWritesThisRun = true;
           writeCount++;
           executedSinceWrite = false;
@@ -5700,6 +6218,7 @@ export class AgentLoop {
           }
           if (output.success && p.isWrite) {
             editsSinceVerify = true;
+            noCheckRequired = false;
             anyWritesThisRun = true;
             // The loop detector reads this: a command repeated AFTER an edit is
             // a verify cycle, not a rut.

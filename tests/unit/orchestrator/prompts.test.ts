@@ -35,8 +35,11 @@ describe("AGENT_DOCTRINE", () => {
     expect(AGENT_DOCTRINE).toContain('"nothing runnable detected"');
     // The clone class is named in the Ambiguity section, and deviations from
     // the literal ask must be surfaced up front, never as a footnote.
-    expect(AGENT_DOCTRINE).toContain('"Build me a clone of X"');
-    expect(AGENT_DOCTRINE).toContain("never a silent decision");
+    // (Reworded by the 2026-10-06 prompt economy pass; the two rules are held
+    // here in the words that carry them now.)
+    expect(AGENT_DOCTRINE).toContain('For "clone X" or "an app like X"');
+    expect(AGENT_DOCTRINE).toContain("Surface any proposed narrowing or substitution then.");
+    expect(AGENT_DOCTRINE).toContain("never as a footnote in the final report");
     // The words of the ask decide the stack — never workspace neighbors.
     expect(AGENT_DOCTRINE).toContain("never what happens to already sit in the workspace");
   });

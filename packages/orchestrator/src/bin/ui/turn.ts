@@ -3,9 +3,9 @@
 // Complete -> Answer. Keep private reasoning private, but never hide the actual
 // actions or evidence that explain what the agent did.
 
-import { accent, bold, danger, faint, muted, ok, quiet, stripAnsi, text, warn } from "./theme";
+import { accent, bold, danger, faint, muted, ok, stripAnsi, text, warn } from "./theme";
 import { glyph } from "./glyphs";
-import { truncate, wrap } from "./render";
+import { truncate, visLen, wrap } from "./render";
 import * as F from "./flow";
 import {
   CHAMBER_AT,
@@ -33,27 +33,29 @@ import type {
   TaskLifecycle,
   WorkflowNodeContext,
 } from "@rune/protocol";
-import { assertNeverSoft } from "@rune/protocol";
+import { assertNeverSoft, describeVerification, verificationOutcome } from "@rune/protocol";
 import { formatError, formatEvent, fmtTokens } from "./events";
 import { Pulse, PULSE_WEIGHT, quietLabel } from "./pulse";
 import type { TitleBeat } from "./title";
+import { STROKE_WEIGHT, WorkGlyph, paintGlyph, restGlyph } from "./waveform";
 import {
-  elapsedWord,
-  isBareKind,
+  stagedRow,
   workingKindForTool,
-  workingMark,
   workingPhrase,
-  paintPhrase,
-  breathFrame,
-  createPaintClock,
-  fitPhrase,
-  SHIMMER_MAX_PHRASE,
+  type WorkStage,
   type WorkingKind,
   type WorkingState,
 } from "./working";
 import { voiceLine } from "./voice";
 import { deriveChildName } from "../../subagent-events";
-import { fleetLedger, type AgentCard, type CardReceipt } from "./agents-panel";
+import {
+  AGENTS_KEY_HINT,
+  agentBlocks,
+  fleetLedger,
+  newestReceipt,
+  type AgentCard,
+  type CardReceipt,
+} from "./agents-panel";
 import { renderMarkdown } from "./markdown";
 import { renderUnifiedDiff } from "../diff-render";
 import { stepReceipt, type TodoItem as SpineTodo } from "../../task-state";
@@ -211,10 +213,6 @@ interface FleetAgent {
    * the ledger because this entry is deleted when the call lands and the card
    * is not.
    */
-  /** The paragraph this member is streaming into its own pane, and how many
-   *  rendered rows it currently occupies -- see childProse. Undefined between
-   *  paragraphs, which is what closes one. */
-  stream?: { thinking: boolean; text: string; rows: number };
   /**
    * Where this member sits in a workflow graph, when it is a workflow node
    * rather than an ad-hoc `task`/`worker` (P10.9).
@@ -236,11 +234,6 @@ const FLEET_ROWS = 6;
  *  thing it is, and nothing else. Matched rather than compared so the two
  *  placeholders stay one fact in one place. */
 const PLACEHOLDER_BRIEF = /^(investigating|building)$/;
-
-/** Measure a child's transcript is wrapped to. The workspace split is the main
- *  pane's width, which is the same measure the parent's prose uses -- the pane
- *  is a transcript, not a sidebar. */
-const CHILD_PANE_COLS = 72;
 
 /** A worker keys its heartbeats with its own id (`w1 edit_file src/x.ts`) so
  *  the old single-line rung could tell one member of a fleet from another. On
@@ -287,13 +280,19 @@ const MAX_RECEIPT_CHARS = 30;
  */
 function childReceipt(event: AgentTurnEvent, at: number): CardReceipt | null {
   switch (event.type) {
-    case "verification_completed":
-      if (!event.ran) return null;
+    case "verification_completed": {
+      // A receipt is something the member now KNOWS. A check that reached no
+      // verdict — nothing ran, or it was killed at its deadline — taught it
+      // nothing, so it is not a `failure` receipt and not a `verified` one.
+      const outcome = verificationOutcome(event);
+      if (outcome.status === "inconclusive") return null;
+      const passed = outcome.status === "passed";
       return {
-        rung: event.passed ? "verified" : "failure",
-        text: event.passed ? "checks pass" : "checks fail",
+        rung: passed ? "verified" : "failure",
+        text: passed ? "checks pass" : "checks fail",
         at,
       };
+    }
     case "step_check":
       if (!event.ran) return null;
       return {
@@ -389,6 +388,14 @@ const GAP_MS = 300;
 /** How long a turn runs before its elapsed clock is worth a column. `0s`
  *  beside every step is noise pretending to be data. */
 const ELAPSED_AFTER_MS = 2000;
+
+/** `second pass`, `third pass`, `4th pass`: how many times the run has been
+ *  over the same work, counting the first. */
+function passWord(pass: number): string {
+  if (pass === 2) return "second pass";
+  if (pass === 3) return "third pass";
+  return `${pass}th pass`;
+}
 
 /**
  * What the rung is holding still: the working STATE, not a pair of strings.
@@ -751,9 +758,16 @@ export class TurnRenderer {
    *  Fed by every scrap of genuine progress: streamed prose, reasoning deltas,
    *  tool arguments, sub-agent heartbeats, calls opening and closing. */
   private readonly pulse = new Pulse();
-  /** The rung's animation clock: one frame of the breath per paint, however
-   *  late the paint was. The wall clock still owns the elapsed receipt. */
-  private readonly breath = createPaintClock();
+  /** The rung's mark: Say's glyph, struck by the same real output the pulse
+   *  is fed (see `heard`). It keeps its own frame clock -- one frame of motion
+   *  per paint, however late the paint was. */
+  private readonly glyph = new WorkGlyph();
+  /** Checks that have failed since one last passed. The run going back over
+   *  its own work is the plainest sign it is struggling, and the rung says so
+   *  in words: `second pass`. */
+  private rework = 0;
+  /** Tool calls that have failed in a row. */
+  private misses = 0;
   /** The provider retry in flight, when there is one. A silent retry is a lie
    *  of omission about how long something took and how reliable it was, so it
    *  rides the rung for as long as it lasts. */
@@ -780,9 +794,6 @@ export class TurnRenderer {
   // durable checkpoint -- all fed by structured events, never invented.
   private downTokens = 0;
   private thinkingMs = 0;
-  /** Reasoning is streaming right now. The rung already says "working"
-   *  then; "thought for" is the receipt once it has stopped. */
-  private thinkingLive = false;
   private lastThinkingAt = 0;
   private contextPercent: number | null = null;
   private turnCount = 0;
@@ -803,8 +814,13 @@ export class TurnRenderer {
   /** Complete, inspectable mechanics. Never printed unless the user asks. */
   fullLog(): string | null {
     if (this.workLog.length === 0) return null;
+    // The two facts about the machine that used to ride the live rung. They
+    // are asked for here, not watched there.
+    const facts = [plural(this.toolCalls, "action")];
+    if (this.downTokens > 0) facts.push(`${fmtTokens(this.downTokens)} tokens`);
+    if (this.thinkingMs >= 100) facts.push(`thought for ${(this.thinkingMs / 1000).toFixed(1)}s`);
     return [
-      `  ${bold(text("Work details"))} ${faint(`| ${plural(this.toolCalls, "action")}`)}`,
+      `  ${bold(text("Work details"))} ${faint(`| ${facts.join(" | ")}`)}`,
       ...this.workLog.map((entry) => entry.line),
     ].join("\n");
   }
@@ -819,10 +835,10 @@ export class TurnRenderer {
    * actually in flight -- never a fake progress bar, because the agent does not
    * know how far along it is either.
    *
-   * The one-cell ramp is sampled from the real-output accumulator. It rises
-   * only when bytes or callbacks arrive and falls when they stop; ambiguous
-   * width terminals receive its ASCII twin. The quiet word still carries the
-   * stall, so shape and colour are never the only evidence.
+   * The mark is struck by real output: it beats only when bytes or callbacks
+   * arrive, and ambiguous-width terminals receive its ASCII twin. The quiet
+   * word still carries the stall, so shape and colour are never the only
+   * evidence.
    *
    * Nothing here slows the work down. Only the reporting is paced -- the elapsed
    * receipt beside the mark is the honest clock, and it never waits.
@@ -840,12 +856,13 @@ export class TurnRenderer {
   /** The working state as the rung is currently holding it -- exported shape
    *  so a surface that paints its own mark (the strip, the panel) can render
    *  the same sentence without re-deriving it from the events. */
-  workingState(): WorkingState {
+  workingState(): WorkingState & { stage: WorkStage } {
     const frame = this.steadyFrame();
     const now = Date.now();
     const elapsedMs = now - this.startedAt;
     return {
       kind: frame.kind,
+      stage: this.stage(),
       phrase: frame.phrase,
       elapsedMs,
       voice: voiceLine({
@@ -857,74 +874,199 @@ export class TurnRenderer {
     };
   }
 
+  /** Where the turn is, for the rung's first word. The harness's own phase,
+   *  which until this row was written and never read -- and `start` for the
+   *  opening, before anything has been called. */
+  private stage(): WorkStage {
+    if (this.verificationRunning) return "verify";
+    const opened = this.toolCalls > 0 || this.currentTool != null || this.todos.length > 0;
+    return opened ? this.phase : "start";
+  }
+
+  /**
+   * Real output, to both readers of it: the pulse, which answers whether the
+   * run is alive, and the mark, which draws it. Bytes where bytes exist; an
+   * event's own weight where it carries none -- and the two readers weigh an
+   * event differently, because proof of life and height are different claims.
+   */
+  private heard(
+    bytes: number,
+    event: keyof typeof PULSE_WEIGHT | null = null,
+    now: number = Date.now(),
+  ): void {
+    if (bytes > 0) {
+      this.pulse.feed(bytes, now);
+      this.glyph.feed(bytes);
+    } else if (event) {
+      this.pulse.feed(PULSE_WEIGHT[event], now);
+      this.glyph.feed(STROKE_WEIGHT[event]);
+    }
+  }
+
+  /**
+   * A member's report, to both readers.
+   *
+   * For the pulse it is proof of life, whatever it carried. For the mark it is
+   * that member's WORK, joined to the lead's own -- the founder, 2026-10-02:
+   * "both those agents' work should be combined and then one pulse should
+   * produce animations ... one universal glyph which would showcase the full
+   * work." So the mark is fed what the member actually produced: the bytes of
+   * its prose and its reasoning, a stroke for each call it opens and closes.
+   * Three members streaming are three streams' worth of output, and the one
+   * glyph beats faster and stands taller for it.
+   *
+   * It used to be one fixed heartbeat per report, whatever the report was, so
+   * a member writing a paragraph and a member reporting its token count struck
+   * the mark alike.
+   */
+  private heardFromMember(callId: string, child: ChildAgentEvent | undefined): void {
+    this.pulse.feed(PULSE_WEIGHT.heartbeat);
+    if (!child) {
+      // An untyped report: a lifecycle marker, or a line from a caller that
+      // only speaks strings. When the member also speaks the typed channel
+      // this is the echo of a call the mark was already struck for.
+      const echo = (this.fleet.get(callId)?.pendingToolEchoes ?? 0) > 0;
+      if (!echo) this.glyph.feed(STROKE_WEIGHT.heartbeat);
+      return;
+    }
+    const event = child.event;
+    switch (event.type) {
+      case "text_delta":
+        this.glyph.feed(event.text.length);
+        return;
+      case "thinking_delta":
+        this.glyph.feed(event.text.length || STROKE_WEIGHT.token);
+        return;
+      case "tool_call_start":
+      case "tool_call_end":
+        this.glyph.feed(STROKE_WEIGHT.callback);
+        return;
+      default:
+        // Usage, lifecycle, checkpoints: bookkeeping about the member, not
+        // output from it.
+        return;
+    }
+  }
+
+  /** A check came back. One that fails sends the run over its work again;
+   *  one that passes ends that. */
+  private checked(passed: boolean): void {
+    this.rework = passed ? 0 : this.rework + 1;
+  }
+
   liveLines(): string[] {
     const frame = this.steadyFrame();
     const state = this.workingState();
-    // Rune's own pulse, eased: the bar climbs and falls through `▁..█` on a
-    // raised cosine, twelve frames a half-breath at 90ms a frame, height and
-    // colour off the same curve. What it replaced was the same ramp driven by
-    // the BYTE RATE -- a flicker rather than a breath -- and then, briefly, a
-    // borrowed florette and a capitalised gerund, which was another product's
-    // indicator wearing ours. Liveness has not been given up: the `quiet 31s`
-    // word in the receipt is still fed by real output and still stops when the
-    // bytes stop (see ./pulse.ts). The mark says the run is working; the word
-    // says whether it still is.
-    // The breath advances one frame per PAINT, not per 90ms of wall clock: a
-    // repaint that arrives late (a busy loop, a terminal under load) makes the
-    // row breathe slower rather than teleport up the ramp. See PaintClock.
-    const anim = this.breath.tick(state.elapsedMs ?? 0);
-    const beat = breathFrame(anim);
-    const mark = workingMark(state, beat);
-    const phrase = workingPhrase(state);
-    // The clock rides inline, after the phrase, because that is the pairing
-    // the founder asked for: `Running checks - 1m 05s` is one sentence, and a
-    // duration flung to the right margin is a second column to read.
-    const clock =
-      state.kind === "waiting" || (state.elapsedMs ?? 0) < ELAPSED_AFTER_MS
-        ? ""
-        : elapsedWord(state.elapsedMs ?? 0);
-    const dot = ` ${glyph("observed")} `;
-    // One row: the mark, the voice, the phrase, the clock, whatever is
-    // measurably in flight, and the receipt. The detail used to be a second
-    // row, the streaming prose a third to sixth, and the block was pinned to
-    // the tallest it had been so the transcript would stop jumping -- three
-    // timing constants to stop it strobing, which was the code admitting the
-    // block moved too much. Prose streams into the transcript now (see
-    // settleProse), so the rung has one sentence to say and says it once.
+    // The mark is Say's glyph (./waveform.ts), struck by the turn's own
+    // output: a beat for what arrived, tall for a lot of it, a low sweep while
+    // the turn is in flight and silent, flat and dim when it is waiting on a
+    // person. It is the only thing on the row that moves. Liveness is still
+    // said in words -- `quiet 31s` in the receipt, fed by the same output.
+    const inFlight = state.kind !== "waiting" && state.kind !== "done";
+    let agents = 0;
+    for (const agent of this.fleet.values()) if (agent.card.state === "running") agents++;
+    const drawn = this.glyph.step({
+      quietMs: this.pulse.sample().quietMs,
+      agents,
+      live: inFlight,
+    });
+    const mark =
+      !inFlight && drawn.levels.every((level) => level === 0) ? restGlyph() : paintGlyph(drawn);
+    // One row: the mark, the stage, the voice, the fact, the clock -- and two
+    // spaces on, whatever is measurably in flight and the news. The receipt is
+    // paid for first, out of the fact, so the clock is never what gets cut.
     //
-    // The VOICE leads (`having a look around`) and takes the shimmer -- a soft
-    // glow easing across it once a breath. The PHRASE is the fact beside it
-    // (`reading turn.ts`), set quiet; it is the part a developer reads, and it
-    // is exactly what the row said before the voice arrived. A window too
-    // narrow for both keeps the fact. The clock does not shimmer: a number
-    // that moves under the eye is a number you re-read.
-    const voice = F.proseWidth() >= 72 ? (state.voice ?? "").trim() : "";
-    // A bare word is not a fact worth a column beside a voice that already
-    // says it: `okay, geared up · working` says `working` twice.
+    // The members in flight come first: each in its own block, a name in a
+    // box, and none of them animated -- the mark at the head of the row is
+    // struck by all of them together (`heardFromMember`), and it is the one
+    // thing that moves.
     //
-    // The fact is FITTED to what is left of the row rather than left to run
-    // past the right margin: `flowRow` would cut it from the right, which
-    // takes the filename -- the one thing the fact is there to carry -- and
-    // the glow would go on sweeping cells the screen never shows.
-    const room = Math.max(
-      12,
-      Math.min(
-        SHIMMER_MAX_PHRASE,
-        F.proseWidth() - (voice ? voice.length + 3 : 0) - clock.length - 4,
-      ),
+    // What is in flight (a step's name, a call's own heartbeat) is said when
+    // there is room for it and is the first thing to go when there is not: the
+    // news -- which step, a second pass, a stall -- must never be the part
+    // that is cut.
+    const news = this.receipt();
+    const newsText = F.receiptOf(news);
+    // While the keys are on the agents -- on the row, or in one member's
+    // transcript -- the blocks are the SELECTOR: the whole roster in the order
+    // the arrows walk it, finished members included, with the one the keys are
+    // on marked. Otherwise they are the members in flight, as before.
+    const marked = fleetLedger.marked();
+    const members = marked
+      ? fleetLedger.order()
+      : [...this.fleet.values()].map((agent) => agent.card);
+    if (members.length > 0) fleetLedger.sample();
+    // With members to name, the receipt may take everything the row's own
+    // minimum (the mark, the longest stage word, the clock) does not need: a
+    // block that turns into `+1` because `quiet 4s` arrived is a row
+    // rearranging itself under the eye. The voice gives way to make the room.
+    const room =
+      members.length > 0
+        ? Math.max(24, F.measure() - 34)
+        : Math.max(24, Math.floor(F.measure() * 0.45));
+    const blocks = agentBlocks(
+      members,
+      Math.max(10, room - (newsText ? visLen(newsText) + 3 : 0)),
+      { selectedId: marked },
     );
-    const fact = voice && isBareKind(state.kind) ? "" : fitPhrase(phrase, room);
-    const lit = voice
-      ? fact
-        ? `${paintPhrase(voice, anim, { kind: state.kind })}${faint(dot)}${quiet(fact)}`
-        : paintPhrase(voice, anim, { kind: state.kind })
-      : paintPhrase(fact, anim, { kind: state.kind });
-    const said = clock ? `${lit}${faint(dot)}${faint(clock)}` : lit;
-    const spent = (voice ? voice.length + 3 : 0) + fact.length + clock.length + 4;
-    const head = frame.detail
-      ? `${said}${faint(dot)}${faint(truncate(frame.detail, Math.max(20, F.proseWidth() - spent)))}`
-      : said;
-    const lines = [F.flowRow(`${F.MARK}${mark} ${head}`, faint(F.receiptOf(this.receipt())))];
+    // Beside the blocks, the detail is the newest thing any member PROVED,
+    // with its owner -- the collapsed strip led with that (founder review,
+    // 2026-09-14: what was proved outranks who is busy), and it keeps its
+    // place on the rung. A fan-out's own detail (`2 back`) is not said: the
+    // blocks already show who is back.
+    // (Not beside the selector: there the row's room is the roster's.)
+    const proved = blocks && !marked ? newestReceipt(members) : null;
+    const detail = proved
+      ? truncate(`${glyph(proved.receipt.rung)} ${proved.card.name} ${proved.receipt.text}`, 40)
+      : !blocks && frame.detail
+        ? truncate(frame.detail, 36)
+        : "";
+    // Each part carries its own ink: the blocks say by theirs which member is
+    // working and which is queued or quiet, and everything else is faint.
+    const dot = faint(` ${glyph("observed")} `);
+    // Kept by what a part DRAWS, not by whether the string is empty: a painted
+    // empty string is a colour sequence around nothing, which is not "" and is
+    // not anything on screen either. Filtered on `!== ""`, the detail slot --
+    // empty whenever no member has proved anything yet -- kept its place in a
+    // colour terminal and took a separator with it, so the row ended on a
+    // middot with nothing after it: `[planner] [builder] ·`. No capture showed
+    // it, because a capture written to a file has no colour to keep.
+    const joined = (parts: string[]): string => parts.filter((part) => visLen(part) > 0).join(dot);
+    const quietly = news.map((part) => faint(part));
+    const withDetail = joined([blocks, faint(detail), ...quietly]);
+    const receipt =
+      !detail || visLen(withDetail) <= room
+        ? withDetail
+        : joined(blocks || news.length > 0 ? [blocks, ...quietly] : [faint(detail)]);
+    const row = stagedRow(
+      mark,
+      {
+        ...state,
+        // A window too narrow for both keeps the fact.
+        voice: F.proseWidth() >= 72 ? state.voice : "",
+        // The first two seconds of a turn are not worth timing.
+        elapsedMs: (state.elapsedMs ?? 0) < ELAPSED_AFTER_MS ? undefined : state.elapsedMs,
+      },
+      {
+        width: F.measure(),
+        // The receipt, and the key that reaches the agents. The frame sets
+        // that key down on the right of this row wherever there is a member to
+        // reach (tui-frame `stripRow`), and it gave way whenever the row was
+        // long -- which, with a voice line and two blocks, was already true at
+        // a hundred columns: the one hint that says the agents can be opened
+        // was missing exactly when there were agents. Its cells are reserved
+        // here, so it is the voice that gives way.
+        reserve:
+          (receipt ? visLen(receipt) + 2 : 0) +
+          (!marked && fleetLedger.all().length > 0 ? visLen(AGENTS_KEY_HINT) + 2 : 0),
+        // The blocks name the members; `delegating 3 sub-agents` beside them
+        // would be the count the blocks exist to replace. A single member's
+        // own label (`scouting the auth store`) is not that, and stays where
+        // it fits whole.
+        fact: !blocks ? true : /^delegating\b/i.test(state.phrase ?? "") ? false : "whole",
+      },
+    );
+    const lines = [F.flowRow(`${F.MARK}${row}`, receipt)];
     lines.push(...this.fleetLines());
     // A sink that cannot amend still shows the voice live, in the block.
     if (!this.live) lines.push(...this.streamingProseTail());
@@ -1101,6 +1243,7 @@ export class TurnRenderer {
     if (state === "started") {
       card.state = "running";
       card.startedAt = now;
+      this.briefMember(agent);
       return;
     }
     if (state === "settled") {
@@ -1204,12 +1347,14 @@ export class TurnRenderer {
       case "retry":
         card.reroutes++;
         break;
-      case "verification_completed":
-        if (event.ran) {
+      case "verification_completed": {
+        const outcome = verificationOutcome(event);
+        if (outcome.status !== "inconclusive") {
           card.checks++;
-          if (event.passed) card.checksPassed++;
+          if (outcome.status === "passed") card.checksPassed++;
         }
         break;
+      }
       case "step_check":
         if (event.ran) {
           card.checks++;
@@ -1219,6 +1364,13 @@ export class TurnRenderer {
       default:
         break;
     }
+    // The transcript. Every event goes to this member's own writer, which
+    // draws it with the renderers the lead's transcript uses -- a call as the
+    // box it is, prose as prose, a reroute as the row a reroute gets. It used
+    // to be three cases here (prose, thinking, and a call's bare verb), which
+    // is why opening a sub-agent showed that it was doing something and not
+    // what. See ./child-transcript.ts.
+    fleetLedger.transcript(card.id).absorb(event);
     switch (event.type) {
       case "usage": {
         // Fresh input, cached input and output are three different prices and
@@ -1230,66 +1382,43 @@ export class TurnRenderer {
           (event.cacheCreationTokens ?? 0);
         return;
       }
-      case "text_delta": {
+      // The PULSE: fed by bytes where bytes exist, so the cell beside the name
+      // answers to the rate of real output and not to a clock.
+      case "text_delta":
         fleetLedger.feed(card.id, event.text.length, now);
-        this.childProse(agent, event.text, false);
         return;
-      }
-      case "thinking_delta": {
-        // The child's thinking is visible in its pane exactly as the master's
-        // is in the transcript -- it is the same kind of evidence, and hiding
-        // it for a sub-agent is what made a fan-out feel like a black box.
+      case "thinking_delta":
         fleetLedger.feed(card.id, event.text.length || PULSE_WEIGHT.token, now);
-        this.childProse(agent, event.text, true);
         return;
-      }
-      case "tool_call_start": {
+      case "tool_call_args_delta":
+        // The model writing a call IS the member working. This never crossed
+        // before, so a member streaming a large file read `quiet 12s` for as
+        // long as it took to write it.
+        fleetLedger.feed(card.id, event.partialJson.length || PULSE_WEIGHT.token, now);
+        return;
+      case "tool_call_start":
         fleetLedger.feed(card.id, PULSE_WEIGHT.callback, now);
-        // The child's own tool row, drawn with the SAME flow call the parent's
-        // transcript uses. A pane that invented a second grammar for a smaller
-        // agent would be a fifth dialect (ui-grammar.test), and the one thing
-        // a sub-agent's transcript must be is recognisable as a transcript.
-        this.childRow(
-          agent,
-          F.toolRow({
-            name: verbOf(String(event.toolName ?? "tool")),
-            arg: "",
-            metric: "",
-            status: "active",
-          }),
-        );
         return;
-      }
       default:
         return;
     }
   }
 
   /**
-   * Streamed child prose, growing IN PLACE in that child's buffer.
+   * Open a member's transcript with what it was sent to do.
    *
-   * One row per delta would make the pane a column of fragments. The open
-   * paragraph's rows are replaced as it grows, which is how the parent's own
-   * transcript streams -- the pane is the same surface for a smaller agent.
+   * A transcript that begins at the first tool call begins in the middle: the
+   * question the work answers is the lead's brief, and it was on the wire the
+   * whole time -- as the arguments of the call that dispatched the member.
+   * Stated once, and first, whenever it becomes readable: when the member
+   * starts (the arguments have finished streaming by then), or when its call
+   * lands, for a provider that delivers a call's input whole and streams
+   * nothing.
    */
-  private childProse(agent: FleetAgent, chunk: string, thinking: boolean): void {
-    if (!chunk) return;
-    const open = agent.stream && agent.stream.thinking === thinking ? agent.stream : undefined;
-    const body = (open?.text ?? "") + chunk;
-    const width = Math.max(20, CHILD_PANE_COLS);
-    const mark = thinking ? faint(glyph("suspected")) : muted(glyph("live"));
-    const paint = thinking ? faint : text;
-    const rows = wrap(body.trim(), width).map(
-      (line, i) => `  ${i === 0 ? mark : " "} ${paint(line)}`,
-    );
-    fleetLedger.replaceTail(agent.card.id, open?.rows ?? 0, rows);
-    agent.stream = { thinking, text: body, rows: rows.length };
-  }
-
-  /** A finished row in a child's buffer: the prose being written closes first. */
-  private childRow(agent: FleetAgent, row: string): void {
-    agent.stream = undefined;
-    fleetLedger.append(agent.card.id, [row]);
+  private briefMember(agent: FleetAgent, args?: Record<string, unknown>): void {
+    const source = args ?? partialArgs(agent.argsJson);
+    const prompt = typeof source.prompt === "string" ? source.prompt : "";
+    if (prompt.trim()) fleetLedger.transcript(agent.card.id).asked(prompt);
   }
 
   /**
@@ -1307,6 +1436,9 @@ export class TurnRenderer {
     const card = agent.card;
     card.retired = true;
     card.note = "";
+    // Its call has landed, so nothing in its transcript is in flight -- whether
+    // or not its own terminal event ever crossed.
+    fleetLedger.transcript(card.id).close();
     // A member that came back without a lifecycle marker is still back: the
     // call landed. Reporting it as `running` on the finished list would be the
     // panel disagreeing with the transcript directly above it.
@@ -1657,10 +1789,9 @@ export class TurnRenderer {
       return "";
     }
     const active = this.todos.find((item) => item.status === "in_progress");
-    if (active) {
-      const done = this.todos.filter((item) => item.status === "completed").length;
-      return `${active.content} ${glyph("observed")} ${done}/${this.todos.length} steps`;
-    }
+    // The step's name. Its number is the receipt's (`step 3 of 7`), which is
+    // there whether or not a call is in flight.
+    if (active) return active.content;
     // Nothing measured is in flight, so the rung says nothing more than its
     // phrase. The clock beside it is the only thing still moving.
     return "";
@@ -1695,23 +1826,31 @@ export class TurnRenderer {
 
   private receipt(): string[] {
     const parts: string[] = [];
-    // The elapsed clock is NOT here any more: it rides inline beside the
-    // phrase (`Running checks - 1m 05s`, the founder's own shape). What is
-    // left is the news -- the stall, in words, and a retry -- which is what
-    // the right margin was always for.
-    // The pulse can go flat; only this says so. Carried by the word, never by
+    // Where the work is in its own plan, whenever there is one.
+    if (this.todos.length > 0) {
+      const done = this.todos.filter((item) => item.status === "completed").length;
+      const open = this.todos.some((item) => item.status === "in_progress");
+      parts.push(
+        open
+          ? `step ${Math.min(done + 1, this.todos.length)} of ${this.todos.length}`
+          : `${done} of ${this.todos.length} steps`,
+      );
+    }
+    // The run going back over its own work, and calls failing in a row: the
+    // two measured signs that it is struggling. Said in words, like the stall.
+    if (this.rework > 0) parts.push(passWord(this.rework + 1));
+    if (this.misses >= 2) parts.push(`${this.misses} misses`);
+    // The mark can go flat; only this says so. Carried by the word, never by
     // the glyph or the colour, so it survives NO_COLOR and a mono rung.
     const quiet = quietLabel(this.pulse.sample());
     if (quiet) parts.push(quiet);
     if (this.retrying) {
       parts.push(`${glyph("retry")} ${this.retrying.attempt} of ${this.retrying.of}`);
     }
-    if (this.downTokens > 0) parts.push(`${fmtTokens(this.downTokens)} tokens`);
-    // "thinking 6s · thought for 5.1s" on one rung was two clocks for one
-    // thing; the receipt waits for the thinking to stop.
-    if (this.thinkingMs >= 100 && !this.thinkingLive) {
-      parts.push(`thought for ${(this.thinkingMs / 1000).toFixed(1)}s`);
-    }
+    // Token counts and reasoning wall-clock are no longer here. They are true,
+    // and they are telemetry about the machine rather than news about the
+    // work; on a row meant to be watched for an hour they were two more
+    // numbers changing under the eye. /details carries them (see fullLog).
     return parts;
   }
 
@@ -1974,12 +2113,16 @@ export class TurnRenderer {
     if (!success && !isHarnessTool(name)) {
       this.failures++;
       this.errored = true;
+      this.misses++;
+    } else if (success) {
+      this.misses = 0;
     }
     this.recordEdit(event);
     if (name === "bash") {
       const check = parseCheck(String(args.command ?? ""), result, success);
       if (check) {
         this.checks.push(check);
+        if (check.status !== "not-run") this.checked(check.status === "passed");
         if (check.status === "failed" && success) {
           this.failures++;
           this.errored = true;
@@ -2174,8 +2317,7 @@ export class TurnRenderer {
         // instead -- but the time SPENT reasoning is honest turn metadata
         // ("thought for 2.3s"), so accumulate wall-clock across delta bursts.
         const now = Date.now();
-        this.thinkingLive = true;
-        this.pulse.feed(String(event.text ?? "").length || PULSE_WEIGHT.token, now);
+        this.heard(String(event.text ?? "").length, "token", now);
         if (this.lastThinkingAt > 0 && now - this.lastThinkingAt < 3000) {
           this.thinkingMs += now - this.lastThinkingAt;
         }
@@ -2184,10 +2326,9 @@ export class TurnRenderer {
       }
 
       case "text_delta": {
-        this.thinkingLive = false;
         this.activity = null;
         this.prose += event.text;
-        this.pulse.feed(String(event.text ?? "").length);
+        this.heard(String(event.text ?? "").length);
         const now = Date.now();
         if (this.live) {
           // The voice streams INTO the transcript, where it will stay: the
@@ -2224,7 +2365,7 @@ export class TurnRenderer {
 
       case "stream_reset":
         // Re-streaming from scratch is work, not silence.
-        this.pulse.feed(PULSE_WEIGHT.callback);
+        this.heard(0, "callback");
         this.prose = "";
         this.proseDirty = false;
         // The stream starts over, and so does the block it was writing.
@@ -2244,8 +2385,8 @@ export class TurnRenderer {
 
       case "tool_progress": {
         // Sub-agent/worker heartbeat: shown live, never committed.
-        this.pulse.feed(PULSE_WEIGHT.heartbeat);
         const callId = String(event.callId ?? "");
+        this.heardFromMember(callId, event.child);
         const note = String(event.note ?? "");
         if (note) this.toolProgressNote = { callId, note };
         this.trackFleetProgress(callId, note, event.state, event.ok !== false, event.child);
@@ -2254,8 +2395,7 @@ export class TurnRenderer {
       }
 
       case "tool_call_start": {
-        this.thinkingLive = false;
-        this.pulse.feed(PULSE_WEIGHT.callback);
+        this.heard(0, "callback");
         this.settleProse();
         this.currentTool = {
           callId: String(event.callId ?? ""),
@@ -2310,7 +2450,7 @@ export class TurnRenderer {
 
       case "tool_call_args_delta": {
         if (this.currentTool && (!event.callId || event.callId === this.currentTool.callId)) {
-          this.pulse.feed(String(event.partialJson ?? "").length);
+          this.heard(String(event.partialJson ?? "").length);
           this.currentTool.argsJson += String(event.partialJson ?? "");
           this.currentTool.args = partialArgs(this.currentTool.argsJson);
           this.activity = liveToolLabel(this.currentTool.name, this.currentTool.args);
@@ -2349,8 +2489,7 @@ export class TurnRenderer {
       }
 
       case "tool_call_end": {
-        this.thinkingLive = false;
-        this.pulse.feed(PULSE_WEIGHT.callback);
+        this.heard(0, "callback");
         this.settleProse();
         const phase = phaseForTool(String(event.output?.toolName ?? ""), event.args ?? {});
         this.setPhase(phase);
@@ -2368,6 +2507,15 @@ export class TurnRenderer {
         // want to compare four members is the moment three of them are back,
         // and before this that was the moment three of them vanished.
         const endedCall = String(event.callId ?? "");
+        const landed = this.fleet.get(endedCall);
+        if (landed) {
+          this.briefMember(landed, event.args ?? {});
+          // The id its record is stored under. The card is keyed by the call,
+          // which means nothing once the process ends; this is how the same
+          // member's transcript is read back from the session log later.
+          const taskId = (event.output?.structured as { task_id?: unknown } | undefined)?.task_id;
+          if (typeof taskId === "string") landed.card.taskId = taskId;
+        }
         this.retireFleetMember(endedCall);
         for (const key of [...this.fleet.keys()]) {
           if (key.startsWith(`${endedCall}:`)) this.retireFleetMember(key);
@@ -2523,6 +2671,7 @@ export class TurnRenderer {
         ].join("\n");
         this.addLog(row);
         this.commitTimeline(row);
+        this.checked(passed);
         if (!passed) {
           this.failures++;
           this.setPhase("act");
@@ -2555,15 +2704,34 @@ export class TurnRenderer {
             .replace(/\s+\(ok\)$/, "") ?? "project checks",
           62,
         );
+        // Three outcomes. `inconclusive` is never drawn as a failure: a check
+        // killed at its deadline measured nothing, and a red row for it is the
+        // terminal telling the reader the work is wrong when nobody knows.
+        const outcome = verificationOutcome(event);
+        const settled = outcome.status !== "inconclusive";
+        const passed = outcome.status === "passed";
+        // A check that was started and did not finish, as opposed to: nothing
+        // could run at all.
+        const unfinished =
+          outcome.status === "inconclusive" &&
+          (outcome.reason === "timeout" || outcome.reason === "cancelled");
+        // Red, and every failing test was already failing before the run
+        // began. Still drawn red — it is — but not as the turn's own failure:
+        // nothing is being reworked.
+        const inherited = outcome.status === "failed" && outcome.preexisting === true;
         this.checks.push({
           label: command || "project checks",
-          detail: event.ran
-            ? event.passed
+          detail: settled
+            ? passed
               ? "passed"
-              : oneLine(lastNonEmpty(report), 56)
-            : "not run",
-          status: !event.ran ? "not-run" : event.passed ? "passed" : "failed",
-          count: event.ran ? commandCount : 0,
+              : inherited
+                ? describeVerification(outcome)
+                : oneLine(lastNonEmpty(report), 56)
+            : unfinished
+              ? describeVerification(outcome)
+              : "not run",
+          status: !settled ? "not-run" : passed ? "passed" : "failed",
+          count: settled ? commandCount : 0,
         });
         // The harness's own checks read like the checks the model ran: on the
         // rail, a verb, the commands, a verdict. "✓ $ npm test (ok)" beside
@@ -2573,20 +2741,46 @@ export class TurnRenderer {
           .filter((line) => line.startsWith("$ "))
           .map((line) => line.replace(/^\$ /, "").replace(/\s+\((ok|exit \d+)\)$/, ""));
         const shown = commands.slice(0, 3).join(` ${glyph("observed")} `);
-        const verification = event.ran
+        const verification = settled
           ? [
               F.toolRow({
                 name: "check",
                 arg: oneLine(shown || "project checks", Math.max(24, F.measure() - 20)),
-                status: event.passed ? "pass" : "fail",
+                status: passed ? "pass" : "fail",
                 metric: commands.length > 3 ? `${commands.length} commands` : undefined,
               }),
-              ...(event.passed ? [] : [F.toolNote(oneLine(lastNonEmpty(report), 60), "fail")]),
+              ...(passed
+                ? []
+                : inherited
+                  ? [F.toolNote("already failing before this run began; nothing new failed")]
+                  : [F.toolNote(oneLine(lastNonEmpty(report), 60), "fail")]),
             ].join("\n")
-          : F.toolRow({ name: "check", arg: "no project checks were detected", status: "none" });
+          : unfinished
+            ? [
+                // The commands, on a neutral mark, and why there is no verdict.
+                F.toolRow({
+                  name: "check",
+                  arg: oneLine(shown || "project checks", Math.max(24, F.measure() - 20)),
+                  status: "none",
+                }),
+                F.toolNote(
+                  `${describeVerification(outcome)} ${glyph("observed")} nothing was measured`,
+                ),
+              ].join("\n")
+            : F.toolRow({
+                name: "check",
+                arg:
+                  outcome.reason === "missing_runner"
+                    ? "no project check could run here"
+                    : outcome.reason === "not_required"
+                      ? "no check applies to a documentation-only change"
+                      : "no project checks were detected",
+                status: "none",
+              });
         this.addLog(verification);
         this.commitTimeline(verification);
-        if (event.ran && !event.passed) {
+        if (settled && !inherited) this.checked(passed);
+        if (outcome.status === "failed" && !inherited) {
           this.failures++;
           this.setPhase("act");
         } else {
@@ -2598,6 +2792,9 @@ export class TurnRenderer {
       case "usage": {
         // Authoritative provider counts: drive the "down tokens" meta and the
         // live context percentage without a transcript line.
+        // The pulse alone: this is a count of output that already arrived as
+        // deltas, and struck on the mark it would be a full-height beat for
+        // text the reader watched stream a moment ago.
         this.pulse.feed(Number(event.outputTokens ?? 0) * 4);
         this.downTokens += Number(event.outputTokens ?? 0);
         if (event.context && Number(event.context.percent) > 0) {
@@ -2634,7 +2831,7 @@ export class TurnRenderer {
       // turn took and how reliable the run was -- and left the rung looking
       // wedged for the length of the backoff with nothing to explain it.
       case "retry": {
-        this.pulse.feed(PULSE_WEIGHT.callback);
+        this.heard(0, "callback");
         this.retrying = {
           attempt: Math.max(1, Number(event.attempt ?? 1)),
           of: Math.max(1, Number(event.of ?? 1)),
@@ -2644,7 +2841,7 @@ export class TurnRenderer {
       }
 
       case "fallback": {
-        this.pulse.feed(PULSE_WEIGHT.callback);
+        this.heard(0, "callback");
         // Switching provider ends this provider's retry ladder.
         this.retrying = null;
         this.reroutes++;

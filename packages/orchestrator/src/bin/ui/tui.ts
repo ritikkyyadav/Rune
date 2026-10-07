@@ -56,7 +56,7 @@ import {
   type FrameMethods,
 } from "./tui-frame";
 import { INPUT_METHODS, type InputMethods } from "./tui-input";
-import { fleetLedger } from "./agents-panel";
+import { agentsHint, fleetLedger } from "./agents-panel";
 import { COMMAND_METHODS, type CommandMethods } from "./tui-commands";
 export { holdOpenRows } from "./tui-frame";
 import { setActivityWorkspaceRoot } from "./activity";
@@ -110,7 +110,8 @@ import {
   type SessionRowView,
 } from "./composer";
 import { RUNE_MARK, renderBanner } from "./banner";
-import { FRAME_MS, createPaintClock, workingRow } from "./working";
+import { WorkGlyph, paintGlyph } from "./waveform";
+import { FRAME_MS, stagedRow } from "./working";
 import { notifyWarp } from "./warp";
 import { Glide, setTitle, clearTitle, type TitleBeat } from "./title";
 import { renderReadBack, renderClose } from "./read-back";
@@ -267,14 +268,13 @@ export function permissionKeyAction(
 type SessionListItem = ReturnType<Engine["listSessions"]>[number];
 
 /**
- * The breath of the ONE row drawn before a turn has any events to show.
+ * The mark of the ONE row drawn before a turn has any events to show.
  *
- * A module clock rather than a field because it animates a single surface that
- * only ever exists while a turn is opening, and because a paint clock must be
- * ticked once per paint by exactly one caller to mean anything. It re-syncs on
- * its own when a new turn restarts the elapsed clock (see `createPaintClock`).
+ * Module state rather than a field because it animates a single surface that
+ * only ever exists while a turn is opening. A turn's own mark lives on its
+ * renderer; this one is replaced whenever a new turn starts the clock again.
  */
-const OPENING_BREATH = createPaintClock();
+const OPENING = { glyph: new WorkGlyph(), turnStart: 0 };
 
 /** Empty launch placeholders are implementation detail, not conversation history. */
 function isMeaningfulSession(session: SessionListItem): boolean {
@@ -350,6 +350,10 @@ export class Tui {
   /** The child pane's own scroll offset. Per region, so paging one pane never
    *  moves the other. */
   childScroll = 0;
+  /** How many rows the open transcript was given on the last painted frame.
+   *  Its scroll keys page by this, the same way the main pane's page by the
+   *  body rows of the frame actually on screen. Null with no pane open. */
+  lastChildRows: number | null = null;
   /** SIGWINCH. A field, not a method, because `process.stdout.on("resize", ...)`
    *  needs a stable bound reference to add and remove; the work is in
    *  ./tui-frame.ts with the rest of the geometry. */
@@ -776,6 +780,10 @@ export class Tui {
         folds: !this.inline && this.folds.size > 0,
         streaming: this.mode === "turn",
         drafting: this.input.length > 0,
+        // With the keys on the agents, `esc` goes BACK. The strip says so --
+        // mid-turn it otherwise reads `esc stop`, which is the one thing `esc`
+        // will not do from there.
+        focusKeys: this.agentsLegend(width),
         theme: getTheme().name === "auto" ? "auto" : getTheme().appearance,
         loop:
           loop.count > 0 && loop.nextRunAt !== null
@@ -784,6 +792,29 @@ export class Tui {
       },
       width,
     );
+  }
+
+  /**
+   * The agents keys, for the status strip's right edge -- or "" when the keys
+   * are on the composer.
+   *
+   * The strip is where the keys that act RIGHT NOW are said (composer.ts
+   * `statusLine`), and that is why the legend is here and not on a row of its
+   * own under the field: in one column a hint row there is paid for by the
+   * workspace, so the rung and the field hopped up a row every time the keys
+   * moved to the agents and back. The strip is always on screen and nothing
+   * moves to make room for it.
+   *
+   * With a right column the cards' legend keeps its hint row -- the composer
+   * grows into the panel there and the workspace is not touched -- so the strip
+   * only has to say the way out.
+   */
+  agentsLegend(width: number): string {
+    if (this.mode !== "input" && this.mode !== "turn") return "";
+    const focus = this.agentFocus();
+    if (focus === "composer") return "";
+    if (!this.regionsNow().collapsed) return "esc back";
+    return agentsHint(focus, fleetLedger.view(true), Math.max(16, Math.floor(width * 0.55)));
   }
 
   /** Shift up one gear (Shift+Tab / `/gear` / `/mode`) -- or straight to `target` -- and announce it. */
@@ -1275,13 +1306,20 @@ export class Tui {
       // brand mark and a bold `Thinking...`, which is the one place in the
       // product where the accent colour and a bold weight were spent on the
       // fact that nothing had happened yet.
+      if (OPENING.turnStart !== this.turnStart) {
+        OPENING.glyph = new WorkGlyph();
+        OPENING.turnStart = this.turnStart;
+      }
+      const elapsed = Math.max(0, Date.now() - this.turnStart);
+      // Nothing has arrived, so nothing is struck: after a moment of silence
+      // the mark sweeps, which is what a turn in flight and saying nothing is.
+      const mark = paintGlyph(OPENING.glyph.step({ quietMs: elapsed, live: true }));
       return this.pinLiveHeight([
-        `  ${workingRow(
-          { kind: "working", elapsedMs: Math.max(0, Date.now() - this.turnStart) },
-          // One frame of the breath per paint, not per 90ms of wall clock:
-          // a late repaint breathes slower instead of skipping levels.
-          { animMs: OPENING_BREATH.tick(Math.max(0, Date.now() - this.turnStart)) },
-        )}`,
+        `  ${stagedRow(mark, {
+          kind: "working",
+          stage: "start",
+          elapsedMs: elapsed < 2000 ? undefined : elapsed,
+        })}`,
       ]);
     }
     // This was a flat two rows, which is why a fan-out of sub-agents could only
@@ -1768,6 +1806,7 @@ export class Tui {
     );
     this.printTranscriptLines(lines);
     if (lines.length === 0) this.print(`  ${faint("(no earlier messages)")}`);
+    this.restoreAgents();
 
     if (res.switched) {
       this.print(
@@ -1803,7 +1842,25 @@ export class Tui {
       `  ${faint("--")} ${muted("resumed")} ${text(title)} ${faint(this.shortId(this.ctx.sessionId))} ${faint("--")}`,
     );
     this.printTranscriptLines(lines);
+    this.restoreAgents();
     this.print(`  ${faint("continue where you left off")}`);
+  }
+
+  /**
+   * Put a reopened session's sub-agents back on the rung.
+   *
+   * Their conversations have always been in the session log; the cards that
+   * named them lived in this process and went with it. So a session resumed an
+   * hour later showed the lead's transcript and no sign that four agents had
+   * worked under it. Read back here from the log's own record -- a few fields
+   * per child; each transcript is loaded only when its card is opened.
+   */
+  restoreAgents(): void {
+    try {
+      fleetLedger.restore(this.ctx.engine.listDelegations(this.ctx.sessionId));
+    } catch {
+      /* a session whose children cannot be listed still opens */
+    }
   }
 
   /**
@@ -2837,15 +2894,14 @@ export class Tui {
       },
     );
     this.liveTurn = turn;
-    // The animation clock. A terminal cannot rotate a glyph, so Rune's pulse
-    // eases up and down the block ramp instead (./working.ts) while the phrase
-    // shimmers and the elapsed receipt advances. This interval IS the frame
-    // clock -- FRAME_MS, 11.1fps, under the 12fps ceiling -- and it is
-    // deliberately the only thing repainting the rung on a timer: the stream
-    // may arrive as fast as it likes and the footer still moves no faster than
-    // a person can read it. It must not be slower than FRAME_MS either, or the
-    // repaint samples the easing curve unevenly and puts back exactly the
-    // stepping the curve exists to remove.
+    // The animation clock. The rung's mark is struck by the turn's own output
+    // and carried by springs (./waveform.ts), and the elapsed receipt
+    // advances. This interval IS the frame clock -- FRAME_MS, 11.1fps, under
+    // the 12fps ceiling -- and it is deliberately the only thing repainting
+    // the rung on a timer: the stream may arrive as fast as it likes and the
+    // footer still moves no faster than a person can read it. It must not be
+    // slower than FRAME_MS either: the mark takes one frame of motion per
+    // paint, so a slower tick is a slower mark.
     this.tick = setInterval(() => {
       if (this.mode === "turn") {
         // The title dedupes itself; the frame is scheduled only when the rung
@@ -2855,7 +2911,11 @@ export class Tui {
         this.paintTitle(turn);
         turn.tick();
         const lines = turn.liveLines();
-        const key = lines.join("\n");
+        // The rung, and -- while one is open -- how far the open transcript
+        // has got. The rung can read the same for seconds while a sub-agent
+        // streams a paragraph under it; without the second term the pane you
+        // opened to WATCH would only move when the row above the composer did.
+        const key = `${lines.join("\n")}\u0000${fleetLedger.paneRevision()}`;
         if (key !== this.lastTickKey) {
           this.lastTickKey = key;
           this.turnPreview = lines;

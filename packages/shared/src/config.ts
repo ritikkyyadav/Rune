@@ -302,6 +302,13 @@ export interface RuneConfig {
     maxConsecutiveErrors?: number;
     maxStuckNudges?: number;
     maxRateWaits?: number;
+    /**
+     * Seconds a run may go without an answer from its provider before it ends
+     * as `provider_lost`, which `--resume-until` and `rune resume` continue
+     * from (default 600; 0 turns the deadline off and leaves the attempt
+     * count alone to decide).
+     */
+    providerDeadlineSecs?: number;
     maxOverflowCompactions?: number;
     maxEmptyCompletionRetries?: number;
     maxTruncationRetries?: number;
@@ -473,6 +480,15 @@ export interface RuneConfig {
      * Default true.
      */
     perStep?: boolean;
+    /**
+     * Leave what the checks generate in the workspace. Default false: the
+     * git-ignored paths a pass of checks created — a `dist/`, a `.turbo/` —
+     * are removed when it ends, so a check Rune chose to run leaves the tree
+     * as it found it. Set true where that output is wanted, or where the next
+     * pass is much slower without it. Only for detected checks: what a command
+     * written in `commands` builds is always left.
+     */
+    keepGenerated?: boolean;
     /**
      * Per-ecosystem control (`[verify.ecosystems]`). Detection covers js, go,
      * python, rust and jvm (Java + Kotlin, which share gradle and maven, and

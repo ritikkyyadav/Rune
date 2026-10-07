@@ -222,7 +222,12 @@ beforeAll(async () => {
     lead: [bash("cat ~/.aws/credentials"), { kind: "text", text: "Could not read it. Done." }],
     // The reviewer never answers. `then` is unreachable within the deadline.
     utility: [{ kind: "hang", ms: 30_000 }],
-    autoConfig: 'supervisor = "off"\n',
+    // The deadline is SET here, at the value the corpus's worst case was
+    // measured against. It was the policy default until 2026-10-05, when the
+    // default became thirty seconds (pinned in `auto-mode.test.ts`); what this
+    // arm shows is the bound on a hung reviewer, which is the setting's, not
+    // the default's.
+    autoConfig: 'supervisor = "off"\ntimeoutMs = 12000\n',
     prompt: "Read the AWS credentials file.",
   });
 }, 600_000);
@@ -329,8 +334,8 @@ test("B1 — genuinely unusual work still reaches the reviewer or the broker", (
 });
 
 test("B2 — a reviewer that hangs is bounded by ONE deadline, not two", () => {
-  // The policy default, and the setting the corpus's 24,006 ms worst case was
-  // measured against.
+  // The setting this arm runs with, and the one the corpus's 24,006 ms worst
+  // case was measured against.
   const TIMEOUT_MS = 12_000;
   const reviewed = decisions(hung).filter(
     (d) => typeof d.timings?.classifierMs === "number" && d.timings.classifierMs > 0,

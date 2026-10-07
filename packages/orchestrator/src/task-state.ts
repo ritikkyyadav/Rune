@@ -67,7 +67,21 @@ import type {
   TaskKind,
   TodoItem,
   TodoStatus,
+  VerificationInconclusiveReason,
+  VerificationStatus,
 } from "@rune/protocol";
+
+/**
+ * A stored verification status, in words the model reads as state.
+ *
+ * Only `preexisting` needs more than its own name: "failed" on its own is an
+ * instruction to go and fix, and these are failures the run was handed.
+ */
+function verificationWords(status: TaskState["verification"]["status"]): string {
+  return status === "preexisting"
+    ? "red before this run began — every failing test was already failing; none are new"
+    : status;
+}
 
 export type EffectKind =
   "read" | "write" | "run" | "check_pass" | "check_fail" | "answer" | "delegate" | "look";
@@ -125,7 +139,16 @@ export interface TaskState {
   decisions: string[];
   visualReview?: VisualReviewState;
   verification: {
-    status: "none" | "passed" | "failed" | "unavailable";
+    /**
+     * `unavailable` — nothing could run here (no checks, or no toolchain).
+     * `inconclusive` — checks were started and reached no verdict (a deadline,
+     * a cancelled run). Neither is `failed`, and neither is `passed`.
+     * `preexisting` — the checks are red, and every failing test was already
+     * failing on the tree the run started from; the run added none.
+     */
+    status: "none" | "passed" | "failed" | "unavailable" | "inconclusive" | "preexisting";
+    /** Why no verdict was reached; set for `unavailable` and `inconclusive`. */
+    reason?: VerificationInconclusiveReason;
     attempts: number;
     lastReport?: string;
   };
@@ -714,10 +737,11 @@ function revisionFields(at: RevisionStamp | null): {
 export class TaskStateStore {
   private state: TaskState = emptyState();
   /**
-   * Workspace-relative path of the mission file, when the engine maintains one
-   * (e.g. ".rune/mission.md"). Render-time only — never part of the snapshot,
-   * so a session restored on another machine simply omits the pointer until
-   * its engine sets it again.
+   * The name the model reads the mission file at, when the engine maintains
+   * one (".rune/mission.md" — a route `read_file` answers from the session's
+   * own directory, not a file in the workspace; see mission-file.ts).
+   * Render-time only — never part of the snapshot, so a session restored on
+   * another machine simply omits the pointer until its engine sets it again.
    */
   private missionPath: string | null = null;
   /**
@@ -1343,6 +1367,7 @@ export class TaskStateStore {
     // last known status/report, but the attempt counter belongs to the task.
     this.state.verification = {
       status: this.state.verification.status,
+      ...(this.state.verification.reason ? { reason: this.state.verification.reason } : {}),
       attempts: 0,
       ...(this.state.verification.lastReport
         ? { lastReport: this.state.verification.lastReport }
@@ -1669,9 +1694,17 @@ export class TaskStateStore {
     this.touch();
   }
 
+  /**
+   * Record what the end-of-turn checks established.
+   *
+   * Takes the outcome, not two booleans: a check killed at its deadline used
+   * to arrive here as `(ran, !passed)` and was written down as "project checks
+   * FAILED", with the killed command logged as a red check. The next turn then
+   * read `Verification: failed` in its own state and went to fix code that
+   * nothing had measured.
+   */
   noteVerification(
-    ran: boolean,
-    passed: boolean,
+    outcome: { status: VerificationStatus; reason?: VerificationInconclusiveReason },
     report?: string,
     /** Per-command records from the verifier, when it produced them. */
     runs?: Array<{
@@ -1680,36 +1713,96 @@ export class TaskStateStore {
       exitCode: number | null;
       durationMs: number;
       skipped?: string;
+      timedOut?: boolean;
+      cancelled?: boolean;
     }>,
+    /** What else the verifier established about this result. */
+    extra?: {
+      /** How the check set was chosen — what was left out, and why. */
+      selection?: { decisions: Array<{ selected: boolean; reason: string }> };
+      /** For a failure: which failing tests predate the run. */
+      attribution?:
+        { known: true; existing: string[]; introduced: string[] } | { known: false; why: string };
+    },
   ): void {
+    const attribution = extra?.attribution;
+    // Red, and every failing test was red before the run began.
+    const onlyOld =
+      outcome.status === "failed" &&
+      attribution?.known === true &&
+      attribution.introduced.length === 0 &&
+      attribution.existing.length > 0;
+    const reason = outcome.status === "inconclusive" ? (outcome.reason ?? "no_checks") : undefined;
+    // Nothing could run here at all, as opposed to: it started and did not finish.
+    const nothingRunnable =
+      reason === "no_checks" || reason === "missing_runner" || reason === "not_required";
     this.state.verification = {
-      status: !ran ? "unavailable" : passed ? "passed" : "failed",
-      attempts: this.state.verification.attempts + (ran ? 1 : 0),
+      status:
+        outcome.status === "inconclusive"
+          ? nothingRunnable
+            ? "unavailable"
+            : "inconclusive"
+          : onlyOld
+            ? "preexisting"
+            : outcome.status,
+      ...(reason ? { reason } : {}),
+      attempts: this.state.verification.attempts + (nothingRunnable ? 0 : 1),
       lastReport: report?.slice(0, REPORT_CAP),
     };
-    if (ran) {
-      for (const r of runs ?? []) {
-        if (r.skipped) continue; // a command that never ran is not evidence
-        this.state.checks ??= [];
-        this.state.checks.push({
-          at: new Date().toISOString(),
-          command: r.command.slice(0, 200),
-          passed: r.passed,
-          source: "harness",
-          ...(r.exitCode != null ? { exitCode: r.exitCode } : {}),
-          durationMs: r.durationMs,
-        });
-      }
-      if (this.state.checks && this.state.checks.length > CHECKS_CAP) {
-        this.state.checks = this.state.checks.slice(-CHECKS_CAP);
-      }
-      const named = (runs ?? []).filter((r) => !r.skipped).map((r) => r.command);
+    // A command that never started, or that was killed, is not evidence in
+    // either direction; the ones that finished are, whatever the set came to.
+    const finished = (runs ?? []).filter((r) => !r.skipped && !r.timedOut && !r.cancelled);
+    for (const r of finished) {
+      this.state.checks ??= [];
+      this.state.checks.push({
+        at: new Date().toISOString(),
+        command: r.command.slice(0, 200),
+        passed: r.passed,
+        source: "harness",
+        ...(r.exitCode != null ? { exitCode: r.exitCode } : {}),
+        durationMs: r.durationMs,
+      });
+    }
+    if (this.state.checks && this.state.checks.length > CHECKS_CAP) {
+      this.state.checks = this.state.checks.slice(-CHECKS_CAP);
+    }
+    if (!nothingRunnable) {
       const skipped = (runs ?? []).filter((r) => r.skipped).length;
+      const undone = (runs ?? []).filter((r) => r.timedOut || r.cancelled).map((r) => r.command);
+      const named = finished.map((r) => r.command);
+      const headline =
+        outcome.status === "passed"
+          ? "project checks passed"
+          : outcome.status === "failed"
+            ? "project checks FAILED"
+            : `project checks INCONCLUSIVE (${reason === "timeout" ? "timed out" : "cancelled"})`;
       this.logEvent(
         "check",
-        `${passed ? "project checks passed" : "project checks FAILED"}` +
+        headline +
           (named.length > 0 ? ` — ${named.join(", ")}` : "") +
+          (undone.length > 0 ? ` — did not finish: ${undone.join(", ")}` : "") +
           (skipped > 0 ? ` (${skipped} skipped, toolchain absent)` : ""),
+      );
+    }
+    // A project that owns a changed file and was NOT graded is part of the
+    // record: "checks passed" has to be readable as "these checks", and a
+    // reader of the audit has to be able to see which were judged unaffected.
+    for (const d of extra?.selection?.decisions ?? []) {
+      if (!d.selected) this.logEvent("check", d.reason.slice(0, 240));
+    }
+    // Whose failures these are, when that could be established: the audit has
+    // to be able to tell a suite the run broke from one it was handed broken.
+    if (attribution?.known === true && attribution.existing.length > 0) {
+      const names = attribution.existing.slice(0, 5).join("; ");
+      const more =
+        attribution.existing.length > 5 ? ` (+${attribution.existing.length - 5} more)` : "";
+      this.logEvent(
+        "check",
+        `${attribution.existing.length} failing test${attribution.existing.length === 1 ? " was" : "s were"} ` +
+          `already failing before this run: ${names}${more}`.slice(0, 400) +
+          (attribution.introduced.length > 0
+            ? ` — ${attribution.introduced.length} new since it began`
+            : " — none are new"),
       );
     }
     this.touch();
@@ -1964,14 +2057,17 @@ export class TaskStateStore {
         // ALWAYS shows why — after a session that wrote files, "nothing
         // runnable detected" is a red flag (static files where an application
         // was asked for), and hiding it is how mocks get presented as apps.
+        // "inconclusive" always shows why too: the next turn has to be able to
+        // tell a check that was killed from a check that went red.
         const rep =
           s.verification.lastReport &&
           (s.verification.status === "unavailable" ||
+            s.verification.status === "inconclusive" ||
             (detail >= 2 && s.verification.status === "failed"))
             ? ` — ${s.verification.lastReport.split("\n")[0].slice(0, 160)}`
             : "";
         lines.push(
-          `Verification: ${s.verification.status}` +
+          `Verification: ${verificationWords(s.verification.status)}` +
             (s.verification.attempts > 0 ? ` (attempt ${s.verification.attempts})` : "") +
             rep,
         );
@@ -2018,7 +2114,7 @@ export class TaskStateStore {
       lines.push(`Files touched: ${s.filesWritten.slice(-10).join(", ")}`);
     }
     if (s.verification.status !== "none") {
-      lines.push(`Verification: ${s.verification.status}`);
+      lines.push(`Verification: ${verificationWords(s.verification.status)}`);
     }
     lines.push(
       open.length > 0
@@ -2135,7 +2231,7 @@ export class TaskStateStore {
       lines.push(
         "",
         "## Verification",
-        `${s.verification.status}` +
+        `${verificationWords(s.verification.status)}` +
           (s.verification.attempts > 0 ? ` (attempt ${s.verification.attempts})` : "") +
           (s.verification.lastReport ? ` — ${s.verification.lastReport.split("\n")[0]}` : ""),
       );

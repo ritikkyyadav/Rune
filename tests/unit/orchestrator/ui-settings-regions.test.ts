@@ -164,6 +164,7 @@ function frame(columns: number, rows: number, over: Record<string, unknown> = {}
     keysInBand: FRAME_METHODS.keysInBand,
     setupInBand: FRAME_METHODS.setupInBand,
     panesNow: FRAME_METHODS.panesNow,
+    agentFocus: FRAME_METHODS.agentFocus,
     paneRows: FRAME_METHODS.paneRows,
     panelBlock: FRAME_METHODS.panelBlock,
     bandComposer: FRAME_METHODS.bandComposer,

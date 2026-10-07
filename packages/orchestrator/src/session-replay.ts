@@ -42,6 +42,21 @@ interface CompactionPayload {
   instructions?: string;
 }
 
+/**
+ * What a resumed run is told about a call that has no result on the log.
+ *
+ * Exactly what is known and no more: the previous run ended before the tool
+ * returned, so whether it ran is not on record. The model is asked to look
+ * before it repeats, because only it can tell a read from a push.
+ */
+export function unansweredCall(toolName: string): string {
+  return (
+    `No result was recorded: the previous Rune run ended before ${toolName || "this tool"} returned. ` +
+    "It may not have run, or it may have run in part or in full. Before repeating it, check " +
+    "the state it would have changed; repeat it only if that shows it did not happen."
+  );
+}
+
 export function eventsToMessages(
   events: Array<{ seq: number; event: SessionEvent }>,
   opts?: { dropLegacyToolProtocol?: boolean },
@@ -49,10 +64,17 @@ export function eventsToMessages(
   const messages: Message[] = [];
   const pendingToolCalls = new Map<string, string>();
 
-  // Historical runs could terminate after persisting an assistant tool_use
-  // but before persisting its result (the loop detector was one such path).
-  // Strict providers reject that transcript forever on resume. Close those
-  // pairs in the replayed view; the append-only audit log remains untouched.
+  // A run can end after persisting an assistant tool_use and before persisting
+  // its result: the loop detector stopping it was one such path, and a process
+  // killed INSIDE the tool is the other. Strict providers reject that
+  // transcript forever on resume. Close those pairs in the replayed view; the
+  // append-only audit log remains untouched.
+  //
+  // What the closing result says is all the log knows: no result was recorded.
+  // It used to say "Not executed … Re-run it", which is false for the second
+  // path — a command that was killed mid-flight has run, in part or in full —
+  // and told the model to repeat it. Repeating a push, a publish, a migration
+  // or an append is not a retry.
   const closePendingToolCalls = () => {
     if (pendingToolCalls.size === 0) return;
     messages.push({
@@ -60,9 +82,7 @@ export function eventsToMessages(
       content: [...pendingToolCalls].map(([callId, toolName]): ContentBlock => ({
         type: "tool_result",
         toolCallId: callId,
-        toolResultContent:
-          `Not executed: the previous Rune run ended before ${toolName || "this tool"} returned. ` +
-          "Re-run it if the result is still needed.",
+        toolResultContent: unansweredCall(toolName),
         isError: true,
       })),
     });

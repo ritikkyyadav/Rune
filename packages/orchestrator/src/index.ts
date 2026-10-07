@@ -183,6 +183,14 @@ export {
 
 // ─── Session Replay ───
 export { resumeFromCheckpoint } from "./session-replay";
+// A delegated child, read back from its parent's log (Engine.listDelegations,
+// Engine.getDelegationTranscript).
+export {
+  delegationEntries,
+  listStoredDelegations,
+  type DelegationEntry,
+  type StoredDelegation,
+} from "./delegation-replay";
 
 // ── Orchestration primitives ──
 //

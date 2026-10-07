@@ -23,6 +23,7 @@ import {
   type HeadlessResult,
 } from "../../../packages/orchestrator/src/headless";
 import type { Engine, PermissionPrompt } from "../../../packages/orchestrator/src/engine";
+import type { CompletionVerdict } from "@rune/protocol";
 
 /** An Engine stand-in that replays a fixed event stream. */
 function fakeEngine(events: unknown[], throwAfter?: Error): Engine {
@@ -176,6 +177,144 @@ describe("exit codes", () => {
     // cleanly and ok is true. Nothing was created. A caller reading only the
     // exit code would have recorded a success.
     expect(headlessExitCode({ ...base, ok: true, permissionsDenied: 1 })).toBe(
+      HEADLESS_EXIT.needsPermission,
+    );
+  });
+});
+
+describe("a verdict makes a finished run a failed one only where a promise was made about a change", () => {
+  // The first version of this rule failed every `partial` and `unmet` run. A
+  // plain "hello" ends `unmet` ("no criteria stated") by construction, and so
+  // does a fresh install's first prompt and a pull-request review — all three
+  // started exiting 1 (2026-10-06). The rule is about a promise: criteria the
+  // run was held to, and a change they were about.
+  const own = (text: string) => ({ text, rung: null, status: "unassessed" as const });
+  const WROTE = {
+    type: "tool_call_end",
+    args: { path: "src/a.ts", content: "x" },
+    output: { toolName: "write_file", success: true, result: "ok" },
+  };
+  const ended = (verdict: CompletionVerdict, ...before: unknown[]) =>
+    runHeadless(
+      fakeEngine([
+        { type: "text_delta", text: "Implemented the change." },
+        ...before,
+        { type: "turn_complete", stopReason: "end_turn", totalTurns: 2, verdict },
+      ]),
+      "s",
+      "fix the bug",
+    );
+  const unmet = (criteria: CompletionVerdict["criteria"]): CompletionVerdict => ({
+    kind: "unmet",
+    criteria,
+    missing: criteria.map((c) => c.text),
+  });
+  const partial = (criteria: CompletionVerdict["criteria"]): CompletionVerdict => ({
+    kind: "partial",
+    criteria,
+    gaps: [{ criterion: "tests", why: "not run" }],
+  });
+  const failedEverywhere = (result: Awaited<ReturnType<typeof runHeadless>>, kind: string) => {
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe(
+      `The task is ${kind}; the completion criteria were not all satisfied.`,
+    );
+    expect(result.text).toContain("Implemented the change.");
+    expect(headlessExitCode(result)).toBe(HEADLESS_EXIT.failed);
+    expect(JSON.parse(headlessEnvelope(result)).ok).toBe(false);
+    // An embedder that still supplies execution-only `ok` cannot override it.
+    expect(headlessExitCode({ ...result, ok: true })).toBe(HEADLESS_EXIT.failed);
+    expect(JSON.parse(headlessEnvelope({ ...result, ok: true })).ok).toBe(false);
+    expect(JSON.parse(headlessEnvelope({ ...result, ok: true, error: undefined })).error).toContain(
+      kind,
+    );
+  };
+  const succeeded = (result: Awaited<ReturnType<typeof runHeadless>>) => {
+    expect(result.ok).toBe(true);
+    expect(result.error).toBeUndefined();
+    expect(headlessExitCode(result)).toBe(HEADLESS_EXIT.ok);
+    const envelope = JSON.parse(headlessEnvelope(result));
+    expect(envelope.ok).toBe(true);
+    expect(envelope.error).toBeUndefined();
+  };
+
+  test("a change held to the run's own criteria, and not shown to meet them, is unsuccessful on every surface", async () => {
+    const criteria = [own("the parser keeps the lines that follow an unterminated list")];
+    failedEverywhere(await ended(unmet(criteria), WROTE), "unmet");
+    failedEverywhere(await ended(partial(criteria), WROTE), "partial");
+  });
+
+  test("no criteria were stated: a greeting, a first prompt, a bare reply — judged by whether it ran", async () => {
+    const said: CompletionVerdict = {
+      kind: "unmet",
+      criteria: [],
+      missing: ["no criteria stated"],
+    };
+    succeeded(await ended(said));
+    // Even when it wrote: nothing was promised about what it wrote.
+    succeeded(await ended(said, WROTE));
+    succeeded(await ended({ kind: "partial", criteria: [], gaps: [] }, WROTE));
+  });
+
+  test("only the run's own read-back and nothing changed: an answer, a review, a plan", async () => {
+    // Its criteria describe an answer, there is nothing to run, and `partial`
+    // is the best such a run can reach.
+    const criteria = [own("every finding names a file and a line")];
+    succeeded(await ended(partial(criteria)));
+    succeeded(await ended(unmet(criteria)));
+    // A source that is not written down is the read-back's, as it always was.
+    succeeded(await ended(partial([{ text: "an older verdict's criterion", rung: null }])));
+  });
+
+  test("a criterion from outside the run is held whether or not anything changed", async () => {
+    // Asked to build something, held to someone else's check, and changed nothing.
+    for (const source of ["evaluator", "user"] as const) {
+      const criteria = [{ ...own("the build exits 0"), source }];
+      failedEverywhere(await ended(unmet(criteria)), "unmet");
+      failedEverywhere(await ended(partial(criteria)), "partial");
+    }
+    // One outside criterion among the run's own is enough.
+    const mixed = [
+      own("a note is written"),
+      { ...own("the build exits 0"), source: "evaluator" as const },
+    ];
+    failedEverywhere(await ended(partial(mixed)), "partial");
+  });
+
+  test("a failed tool call changed nothing, so it is not a change the criteria were about", async () => {
+    const refused = { ...WROTE, output: { ...WROTE.output, success: false } };
+    succeeded(await ended(unmet([own("the file is written")]), refused));
+  });
+
+  test.each([
+    { kind: "met", criteria: [] },
+    { kind: "met", criteria: [{ text: "the tests pass", rung: "verified", status: "satisfied" }] },
+    { kind: "none", criteria: [], reason: "a conversational answer" },
+  ] satisfies CompletionVerdict[])(
+    "$kind remains successful, with a change or without",
+    async (verdict) => {
+      succeeded(await ended(verdict));
+      succeeded(await ended(verdict, WROTE));
+    },
+  );
+
+  test("a terminal failure retains its cause even with an unmet verdict", async () => {
+    const result = await runHeadless(
+      fakeEngine([
+        { type: "error", error: "provider disconnected", recoverable: false },
+        WROTE,
+        {
+          type: "turn_complete",
+          stopReason: "provider_lost",
+          totalTurns: 2,
+          verdict: unmet([own("the tests pass")]),
+        },
+      ]),
+      "s",
+      "fix the bug",
+    );
+    expect(result.error).toBe("provider disconnected");
+    expect(headlessExitCode({ ...result, permissionsDenied: 1 })).toBe(
       HEADLESS_EXIT.needsPermission,
     );
   });

@@ -31,7 +31,6 @@ import type { LlmGateway } from "../../../packages/llm-gateway/src/gateway";
 import {
   fleetLedger,
   renderAgentsPanel,
-  renderAgentsStrip,
   initialsFor,
   resolveName,
   chooseRungs,
@@ -51,8 +50,8 @@ function harness() {
     /** The right column, as the frame would draw it. */
     panel: (rows = 30, width = 38, focused = false, now = Date.now()) =>
       stripAnsi(renderAgentsPanel(fleetLedger.view(focused, now), width, rows, now).join("\n")),
-    strip: (width = 76, focused = false) =>
-      stripAnsi(renderAgentsStrip(fleetLedger.view(focused), width)),
+    /** The row above the composer: the rung, with the members on it. */
+    head: () => stripAnsi(turn.liveLines()[0] ?? ""),
     card: (name: string) => fleetLedger.all().find((c) => c.name === name),
     output: () => stripAnsi(commits.join("\n")),
     /** What the 125ms tick would paint right now. */
@@ -115,16 +114,15 @@ describe("the fleet panel — a row per sub-agent, not a count", () => {
     expect(row("map the deploy surface")).toContain("grep backend");
     expect(row("find the auth store")).toContain("read src/auth.ts");
     expect(row("survey the test suite")).not.toContain("grep backend");
-    // The summary line -- the rung's ONE row -- counts them and no longer
-    // speaks for them; the members' rows follow it.
-    // `delegating 3 sub-agents - running`, not `3 sub-agents running`: the
-    // working indicator leads with a whole phrase naming the STATE, and the
-    // count is its subject (founder, 2026-09-15; ui/working.ts). Same two
-    // facts, in the order a sentence puts them -- in Rune's lower-case strip
-    // voice, not a borrowed capitalised gerund.
-    expect(rung).toContain("delegating 3 sub-agents");
-    expect(rung).toContain("running");
-    expect(rung.split("\n")[0]).toContain("delegating 3 sub-agents");
+    // The summary line -- the rung's ONE row -- no longer speaks for them and
+    // no longer counts them either: each member is a block on it, after the
+    // glyph they all strike (founder, 2026-10-02). The members' rows follow.
+    // It said `delegating 3 sub-agents` before, and three blocks beside that
+    // phrase would be the same fact twice.
+    const head = rung.split("\n")[0]!;
+    expect(head.match(/\[[^\]]+\]/g)).toHaveLength(3);
+    expect(head).not.toContain("delegating 3 sub-agents");
+    expect(head).toMatch(/^ {2}[▁▂▃▄▅▆▇█]{12} /);
     expect(rung.split("\n")[0]).not.toContain("grep backend");
     setTermWidthOverride(undefined as unknown as number);
   });
@@ -161,9 +159,17 @@ describe("the fleet panel — a row per sub-agent, not a count", () => {
     expect(row("map the deploy surface")).not.toContain("read src/deploy.ts");
     expect(row("find the auth store")).not.toContain("done");
     // And the summary owns up to it rather than saying "2 running" for another
-    // four minutes, which is what every tool_call_end landing together meant.
+    // four minutes, which is what every tool_call_end landing together meant:
+    // the member's own block carries the tick, and the other one does not.
     await sleep(DWELL + 50);
-    expect(h.rung()).toContain("1 back");
+    const blocks =
+      h
+        .rung()
+        .split("\n")[0]!
+        .match(/\[[^\]]+\]/g) ?? [];
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0]).toContain("✓");
+    expect(blocks[1]).not.toContain("✓");
     setTermWidthOverride(undefined as unknown as number);
   });
 
@@ -223,7 +229,13 @@ describe("the fleet panel — a row per sub-agent, not a count", () => {
     expect(rung).toContain("scout number 5");
     expect(rung).not.toContain("scout number 6");
     expect(rung).toContain("+3 more");
-    expect(rung).toContain("delegating 9 sub-agents");
+    // The head names as many as it has room for and counts the rest, so the
+    // whole fan-out is still accounted for on one row: blocks plus `+N` is 9.
+    const head = rung.split("\n")[0]!;
+    const named = (head.match(/\[[^\]]+\]/g) ?? []).length;
+    const owed = Number(/\+(\d+)$/.exec(head)?.[1] ?? 0);
+    expect(named).toBeGreaterThanOrEqual(3);
+    expect(named + owed).toBe(9);
     setTermWidthOverride(undefined as unknown as number);
   });
 
@@ -694,23 +706,108 @@ describe("what the panel counts", () => {
   });
 });
 
-describe("the collapsed strip, below 100 columns", () => {
-  it("names the members it has room for instead of printing a count", () => {
-    setTermWidthOverride(80);
+describe("the members on the rung", () => {
+  // The collapsed strip used to REPLACE the rung whenever a member existed,
+  // which hid the glyph for exactly as long as the most was happening. The
+  // members are blocks on the rung now, after its own words.
+  it("keeps the glyph and names each member in its own block", () => {
+    setTermWidthOverride(100);
     const h = harness();
     dispatch(h.turn, "c1", { name: "planner", label: "map the surface" });
     dispatch(h.turn, "c2", { name: "builder", label: "build the page" }, "worker");
     for (const id of ["c1", "c2"]) h.turn.onEvent(started(id));
     h.turn.onEvent(settled("c2"));
-    const strip = h.strip(76);
-    expect(strip).toContain("planner");
-    expect(strip).toContain("builder");
-    expect(strip).toContain("ctrl+f agents");
-    // One row, always: the strip exists because the column is not worth its
-    // cells at this width, not so it can become two.
-    expect(strip.split("\n")).toHaveLength(1);
+    const head = h.head();
+    // The glyph is still the first thing on the row.
+    expect(head).toMatch(/^ {2}[▁▂▃▄▅▆▇█]{12} /);
+    expect(head).toContain("[planner]");
+    expect(head).toContain("[builder ✓]");
+    // The blocks are the count: the row does not also say how many.
+    expect(head).not.toContain("delegating 2");
+    expect(head).not.toMatch(/\d+ running/);
+    // One row, always.
+    expect(head.split("\n")).toHaveLength(1);
     setTermWidthOverride(undefined as unknown as number);
   });
+
+  it("keeps a single member's own label beside its block", async () => {
+    setTermWidthOverride(110);
+    const h = harness();
+    dispatch(h.turn, "c1", { name: "scout", description: "find the auth store" });
+    await new Promise((resolve) => setTimeout(resolve, 760));
+    const head = h.head();
+    expect(head).toContain("[scout]");
+    expect(head).toContain("scouting");
+    setTermWidthOverride(undefined as unknown as number);
+  });
+});
+
+describe("one glyph for the whole fleet", () => {
+  // "both those agents' work should be combined and then one pulse should
+  // produce animations ... one universal glyph which would showcase the full
+  // work." The mark is struck by what each member actually produced.
+  const says = (callId: string, event: Record<string, unknown>) => ({
+    type: "tool_progress",
+    callId,
+    note: "",
+    child: { agentId: callId, event },
+  });
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  const mark = (head: string) => head.trim().slice(0, 12);
+  const peak = (m: string) => Math.max(...[...m].map((cell) => "▁▂▃▄▅▆▇█".indexOf(cell)));
+
+  /** Dispatch members, let the strokes their calls opening made fall away,
+   *  then run `each` once a frame and report the tallest the mark got. */
+  async function tallest(members: string[], each: (h: ReturnType<typeof harness>) => void) {
+    setTermWidthOverride(110);
+    const h = harness();
+    members.forEach((name, i) => dispatch(h.turn, `c${i}`, { name, label: `${name} it` }));
+    members.forEach((_, i) => h.turn.onEvent(started(`c${i}`)));
+    // Bookkeeping keeps the turn from reading as silent (which would start
+    // the sweep) without striking the mark -- the second test below is that
+    // claim on its own.
+    for (let f = 0; f < 18; f++) {
+      h.turn.onEvent(says("c0", { type: "usage", inputTokens: 1, outputTokens: 1 }));
+      h.head();
+      await sleep(90);
+    }
+    let top = 0;
+    for (let f = 0; f < 20; f++) {
+      each(h);
+      top = Math.max(top, peak(mark(h.head())));
+      await sleep(90);
+    }
+    setTermWidthOverride(undefined as unknown as number);
+    return top;
+  }
+
+  it("is struck by a member's own output", async () => {
+    const writing = await tallest(["planner"], (h) =>
+      h.turn.onEvent(says("c0", { type: "text_delta", text: "x".repeat(24) })),
+    );
+    expect(writing).toBeGreaterThanOrEqual(4);
+  }, 12_000);
+
+  it("is not struck by a member's bookkeeping", async () => {
+    // A usage report is proof the member is alive and is not output from it:
+    // the pulse hears it, the mark does not.
+    const counting = await tallest(["planner"], (h) =>
+      h.turn.onEvent(says("c0", { type: "usage", inputTokens: 900, outputTokens: 40 })),
+    );
+    expect(counting).toBe(0);
+  }, 12_000);
+
+  it("stands taller for three members writing than for one", async () => {
+    const one = await tallest(["planner", "builder", "verifier"], (h) =>
+      h.turn.onEvent(says("c0", { type: "text_delta", text: "x".repeat(8) })),
+    );
+    const three = await tallest(["planner", "builder", "verifier"], (h) => {
+      for (const id of ["c0", "c1", "c2"]) {
+        h.turn.onEvent(says(id, { type: "text_delta", text: "x".repeat(8) }));
+      }
+    });
+    expect(three).toBeGreaterThan(one);
+  }, 20_000);
 });
 
 describe("the card leads with what the member proved", () => {
@@ -846,8 +943,8 @@ describe("the card leads with what the member proved", () => {
     setTermWidthOverride(undefined as unknown as number);
   });
 
-  it("leads the collapsed strip with the newest verdict too", () => {
-    setTermWidthOverride(80);
+  it("keeps the newest verdict on the rung, after the members", () => {
+    setTermWidthOverride(110);
     const h = harness();
     dispatch(h.turn, "c1", { name: "planner", label: "map the surface" });
     dispatch(h.turn, "c2", { name: "verifier", label: "run the checks" });
@@ -861,11 +958,12 @@ describe("the card leads with what the member proved", () => {
         report: "",
       }),
     );
-    const strip = h.strip(76);
-    // The verdict, its owner, and only then who is busy.
-    expect(strip.indexOf("checks pass")).toBeGreaterThanOrEqual(0);
-    expect(strip.indexOf("checks pass")).toBeLessThan(strip.indexOf("2 running"));
-    expect(strip.split("\n")).toHaveLength(1);
+    const head = h.head();
+    // Who is in flight, then the newest thing any of them proved, with its
+    // owner's name.
+    expect(head).toContain("[planner] [verifier]");
+    expect(head.indexOf("verifier checks pass")).toBeGreaterThan(head.indexOf("[verifier]"));
+    expect(head.split("\n")).toHaveLength(1);
     setTermWidthOverride(undefined as unknown as number);
   });
 });

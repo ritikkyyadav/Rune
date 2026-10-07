@@ -36,7 +36,8 @@ import { loopPromptPreview } from "../../loop-mode";
 import { text, muted, faint, info, ok, warn, danger } from "./theme";
 import { glyph, TERMINAL_GLYPH_MODE } from "./glyphs";
 import { rowsCount, SCROLL_STEP } from "./tui-frame";
-import { fleetLedger } from "./agents-panel";
+import { agentKeyAction, fleetLedger, type AgentCard } from "./agents-panel";
+import { fillFromRecord } from "./child-transcript";
 import { ledgerRows, maskLive, savedActiveRows, type StepReceipt } from "../../first-run";
 /** The rung, read once. `ledgerRows` takes it as an argument because
  * first-run.ts is engine-side and never learns what a terminal can draw. */
@@ -448,9 +449,13 @@ export const INPUT_METHODS = {
     // the same thing in each: a fan-out does not stop being reviewable because
     // the master happens to be mid-turn. Every key it does not claim falls
     // through to the mode below, so typing is never swallowed.
-    if ((this.mode === "input" || this.mode === "turn") && this.focus === "panel") {
-      if (this.panelKey(key)) return;
-    }
+    //
+    // ALL of them go through here, including the ring's own (`ctrl+f`, `ctrl+w`,
+    // `esc`). Those used to be reached only through `inputKey`, and `turnKey`
+    // is a separate chain that never got there -- so for the whole of a running
+    // turn, the only time a sub-agent is live, `ctrl+f` was unbound and `esc`
+    // on the panel interrupted the run.
+    if ((this.mode === "input" || this.mode === "turn") && this.agentsKey(key)) return;
     switch (this.mode) {
       case "input":
         this.inputKey(key);
@@ -494,6 +499,11 @@ export const INPUT_METHODS = {
   /** Land a finished paste: small single-line pastes drop in inline; anything multi-line or long
    *  collapses to a chip so the composer stays a clean single line (see `pastes`). */
   endPaste(this: Tui, content: string): void {
+    // A paste is typing: it lands in the field, and the keys go back with it.
+    if ((this.mode === "input" || this.mode === "turn") && this.agentFocus() === "row") {
+      this.focus = "composer";
+      this.refreshRung();
+    }
     // Key/URL editor is a single-line field -- always inline, newlines stripped by insertActive.
     if (this.mode === "keys" || this.mode === "setup") {
       this.insertActive(content);
@@ -682,70 +692,172 @@ export const INPUT_METHODS = {
   },
 
   /**
-   * The keys, while the agents panel has focus (P4 §2.7).
+   * The agents keys (P4 §2.7, reworked for the one-column frame).
    *
-   * Returns true when it claimed the key. Four bindings and no more:
+   * Returns true when it claimed the key. WHAT a key means is not decided
+   * here: it is `agentKeyAction` (./agents-panel.ts), a pure table from the key
+   * and where the keys currently are to one of eight actions. This applies the
+   * action to the frame, which is the half that needs a terminal.
    *
-   *   ↑↓     move the selection. Held on the LEDGER, by id, so a member
-   *          finishing above the selection does not move it under the eye.
-   *   1–9    jump straight to that agent. Digits already mean "select" in
-   *          every other Rune list (the picker, the permission card, the held
-   *          panel), so this is the existing idiom rather than a new one --
-   *          and it is what the founder's `shift+N` becomes, because a
-   *          terminal never delivers shift+3 as anything but `#` (§2.7).
-   *   enter  open that agent's live transcript in the workspace split. The
-   *          buffer is handed over BY REFERENCE, so a pane opened mid-run
-   *          keeps filling as the child reports rather than freezing at the
-   *          moment you looked.
-   *   c      clear the finished section.
+   *   on the row     left/right move the selection, enter opens its transcript
+   *   on the cards   up/down move, 1-9 jump, enter opens, c clears the finished
+   *   in a transcript  left/right switch to the neighbouring one
+   *   anywhere       ctrl+f the cards, esc one step back, ctrl+w closes a pane
    *
-   * `esc`, `ctrl+f` and `ctrl+w` are deliberately NOT here: they are the ring
-   * and they must behave identically from every region, which is what the
-   * fall-through below gives them.
+   * The selection is held on the LEDGER, by id, so a member finishing above it
+   * does not move it under the eye. Digits already mean "select" in every other
+   * Rune list, which is what the founder's `shift+N` becomes: a terminal never
+   * delivers shift+3 as anything but `#`.
    */
-  panelKey(this: Tui, key: Key): boolean {
-    const view = fleetLedger.view(true);
-    const any = view.running.length + view.finished.length > 0;
-    if (key.type === "up" || key.type === "down") {
-      if (!any) return false;
-      fleetLedger.move(key.type === "up" ? -1 : 1);
-      this.scheduleDraw();
+  agentsKey(this: Tui, key: Key): boolean {
+    // --inline has no workspace to open a transcript in and no rung to select
+    // on: the composer trails the terminal's own scrollback.
+    if (this.inline) return false;
+    // The pane closes from anywhere, including with the composer focused --
+    // otherwise closing it would need two keys.
+    if (key.type === "ctrl" && key.name === "w" && this.childPane) {
+      this.closeChildPane();
+      this.refreshRung();
       return true;
     }
-    if (key.type === "char" && /^[1-9]$/.test(key.value)) {
-      if (!fleetLedger.selectIndex(Number(key.value))) return false;
-      this.scheduleDraw();
-      return true;
-    }
-    if (key.type === "char" && key.value === "c") {
-      // Nothing to clear is not a key press to swallow: `c` falls through and
-      // types a `c`, which is what a composer-bound user expects.
-      if (view.finished.length === 0) return false;
-      fleetLedger.clearFinished();
-      if (this.childPane && !fleetLedger.get(this.childPane.id)) this.closeChildPane();
-      this.scheduleDraw();
-      return true;
-    }
-    if (key.type === "enter") {
-      const id = view.selectedId;
-      const card = id ? fleetLedger.get(id) : undefined;
-      if (!card) return false;
-      // Already open on this one: enter closes it. A key that only ever opens
-      // leaves the reader hunting for the one that undoes it.
-      if (this.childPane?.id === card.id) {
-        fleetLedger.detachPane();
-        this.closeChildPane();
-        this.scheduleDraw();
+    // `esc` from ANY focus that is not the composer is one step back. The
+    // table below covers the agents; this covers the one focus that is not
+    // theirs -- the workspace, in the four-region frame's ring -- where `esc`
+    // mid-turn would otherwise reach the turn and interrupt it.
+    if (key.type === "esc" && this.focus !== "composer" && !this.panelOverlay) {
+      if (this.agentFocus() === "composer") {
+        this.releaseFocus();
+        this.refreshRung();
         return true;
       }
-      const pane = { id: card.id, name: card.name, lines: fleetLedger.buffer(card.id) };
-      fleetLedger.attachPane(pane);
-      fleetLedger.refreshPane();
-      this.openChildPane(pane);
-      this.scheduleDraw();
-      return true;
     }
-    return false;
+    const view = fleetLedger.view(true);
+    const focus = this.agentFocus();
+    const action = agentKeyAction(key, {
+      focus,
+      members: view.running.length + view.finished.length,
+      empty: this.input.length === 0,
+      streaming: this.mode === "turn",
+    });
+    switch (action.kind) {
+      case "none":
+        // Typing takes the keys back. The row claims no printable key, so the
+        // character still lands in the field below; what changes is that the
+        // NEXT enter sends the message instead of opening a transcript.
+        if (
+          focus === "row" &&
+          (key.type === "char" || key.type === "backspace" || key.type === "delete")
+        ) {
+          this.focus = "composer";
+          this.refreshRung();
+        }
+        return false;
+
+      case "stay":
+        return true;
+
+      case "focus":
+        this.focus = "panel";
+        this.panelOverlay = false;
+        this.refreshRung();
+        return true;
+
+      case "cards":
+        this.cycleFocus();
+        this.refreshRung();
+        return true;
+
+      case "back":
+        this.releaseFocus();
+        this.refreshRung();
+        return true;
+
+      case "move":
+        fleetLedger.move(action.delta);
+        // Inside a transcript the arrows turn the page to the neighbour's: the
+        // selection and what is open are the same thing there.
+        if (focus === "view") this.openAgent(fleetLedger.selectedId());
+        this.refreshRung();
+        return true;
+
+      case "jump":
+        if (!fleetLedger.selectIndex(action.ordinal)) return false;
+        this.refreshRung();
+        return true;
+
+      case "clear":
+        // Nothing to clear is not a key press to swallow: `c` falls through and
+        // types a `c`, which is what a composer-bound user expects.
+        if (view.finished.length === 0) return false;
+        fleetLedger.clearFinished();
+        if (this.childPane && !fleetLedger.get(this.childPane.id)) this.closeChildPane();
+        this.refreshRung();
+        return true;
+
+      case "open": {
+        const id = view.selectedId;
+        if (!id || !fleetLedger.get(id)) return false;
+        // Beside the cards (the four-region frame) enter on the open one
+        // closes it: a key that only ever opens leaves the reader hunting for
+        // the one that undoes it. In one column the cards were covering it, so
+        // the same key uncovers it instead.
+        if (this.childPane?.id === id && !this.panelOverlay) this.closeChildPane();
+        else this.openAgent(id);
+        this.refreshRung();
+        return true;
+      }
+    }
+  },
+
+  /**
+   * Open one agent's transcript in the workspace.
+   *
+   * The rows are handed over BY REFERENCE, so a transcript opened mid-run keeps
+   * filling as the child reports rather than freezing at the moment you
+   * looked. One at a time: opening another replaces it.
+   */
+  openAgent(this: Tui, id: string | null): boolean {
+    const card = id ? fleetLedger.get(id) : undefined;
+    if (!card) return false;
+    this.hydrateAgent(card);
+    const pane = { id: card.id, name: card.name, lines: fleetLedger.buffer(card.id) };
+    fleetLedger.select(card.id);
+    fleetLedger.attachPane(pane);
+    fleetLedger.refreshPane();
+    this.openChildPane(pane);
+    return true;
+  },
+
+  /**
+   * Read a FINISHED agent's transcript back from the session log, when this
+   * process does not hold it.
+   *
+   * Two cases. A card restored from a reopened session never had rows here.
+   * And a long run's live rows are a window: past the ceiling the oldest leave,
+   * so the transcript in memory begins mid-run. Either way the whole
+   * conversation is in the log under the card's `taskId`, and it is drawn by
+   * the same renderers a live transcript is. A running agent is never
+   * replaced: its record is behind its live rows, not ahead of them.
+   */
+  hydrateAgent(this: Tui, card: AgentCard): void {
+    if (!card.retired || !card.taskId) return;
+    const log = fleetLedger.log(card.id);
+    if (!log.empty && log.trimmed === 0) return;
+    let entries: ReturnType<Tui["ctx"]["engine"]["getDelegationTranscript"]> = null;
+    try {
+      entries = this.ctx.engine.getDelegationTranscript(this.ctx.sessionId, card.taskId);
+    } catch {
+      entries = null;
+    }
+    if (entries && entries.length > 0) {
+      fillFromRecord(log, entries);
+      return;
+    }
+    // Said, rather than left as a blank pane: an empty transcript and a missing
+    // record look identical, and they are different facts.
+    if (log.empty) {
+      log.push([`${F.MARK}${faint("no transcript for this agent in the session log")}`]);
+    }
   },
 
   inputKey(this: Tui, key: Key): void {
@@ -844,11 +956,15 @@ export const INPUT_METHODS = {
       // is one key rather than the founder's shift+N, which the parser cannot
       // see: on every terminal Rune supports shift+3 arrives as `#`, and
       // modified keys are dropped before a handler ever runs (keys.ts).
+      //
+      // In the fixed frame both of these are claimed earlier, by `agentsKey`,
+      // in BOTH writing modes -- which is the fix: this method is only ever
+      // reached from `inputKey`, so bound here alone they were dead for the
+      // whole of a running turn. They stay for callers that drive this method
+      // directly.
       case "f":
         this.cycleFocus();
         return;
-      // The child pane closes from anywhere, including while the composer has
-      // focus -- otherwise closing it would need two keys.
       case "w":
         this.closeChildPane();
         return;
@@ -903,7 +1019,9 @@ export const INPUT_METHODS = {
       case "t":
         // The transcript view this promised is `ctrl+f` to the panel, then
         // enter on an agent. Say so rather than promising a later build again.
-        this.print(`  ${faint("Transcript view: ctrl+f to the agents panel, then enter.")}`);
+        this.print(
+          `  ${faint("Transcript view: right arrow on an empty composer selects an agent, enter opens it.")}`,
+        );
         break;
     }
   },

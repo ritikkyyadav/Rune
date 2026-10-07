@@ -14,6 +14,9 @@ describe("reliability policy", () => {
       maxConsecutiveErrors: 3,
       maxStuckNudges: 1,
       maxRateWaits: 2,
+      // The outage deadline joined on 2026-10-04 (T1): the count above bounds
+      // how many times a request is re-sent, this how long that may take.
+      providerDeadlineSecs: 600,
       maxOverflowCompactions: 2,
       maxEmptyCompletionRetries: 3,
       maxTruncationRetries: 2,

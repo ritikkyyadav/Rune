@@ -117,6 +117,14 @@ export interface Evidence {
   /** The parent commit the check was run against, for the receipt. */
   parentCommit?: string;
   /**
+   * For a check the run WROTE and the runtime replayed on the tree the run
+   * started from: the digest of the witness that result is a result of (the
+   * argv and every byte of the test files), and the files themselves. A test
+   * edited afterwards is another witness, and this claim is not about it.
+   */
+  witness?: string;
+  witnessFiles?: string[];
+  /**
    * Why this citation was SET ASIDE: the runtime ran the command and priced
    * it, and then could not see that it speaks to this criterion.
    *

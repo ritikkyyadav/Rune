@@ -1,83 +1,43 @@
 /**
- * The working indicator: Rune's own pulse, given motion.
+ * The working row: what the run is doing, in words.
  *
- * Founder, 2026-09-15 evening: the previous lane "copied Claude Code and built
- * the exact same interface. I don't want that. I wanted that pulse design only,
- * and something very soothing — a smooth animation, the kind of effect Claude
- * Code and Codex both have while they are working — implemented correctly, not
- * copied from some other CLI."
+ * This file pins the WORDS of the row above the composer -- the stage, the
+ * voice, the fact, the clock, how they are fitted to a window -- and that the
+ * renderer reaches each of them from the event that should produce it. The
+ * row's mark, and everything that moves, is ui-waveform.test.ts's.
  *
- * So this file pins the MOTION, not a glyph and not a sentence, because motion
- * is the part that cannot be reviewed by reading the diff. Five claims, and
- * each of them is the kind that rots first:
+ * It used to pin a great deal more, and what it no longer pins is the history
+ * of this row (2026-09-15 to 2026-10-02):
  *
- *   1. the CURVE — a raised cosine over 24 frames, monotone within each
- *      half-breath, symmetric about the crest, and never moving the ramp or
- *      the tint by more than one step in a frame (a two-step jump is a strobe);
- *   2. the RATE — 90ms a frame, at most 12fps, and the repaint tick runs on
- *      the same clock so every computed frame is a frame the screen shows;
- *   3. the SHIMMER — a four-cell window that enters from off the left edge,
- *      travels monotonically to off the right, and then RESTS before the next
- *      pass;
- *   4. the STILLNESS — idle, `done` and `waiting` do not move at all, and
- *      neither does anything under NO_COLOR or on a seven-bit terminal beyond
- *      the height the ramp itself carries;
- *   5. the VOICE — every phrase is lower-case, is Rune's own word, and is
- *      reachable from an event the renderer already reads.
+ *   - `the curve`, `the paint clock`, `the mark`: a one-cell bar breathing on a
+ *     raised cosine. On the rung it moved on a wall clock, so a fast stream
+ *     and a hung call drew the same bar; kept for each sub-agent it was "just
+ *     a deterministic behaviour ... I don't want that in Rune, just that one
+ *     Glyph as the animation" (founder, 2026-10-02). Deleted, with its tests.
+ *   - `the shimmer`: a glow sweeping the phrase. A second thing moving on a row
+ *     meant to be watched for an hour. Deleted, with its tests.
  *
- * What changed from the previous lane's version of this file, deliberately and
- * by name:
- *   - `the cadence` (one colour step per 700ms, shape never changes) is gone:
- *     the shape IS the motion again, and 700ms steps are what made the old
- *     version read as a slideshow rather than as a breath. Replaced by
- *     `the curve` and `the frame rate`.
- *   - `the alphabet` asserted the indicator never emits a block cell. Inverted:
- *     the block ramp is the indicator, and what must never appear now is the
- *     borrowed florette.
- *   - `the phrases` asserted capitalised gerunds (`Thinking`, `Reading x`).
- *     Rewritten to Rune's lower-case strip voice, and `Thinking` is asserted
- *     absent.
- *   - `the clock` is unchanged in substance and kept, plus one new claim: the
- *     clock never shimmers.
+ * What is asserted in their place is their ABSENCE: this module exports
+ * nothing that draws a frame, and the rung takes its mark from the glyph.
  */
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";
 import {
-  BREATH_FRAMES,
   BREATH_MS,
-  BREATH_TINTS,
   FRAME_MS,
-  HALF_BREATH_FRAMES,
   MAX_FPS,
-  REST_INDEX,
   ROW_MAX_COLS,
-  SHIMMER_CELLS,
-  SHIMMER_CYCLE_MS,
-  SHIMMER_MAX_PHRASE,
-  SHIMMER_PAUSE_MS,
-  SHIMMER_SWEEP_MS,
-  breathEase,
-  breathFrame,
-  breathTint,
-  createPaintClock,
   elapsedWord,
   fitPhrase,
   fitSaid,
   isBreathing,
-  paintPhrase,
-  rampGlyph,
-  rampIndex,
-  shimmerEase,
-  shimmerSegments,
-  shimmerWindowAt,
-  tintIndex,
+  stageWord,
+  stagedRow,
   workingKindForTool,
-  workingMark,
   workingRowCells,
   workingPhrase,
-  workingRestGlyph,
-  workingRow,
+  type WorkStage,
   type WorkingKind,
   type WorkingState,
 } from "../../../packages/orchestrator/src/bin/ui/working";
@@ -97,7 +57,11 @@ const voiced = (rung: string, set: readonly string[]): boolean =>
   set.some((line) => rung.includes(address(line, "")));
 
 const RAMP = PULSE_GLYPHS.map((g) => g.utf8);
-const ASCII_RAMP = PULSE_GLYPHS.map((g) => g.ascii);
+/** A one-cell stand-in for the rung's mark. The row's words are this file's
+ *  business; the mark's motion is ui-waveform.test.ts's. */
+const MARK = "▄";
+const row = (state: WorkingState & { stage: WorkStage }, opts?: Parameters<typeof stagedRow>[2]) =>
+  stripAnsi(stagedRow(MARK, state, opts));
 const ALL_KINDS: WorkingKind[] = [
   "working",
   "reading",
@@ -110,97 +74,25 @@ const ALL_KINDS: WorkingKind[] = [
   "done",
 ];
 
-describe("the curve", () => {
-  it("is a raised cosine: 0 at the trough, 1 at the crest, and level at both", () => {
-    expect(breathEase(0)).toBeCloseTo(0, 10);
-    expect(breathEase(HALF_BREATH_FRAMES)).toBeCloseTo(1, 10);
-    expect(breathEase(BREATH_FRAMES)).toBeCloseTo(0, 10);
-    // Level at both ends: the frame either side of the trough and the crest
-    // barely moves, which is the pause the eye reads as breathing rather than
-    // as a shape bouncing off a wall. A linear ramp fails this.
-    expect(breathEase(1) - breathEase(0)).toBeLessThan(0.02);
-    expect(breathEase(HALF_BREATH_FRAMES) - breathEase(HALF_BREATH_FRAMES - 1)).toBeLessThan(0.02);
-    // ...and genuinely fast in the middle, or it is not eased, it is stalled.
-    const mid = HALF_BREATH_FRAMES / 2;
-    expect(breathEase(mid + 1) - breathEase(mid)).toBeGreaterThan(0.05);
-  });
-
-  it("rises monotonically through a half-breath and falls back monotonically", () => {
-    for (let f = 1; f <= HALF_BREATH_FRAMES; f++) {
-      expect(rampIndex(f), `up ${f}`).toBeGreaterThanOrEqual(rampIndex(f - 1));
-      expect(tintIndex(f), `tint up ${f}`).toBeGreaterThanOrEqual(tintIndex(f - 1));
-    }
-    for (let f = HALF_BREATH_FRAMES + 1; f <= BREATH_FRAMES; f++) {
-      expect(rampIndex(f), `down ${f}`).toBeLessThanOrEqual(rampIndex(f - 1));
-      expect(tintIndex(f), `tint down ${f}`).toBeLessThanOrEqual(tintIndex(f - 1));
-    }
-    // The whole ramp is used: trough to crest, nothing clipped off either end.
-    expect(rampIndex(0)).toBe(0);
-    expect(rampIndex(HALF_BREATH_FRAMES)).toBe(PULSE_GLYPHS.length - 1);
-    expect(tintIndex(0)).toBe(0);
-    expect(tintIndex(HALF_BREATH_FRAMES)).toBe(BREATH_TINTS.length - 1);
-    expect(breathTint(0)).toBe("dim");
-    expect(breathTint(HALF_BREATH_FRAMES)).toBe("accent");
-  });
-
-  it("is symmetric: the way down is the way up, reversed", () => {
-    for (let f = 0; f <= HALF_BREATH_FRAMES; f++) {
-      expect(rampIndex(BREATH_FRAMES - f), `mirror ${f}`).toBe(rampIndex(f));
-      expect(tintIndex(BREATH_FRAMES - f), `tint mirror ${f}`).toBe(tintIndex(f));
-    }
-  });
-
-  it("never steps more than one level, in height OR in colour", () => {
-    // This is the strobe test, and it is the reason the curve is a raised
-    // cosine rather than anything steeper: the fastest the curve moves is
-    // pi/24 of its range per frame, so seven intervals of ramp move by at most
-    // 0.92 and three of tint by at most 0.40, and a rounded value therefore
-    // cannot jump. Asserted over two whole breaths, across the wrap.
-    for (let f = 1; f <= BREATH_FRAMES * 2; f++) {
-      const a = f - 1;
-      const b = f;
-      expect(Math.abs(rampIndex(b) - rampIndex(a)), `ramp ${a}->${b}`).toBeLessThanOrEqual(1);
-      expect(Math.abs(tintIndex(b) - tintIndex(a)), `tint ${a}->${b}`).toBeLessThanOrEqual(1);
-    }
-    // And across the wrap as the renderer actually walks it: frame 23 -> 0.
-    expect(Math.abs(rampIndex(breathFrame(0)) - rampIndex(BREATH_FRAMES - 1))).toBeLessThanOrEqual(
-      1,
-    );
-  });
-
-  it("walks the frames off the turn's own clock, and wraps", () => {
-    expect(breathFrame(0)).toBe(0);
-    expect(breathFrame(FRAME_MS - 1)).toBe(0);
-    expect(breathFrame(FRAME_MS)).toBe(1);
-    expect(breathFrame(FRAME_MS * HALF_BREATH_FRAMES)).toBe(HALF_BREATH_FRAMES);
-    expect(breathFrame(BREATH_MS)).toBe(0);
-    expect(breathFrame(BREATH_MS * 3 + FRAME_MS * 5)).toBe(5);
-    expect(breathFrame(-500)).toBe(0);
-  });
-});
-
 describe("the frame rate", () => {
   it("is 90ms a frame -- 11.1fps, under the 12fps ceiling", () => {
     expect(FRAME_MS).toBe(90);
     expect(1000 / FRAME_MS).toBeLessThanOrEqual(MAX_FPS);
-    // Twenty-four frames a half-breath: a 4.32s breath, fourteen a minute --
-    // a calm person at rest, which is the entire design brief for this curve.
-    // Twelve was twenty-eight a minute, and the founder read it as "too fast,
-    // not soothing, totally jittery" (2026-09-15).
-    expect(HALF_BREATH_FRAMES).toBe(24);
-    expect(BREATH_FRAMES).toBe(48);
+    // The calm period: 4.32s, fourteen to the minute -- a person breathing at
+    // rest. 2.16s was twenty-eight a minute, and the founder read it as "too
+    // fast, not soothing, totally jittery" (2026-09-15). The breath that
+    // number belonged to is gone; the mark's silent sweep and the tab's pill
+    // still keep it (ui-waveform.test.ts, ui-title.test.ts).
     expect(BREATH_MS).toBe(4320);
-    // Twelve to sixteen breaths a minute: 3.75s to 5s.
     expect(BREATH_MS).toBeGreaterThanOrEqual(3750);
     expect(BREATH_MS).toBeLessThanOrEqual(5000);
   });
 
   it("is the same clock the repaint tick runs on", () => {
-    // A repaint slower than the frame clock samples the curve unevenly and
-    // puts back exactly the stepping the easing exists to remove -- which is
-    // what a hard-coded 125ms tick beside a 90ms curve would do. Asserted on
-    // the source because there is no way to observe an interval's period from
-    // inside the interval.
+    // The mark takes one frame of motion per paint, so a tick slower than the
+    // frame is a slower mark -- which is what a hard-coded 125ms tick beside a
+    // 90ms frame would be. Asserted on the source because there is no way to
+    // observe an interval's period from inside the interval.
     const tui = readFileSync(
       join(import.meta.dir, "../../../packages/orchestrator/src/bin/ui/tui.ts"),
       "utf8",
@@ -210,99 +102,42 @@ describe("the frame rate", () => {
   });
 });
 
-describe("the paint clock", () => {
-  /** The ramp a terminal repainting every `periodMs` actually puts on the
-   *  glass, over two whole breaths. */
-  const rendered = (periodMs: number) => {
-    const clock = createPaintClock();
-    const out: number[] = [];
-    for (let t = 0; t < BREATH_MS * 2; t += periodMs)
-      out.push(rampIndex(breathFrame(clock.tick(t))));
-    return out;
-  };
-  const worstStep = (seq: number[]) =>
-    seq.slice(1).reduce((worst, v, i) => Math.max(worst, Math.abs(v - seq[i]!)), 0);
+describe("the mark is not this module's", () => {
+  it("draws nothing that moves: no breath, no clock, no ramp", async () => {
+    // The one-cell breath lived here and was the last animation outside the
+    // glyph. A name that comes back is a breath that came back.
+    // (`BREATH_MS` is a number, the calm period, and stays; what must not
+    // return is a FUNCTION that draws a frame.)
+    const module: Record<string, unknown> =
+      await import("../../../packages/orchestrator/src/bin/ui/working");
+    expect(
+      Object.keys(module).filter(
+        (name) =>
+          typeof module[name] === "function" &&
+          /breath(?!ing)|ramp|tint|paintclock|workingmark|workingrest/i.test(name),
+      ),
+    ).toEqual([]);
+  });
 
-  it("is the wall clock exactly, while the repaint keeps up", () => {
-    // Nothing changes for a terminal that arrives on time: the animation time
-    // IS the elapsed time, frame for frame, over two whole breaths.
-    const clock = createPaintClock();
-    for (let t = 0; t < BREATH_MS * 2; t += FRAME_MS) {
-      expect(clock.tick(t), `at ${t}ms`).toBe(t);
+  it("is the glyph, on the rung and for every sub-agent", () => {
+    // The row a person actually watches is turn.ts's. Its mark is struck by
+    // the turn's own output and by each member's, and keeps its own frame
+    // clock (./waveform.ts). Asserted on the source, like the frame rate.
+    const source = (name: string) =>
+      readFileSync(
+        join(import.meta.dir, `../../../packages/orchestrator/src/bin/ui/${name}`),
+        "utf8",
+      );
+    const turn = source("turn.ts");
+    expect(turn).toContain("new WorkGlyph()");
+    expect(turn).toContain("this.glyph.step(");
+    expect(turn).toContain("this.glyph.feed(");
+    for (const file of ["turn.ts", "tui.ts", "tui-frame.ts", "agents-panel.ts"]) {
+      expect(source(file), file).not.toMatch(/createPaintClock|breathFrame|workingMark|rampAt\(/);
     }
   });
 
-  it("never skips a ramp level, however late the repaint is", () => {
-    // The invariant this module states -- at most one level a frame, because a
-    // jump is a strobe -- used to be a property of the FUNCTION and not of the
-    // SCREEN. Measured on a real pty draining every 200ms, what the child
-    // wrote stepped by at most one and what the glass showed stepped by three,
-    // eleven to thirteen times a breath (verifier pass 3, finding 20).
-    for (const period of [FRAME_MS, 125, 200, 250, 300, 700]) {
-      const seq = rendered(period);
-      expect(worstStep(seq), `${period}ms repaint`).toBeLessThanOrEqual(1);
-      // ...and it is still MOVING: a clock that never advanced would pass the
-      // line above and put a dead bar on the screen.
-      expect(new Set(seq).size, `${period}ms repaint`).toBeGreaterThan(1);
-    }
-    // The tint rides the same eased value, so it cannot skip either.
-    const clock = createPaintClock();
-    const tints: number[] = [];
-    for (let t = 0; t < BREATH_MS * 2; t += 300) tints.push(tintIndex(breathFrame(clock.tick(t))));
-    expect(worstStep(tints)).toBeLessThanOrEqual(1);
-  });
-
-  it("breathes slower rather than faster: one frame a paint, always", () => {
-    // The trade, stated: a terminal that cannot keep up gets a longer breath,
-    // not a shorter one with holes in it. Forty-eight paints to the breath
-    // whatever each paint cost.
-    const clock = createPaintClock();
-    const start = clock.tick(0);
-    let paints = 0;
-    let now = start;
-    while (paints < BREATH_FRAMES * 2) {
-      paints++;
-      now = clock.tick(paints * 300);
-      if (now - start >= BREATH_MS) break;
-    }
-    expect(paints).toBe(BREATH_FRAMES);
-  });
-
-  it("does not double-advance when one frame is drawn twice", () => {
-    // Two surfaces (or a redraw) inside one frame must not move the breath
-    // twice: the advance is keyed on the wall clock's own frame bucket.
-    const clock = createPaintClock();
-    expect(clock.tick(0)).toBe(0);
-    expect(clock.tick(FRAME_MS)).toBe(FRAME_MS);
-    expect(clock.tick(FRAME_MS + 10)).toBe(FRAME_MS);
-    expect(clock.tick(FRAME_MS + 89)).toBe(FRAME_MS);
-    expect(clock.tick(FRAME_MS * 2)).toBe(FRAME_MS * 2);
-  });
-
-  it("adopts a clock that went backwards, because that is a new turn", () => {
-    const clock = createPaintClock();
-    clock.tick(60_000);
-    expect(clock.tick(0)).toBe(0);
-    expect(clock.tick(FRAME_MS)).toBe(FRAME_MS);
-  });
-
-  it("is what the rung's breath is drawn from", () => {
-    // The row a person actually watches is turn.ts's, and it must take its
-    // frame from the paint clock rather than from `state.elapsedMs` -- the
-    // same assertion the frame rate makes against tui.ts, for the same reason:
-    // a repaint's period cannot be observed from inside it.
-    const turn = readFileSync(
-      join(import.meta.dir, "../../../packages/orchestrator/src/bin/ui/turn.ts"),
-      "utf8",
-    );
-    expect(turn).toContain("createPaintClock()");
-    expect(turn).toContain("this.breath.tick(");
-    expect(turn).not.toMatch(/breathFrame\(state\.elapsedMs/);
-  });
-});
-
-describe("the mark", () => {
-  it("is Rune's own ramp and not a borrowed mark", () => {
+  it("is never the borrowed one", () => {
     // The florette is gone from the alphabet entirely, so it cannot come back
     // by a call site typing its name.
     expect(Object.keys(GLYPH_DEFINITIONS)).not.toContain("working");
@@ -310,164 +145,54 @@ describe("the mark", () => {
       Object.values(GLYPH_DEFINITIONS).some((d) => d.utf8 === "✻"),
       "the borrowed florette is still in the alphabet",
     ).toBe(false);
-
-    const seen = new Set<string>();
-    for (let f = 0; f < BREATH_FRAMES; f++) {
-      const cell = workingMark({ kind: "running" }, f, "utf8");
-      expect(visLen(cell)).toBe(1);
-      seen.add(stripAnsi(cell));
-    }
-    // Every cell it emits is a level of the ramp, and it uses ALL of them --
-    // a breath that only touches three levels is a flicker with extra steps.
-    for (const cell of seen) expect(RAMP).toContain(cell);
-    expect(seen.size).toBe(PULSE_GLYPHS.length);
-  });
-
-  it("rests at the mid bar, dim, for anything that is not moving", () => {
-    expect(rampGlyph(REST_INDEX, "utf8")).toBe(RAMP[REST_INDEX]!);
-    expect(workingRestGlyph("utf8")).toBe("▄");
-    // Not the trough: a finished run whose mark had shrunk to an underscore
-    // reads as an error rather than as a rest.
-    expect(REST_INDEX).toBeGreaterThan(0);
-    expect(REST_INDEX).toBeLessThan(PULSE_GLYPHS.length - 1);
   });
 });
 
 describe("the stillness", () => {
-  it("does not move for done or waiting", () => {
-    // `done` is finished and `waiting` is waiting on a person. A mark still
-    // breathing through either would report activity that is not happening --
-    // the exact failure the byte-fed pulse was built to stop.
+  it("says its word and stops for done and waiting", () => {
+    // `done` is finished and `waiting` is waiting on a person. A row still
+    // describing work through either would report activity that is not
+    // happening.
     for (const kind of ["done", "waiting"] as WorkingKind[]) {
       expect(isBreathing(kind), kind).toBe(false);
-      const held = new Set(
-        Array.from({ length: BREATH_FRAMES * 2 }, (_, f) => workingMark({ kind }, f, "utf8")),
-      );
-      expect(held.size, kind).toBe(1);
-      expect(stripAnsi([...held][0]!)).toBe(RAMP[REST_INDEX]!);
-      // ...and the phrase holds still too: no window sweeps a sentence that
-      // is not about work in progress.
-      const phrases = new Set(
-        Array.from({ length: 40 }, (_, i) =>
-          paintPhrase("waiting for you", i * FRAME_MS, { kind, color: true }),
-        ),
-      );
-      expect(phrases.size, `${kind} phrase`).toBe(1);
     }
-  });
-
-  it("moves for every state that is genuinely working", () => {
     for (const kind of ALL_KINDS.filter((k) => k !== "done" && k !== "waiting")) {
       expect(isBreathing(kind), kind).toBe(true);
-      const cells = new Set(
-        Array.from({ length: BREATH_FRAMES }, (_, f) =>
-          stripAnsi(workingMark({ kind }, f, "utf8")),
-        ),
-      );
-      expect(cells.size, kind).toBe(PULSE_GLYPHS.length);
     }
   });
 
-  it("does not move when there is no run: no clock, no frames", () => {
-    // Idle is the caller's case -- no turn, no tick -- but the row must be
-    // safe to draw anyway, and a stateless row draws frame zero forever.
-    const idle = stripAnsi(workingRow({ kind: "working" }));
-    expect(idle).toBe(`${RAMP[0]!} working`);
-    expect(stripAnsi(workingRow({ kind: "working" }))).toBe(idle);
+  it("says its stage and nothing else when there is no clock and nothing in flight", () => {
+    // The opening, before anything has been called or timed.
+    const idle = row({ kind: "working", stage: "start" });
+    expect(idle).toBe(`${MARK} starting`);
+    expect(row({ kind: "working", stage: "start" })).toBe(idle);
   });
 });
 
-describe("the shimmer", () => {
-  const PHRASE = "reading turn.ts"; // 15 cells
-  const frames = (ms: number) => Math.floor(ms / FRAME_MS);
-
-  it("sweeps for two thirds of a breath, rests for the last third, and cycles once a breath", () => {
-    // One clock for the row: the glow crosses the words while the bar rises
-    // and rests while it falls. Unrelated clocks (1.6s + 0.4s against a 2.16s
-    // breath) put the highlight at a different moment of every breath, which
-    // is what "preprogrammed" looks like when you cannot say why.
-    expect(SHIMMER_SWEEP_MS).toBe(2880);
-    expect(SHIMMER_PAUSE_MS).toBe(1440);
-    expect(SHIMMER_CYCLE_MS).toBe(BREATH_MS);
-    expect(SHIMMER_CELLS).toBe(6);
-    expect(SHIMMER_CELLS).toBeGreaterThanOrEqual(3);
-    expect(SHIMMER_CELLS).toBeLessThanOrEqual(6);
-    // Same family as the breath -- half a raised cosine -- so the two motions
-    // on one row are one idea of smooth at two rates.
-    expect(shimmerEase(0)).toBeCloseTo(0, 10);
-    expect(shimmerEase(0.5)).toBeCloseTo(0.5, 10);
-    expect(shimmerEase(1)).toBeCloseTo(1, 10);
-    expect(shimmerEase(0.05)).toBeLessThan(0.05); // slow off the mark
-    expect(shimmerEase(0.95)).toBeGreaterThan(0.95); // slow into the stop
+describe("the words hold still", () => {
+  it("has no sweep left in it: nothing in this module moves a phrase", async () => {
+    const module = await import("../../../packages/orchestrator/src/bin/ui/working");
+    expect(Object.keys(module).filter((name) => /shimmer|paintPhrase/i.test(name))).toEqual([]);
+    const source = readFileSync(
+      join(import.meta.dir, "../../../packages/orchestrator/src/bin/ui/working.ts"),
+      "utf8",
+    );
+    expect(source).not.toMatch(/shimmer/i);
   });
 
-  it("enters from off the left edge and leaves off the right, monotonically", () => {
-    const heads: number[] = [];
-    for (let f = 0; f * FRAME_MS < SHIMMER_SWEEP_MS; f++) {
-      const win = shimmerWindowAt(f * FRAME_MS, PHRASE.length);
-      expect(win, `frame ${f}`).not.toBeNull();
-      heads.push(win!.head);
-      // The clipped span is always inside the phrase and never wider than the
-      // window -- a bright patch that ran off the end would be painting cells
-      // the phrase does not have.
-      expect(win!.start).toBeGreaterThanOrEqual(0);
-      expect(win!.end).toBeLessThanOrEqual(PHRASE.length);
-      expect(win!.end - win!.start).toBeLessThanOrEqual(SHIMMER_CELLS);
-    }
-    expect(heads[0]).toBe(-SHIMMER_CELLS); // fully off the left: it enters
-    expect(heads[heads.length - 1]).toBeGreaterThanOrEqual(PHRASE.length - 1); // and leaves
-    for (let i = 1; i < heads.length; i++) {
-      expect(heads[i]!, `head ${i}`).toBeGreaterThanOrEqual(heads[i - 1]!);
-    }
-    // Left to right, never back: a window that reversed would read as a
-    // scanner rather than as light moving over the words.
-    expect(heads[heads.length - 1]!).toBeGreaterThan(heads[0]!);
-  });
-
-  it("rests, fully quiet, between passes", () => {
-    // Without the rest the window reappears on the left the instant it leaves
-    // on the right, and a loop with no rest in it is a barber's pole.
-    expect(shimmerWindowAt(SHIMMER_SWEEP_MS, PHRASE.length)).toBeNull();
-    expect(shimmerWindowAt(SHIMMER_SWEEP_MS + 200, PHRASE.length)).toBeNull();
-    expect(shimmerWindowAt(SHIMMER_CYCLE_MS - 1, PHRASE.length)).toBeNull();
-    // ...and the next cycle starts the pass again from off the left.
-    expect(shimmerWindowAt(SHIMMER_CYCLE_MS, PHRASE.length)!.head).toBe(-SHIMMER_CELLS);
-    // The whole phrase is quiet during the rest: one segment, unlit.
-    const resting = shimmerSegments(PHRASE, SHIMMER_SWEEP_MS + 100);
-    expect(resting).toEqual([{ text: PHRASE, bright: false }]);
-  });
-
-  it("lights a contiguous run of the phrase and nothing else", () => {
-    // Mid-sweep: exactly one bright segment, and the pieces still spell the
-    // phrase. Asserted on segments rather than on painted bytes because the
-    // suite runs with NO_COLOR, where every frame would be byte-identical.
-    const mid = shimmerSegments(PHRASE, SHIMMER_SWEEP_MS / 2);
-    expect(mid.map((p) => p.text).join("")).toBe(PHRASE);
-    expect(mid.filter((p) => p.bright)).toHaveLength(1);
-    expect(mid.find((p) => p.bright)!.text.length).toBe(SHIMMER_CELLS);
-    // Over a whole sweep every cell of the phrase is lit at some point, and
-    // the phrase is never destroyed by the split.
-    const lit = new Set<number>();
-    for (let f = 0; f * FRAME_MS < SHIMMER_SWEEP_MS; f++) {
-      const win = shimmerWindowAt(f * FRAME_MS, PHRASE.length)!;
-      for (let i = win.start; i < win.end; i++) lit.add(i);
-      expect(
-        shimmerSegments(PHRASE, f * FRAME_MS)
-          .map((p) => p.text)
-          .join(""),
-      ).toBe(PHRASE);
-    }
-    expect(lit.size).toBe(PHRASE.length);
-  });
-
-  it("leaves the clock alone", () => {
-    // A number that moves under the eye is a number you re-read. The clock is
-    // outside the phrase the window sweeps, and it is faint, not lit.
-    const row = workingRow({ kind: "reading", target: "turn.ts", elapsedMs: 40_000 });
-    expect(stripAnsi(row)).toBe(`${RAMP[rampIndex(breathFrame(40_000))]!} reading turn.ts · 40s`);
-    const segments = shimmerSegments("reading turn.ts", 40_000);
-    expect(segments.map((p) => p.text).join("")).toBe("reading turn.ts");
-    expect(segments.some((p) => p.text.includes("40s"))).toBe(false);
+  it("paints the same row for the same state, whenever it is drawn", () => {
+    // The mark is the caller's and is the only thing that moves. Hand the row
+    // the same mark and the same state and it is the same bytes -- there is
+    // no clock in here for a phrase to animate on.
+    const state = {
+      kind: "reading",
+      stage: "understand",
+      target: "turn.ts",
+      elapsedMs: 40_000,
+    } as const;
+    const first = stagedRow(MARK, state);
+    for (let i = 0; i < 20; i++) expect(stagedRow(MARK, state)).toBe(first);
+    expect(stripAnsi(first)).toBe(`${MARK} looking · reading turn.ts · 40s`);
   });
 });
 
@@ -480,35 +205,82 @@ describe("the measure", () => {
   const vis = (row: string) => visLen(stripAnsi(row));
 
   it("fits the row to the terminal it is drawn in", () => {
-    // `workingRow` emitted 215 cells for this state and left every call site
+    // The old row emitted 215 cells for this state and left every call site
     // to clamp it -- and the clamp cuts from the RIGHT, which takes the
     // filename (verifier pass 3, finding 31's reprise).
     expect(PATH_200.length).toBe(200);
+    // The rung's real mark is twelve cells, and the row is fitted around it.
+    const GLYPH = "▁".repeat(12);
     for (const width of [60, 80, 120, 400]) {
-      const row = workingRow({ kind: "reading", target: PATH_200, elapsedMs: 800 }, { width });
-      expect(vis(row), `at ${width} columns`).toBeLessThanOrEqual(Math.min(width, ROW_MAX_COLS));
+      const fitted = stagedRow(
+        GLYPH,
+        { kind: "reading", stage: "understand", target: PATH_200, elapsedMs: 800 },
+        { width },
+      );
+      expect(vis(fitted), `at ${width} columns`).toBeLessThanOrEqual(Math.min(width, ROW_MAX_COLS));
     }
     // A caller-composed phrase (turn.ts's live tool label) is fitted too.
     expect(
       vis(
-        workingRow(
-          { kind: "running", phrase: `Checking with ${"a".repeat(186)}`, elapsedMs: 800 },
+        stagedRow(
+          GLYPH,
+          {
+            kind: "running",
+            stage: "verify",
+            phrase: `Checking with ${"a".repeat(186)}`,
+            elapsedMs: 800,
+          },
           { width: 120 },
         ),
       ),
     ).toBeLessThanOrEqual(120);
+    // And what the caller sets down after the row is paid for inside it.
+    const reserved = stagedRow(
+      GLYPH,
+      { kind: "reading", stage: "understand", target: PATH_200, elapsedMs: 800 },
+      { width: 100, reserve: 20 },
+    );
+    expect(vis(reserved)).toBeLessThanOrEqual(100 - 2 - 20);
+    expect(stripAnsi(reserved).endsWith("· 0s")).toBe(true);
   });
 
   it("keeps the verb and the filename and takes the middle out", () => {
-    const row = stripAnsi(
-      workingRow({ kind: "reading", target: PATH_200, elapsedMs: 800 }, { width: 120 }),
+    const fitted = row(
+      { kind: "reading", stage: "understand", target: PATH_200, elapsedMs: 800 },
+      { width: 120 },
     );
-    expect(row).toContain("reading /Users/someone/project/");
-    expect(row).toContain("a-generated-fixture.ts");
-    expect(row).toContain(glyph("elision"));
+    expect(fitted).toContain("reading /Users/someone/project/");
+    expect(fitted).toContain("a-generated-fixture.ts");
+    expect(fitted).toContain(glyph("elision"));
     // The clock is never the thing that gives way: a duration cut in half is a
     // duration that says nothing.
-    expect(row.endsWith("· 0s")).toBe(true);
+    expect(fitted.endsWith("· 0s")).toBe(true);
+  });
+
+  it("drops the voice whole before it takes the middle out of a fact", () => {
+    const state = {
+      kind: "reading",
+      stage: "understand",
+      phrase: "Reading src/auth/session.ts",
+      elapsedMs: 40_000,
+      voice: "seeing how this fits together",
+    } as const;
+    // Room for both: both.
+    expect(row(state, { width: 120 })).toBe(
+      `${MARK} looking · seeing how this fits together · reading src/auth/session.ts · 40s`,
+    );
+    // Not room for both: the fact, whole, and no voice -- never the voice and
+    // half a file name.
+    expect(row(state, { width: 56 })).toBe(`${MARK} looking · reading src/auth/session.ts · 40s`);
+    // And a voice with no fact beside it is said whole or not at all.
+    const bare = {
+      kind: "working",
+      stage: "act",
+      elapsedMs: 12_000,
+      voice: "making the change",
+    } as const;
+    expect(row(bare, { width: 60 })).toBe(`${MARK} building · making the change · 12s`);
+    expect(row(bare, { width: 28 })).toBe(`${MARK} building · 12s`);
   });
 
   it("keeps the fact when the window is too narrow for the voice as well", () => {
@@ -535,127 +307,90 @@ describe("the measure", () => {
     expect(visLen(fitPhrase("reading some/very/long/path.ts", 12))).toBeLessThanOrEqual(12);
   });
 
-  it("never lets the glow leap a cell, at any length the row can reach", () => {
-    // The sweep crosses `length + SHIMMER_CELLS` cells in a fixed 32 frames,
-    // so the window's step per frame IS the phrase's length. Past the point
-    // where that step exceeds the window's own width the highlight stops being
-    // light over the words and becomes a stencil hopping across them, and the
-    // cells in the gaps are never lit at all.
-    for (let len = 1; len <= SHIMMER_MAX_PHRASE; len++) {
-      let worst = 0;
-      let prev: number | null = null;
-      const lit = new Set<number>();
-      for (let t = 0; t < SHIMMER_SWEEP_MS; t += FRAME_MS) {
-        const win = shimmerWindowAt(t, len);
-        if (!win) continue;
-        if (prev != null) worst = Math.max(worst, Math.abs(win.head - prev));
-        prev = win.head;
-        for (let c = win.start; c < win.end; c++) lit.add(c);
-      }
-      expect(worst, `a ${len}-cell phrase`).toBeLessThanOrEqual(SHIMMER_CELLS);
-      expect(lit.size, `a ${len}-cell phrase`).toBe(len);
-    }
-  });
-
-  it("holds the words inside that bound however wide the terminal is", () => {
+  it("holds the words to a reading column however wide the terminal is", () => {
     // The measure is a reading column, not a window width: a 400-column
-    // terminal does not get a 400-cell sentence with the glow tearing across
-    // it eleven cells a frame.
+    // terminal does not get a 400-cell sentence.
     expect(workingRowCells(400)).toBeLessThanOrEqual(ROW_MAX_COLS);
     for (const width of [120, 200, 400]) {
-      const said = stripAnsi(
-        workingRow({ kind: "reading", target: PATH_200, elapsedMs: 800 }, { width }),
-      ).replace(/^.\s|\s·\s\d+s$/g, "");
-      expect(visLen(said), `at ${width} columns`).toBeLessThanOrEqual(SHIMMER_MAX_PHRASE);
+      const fitted = row(
+        { kind: "reading", stage: "understand", target: PATH_200, elapsedMs: 800 },
+        { width },
+      );
+      expect(visLen(fitted), `at ${width} columns`).toBeLessThanOrEqual(ROW_MAX_COLS);
     }
   });
 });
 
 describe("the fallbacks", () => {
-  it("keeps the motion on a seven-bit terminal, and drops the shimmer", () => {
-    // The ASCII twins are a ramp too -- `_ . , - = + * #` climbs -- so a
-    // terminal with no blocks still sees the bar rise and fall. Colour it has
-    // none of, so the window would be a repaint with nothing to show.
-    const cells = Array.from({ length: BREATH_FRAMES }, (_, f) =>
-      stripAnsi(workingMark({ kind: "running" }, f, "ascii")),
-    );
-    for (const cell of cells) expect(ASCII_RAMP).toContain(cell);
-    expect(new Set(cells).size).toBe(PULSE_GLYPHS.length);
-    const steady = new Set(
-      Array.from({ length: 40 }, (_, i) =>
-        paintPhrase("running checks", i * FRAME_MS, { mode: "ascii", color: true }),
+  it("is seven-bit clean on a seven-bit terminal", () => {
+    const seven = stripAnsi(
+      stagedRow(
+        "_-_",
+        { kind: "running", stage: "verify", target: "checks", elapsedMs: 65_000 },
+        { mode: "ascii" },
       ),
     );
-    expect(steady.size).toBe(1);
-    const row = stripAnsi(
-      workingRow({ kind: "running", target: "checks", elapsedMs: 65_000 }, { mode: "ascii" }),
-    );
-    expect(row).toContain("running checks");
-    expect(row).toContain("1m 05s");
-    expect(row).not.toMatch(/[^\x00-\x7f]/);
-  });
-
-  it("uses the twin on an ambiguous-width terminal, where a block eats a cell", () => {
-    // Same rule `contextBar` follows: the UTF-8 blocks only where the terminal
-    // has told us its cells are one column wide.
-    for (let f = 0; f < BREATH_FRAMES; f++) {
-      expect(ASCII_RAMP).toContain(stripAnsi(workingMark({ kind: "running" }, f, "ambig")));
-    }
-  });
-
-  it("keeps height only under NO_COLOR: the bar moves, the phrase does not", () => {
-    // `color: false` is what a NO_COLOR run looks like from inside this
-    // module. The height still carries the breath -- which is the whole reason
-    // the indicator went back to a ramp -- and the phrase is one steady string,
-    // so the repaint tick is not woken to redraw identical bytes.
-    const heights = new Set(
-      Array.from({ length: BREATH_FRAMES }, (_, f) =>
-        stripAnsi(workingMark({ kind: "running" }, f, "utf8")),
-      ),
-    );
-    expect(heights.size).toBe(PULSE_GLYPHS.length);
-    const steady = new Set(
-      Array.from({ length: 40 }, (_, i) =>
-        paintPhrase("running checks", i * FRAME_MS, { color: false }),
-      ),
-    );
-    expect(steady.size).toBe(1);
-    expect(stripAnsi([...steady][0]!)).toBe("running checks");
+    expect(seven).toContain("running checks");
+    expect(seven).toContain("1m 05s");
+    expect(seven).not.toMatch(/[^\x00-\x7f]/);
   });
 });
 
 describe("the voice", () => {
   it("speaks Rune's lower-case strip voice, and never the borrowed one", () => {
-    const rows = ALL_KINDS.map((kind) =>
-      stripAnsi(workingRow({ kind, target: "turn.ts", elapsedMs: 12_000 })),
-    );
-    for (const row of rows) {
-      expect(row).not.toContain("Thinking");
-      expect(row).not.toContain("✻");
-      // Everything after the mark and its space is lower-case: a capital in a
-      // chrome row is a title, and this row is a sentence.
-      const words = row.slice(2);
-      expect(words, row).toBe(words.toLowerCase());
+    const stages: WorkStage[] = ["start", "understand", "plan", "act", "verify"];
+    for (const kind of ALL_KINDS) {
+      for (const stage of stages) {
+        const said = row({ kind, stage, target: "turn.ts", elapsedMs: 12_000 });
+        expect(said).not.toContain("Thinking");
+        expect(said).not.toContain("✻");
+        // Everything after the mark and its space is lower-case: a capital in
+        // a chrome row is a title, and this row is a sentence.
+        const words = said.slice(2);
+        expect(words, said).toBe(words.toLowerCase());
+      }
     }
   });
 
-  it("reads the way the founder wrote it", () => {
-    const row = (state: WorkingState) => stripAnsi(workingRow(state));
-    const bar = (ms: number) => RAMP[rampIndex(breathFrame(ms))]!;
-    expect(row({ kind: "working", elapsedMs: 12_000 })).toBe(`${bar(12_000)} working · 12s`);
-    expect(row({ kind: "reading", target: "turn.ts", elapsedMs: 40_000 })).toBe(
-      `${bar(40_000)} reading turn.ts · 40s`,
+  it("names the stage in plain words, and steps aside for the four states that are not one", () => {
+    expect(stageWord("start", "working")).toBe("starting");
+    expect(stageWord("understand", "reading")).toBe("looking");
+    expect(stageWord("plan", "working")).toBe("planning");
+    expect(stageWord("act", "editing")).toBe("building");
+    expect(stageWord("verify", "running")).toBe("checking");
+    // Not stages of the work: writing the answer, rewriting its own context,
+    // waiting on a person, finished.
+    for (const stage of ["start", "understand", "plan", "act", "verify"] as WorkStage[]) {
+      expect(stageWord(stage, "answering")).toBe("answering");
+      expect(stageWord(stage, "compacting")).toBe("housekeeping");
+      expect(stageWord(stage, "waiting")).toBe("over to you");
+      expect(stageWord(stage, "done")).toBe("done");
+    }
+  });
+
+  it("reads the way the founder asked: the stage, then what is happening, then how long", () => {
+    // A bare kind is the stage alone -- `building · working` says it twice.
+    expect(row({ kind: "working", stage: "act", elapsedMs: 12_000 })).toBe(
+      `${MARK} building · 12s`,
     );
-    expect(row({ kind: "editing", target: "composer.ts", elapsedMs: 40_000 })).toBe(
-      `${bar(40_000)} editing composer.ts · 40s`,
+    expect(
+      row({ kind: "reading", stage: "understand", target: "turn.ts", elapsedMs: 40_000 }),
+    ).toBe(`${MARK} looking · reading turn.ts · 40s`);
+    expect(row({ kind: "editing", stage: "act", target: "composer.ts", elapsedMs: 40_000 })).toBe(
+      `${MARK} building · editing composer.ts · 40s`,
     );
-    expect(row({ kind: "running", target: "checks", elapsedMs: 65_000 })).toBe(
-      `${bar(65_000)} running checks · 1m 05s`,
+    expect(row({ kind: "running", stage: "verify", target: "checks", elapsedMs: 65_000 })).toBe(
+      `${MARK} checking · running checks · 1m 05s`,
     );
     // The one state that is about the reader, not the machine -- and the one
-    // with no clock, because how long it has been true of YOU is not news.
-    expect(row({ kind: "waiting", elapsedMs: 9_000 })).toBe(`${RAMP[REST_INDEX]!} waiting for you`);
-    expect(row({ kind: "done", elapsedMs: 118_000 })).toBe(`${RAMP[REST_INDEX]!} done · 1m 58s`);
+    // with no clock, because how long it has been true of YOU is not news. A
+    // voice handed to a still state is not said: the word is the sentence.
+    expect(row({ kind: "waiting", stage: "act", elapsedMs: 9_000, voice: "over to you" })).toBe(
+      `${MARK} over to you`,
+    );
+    expect(row({ kind: "done", stage: "verify", elapsedMs: 118_000 })).toBe(
+      `${MARK} done · 1m 58s`,
+    );
   });
 
   it("every phrase is reachable from a real event, and nothing else is", () => {
@@ -739,8 +474,8 @@ describe("the clock", () => {
   });
 
   it("is dropped where there is nothing worth timing", () => {
-    expect(stripAnsi(workingRow({ kind: "working" }))).toBe(`${RAMP[0]!} working`);
-    expect(stripAnsi(workingRow({ kind: "waiting", elapsedMs: 600_000 }))).not.toContain("m ");
+    expect(row({ kind: "working", stage: "start" })).toBe(`${MARK} starting`);
+    expect(row({ kind: "waiting", stage: "act", elapsedMs: 600_000 })).not.toContain("m ");
   });
 });
 
@@ -773,9 +508,10 @@ describe("the rung says what the events say", () => {
     const h = rungHarness();
     expect(h.turn.workingState().kind).toBe("working");
     expect(voiced(h.rung(), OPENING)).toBe(true);
-    // And it opens on Rune's mark, not the borrowed one.
+    // And it opens on Rune's mark, not the borrowed one: the glyph, twelve
+    // cells on one base, and the stage after it.
     expect(h.rung()).not.toContain("✻");
-    expect(RAMP.some((cell) => h.rung().includes(cell))).toBe(true);
+    expect(h.rung()).toMatch(/^ {2}[▁▂▃▄▅▆▇█]{12} starting/);
   });
 
   it("reads, edits, runs and checks -- each from its own tool_call_start", async () => {
@@ -808,9 +544,11 @@ describe("the rung says what the events say", () => {
     expect(h.turn.workingState().kind).toBe("waiting");
     expect(voiced(h.rung(), VOICE.waiting)).toBe(true);
     expect(h.rung()).not.toContain("asking");
-    // ...and the mark holds still at the mid bar while a person is the one
+    // ...and the mark is flat and holds still while a person is the one
     // holding things up.
-    expect(h.rung()).toContain(RAMP[REST_INDEX]!);
+    expect(h.rung()).toContain("▁".repeat(12));
+    await sleep(FRAME_MS * 3);
+    expect(h.rung()).toContain("▁".repeat(12));
   });
 
   it("says compacting only while the harness says it is compacting", async () => {
@@ -855,7 +593,12 @@ describe("the rung says what the events say", () => {
       } as never);
     }
     await sleep(DWELL + 60);
-    expect(h.rung().split("\n")[0]).toContain("delegating 3 sub-agents");
+    // The members themselves, each in its own block -- which is the count, so
+    // the row does not also say `delegating 3 sub-agents`.
+    const head = h.rung().split("\n")[0]!;
+    expect(head.match(/\[[^\]]+\]/g)).toHaveLength(3);
+    expect(head).not.toContain("delegating 3 sub-agents");
+    expect(h.turn.workingState().kind).toBe("delegating");
   });
 
   it("carries the elapsed clock inline, and the stall in words beside it", async () => {
@@ -868,20 +611,38 @@ describe("the rung says what the events say", () => {
     expect(h.rung()).not.toMatch(/\d+m \d\ds/);
   });
 
-  it("breathes while it works: the mark moves between frames of the same state", async () => {
+  it("moves while it works: the mark is struck by the call, and the words hold", async () => {
     const h = rungHarness();
     for (const event of call("c1", "read_file", { path: "a.ts" })) h.turn.onEvent(event as never);
     await sleep(DWELL + 60);
-    // Same state, different moments: the phrase holds and the bar does not.
-    // Sampled over most of a breath, because two frames 90ms apart near the
-    // crest legitimately share a level.
-    const cells = new Set<string>();
+    // Same state, different moments: the phrase holds and the mark does not.
+    // The call opening is real output, so it lands as a stroke and falls.
+    const marks = new Set<string>();
     for (let i = 0; i < 12; i++) {
-      const row = h.rung().split("\n")[0]!;
-      cells.add([...row].find((c) => RAMP.includes(c)) ?? "");
-      expect(row).toContain("reading a.ts");
+      const first = h.rung().split("\n")[0]!;
+      marks.add(first.trim().slice(0, 12));
+      expect(first).toContain("reading a.ts");
       await sleep(FRAME_MS);
     }
-    expect(cells.size).toBeGreaterThan(1);
+    expect(marks.size).toBeGreaterThan(1);
+  });
+
+  it("says the run is going back over its work, in words", async () => {
+    const h = rungHarness();
+    h.turn.onEvent({
+      type: "step_check",
+      passed: false,
+      report: "$ bun test (exit 1)\n1 fail",
+    } as never);
+    expect(h.rung()).toContain("second pass");
+    h.turn.onEvent({
+      type: "step_check",
+      passed: false,
+      report: "$ bun test (exit 1)\n1 fail",
+    } as never);
+    expect(h.rung()).toContain("third pass");
+    // A check passing ends it.
+    h.turn.onEvent({ type: "step_check", passed: true, report: "$ bun test (ok)" } as never);
+    expect(h.rung()).not.toContain("pass");
   });
 });

@@ -17,6 +17,13 @@ export interface ReliabilityPolicy {
   maxStuckNudges: number;
   /** Bounded all-providers-throttled waits per run (Retry-After honored). */
   maxRateWaits: number;
+  /**
+   * Seconds a run may go without an answer from its provider before it ends
+   * as `provider_lost` — the resumable ending. `maxConsecutiveErrors` bounds
+   * how many times a request is re-sent; this bounds how long that may take,
+   * which a provider that stalls instead of failing makes very long. 0: off.
+   */
+  providerDeadlineSecs: number;
   /** Forced compactions after provider over-limit rejections per run. */
   maxOverflowCompactions: number;
   /** Retries of a stream that "succeeded" with no text and no tool calls. */
@@ -57,6 +64,11 @@ export const DEFAULT_RELIABILITY: ReliabilityPolicy = {
   maxConsecutiveErrors: 3,
   maxStuckNudges: 1,
   maxRateWaits: 2,
+  // Ten minutes. Long enough for a brown-out the attempt count already rides
+  // out; short enough that the sixteen minutes a stalled stream once cost
+  // (evolab7: four attempts, each waiting out its own first-byte timeout,
+  // three times over) cannot happen again.
+  providerDeadlineSecs: 600,
   maxOverflowCompactions: 2,
   maxEmptyCompletionRetries: 3,
   maxTruncationRetries: 2,

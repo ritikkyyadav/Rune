@@ -192,12 +192,31 @@ export type AgentTurnEvent =
   | { type: "context_warning"; message: string }
   | { type: "notice"; message: string }
   | { type: "verification_started"; attempt: number }
+  // `status` is what happened; `reason` says why nothing was concluded. Both
+  // are OPTIONAL because rows written before they existed are still replayed —
+  // read the event through `verificationOutcome`, which answers for either
+  // shape. `ran` and `passed` are kept for a client that predates `status`,
+  // and on a new event they are derived from it: `passed` is true only for
+  // `passed`, `ran` is false exactly for `inconclusive`.
   | {
       type: "verification_completed";
       attempt: number;
+      status?: VerificationStatus;
+      reason?: VerificationInconclusiveReason;
+      /**
+       * On a `failed` result: every failing test was already failing on the
+       * tree the run started from, and the run added none. The checks are
+       * still red — this says whose red it is, not that it is green.
+       */
+      preexisting?: boolean;
       ran: boolean;
       passed: boolean;
       report: string;
+      /**
+       * Git-ignored paths these checks generated in the workspace and the
+       * harness removed again when they had run. Absent when there were none.
+       */
+      removed?: string[];
     }
   // The provider stream was abandoned mid-response and is being re-streamed:
   // UIs must drop any partially-rendered text/thinking for the current turn.
@@ -209,7 +228,15 @@ export type AgentTurnEvent =
   | { type: "todo_updated"; items: TodoItem[] }
   // The harness ran the project's compile-class check at a step boundary
   // (a step that wrote files was being closed with no check of its own).
-  | { type: "step_check"; step: string; ran: boolean; passed: boolean; report: string }
+  // `removed`: as on `verification_completed`.
+  | {
+      type: "step_check";
+      step: string;
+      ran: boolean;
+      passed: boolean;
+      report: string;
+      removed?: string[];
+    }
   // ─── v2 surface events (structured, replacing prose-only signals) ───
   // The gateway abandoned one provider/model and is streaming from another.
   // The turn continues; nothing already accepted is lost.
@@ -439,6 +466,84 @@ export interface WorkflowNodeContext {
   cached: boolean;
   /** The node's own outcome, once the executor has one for it. */
   status?: "running" | "completed" | "failed" | "skipped";
+}
+
+/**
+ * What the project's checks established at the end of a turn.
+ *
+ * `inconclusive` is not a softer `failed`: it means no verdict was reached — a
+ * check was killed at its deadline, the run was cancelled, or nothing could
+ * run here — and a surface must say that, not "checks fail" and not "checks
+ * pass".
+ */
+export type VerificationStatus = "passed" | "failed" | "inconclusive";
+
+export type VerificationInconclusiveReason =
+  | "timeout"
+  | "cancelled"
+  | "missing_runner"
+  | "no_checks"
+  /** Decided, not discovered: what changed is documentation no check reads. */
+  | "not_required";
+
+/**
+ * The outcome of a `verification_completed` event, whichever host wrote it.
+ *
+ * An event from before `status` existed carried two booleans, and is read the
+ * way every reducer already read it: nothing ran → no verdict; otherwise the
+ * verdict is `passed`.
+ */
+export function verificationOutcome(event: {
+  status?: VerificationStatus;
+  reason?: VerificationInconclusiveReason;
+  preexisting?: boolean;
+  ran?: boolean;
+  passed?: boolean;
+}): {
+  status: VerificationStatus;
+  reason?: VerificationInconclusiveReason;
+  preexisting?: boolean;
+} {
+  if (event.status === "failed" && event.preexisting === true) {
+    return { status: "failed", preexisting: true };
+  }
+  if (event.status === "passed" || event.status === "failed") return { status: event.status };
+  if (event.status === "inconclusive") {
+    return { status: "inconclusive", reason: event.reason ?? "no_checks" };
+  }
+  if (event.ran === false) return { status: "inconclusive", reason: "no_checks" };
+  return { status: event.passed === true ? "passed" : "failed" };
+}
+
+/**
+ * The outcome in a few words — the same words on every surface.
+ *
+ * Here rather than in each reducer because the point of naming the outcome is
+ * lost the moment the terminal says "timed out" and the headless stream says
+ * "failed" about one event. A surface adds its own grammar around this; it
+ * does not choose a different verdict.
+ */
+export function describeVerification(outcome: {
+  status: VerificationStatus;
+  reason?: VerificationInconclusiveReason;
+  preexisting?: boolean;
+}): string {
+  if (outcome.status === "passed") return "passed";
+  if (outcome.status === "failed") {
+    return outcome.preexisting ? "failed before this run (nothing new)" : "failed";
+  }
+  switch (outcome.reason) {
+    case "timeout":
+      return "did not finish (timed out)";
+    case "cancelled":
+      return "did not finish (cancelled)";
+    case "missing_runner":
+      return "could not run (toolchain missing)";
+    case "not_required":
+      return "not required (documentation only)";
+    default:
+      return "nothing to run";
+  }
 }
 
 /** Every member's discriminant, as a type. */

@@ -169,6 +169,11 @@ export function workspaceRevision(root: string): { head: string | null; dirty: b
  */
 const HARNESS_OWNED = /^\.(?:rune|gear|alan)\//;
 
+/** Whether a workspace-relative path is Rune's own footprint, not the work. */
+export function isHarnessOwnedPath(path: string): boolean {
+  return HARNESS_OWNED.test(path);
+}
+
 /**
  * One `git status --porcelain` line: is it a change to the WORK?
  *

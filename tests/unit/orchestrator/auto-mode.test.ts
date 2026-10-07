@@ -9,6 +9,7 @@ import {
   isHaltExemptTool,
   isSelfProtectionPath,
   parseFastDecision,
+  DEFAULT_TIMEOUT_MS,
   resolveAutoModeConfig,
   ruleMatches,
   shouldProbeToolResult,
@@ -779,6 +780,24 @@ describe("Fast-stage robustness", () => {
     // And the decision still LANDS — mechanically, not as a question.
     expect(review.verdict).not.toBe("ask");
     expect(review.source).toBe("containment");
+  });
+
+  test("the shared deadline defaults to thirty seconds, and a person's own setting still decides", () => {
+    // Twelve until 2026-10-05, when the first attempt's ten seconds sat a second
+    // above the reasoned review's ordinary latency and a slow evening turned
+    // both in-path reviews of a live run into denials. By the rule above the
+    // first attempt now has twenty-eight; nothing else about a review moved.
+    expect(DEFAULT_TIMEOUT_MS).toBe(30_000);
+    expect(resolveAutoModeConfig().timeoutMs).toBe(30_000);
+    expect(resolveAutoModeConfig({}).timeoutMs).toBe(30_000);
+    expect(resolveAutoModeConfig({ timeoutMs: 12_000 }).timeoutMs).toBe(12_000);
+    // Inside its bounds: one second to sixty.
+    expect(resolveAutoModeConfig({ timeoutMs: 200 }).timeoutMs).toBe(1_000);
+    expect(resolveAutoModeConfig({ timeoutMs: 600_000 }).timeoutMs).toBe(60_000);
+    // A managed setting is the one that holds.
+    expect(resolveAutoModeConfig({ timeoutMs: 45_000 }, { timeoutMs: 8_000 }).timeoutMs).toBe(
+      8_000,
+    );
   });
 
   test("when both stages fail the review falls back to containment, not to a human", async () => {

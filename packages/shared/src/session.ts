@@ -370,6 +370,50 @@ export class SessionManager {
   }
 
   /**
+   * Named fields of every event of one type, without loading the payloads.
+   *
+   * `paths` maps the name a caller wants to a JSON path under the stored row
+   * (`$.payload.id`). SQLite extracts them, so a row whose payload is a quarter
+   * of a megabyte costs the caller a handful of scalars — which is the whole
+   * point: the rows this exists for are a delegated child's checkpoints, each
+   * carrying that child's entire conversation, and a surface that only wants to
+   * LIST the children must not materialise all of it to do so.
+   *
+   * A path that names an object or an array comes back as its JSON text, the
+   * way `json_extract` returns it; a missing one comes back null. `clip` bounds
+   * a text field in the database, before it crosses, for the one field a caller
+   * wants only the head of.
+   */
+  projectEvents(
+    sessionId: string,
+    type: string,
+    paths: Record<string, string>,
+    clip: Record<string, number> = {},
+  ): Array<{ seq: number; at: string; fields: Record<string, unknown> }> {
+    const names = Object.keys(paths);
+    // Positional aliases: a caller's field name never reaches the SQL text, so
+    // there is nothing to quote and nothing to inject through.
+    const columns = names.map((name, i) => {
+      const max = clip[name];
+      return Number.isFinite(max) && max! > 0
+        ? `substr(json_extract(payload_json, ?), 1, ${Math.floor(max!)}) AS f${i}`
+        : `json_extract(payload_json, ?) AS f${i}`;
+    });
+    const rows = this.db
+      .prepare(
+        `SELECT seq, created_at${columns.length ? `, ${columns.join(", ")}` : ""} FROM events
+         WHERE session_id = ? AND type = ?
+         ORDER BY seq ASC`,
+      )
+      .all(...names.map((name) => paths[name]!), sessionId, type) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({
+      seq: Number(row.seq),
+      at: String(row.created_at),
+      fields: Object.fromEntries(names.map((name, i) => [name, row[`f${i}`] ?? null])),
+    }));
+  }
+
+  /**
    * Delete every event for a session whose seq is strictly greater than
    * `afterSeq`. Used by `/rewind` to truncate the conversation back to an
    * earlier turn (the next chat then resumes from the truncated history).

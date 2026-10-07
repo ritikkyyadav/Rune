@@ -204,7 +204,23 @@ const DEFAULT_HARD_DENY = [
   "Never infer the identity of a destructive target from fuzzy similarity, recency, or convenience.",
 ];
 
-const DEFAULT_TIMEOUT_MS = 12_000;
+/**
+ * The one deadline the reviewer's call and its retry share.
+ *
+ * Twelve seconds until 2026-10-05. The reasoned review runs on the heavy tier
+ * with medium reasoning, and its ordinary latency is about nine seconds — so
+ * the first attempt's ten had a second of headroom. On an evening when the
+ * provider answered at half its afternoon speed, both in-path reviews of a
+ * live run timed out at 10,006 and 10,002 ms, the two-second retry had no
+ * chance, and two commands were denied for the reviewer's slowness rather than
+ * for anything they did. In 22 recorded runs those were the only two in-path
+ * reviews there were.
+ *
+ * Thirty leaves the first attempt twenty-eight. Who reviews, what is asked and
+ * what a missing answer means are unchanged: a reviewer that does not answer
+ * still ends in containment, eighteen seconds later than it used to.
+ */
+export const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_AUTOMATIC_DENIALS = 2;
 /**
  * How much of the reviewer's single deadline is held back for the retry.

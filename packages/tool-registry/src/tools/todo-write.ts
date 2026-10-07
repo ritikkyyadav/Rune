@@ -181,18 +181,19 @@ export const TODO_WRITE_SCHEMA: ToolSchema = {
   name: "todo_write",
   version: "0.1.0",
   description:
-    "Record or replace your plan as a to-do list. This IS the plan: for any task with 3+ steps, " +
-    "write the list BEFORE your first file edit, keep exactly one item in_progress, mark items " +
+    "Record or replace your plan as a to-do list. This IS the plan: for a task with 3+ " +
+    "deliverables or milestones, write the list BEFORE your first file edit, keep exactly one " +
+    "item in_progress, mark items " +
     "completed the moment they are genuinely done, and REWRITE the list whenever the approach " +
     "changes. Set kind to inspect, change, or verify. Implementation steps require actual " +
     "writes; verification steps require a passing check after the latest change. Reading " +
     "a file does not prove implementation. A compound implementation-and-test step needs " +
     "both. Insufficient evidence is reported as unproven; strict mode refuses once. " +
     "The harness may run the project's compile check after writes. The list lives outside the " +
-    "conversation and re-shown to you every turn (it survives compaction and resume), and it " +
-    "powers the live checklist the user watches. The full list is replaced on each call — " +
-    "include every item you want to keep; dropping unfinished steps is noted. Skip it for " +
-    "single trivial actions.",
+    "conversation, survives compaction and resume, and is the checklist the user watches. " +
+    "The full list is replaced on each call — " +
+    "include every item you want to keep; dropping unfinished steps is noted. Skip it for one " +
+    "local change: its read, edit and test are one step.",
   inputSchema: {
     type: "object",
     properties: {

@@ -34,6 +34,7 @@
 // stderr, because one stray `console.log` desynchronises the client's parser
 // and the failure looks like a protocol bug.
 
+import { describeVerification, verificationOutcome } from "@rune/protocol";
 import { adoptLegacyEnv, loadConfig, migrateLegacyHome } from "@rune/shared";
 
 import { DEFAULT_IDLE_HOST_SECS, HostPool, noteRequestOwner, routingKey } from "./serve-cli";
@@ -156,12 +157,25 @@ export function toUpdate(event: { type: string } & Record<string, unknown>): Acp
     // fact a person acts on, clipped, and `rune audit` keeps the full record.
     case "verification_started":
       return thought(`verification started (attempt ${String(event.attempt ?? "?")})`);
-    case "verification_completed":
+    case "verification_completed": {
+      // Three outcomes, not two. A check killed at its deadline used to be
+      // sent as "FAILED", which told an editor the work was wrong when
+      // nothing had measured it.
+      const outcome = verificationOutcome(event as Parameters<typeof verificationOutcome>[0]);
+      if (outcome.status === "inconclusive") {
+        return thought(
+          outcome.reason === "no_checks"
+            ? "verification: nothing runnable detected"
+            : `verification: ${describeVerification(outcome)} — not measured`,
+        );
+      }
+      // Red, and every failing test was red before the run began: said as
+      // that, without the tail of an output the run did not cause.
+      if (outcome.preexisting) return thought(`verification: ${describeVerification(outcome)}`);
       return thought(
-        event.ran === false
-          ? "verification: nothing runnable detected"
-          : `verification: ${event.passed === true ? "passed" : "FAILED"}` + clause(event.report),
+        `verification: ${outcome.status === "passed" ? "passed" : "FAILED"}` + clause(event.report),
       );
+    }
     case "step_check":
       return thought(
         event.ran === false

@@ -254,7 +254,10 @@ describe("an absent toolchain", () => {
       commands: ["rune-absent-toolchain-probe build ./..."],
       timeoutMs: 30_000,
     }).verify();
-    expect(r.passed).toBe(true);
+    // Not a failure — and, since V2, not a pass either: nothing was measured.
+    // (This asserted `passed: true` while a result was two booleans.)
+    expect(r.status).toBe("inconclusive");
+    expect(r.reason).toBe("missing_runner");
     expect(r.ran).toBe(false);
     expect(r.runs![0]!.skipped).toContain("not installed");
   });

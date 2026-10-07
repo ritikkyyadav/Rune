@@ -42,9 +42,17 @@ export type {
   TaskLifecycleKind,
   TaskLifecycleMoment,
   TaskLifecycleStatus,
+  VerificationInconclusiveReason,
+  VerificationStatus,
   WorkflowNodeContext,
 } from "./events";
-export { AGENT_TURN_EVENT_TYPES, isAgentTurnEvent, isAgentTurnEventType } from "./events";
+export {
+  AGENT_TURN_EVENT_TYPES,
+  describeVerification,
+  isAgentTurnEvent,
+  isAgentTurnEventType,
+  verificationOutcome,
+} from "./events";
 
 export type {
   ResearchDepth,

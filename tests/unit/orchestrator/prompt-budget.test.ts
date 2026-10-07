@@ -63,11 +63,15 @@ beforeAll(() => {
  * Decision Record possible: a run that never names a hypothesis produces a
  * record with no "how we got here", which is the section a person reads to
  * decide whether to believe the answer. Cached after the first request.
+ *
+ * Lowered 7,810 -> 5,500 on 2026-10-06 after repeated prompt instructions
+ * were consolidated. Current full doctrine is 5,402 tokens; the ceiling leaves
+ * 98 tokens of headroom while retaining the behavioral assertions below.
  */
-const FULL_DOCTRINE_CEILING = 7_790;
+const FULL_DOCTRINE_CEILING = 5_500;
 
 /** Ceiling for a session that can use none of the gated capabilities. */
-const MINIMAL_DOCTRINE_CEILING = 6_000;
+const MINIMAL_DOCTRINE_CEILING = 3_600;
 
 const MINIMAL: DoctrineContext = {
   canDelegate: false,

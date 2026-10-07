@@ -74,6 +74,10 @@ export interface ComposerStatus {
   /** Something is typed in the field: `?` would type a `?`, not open the sheet,
    *  and mid-turn enter/esc act on the draft. */
   drafting?: boolean;
+  /** The keys are on the agents (the row, the cards, an open transcript)
+   *  rather than on the field, and this is their legend. It replaces the
+   *  field's own keys: from there `esc` goes back, and does nothing else. */
+  focusKeys?: string;
 }
 
 export type PermissionModeId = PermissionMode;
@@ -265,11 +269,21 @@ export function statusLine(s: ComposerStatus, width = process.stdout.columns || 
   // while a turn runs, how to stop it (or, over a typed draft, what enter and
   // esc do to the draft -- tui.ts turnKey); at rest with an empty field, where
   // the rest of the keys are (`?` opens the sheet only then, tui-input.ts).
-  const keys = s.streaming
-    ? faint(s.drafting ? `enter sends${sep}esc clears` : "esc stop")
-    : s.drafting
-      ? ""
-      : [s.folds ? keyHint("ctrl+o", "open") : "", keyHint("?", "keys")].filter(Boolean).join("  ");
+  //
+  // And with the keys on the agents, the one key that leaves them. It outranks
+  // `esc stop`: from there `esc` does not stop the run, and a strip that went
+  // on saying it did would be the frame's most dangerous sentence -- the next
+  // press would be made expecting an interrupt and get a closed pane, or, as
+  // it was before, expecting a closed pane and get an interrupt.
+  const keys = s.focusKeys
+    ? faint(s.focusKeys)
+    : s.streaming
+      ? faint(s.drafting ? `enter sends${sep}esc clears` : "esc stop")
+      : s.drafting
+        ? ""
+        : [s.folds ? keyHint("ctrl+o", "open") : "", keyHint("?", "keys")]
+            .filter(Boolean)
+            .join("  ");
 
   // ── The ladder: widest first; the first tier that fits the window wins. ──
   //

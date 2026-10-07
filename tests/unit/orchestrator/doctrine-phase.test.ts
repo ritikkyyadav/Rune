@@ -117,7 +117,7 @@ describe("doctrine phases", () => {
   test("the working phase is materially cheaper — that is the whole point", () => {
     const full = renderDoctrine(ALL_ON).length;
     const working = renderDoctrine({ ...ALL_ON, phase: "working" }).length;
-    expect(full - working).toBeGreaterThan(6_000);
+    expect(full - working).toBeGreaterThan(5_000);
   });
 
   test("phase gating never leaves a dangling blank-line run", () => {
@@ -172,16 +172,14 @@ describe("doctrine phases", () => {
     const utf8 = (s: string) => new TextEncoder().encode(s).length;
     const opening = utf8(renderDoctrine({ ...JIT, phase: "opening" }));
     const working = utf8(renderDoctrine({ ...JIT, phase: "working" }));
-    // Pinned at 730fd97: opening 24,135, working 19,099. C2 took the working
-    // half to 18,358 by moving the modes section out of it; V-C showed that
-    // opened a correctness hole for a mid-run mode ask, so the 741 bytes are
-    // back and the working half is 19,099 again. The saving C2 claimed is
-    // withdrawn — `docs/program/phase-3-auto-efficiency.md` §6 asks for bytes,
-    // and these are the honest ones.
-    expect(opening).toBe(24_135);
-    expect(working).toBe(19_099);
-    // The switch only ever drops — a working prompt that grew would cost a
-    // second full cache write per run instead of a smaller prefix.
+    // Re-measured 2026-10-06 after the prompt economy pass: opening 15,267,
+    // working 10,505. Keep modest headroom while ensuring future edits retain
+    // most of the reduction. The mid-run modes routing and every working
+    // section remain independently asserted below.
+    expect(opening).toBeLessThanOrEqual(15_500);
+    expect(working).toBeLessThanOrEqual(10_700);
+    // The working prefix must remain materially cheaper, not merely smaller.
+    expect(opening - working).toBeGreaterThan(4_000);
     expect(working).toBeLessThan(opening);
   });
 

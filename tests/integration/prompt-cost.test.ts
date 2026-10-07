@@ -112,8 +112,14 @@ const SUMMARY_RESULT_HEAD_CHARS = 1_680;
  * "# Built-in modes on request" to the opening as well, which adds 741 to the
  * saving on any run where a mode tool is loaded — and 0 on a run like this one,
  * where all three are catalog lines and the section never shipped at all.
+ *
+ * Re-measured 2026-10-06, after the prompt economy pass consolidated the
+ * doctrine: the switch drops 2,784 bytes on this run. The opening-only sections
+ * were cut along with everything else, so there is less of them to drop — the
+ * whole prompt is about a third smaller, and that saving is paid on every
+ * request rather than from the second one on.
  */
-const C2_PHASE_SWITCH_SAVING_AT_HEAD = 3_058;
+const C2_PHASE_SWITCH_SAVING_AT_HEAD = 2_784;
 
 // ─── The script ───
 

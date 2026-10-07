@@ -42,7 +42,8 @@ export const NOTE_HYPOTHESIS_SCHEMA: ToolSchema = {
   name: "note_hypothesis",
   version: "1.0.0",
   description:
-    "Name what you suspect BEFORE you test it, and report the verdict when you have one. Call " +
+    "In an investigation with competing explanations, name what you suspect BEFORE you test " +
+    "it, and report the verdict when you have one. Call " +
     "with `text` to raise a hypothesis (you get back its id); call with `id` and `status` " +
     "(refuted or confirmed) plus a one-line `reason` once a check has settled it. The harness " +
     "also settles hypotheses on its own from failing and passing step checks, so a verdict you " +
@@ -91,8 +92,9 @@ export const RECORD_DECISION_SCHEMA: ToolSchema = {
   name: "record_decision",
   version: "1.0.0",
   description:
-    "Record what you committed to and what justified it, at the moment you commit — not at the " +
-    "end. `based_on` points at evidence you already have: a command you ran, a file you read, a " +
+    "Record a consequential decision (an architecture choice, a real trade-off) and what " +
+    "justified it, when you commit to it. " +
+    "`based_on` points at evidence you already have: a command you ran, a file you read, a " +
     "step that closed, an answer the user gave. A decision with nothing behind it is recorded " +
     "as unbacked rather than refused, and the record will say so.",
   inputSchema: {

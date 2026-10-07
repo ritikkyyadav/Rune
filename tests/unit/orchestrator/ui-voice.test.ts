@@ -17,7 +17,7 @@
 
 import { afterEach, describe, expect, it } from "bun:test";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
-import { workingRow, type WorkingKind } from "../../../packages/orchestrator/src/bin/ui/working";
+import { stagedRow, type WorkingKind } from "../../../packages/orchestrator/src/bin/ui/working";
 import {
   LONG_PHASE_MS,
   OPENING,
@@ -160,21 +160,29 @@ describe("the walk", () => {
 });
 
 describe("the row", () => {
-  const row = (state: Parameters<typeof workingRow>[0]) => stripAnsi(workingRow(state));
+  const row = (state: Parameters<typeof stagedRow>[1]) => stripAnsi(stagedRow("▄", state));
 
-  it("puts the voice first and keeps the fact beside it", () => {
+  it("puts the stage first, then the voice, and keeps the fact beside it", () => {
     const out = row({
       kind: "reading",
+      stage: "understand",
       target: "turn.ts",
       elapsedMs: 40_000,
       voice: "having a look around",
     });
-    expect(out).toMatch(/^. having a look around · reading turn\.ts · 40s$/);
+    expect(out).toBe("▄ looking · having a look around · reading turn.ts · 40s");
   });
 
-  it("is exactly the old row when there is no voice", () => {
-    expect(row({ kind: "reading", target: "turn.ts", elapsedMs: 40_000 })).toMatch(
-      /^. reading turn\.ts · 40s$/,
-    );
+  it("is the stage, the fact and the clock when there is no voice", () => {
+    expect(
+      row({ kind: "reading", stage: "understand", target: "turn.ts", elapsedMs: 40_000 }),
+    ).toBe("▄ looking · reading turn.ts · 40s");
+  });
+
+  it("does not say a bare word twice: the stage already says it", () => {
+    expect(
+      row({ kind: "working", stage: "act", elapsedMs: 12_000, voice: "connecting the dots" }),
+    ).toBe("▄ building · connecting the dots · 12s");
+    expect(row({ kind: "working", stage: "act", elapsedMs: 12_000 })).toBe("▄ building · 12s");
   });
 });

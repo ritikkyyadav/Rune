@@ -4,8 +4,8 @@
  * Lane A's `frame-demo.ts` invents the right column as literal strings — it had
  * to, because the panel did not exist yet. This is the same rig with that half
  * replaced: the cards here are registered by the real `TurnRenderer` from real
- * `AgentTurnEvent`s, the rows are `renderAgentsPanel` / `renderAgentsStrip` /
- * `renderSessionPanel`, the child pane's header is built from the ledger's own
+ * `AgentTurnEvent`s, the rows are `renderAgentsPanel` / `renderSessionPanel`
+ * and the renderer's own rung, the child pane's header is built from the ledger's own
  * `refreshPane`, and the geometry is `regions` / `splitPanes` / `composeFrame`.
  * Only the WORKSPACE is invented, and only because Lane D's boxes are not built
  * yet — it is obviously invented, and no verdict here is taken from it.
@@ -36,7 +36,6 @@ import { TurnRenderer, type TurnSink } from "../../packages/orchestrator/src/bin
 import {
   fleetLedger,
   renderAgentsPanel,
-  renderAgentsStrip,
   renderSessionPanel,
 } from "../../packages/orchestrator/src/bin/ui/agents-panel";
 
@@ -425,11 +424,9 @@ setTermWidthOverride(119);
 setTermWidthOverride(79);
 {
   const turn = fanOut(NOW);
-  void turn;
-  // The product measures the strip to the composer's rules beneath it
-  // (tui-frame.stripRow): the workspace measure less two cells of indent and
-  // two of margin. At 80 columns that is 75.
-  const strip = stripAnsi(renderAgentsStrip(fleetLedger.view(false, AT), 75));
+  // The row above the composer is the rung itself, with a block per member
+  // (tui-frame.stripRow) -- it used to be replaced by a separate agents strip.
+  const strip = stripAnsi(turn.liveLines()[0] ?? "").trimStart();
   built["80x24-working"] = frame({
     cols: 80,
     rows: 24,

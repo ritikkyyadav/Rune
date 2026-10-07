@@ -27,6 +27,21 @@ export interface Checkpoint {
    * reads.
    */
   parentId?: string;
+  /**
+   * Who this child WAS, as the surface showed it: the one-word role and the
+   * 2-5 word brief the master wrote, and the call that dispatched it.
+   *
+   * The record held a child's whole conversation and nothing that named it, so
+   * a session reopened later could list `task_4f1c…` and not `planner`. The
+   * panel's card is keyed by the dispatching call and titled by these two
+   * words; carrying them here is what lets a finished child be found again
+   * under the name it ran as. All three absent on a row written before this.
+   */
+  name?: string;
+  label?: string;
+  callId?: string;
+  /** When this run of the child began, so a restored card can state a span. */
+  startedAt?: string;
   /** What this child has spent across every run of this `task_id` so far. */
   budget?: SpentBudget;
   /** When this record was written, and whether it was written mid-run. */
@@ -607,6 +622,19 @@ export function withDelegatedSessions(
         let boundaryFailure: unknown;
         let lastCheckpointAt: string | undefined;
         let cappedAt: string | undefined;
+        // The identity the surface gave this child, read once from the call
+        // that dispatched it. Bounded: both are display strings, and a model
+        // that wrote a paragraph into `label` must not make every checkpoint
+        // row carry it.
+        const word = (value: unknown, max: number): string | undefined => {
+          const clean = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+          return clean ? clean.slice(0, max) : undefined;
+        };
+        const identity = {
+          name: word(input.args.name, 32),
+          label: word(input.args.label, 80),
+        };
+        const runStartedAt = new Date().toISOString();
         const compose = (atBoundary: boolean, status?: string): Checkpoint | null => {
           if (!run.messages || !run.identity) return null;
           const live = run.budget?.();
@@ -627,6 +655,10 @@ export function withDelegatedSessions(
             messages: compactCheckpointMessages(run.messages()),
             retainedWorker: run.retainedWorker,
             parentId: input.sessionId,
+            ...(identity.name ? { name: identity.name } : {}),
+            ...(identity.label ? { label: identity.label } : {}),
+            callId: input.callId,
+            startedAt: runStartedAt,
             ...(budget ? { budget } : {}),
             at: new Date().toISOString(),
             ...(atBoundary ? { atBoundary: true } : {}),

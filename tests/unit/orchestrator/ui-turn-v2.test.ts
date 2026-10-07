@@ -40,13 +40,16 @@ const editEnd = (path: string) => ({
 });
 
 describe("turn v2 metadata", () => {
-  test("usage events surface real ↓ tokens on the live rung, and nowhere else", () => {
+  test("usage events are counted for /details, and are not on the live rung", () => {
     const h = harness();
     h.turn.onEvent({ type: "usage", inputTokens: 900, outputTokens: 1800 });
-    expect(h.preview()).toContain("1.8k tokens");
+    // The rung is watched, not consulted: a token count was one more number
+    // changing under the eye (founder, 2026-10-02). It is asked for instead.
+    expect(h.preview()).not.toContain("tokens");
     h.turn.onEvent({ type: "usage", inputTokens: 100, outputTokens: 200 });
-    expect(h.preview()).toContain("2.0k tokens"); // 1800 + 200, accumulated
     h.turn.onEvent(editEnd("src/a.ts"));
+    expect(stripAnsi(h.turn.fullLog() ?? "")).toContain("2.0k tokens"); // 1800 + 200
+    expect(h.rung()).not.toContain("tokens");
     h.turn.finish();
     // Session telemetry belongs to the footer, which is always visible anyway.
     // On a committed row it made every line end in a different KIND of number,
@@ -71,9 +74,12 @@ describe("turn v2 metadata", () => {
     } finally {
       Date.now = realNow;
     }
-    // Measured on the rung while it runs; absent from the committed transcript.
-    expect(h.rung()).toContain("thought for 0.3s");
-    expect(h.rung()).not.toContain("thought for 10");
+    // Measured while it runs, kept for /details; absent from the rung and from
+    // the committed transcript.
+    const details = stripAnsi(h.turn.fullLog() ?? "");
+    expect(details).toContain("thought for 0.3s");
+    expect(details).not.toContain("thought for 10");
+    expect(h.rung()).not.toContain("thought for");
     expect(h.output()).not.toContain("thought for");
   });
 

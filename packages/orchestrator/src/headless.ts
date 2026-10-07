@@ -52,7 +52,10 @@ export interface HeadlessOptions {
 export interface HeadlessResult {
   /** The assistant's final text. */
   text: string;
-  /** True when the turn ran to completion without a terminal error. */
+  /**
+   * True when execution finished and no verdict made it a failure — see
+   * `unfinishedVerdict` for the runs a `partial` or `unmet` verdict fails.
+   */
   ok: boolean;
   /** Why it failed, when it did. */
   error?: string;
@@ -100,7 +103,7 @@ export interface HeadlessResult {
 /** Process exit codes. Distinct so a caller can tell WHY a run failed. */
 export const HEADLESS_EXIT = {
   ok: 0,
-  /** The turn raised a terminal error. */
+  /** Execution failed, or a change was held to criteria it did not satisfy. */
   failed: 1,
   /**
    * The run stopped because it needed permission and had no way to ask.
@@ -312,7 +315,7 @@ export async function runHeadless(
   }
 
   const unfinished = stopReason ? UNFINISHED_STOP[stopReason] : undefined;
-  const error = fatalError ?? unfinished;
+  const error = fatalError ?? unfinished ?? unfinishedVerdict(verdict, [...filesChanged]);
   return {
     // The verdict is the LAST line of the answer, so `rune -P "…"` — whose
     // stdout is `text` verbatim — ends by saying what the run did against what
@@ -371,6 +374,39 @@ export const UNFINISHED_STOP: Record<string, string | undefined> = {
     "The request was refused before it was sent because the run was out of budget; the task is not finished.",
 };
 
+/**
+ * A verdict that makes a finished run a FAILED one — and what has to be true
+ * before it can.
+ *
+ * `partial` and `unmet` are about a promise: the run was held to terms and did
+ * not show all of them. So there has to have been a promise, and something it
+ * was about.
+ *
+ *   - No criteria at all: nothing was promised. A greeting, a first prompt and
+ *     a one-line answer end `unmet` ("no criteria stated") by construction.
+ *   - Only the run's own read-back, and no file changed: an answer, a review, a
+ *     plan. Its criteria describe an ANSWER, there is nothing to run, and the
+ *     best verdict such a run can reach is `partial` (see `VerdictEvaluators`).
+ *
+ * Both are judged by whether they ran, as they were before this rule existed.
+ * The first version of it had none of this, and a plain "hello", a fresh
+ * install's first prompt and the pull-request review all exited 1.
+ *
+ * A criterion from OUTSIDE the run — the person's, or an `--acceptance` check —
+ * is held whether or not anything changed: a run asked to build something that
+ * changed nothing is the clearest failure there is.
+ */
+export function unfinishedVerdict(
+  verdict: CompletionVerdict | undefined,
+  filesChanged: readonly string[],
+): string | undefined {
+  if (verdict?.kind !== "unmet" && verdict?.kind !== "partial") return undefined;
+  if (verdict.criteria.length === 0) return undefined;
+  const ownWordsOnly = verdict.criteria.every((c) => (c.source ?? "inferred") === "inferred");
+  if (ownWordsOnly && filesChanged.length === 0) return undefined;
+  return `The task is ${verdict.kind}; the completion criteria were not all satisfied.`;
+}
+
 /** The exit code a result deserves. */
 export function headlessExitCode(r: HeadlessResult): number {
   // Checked BEFORE ok, because a denied permission does not raise: the turn
@@ -382,7 +418,7 @@ export function headlessExitCode(r: HeadlessResult): number {
   // benchmark that cannot tell them apart scores the agent for the harness's
   // missing flag.
   if (r.permissionsDenied > 0) return HEADLESS_EXIT.needsPermission;
-  if (r.ok) return HEADLESS_EXIT.ok;
+  if (r.ok && !unfinishedVerdict(r.verdict, r.filesChanged)) return HEADLESS_EXIT.ok;
   return HEADLESS_EXIT.failed;
 }
 
@@ -400,13 +436,13 @@ export function headlessEnvelope(
 ): string {
   return JSON.stringify(
     {
-      ok: r.ok,
+      ok: r.ok && !unfinishedVerdict(r.verdict, r.filesChanged),
       // The session this run wrote, so a caller can read it back with
       // `rune audit <id>`. CI otherwise has to guess with `rune audit last`,
       // which on a shared runner is a different session's page.
       ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
       text: r.text,
-      error: r.error,
+      error: r.error ?? unfinishedVerdict(r.verdict, r.filesChanged),
       // How it ended, so "cancelled", "out of turns" and "done" are three
       // different answers to a machine consumer, not one boolean.
       stopReason: r.stopReason,

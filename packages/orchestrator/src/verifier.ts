@@ -6,9 +6,12 @@
 // self-correct.
 //
 // Design notes:
-//  - If we cannot detect any check for a workspace, verification PASSES
-//    trivially (ran:false). We never fail a task just because we couldn't
-//    figure out how to verify it.
+//  - If we cannot detect any check for a workspace, verification is
+//    INCONCLUSIVE (`no_checks`). We never fail a task just because we couldn't
+//    figure out how to verify it — and we never call it verified either.
+//  - A check that did not finish (its deadline, a cancelled run) is
+//    inconclusive too. Only a check that RAN TO COMPLETION and went red is a
+//    failure, because only that says anything about the code.
 //  - Commands run scoped to the workspace, with a hard timeout, capturing both
 //    stdout and stderr so the report is useful to the model.
 //  - Detection reads REAL signals — go.mod, Cargo.toml, pyproject.toml,
@@ -25,9 +28,37 @@
 // monorepo whose real project sits one level down, verified as `ran: false` —
 // so the plan ledger could never close a step on a real check.
 
-import { existsSync, readFileSync, readdirSync } from "fs";
-import { homedir } from "os";
-import { isAbsolute, join, relative, resolve } from "path";
+import { execFile, execFileSync } from "child_process";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+} from "fs";
+import { lstat, rm, rmdir, unlink } from "fs/promises";
+import { homedir, tmpdir } from "os";
+import { dirname, isAbsolute, join, relative, resolve } from "path";
+import type { VerificationInconclusiveReason, VerificationStatus } from "@rune/protocol";
+import {
+  baselineIsCurrent,
+  captureBaseline,
+  changedSinceBaseline,
+  materialiseBaseline,
+  type TaskBaseline,
+} from "./baseline";
+import { envFingerprint } from "./brief";
+import {
+  attributable,
+  attributeFailures,
+  parseBunTestRun,
+  testLabel,
+  type ParsedTestRun,
+} from "./check-failures";
+import { isHarnessOwnedPath } from "./lifecycle";
+import { ownersOf, selectProjects, type ProjectDecision, type ScopeFacts } from "./verify-scope";
 
 /** The stacks detection knows how to verify. `jvm` covers Java and Kotlin. */
 export type Ecosystem = "js" | "go" | "python" | "rust" | "jvm";
@@ -102,13 +133,67 @@ export interface CheckRunRecord {
   passed: boolean;
   /** Set when the command was not run at all; the value is why. */
   skipped?: string;
+  /** The command was killed at its deadline. It measured nothing. */
   timedOut?: boolean;
+  /** The run was cancelled while this command was executing. It measured nothing. */
+  cancelled?: boolean;
+}
+
+/**
+ * What a verification established.
+ *
+ *   passed        every check that could run here ran, and none went red
+ *   failed        a check ran to completion and went red — a real negative
+ *   inconclusive  no verdict was reached; `reason` says why
+ *
+ * Two booleans used to carry this, and they have four cells for what are three
+ * outcomes: a check killed at its deadline landed on `(ran, !passed)`, the cell
+ * a real assertion failure lives in, so the loop bought a repair turn for a
+ * clock; and a verification cancelled between two checks fell through to
+ * `(ran, passed)` — green, for work nobody finished measuring.
+ *
+ * The wire's own type (`verification_completed.status`), so the verifier and
+ * every surface that renders its result cannot grow different vocabularies.
+ */
+export type VerifyStatus = VerificationStatus;
+
+/**
+ * Why nothing was established. None of these is a failure of the work, and
+ * none of them is a receipt for it either.
+ *
+ *   timeout         a check was killed at its deadline
+ *   cancelled       the run was aborted before or during the checks
+ *   missing_runner  every selected check's toolchain is absent on this machine
+ *   no_checks       nothing runnable was detected for what the run wrote
+ *   not_required    a decision: only documentation changed, and no check reads it
+ */
+export type InconclusiveReason = VerificationInconclusiveReason;
+
+export interface VerifyOutcome {
+  status: VerifyStatus;
+  /** Set exactly when `status` is `inconclusive`. */
+  reason?: InconclusiveReason;
 }
 
 export interface VerifyResult {
-  /** true when checks pass OR no checks are applicable. */
+  /**
+   * The outcome, and the only field that says what happened. Absent only on a
+   * result from an embedder's own pre-tri-state `Verifier`; `verifyOutcome`
+   * reads either shape and is what every consumer goes through.
+   */
+  status?: VerifyStatus;
+  /** Set exactly when `status` is `inconclusive`. */
+  reason?: InconclusiveReason;
+  /**
+   * @deprecated Read `verifyOutcome(result).status`. On a result this file
+   * built, this is `status === "passed"` and nothing else — it is never true
+   * for a verification that reached no verdict.
+   */
   passed: boolean;
-  /** true when at least one check command actually ran. */
+  /**
+   * @deprecated Read `verifyOutcome(result).status`. On a result this file
+   * built, this is `status !== "inconclusive"`: a verdict was reached.
+   */
   ran: boolean;
   /** Human-readable report (command + trimmed output) to feed back to the agent. */
   report: string;
@@ -118,6 +203,99 @@ export interface VerifyResult {
    * a regex over `$ ` lines.
    */
   runs?: CheckRunRecord[];
+  /** Which checks were chosen for this verification, and why. */
+  selection?: CheckSelection;
+  /**
+   * For a `failed` result: whether the failing tests were already failing on
+   * the tree the run started from. Absent when nothing failed.
+   */
+  attribution?: FailureAttribution;
+  /**
+   * Git-ignored paths these checks generated in the workspace, removed again
+   * once they had run. Absent when there were none.
+   *
+   * Beside the result and never in the report, for the reason `selection` is:
+   * the report's last line is shown as a failure's own words.
+   */
+  removed?: string[];
+}
+
+/**
+ * Whose failures these are.
+ *
+ * `known` only when every failing thing is a named test and the same check
+ * could be run, faithfully, on the tree the run started from. Each test is
+ * then either `existing` — the same test, in an unchanged file, failing with
+ * the same assertion there — or `introduced`. `existing` is never a pass: the
+ * check is red and the result says so. It is only not this run's doing.
+ *
+ * Anything short of that is `known: false` with the reason, and a caller
+ * treats the failure exactly as it always did.
+ */
+export type FailureAttribution =
+  { known: true; existing: string[]; introduced: string[] } | { known: false; why: string };
+
+/**
+ * How a verification's check set was chosen.
+ *
+ * Kept beside the result rather than in the report: the report's first and
+ * last lines are read as the failure's own words, and a note about what was
+ * NOT run is not one of them.
+ */
+export interface CheckSelection {
+  /**
+   * `override`  the user's `[verify] commands`, never narrowed
+   * `workspace` no usable file list, so every detected project
+   * `touched`   the projects the run's changes select
+   * `impacted`  the commands a repair turn was about
+   */
+  scope: "override" | "workspace" | "touched" | "impacted";
+  /** The commands selected, in the order they run. */
+  commands: string[];
+  /** One entry per project that owns a changed file — selected or left out. */
+  decisions: ProjectDecision[];
+}
+
+/**
+ * The outcome of a verification, whichever shape produced it.
+ *
+ * A result from `CommandVerifier` carries its `status` and that is returned as
+ * it stands. A result without one — an embedder's verifier written against the
+ * two-boolean contract — is read the way that contract always meant it, with
+ * one correction: a run the verifier marked `timedOut` did not fail.
+ */
+export function verifyOutcome(
+  result: Pick<VerifyResult, "status" | "reason" | "passed" | "ran" | "runs">,
+): VerifyOutcome {
+  if (result.status === "passed" || result.status === "failed") return { status: result.status };
+  if (result.status === "inconclusive") {
+    return { status: "inconclusive", reason: result.reason ?? "no_checks" };
+  }
+  if (!result.ran) return { status: "inconclusive", reason: "no_checks" };
+  if (result.passed) return { status: "passed" };
+  const undone = (result.runs ?? []).find((r) => r.timedOut || r.cancelled);
+  if (undone) return { status: "inconclusive", reason: undone.cancelled ? "cancelled" : "timeout" };
+  return { status: "failed" };
+}
+
+/** A run that finished: it was started, and it was neither killed nor skipped. */
+export function runCompleted(run: CheckRunRecord): boolean {
+  return !run.skipped && !run.timedOut && !run.cancelled;
+}
+
+/**
+ * Build a result. The one place the legacy pair is written, so it cannot
+ * disagree with the status it is derived from.
+ */
+function settle(outcome: VerifyOutcome, runs: CheckRunRecord[], report: string): VerifyResult {
+  return {
+    status: outcome.status,
+    ...(outcome.status === "inconclusive" ? { reason: outcome.reason ?? "no_checks" } : {}),
+    passed: outcome.status === "passed",
+    ran: outcome.status !== "inconclusive",
+    runs,
+    report,
+  };
 }
 
 export interface Verifier {
@@ -148,6 +326,24 @@ export interface Verifier {
    * gets `go build`, not every project in the tree.
    */
   verifyFast?(signal?: AbortSignal, touched?: string[]): Promise<VerifyResult>;
+  /**
+   * The run is about to make its first change: the workspace as it stands now
+   * is what "before the task" will mean. Called once per run, before the first
+   * tool call that can write. A verifier that keeps no baseline ignores it.
+   */
+  beginChanges?(): void;
+  /**
+   * Workspace-relative paths that differ from where this run began — whoever
+   * changed them and however: a file tool, a shell command, a deletion. `null`
+   * when that cannot be said. Read by the loop to hold a run to a boundary the
+   * request set.
+   */
+  changedThisRun?(): string[] | null;
+  /**
+   * The tree this run started from, uncommitted work included, for a replay of
+   * a check on it (parent-check.ts). Null when none was taken.
+   */
+  baselineForReplay?(): TaskBaseline | null;
 }
 
 /**
@@ -201,6 +397,19 @@ export interface CommandVerifierConfig {
   timeoutMs?: number;
   /** Per-ecosystem enable/disable and command overrides (`[verify.ecosystems]`). */
   ecosystems?: Record<string, EcosystemSetting>;
+  /**
+   * Leave what the checks generate in the workspace (`[verify] keepGenerated`).
+   * Default false: git-ignored paths a pass of detected checks created are
+   * removed when it ends — see `removeGenerated`. What a command in `commands`
+   * builds is always left.
+   */
+  keepGenerated?: boolean;
+  /**
+   * When this session began, in epoch ms. A file the working tree shows as
+   * changed but whose inode has not changed since then was dirty before the
+   * session started and is not this run's doing. Defaults to construction.
+   */
+  sessionStartMs?: number;
   /**
    * Called once per command the verifier actually ran, with the exit code IT
    * read. Wired by the Engine to the same CheckLog the `bash` tool feeds.
@@ -341,6 +550,19 @@ function isJsMonorepoRoot(dir: string): boolean {
   }
 }
 
+/**
+ * The command that runs the project's DECLARED `test` script.
+ *
+ * For npm, pnpm and yarn, `<pm> test` is the script runner. For Bun it is not:
+ * `bun test` is Bun's own test runner, which collects every test file under
+ * the directory and never reads `scripts.test`. A project whose script was
+ * `bun test unit` was graded on suites it had deliberately left out, and the
+ * run was then told its change had failed them.
+ */
+function testScriptCommand(pm: Pm): string {
+  return pm === "bun" ? "bun run test" : `${pm} test`;
+}
+
 /** Checks for one JS/TS project directory (root or a nested app). */
 function jsChecks(dir: string, isMonorepoRoot: boolean): Array<[CheckKind, string]> {
   const out: Array<[CheckKind, string]> = [];
@@ -355,7 +577,7 @@ function jsChecks(dir: string, isMonorepoRoot: boolean): Array<[CheckKind, strin
   // 2. Tests. In a monorepo, ONLY trust root scripts (they fan out properly);
   // running `bun test` over the whole tree would double-run packages.
   if (scripts.test && !/no test specified/i.test(scripts.test)) {
-    out.push(["test", pm === "npm" ? "npm test" : `${pm} test`]);
+    out.push(["test", testScriptCommand(pm)]);
   } else if (!scripts.test && !isMonorepoRoot && walkHas(dir, JS_TEST_FILE)) {
     // Scriptless project with raw test files — Rune runs on Bun, which can
     // execute bun:test files directly.
@@ -740,38 +962,72 @@ function missingToolchain(command: string, exitCode: number, output: string): st
   return `${wantBin} is not installed on this machine`;
 }
 
+/**
+ * Check commands still running, by the pid that leads each one's process
+ * group. Killed when this process exits, so a run that is stopped mid-check
+ * does not leave a test suite running behind it.
+ */
+const liveCheckGroups = new Set<number>();
+let exitReaperInstalled = false;
+
+function killGroup(pid: number): void {
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    // Not a group leader here (a platform without process groups), or the
+    // group is already gone. The leader-only kill is the best that is left.
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      /* already exited */
+    }
+  }
+}
+
 async function runCommand(
   command: string,
   cwd: string,
   timeoutMs: number,
   signal?: AbortSignal,
+  /** Laid over the inherited environment — where generated state goes. */
+  extraEnv?: Record<string, string>,
 ): Promise<{ exitCode: number; output: string; timedOut: boolean; durationMs: number }> {
   const started = Date.now();
   const proc = Bun.spawn(["bash", "-c", command], {
     cwd,
+    // A verifier has no interactive user. Inheriting a terminal lets test
+    // runners or subprocesses wait for input until the entire check expires.
+    stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env },
+    env: { ...process.env, ...extraEnv },
+    // detached → the shell leads its own process group, so the deadline and a
+    // cancelled run stop the WHOLE tree. Killing only the shell orphaned
+    // whatever it had started, and the orphan kept the output pipes open: the
+    // read below then waited for the suite to finish on its own. Measured:
+    // `true && sleep 3` under a 200ms deadline returned after 3011ms — and
+    // every nested project's check is that shape (`cd api && go test ./...`),
+    // so for those the deadline never bounded anything.
+    detached: true,
   });
+  liveCheckGroups.add(proc.pid);
+  if (!exitReaperInstalled) {
+    exitReaperInstalled = true;
+    process.on("exit", () => {
+      for (const pid of liveCheckGroups) killGroup(pid);
+    });
+  }
 
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
-    try {
-      proc.kill();
-    } catch {
-      /* already exited */
-    }
+    killGroup(proc.pid);
   }, timeoutMs);
 
-  const onAbort = () => {
-    try {
-      proc.kill();
-    } catch {
-      /* already exited */
-    }
-  };
+  const onAbort = () => killGroup(proc.pid);
   signal?.addEventListener("abort", onAbort, { once: true });
+  // Cancelled before the listener was attached: `abort` will not fire again.
+  if (signal?.aborted) onAbort();
 
   try {
     const [stdout, stderr, exitCode] = await Promise.all([
@@ -788,7 +1044,255 @@ async function runCommand(
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener("abort", onAbort);
+    liveCheckGroups.delete(proc.pid);
   }
+}
+
+// ─── Where a check's own generated state goes ───
+
+/** Session caches still on disk, removed when the process exits. */
+const liveCaches = new Set<string>();
+let cacheSweepInstalled = false;
+
+/** Whether cargo has been told, by a config file, where to build. */
+function cargoTargetConfigured(projectDir: string, env: NodeJS.ProcessEnv): boolean {
+  const configs: string[] = [];
+  for (let dir = projectDir; ; dir = dirname(dir)) {
+    configs.push(join(dir, ".cargo", "config.toml"), join(dir, ".cargo", "config"));
+    if (dirname(dir) === dir) break;
+  }
+  const cargoHome = env.CARGO_HOME ?? join(homedir(), ".cargo");
+  configs.push(join(cargoHome, "config.toml"), join(cargoHome, "config"));
+  return configs.some((path) => /^\s*target-dir\s*=/m.test(readText(path)));
+}
+
+/** Whether a `target/` already sits beside this manifest or one above it — a workspace's is at its root. */
+function hasCargoTarget(projectDir: string): boolean {
+  for (let dir = projectDir; ; dir = dirname(dir)) {
+    if (existsSync(join(dir, "Cargo.toml")) && existsSync(join(dir, "target"))) return true;
+    if (dirname(dir) === dir) return false;
+  }
+}
+
+/**
+ * Environment that keeps a check's generated state out of the project — for a
+ * project that has nowhere of its own for it yet.
+ *
+ * The first `cargo check` in a crate that has never been built creates
+ * `target/` in the middle of the task tree; a Python compile leaves
+ * `__pycache__` beside every source it touches. Neither is the run's work, and
+ * both then show up as changes to it. So when the project has no such
+ * directory and the person has not said where it goes, it goes to `cache`.
+ *
+ * Never against a choice already made: a variable that is set stays as it is,
+ * a `target/` that exists is used (it is the person's build cache, and warm),
+ * and a `target-dir` in a cargo config is theirs to decide. Only runners with
+ * a supported switch are here — gradle and maven have none that covers their
+ * build directory, and are left alone.
+ */
+export function generatedStateEnv(
+  projectDir: string,
+  ecosystem: Ecosystem,
+  env: NodeJS.ProcessEnv,
+  cache: () => string,
+): Record<string, string> {
+  const unset = (name: string): boolean => !env[name];
+  const absent = (name: string): boolean => !existsSync(join(projectDir, name));
+  const out: Record<string, string> = {};
+  if (ecosystem === "rust") {
+    if (
+      unset("CARGO_TARGET_DIR") &&
+      unset("CARGO_BUILD_TARGET_DIR") &&
+      !hasCargoTarget(projectDir) &&
+      !cargoTargetConfigured(projectDir, env)
+    ) {
+      out.CARGO_TARGET_DIR = join(cache(), "cargo-target");
+    }
+  }
+  if (ecosystem === "python") {
+    if (unset("PYTHONPYCACHEPREFIX")) out.PYTHONPYCACHEPREFIX = join(cache(), "pycache");
+    // pytest's own cache has no relocation variable, but it can be switched
+    // off, and a check run has no use for `--last-failed`.
+    if (unset("PYTEST_ADDOPTS") && absent(".pytest_cache")) {
+      out.PYTEST_ADDOPTS = "-p no:cacheprovider";
+    }
+    if (unset("MYPY_CACHE_DIR") && absent(".mypy_cache")) {
+      out.MYPY_CACHE_DIR = join(cache(), "mypy");
+    }
+    if (unset("RUFF_CACHE_DIR") && absent(".ruff_cache")) {
+      out.RUFF_CACHE_DIR = join(cache(), "ruff");
+    }
+  }
+  return out;
+}
+
+// ─── What a pass of checks leaves in the tree ───
+//
+// B1, 2026-10-05. The end-of-turn `bun run typecheck` of a turbo workspace
+// builds every package, and left 129 new git-ignored paths — `.turbo/`, a
+// `dist/` in each package — in the person's repository. The environment above
+// keeps cargo's and Python's generated state out of the tree; a JavaScript
+// build has no such switch. So what a pass generated is removed when it ends.
+//
+// Only this: a path git ignores now, that git listed neither as ignored nor
+// as untracked before the pass, and that the file system says was created
+// during it. All three, because "newly ignored" is not "new":
+//
+//   - an ignore rule written during the pass makes a folder that was always
+//     there read as newly ignored;
+//   - an empty folder that the checks put only ignored files in reads to git
+//     as an ignored folder from then on.
+//
+// Either would be a person's own directory deleted. A new file git does NOT
+// ignore is left where it is: that one is a visible change, for the person to
+// see. And a path whose name says it is not build output is never taken.
+
+/** Installed dependencies, and what installing leaves: costly to make again, and needed next. */
+const KEPT_NAMES = new Set(["node_modules", ".venv", "venv", "vendor", "Pods"]);
+/**
+ * A person's, or another tool's, wherever git files them: environment files,
+ * an editor's project folder, another agent's settings, the Finder's view of
+ * a folder. Each can first appear while a check happens to be running.
+ */
+const KEPT_SHAPES = /^(?:\.env.*|\.idea|\.vscode|\.claude|\.DS_Store|.+\.egg-info)$/;
+
+function keptByName(path: string): boolean {
+  if (isHarnessOwnedPath(path)) return true;
+  return path.split("/").some((segment) => KEPT_NAMES.has(segment) || KEPT_SHAPES.test(segment));
+}
+
+/**
+ * Paths under `root` that git does not track — the ignored ones, or the ones
+ * it would offer to add. A directory with nothing tracked in it is one entry,
+ * with a trailing `/`. `null` when git cannot say: not a repository, or the
+ * listing failed.
+ *
+ * Not the synchronous call: this runs around every pass of checks, and a git
+ * that is slow to answer must not hold the terminal still while it does.
+ */
+function untracked(root: string, which: "ignored" | "unignored"): Promise<Set<string> | null> {
+  return new Promise((resolve) => {
+    execFile(
+      "git",
+      [
+        "ls-files",
+        "--others",
+        ...(which === "ignored" ? ["--ignored"] : []),
+        "--exclude-standard",
+        "--directory",
+        "-z",
+      ],
+      {
+        cwd: root,
+        encoding: "utf8",
+        timeout: 15_000,
+        maxBuffer: 32 * 1024 * 1024,
+        env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+      },
+      (error, stdout) => resolve(error ? null : new Set(stdout.split("\0").filter(Boolean))),
+    );
+  });
+}
+
+/** The git-ignored paths under `root`; `null` outside a repository. */
+export function ignoredPaths(root: string): Promise<Set<string> | null> {
+  return untracked(root, "ignored");
+}
+
+/** What git did not track under a workspace at one moment. */
+export interface TreeBefore {
+  /** Epoch ms, read before either listing was taken. */
+  at: number;
+  ignored: Set<string>;
+  unignored: Set<string>;
+}
+
+/** Taken before a pass of checks. `null` when there is no telling what it will have generated. */
+export async function treeBefore(root: string): Promise<TreeBefore | null> {
+  const at = Date.now();
+  const [ignored, unignored] = await Promise.all([
+    untracked(root, "ignored"),
+    untracked(root, "unignored"),
+  ]);
+  return ignored && unignored ? { at, ignored, unignored } : null;
+}
+
+/** File systems that keep times to the second, or two, exist. */
+const BIRTH_SLACK_MS = 2_000;
+
+/**
+ * Remove what was generated under `root` since `before`, and return it — as
+ * git names it, sorted, a folder that went whole as one entry. Never throws,
+ * and with no `before` removes nothing.
+ *
+ * A link is unlinked, never followed. A path that will not go is left, and is
+ * not in the answer.
+ */
+export async function removeGenerated(root: string, before: TreeBefore | null): Promise<string[]> {
+  if (!before) return [];
+  const now = await untracked(root, "ignored");
+  if (!now) return [];
+  const listed = [...now].sort();
+
+  /** Where `path` is, when it is the pass's to remove; `null` when it is not. */
+  const generated = async (path: string): Promise<{ full: string; link: boolean } | null> => {
+    if (before.ignored.has(path) || before.unignored.has(path) || keptByName(path)) return null;
+    // No trailing slash: with one, a link is followed to what it points at.
+    const full = join(root, path.replace(/\/+$/, ""));
+    const entry = await lstat(full);
+    // On disk before the pass began, whatever git called it then. A file
+    // system with no creation times reports zero, which decides nothing.
+    if (entry.birthtimeMs > 0 && entry.birthtimeMs < before.at - BIRTH_SLACK_MS) return null;
+    return { full, link: entry.isSymbolicLink() };
+  };
+
+  const removed: string[] = [];
+  // A folder no rule names, listed because all it holds is ignored, has what
+  // it holds listed after it. Those are decided one by one — what is kept by
+  // name inside it stays — and the folder goes last, if that left it empty.
+  const holders: string[] = [];
+  for (const [index, path] of listed.entries()) {
+    if (path.endsWith("/") && listed[index + 1]?.startsWith(path)) {
+      holders.push(path);
+      continue;
+    }
+    try {
+      const it = await generated(path);
+      if (!it) continue;
+      if (it.link) await unlink(it.full);
+      else await rm(it.full, { recursive: true });
+      removed.push(path);
+    } catch {
+      // It would not go, or is already gone.
+    }
+  }
+  for (const path of holders.reverse()) {
+    try {
+      const it = await generated(path);
+      if (!it) continue;
+      await rmdir(it.full);
+      removed.push(path);
+    } catch {
+      // Not empty: something in it was kept.
+    }
+  }
+
+  const whole: string[] = [];
+  for (const path of removed.sort()) {
+    const above = whole[whole.length - 1];
+    if (above?.endsWith("/") && path.startsWith(above)) continue;
+    whole.push(path);
+  }
+  return whole;
+}
+
+/** What a pass removed, as one line of the run's audit trail. */
+export function removedNote(removed: readonly string[]): string {
+  const more = removed.length > 6 ? `, and ${removed.length - 6} more` : "";
+  return (
+    `removed ${removed.length} git-ignored path${removed.length === 1 ? "" : "s"} ` +
+    `the checks generated: ${removed.slice(0, 6).join(", ")}${more}`
+  );
 }
 
 // ─── Per-step compile checks ───
@@ -868,14 +1372,175 @@ export function projectsForRun(
 ): DetectedProject[] {
   const out: DetectedProject[] = [];
   for (const file of touched) {
-    const owners = projects.filter((p) => file.startsWith(p.dir === "" ? "" : `${p.dir}/`));
-    if (owners.length === 0) continue;
-    // Every owner's dir is a prefix of the same path, so the longest is the
-    // innermost, and equal lengths are the same directory.
-    const innermost = Math.max(...owners.map((p) => p.dir.length));
-    for (const p of owners) {
-      if (p.dir.length === innermost && !out.includes(p)) out.push(p);
+    for (const p of ownersOf(projects, file)) {
+      if (!out.includes(p)) out.push(p);
     }
+  }
+  return out;
+}
+
+// ─── What a selection has to ask the file system ───
+
+/** Build files that can invoke another ecosystem's toolchain, per ecosystem. */
+const BUILD_FILES: Partial<Record<Ecosystem, RegExp>> = {
+  rust: /^(?:Cargo\.toml|build\.rs)$/,
+  jvm: /^(?:build\.gradle(?:\.kts)?|settings\.gradle(?:\.kts)?|pom\.xml)$/,
+};
+
+/**
+ * The words by which a build file calls a script toolchain. Bounded on both
+ * sides by something that is not a name character, so `tree-sitter-python` (a
+ * crate) is not Python and `napi` (a dependency) is JS.
+ */
+const TOOLCHAIN_WORDS: Partial<Record<Ecosystem, RegExp>> = {
+  js: /(?<![\w-])(?:npm|npx|pnpm|yarn|bunx?|node|deno|wasm-bindgen|wasm-pack|napi|neon|tauri|trunk)(?![\w-])/i,
+  python: /(?<![\w-])(?:python3?|pip3?|pyo3|maturin|poetry)(?![\w-])/i,
+};
+
+/**
+ * Where each ecosystem would say that its checks read documentation, and the
+ * words it would say it with.
+ *
+ *   rust    `#![doc = include_str!("../README.md")]` — the README is compiled
+ *           and its examples run as doctests
+ *   python  a doctest glob, or a docs build, in the test configuration
+ *   jvm     a documentation task wired into the build
+ *
+ * JS is read from `package.json` itself (below), and Go has no entry: an
+ * `//go:embed` can pull any file into a test from inside a source file, so a
+ * Go project is always taken to read documentation.
+ */
+const DOC_READERS: Partial<Record<Ecosystem, { files: RegExp; words: RegExp }>> = {
+  rust: {
+    files: /^(?:lib|main)\.rs$/,
+    words: /include_str!\s*\(\s*"[^"]*\.(?:md|markdown|txt|rst)"/,
+  },
+  python: {
+    files:
+      /^(?:pyproject\.toml|setup\.cfg|tox\.ini|pytest\.ini|noxfile\.py|mkdocs\.ya?ml|conf\.py)$/,
+    words: /doctest|sphinx|mkdocs/i,
+  },
+  jvm: {
+    files: /^(?:build\.gradle(?:\.kts)?|pom\.xml)$/,
+    words: /asciidoctor|dokka|javadoc|markdown/i,
+  },
+};
+
+/** A script that hands the work to other packages: what THEY run is not visible from here. */
+const FANS_OUT =
+  /\b(?:turbo|nx|lerna|rush|wsrun)\b|\b(?:pnpm|yarn|npm|bun)\b[^&|;]*(?:-r\b|--recursive|--filter|workspaces?\b)/;
+/** Tools that read prose. */
+const DOC_TOOLS =
+  /\b(?:markdownlint|remark|mdx|doctest|typedoc|docusaurus|vitepress|vale|cspell|textlint|prettier)\b|\.mdx?\b|\bdocs?\b/i;
+
+/**
+ * Whether a JS project's own checks read documentation: one of the scripts the
+ * verifier runs names a tool that does, or hands the work to packages whose
+ * scripts cannot be seen from the root.
+ */
+function jsReadsDocumentation(dir: string): boolean {
+  const scripts = readScripts(dir);
+  return ["typecheck", "test", "lint", "build"].some((name) => {
+    const text = scripts[name] ?? "";
+    return FANS_OUT.test(text) || DOC_TOOLS.test(text);
+  });
+}
+
+/**
+ * Whether any build file under `root` names the toolchain. Bounded like every
+ * other walk here: a few levels, the usual skips, a fixed number of files —
+ * and when a budget runs out before the answer is known, the answer is "yes",
+ * because "could not rule it out" must keep the project, not drop it.
+ */
+function buildFilesCall(root: string, files: RegExp, words: RegExp): boolean {
+  const budget = { dirents: 4000, reads: 64 };
+  const walk = (dir: string, depth: number): boolean => {
+    let entries: import("fs").Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return false;
+    }
+    for (const e of entries) {
+      if (budget.dirents-- <= 0) return true;
+      if (!e.isFile() || !files.test(e.name)) continue;
+      if (budget.reads-- <= 0) return true;
+      if (words.test(readText(join(dir, e.name)).slice(0, 256_000))) return true;
+    }
+    if (depth <= 0) return false;
+    for (const e of entries) {
+      if (e.isDirectory() && !WALK_SKIP.has(e.name) && !e.name.startsWith(".")) {
+        if (walk(join(dir, e.name), depth - 1)) return true;
+      }
+    }
+    return false;
+  };
+  return walk(root, 4);
+}
+
+/** File systems that keep times to the second, or two, exist. */
+const CLOCK_SLACK_MS = 2_000;
+
+/**
+ * Files that decide what a JS check resolves and how it is run. If one of
+ * these changed during the run, the environment a baseline would be run in is
+ * no longer the one it had, and no comparison is made.
+ */
+const DEPENDENCY_FILE =
+  /(?:^|\/)(?:package\.json|package-lock\.json|npm-shrinkwrap\.json|bun\.lockb?|pnpm-lock\.yaml|yarn\.lock|bunfig\.toml|tsconfig(?:\.[\w.-]+)?\.json|jsconfig\.json|\.npmrc)$/;
+
+const NO_FAILURES: ParsedTestRun = { failing: [], pass: 0, fail: 0, errors: 0 };
+
+/** A directory under both of its names: as given, and as the kernel knows it. */
+function bothNames(dir: string): string[] {
+  try {
+    const real = realpathSync(dir);
+    return real === dir ? [dir] : [dir, real];
+  } catch {
+    return [dir];
+  }
+}
+
+/**
+ * Workspace-relative paths the working tree shows as changed since `sinceMs`,
+ * or `null` when git cannot say (not a repository, no commit yet, no git).
+ *
+ * "Changed" is the inode's change time, not the content's modification time:
+ * `mv` keeps a file's mtime, so a renamed source would read as old. A path
+ * that is gone cannot be dated and always counts.
+ */
+function changedSince(root: string, sinceMs: number): string[] | null {
+  const git = (args: string[]): string | null => {
+    try {
+      return execFileSync("git", args, {
+        cwd: root,
+        encoding: "utf8",
+        timeout: 5_000,
+        maxBuffer: 8 * 1024 * 1024,
+        stdio: ["ignore", "pipe", "ignore"],
+        env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+      });
+    } catch {
+      return null;
+    }
+  };
+  // Tracked changes against the commit the work started from, both sides of a
+  // rename; then everything untracked that is not ignored.
+  const tracked = git(["diff", "--name-only", "-z", "--relative", "--no-renames", "HEAD"]);
+  if (tracked === null) return null;
+  const untracked = git(["ls-files", "-z", "--others", "--exclude-standard"]);
+  if (untracked === null) return null;
+  const out: string[] = [];
+  for (const path of `${tracked}${untracked}`.split("\0")) {
+    if (!path || isHarnessOwnedPath(path)) continue;
+    let changedAt: number | null;
+    try {
+      const st = statSync(join(root, path));
+      changedAt = Math.max(st.mtimeMs, st.ctimeMs);
+    } catch {
+      changedAt = null;
+    }
+    if (changedAt === null || changedAt >= sinceMs - CLOCK_SLACK_MS) out.push(path);
   }
   return out;
 }
@@ -948,8 +1613,6 @@ function fileScopedCheck(
 // ─── CommandVerifier ───
 
 export class CommandVerifier implements Verifier {
-  constructor(private readonly config: CommandVerifierConfig) {}
-
   private overridden(): string[] | null {
     return this.config.commands && this.config.commands.length > 0 ? this.config.commands : null;
   }
@@ -958,30 +1621,253 @@ export class CommandVerifier implements Verifier {
     return { ecosystems: this.config.ecosystems };
   }
 
+  private readonly sessionStartMs: number;
+  /** The tree this run started from; `null` when none could be taken. */
+  private baseline: TaskBaseline | null = null;
+  /** What a check reported on a baseline tree, by tree + command + toolchain. */
+  private readonly baselineRuns = new Map<string, ParsedTestRun>();
+  /** This session's directory for state a check generates; made on first use. */
+  private cache: string | null = null;
+
+  private cacheDir(): string {
+    if (!this.cache) {
+      this.cache = mkdtempSync(join(tmpdir(), "rune-check-cache-"));
+      liveCaches.add(this.cache);
+      if (!cacheSweepInstalled) {
+        cacheSweepInstalled = true;
+        process.on("exit", () => {
+          for (const dir of liveCaches) rmSync(dir, { recursive: true, force: true });
+        });
+      }
+    }
+    return this.cache;
+  }
+
+  constructor(private readonly config: CommandVerifierConfig) {
+    this.sessionStartMs = config.sessionStartMs ?? Date.now();
+  }
+
+  beginChanges(): void {
+    try {
+      this.baseline = captureBaseline(this.config.workspaceRoot);
+    } catch {
+      this.baseline = null; // no baseline is an answer; a thrown one is not
+    }
+  }
+
+  baselineForReplay(): TaskBaseline | null {
+    return this.baseline;
+  }
+
+  /**
+   * Whether the tests failing in `failed` were already failing where the run
+   * started. Every way this can fall short returns `known: false` with the
+   * reason — the caller then treats the failure as it always has.
+   */
+  private async attribute(
+    failed: { check: DetectedCheck; output: string },
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<FailureAttribution> {
+    const unknown = (why: string): FailureAttribution => ({ known: false, why });
+    const baseline = this.baseline;
+    if (!baseline)
+      return unknown("no snapshot of the tree was taken before the run's first change");
+
+    const now = parseBunTestRun(failed.output, bothNames(this.config.workspaceRoot));
+    if (!now) return unknown("the check's output is not a test report this can read");
+    if (!attributable(now) || now.failing.length === 0) {
+      return unknown("something failed that the report does not name as a test");
+    }
+
+    const current = baselineIsCurrent(baseline);
+    if (!current.ok) return unknown(current.why);
+    const changed = changedSinceBaseline(baseline);
+    if (changed === null) {
+      return unknown("the working tree could not be compared with where the run began");
+    }
+    const dependency = changed.find((p) => DEPENDENCY_FILE.test(p));
+    if (dependency) return unknown(`dependencies changed during the run (${dependency})`);
+
+    // The runner names a test file from where it ran; the comparison names it
+    // from the repository root.
+    const where = [baseline.prefix, failed.check.project].filter(Boolean).join("/");
+    const changedHere = new Set(
+      where === ""
+        ? changed
+        : changed.filter((p) => p.startsWith(`${where}/`)).map((p) => p.slice(where.length + 1)),
+    );
+    const known = (before: ParsedTestRun): FailureAttribution => {
+      const { existing, introduced } = attributeFailures(now, before, changedHere);
+      return {
+        known: true,
+        existing: existing.map(testLabel),
+        introduced: introduced.map(testLabel),
+      };
+    };
+    // Every failing test sits in a file the run changed: they are the run's,
+    // and there is nothing to ask the baseline.
+    if (now.failing.every((t) => changedHere.has(t.file))) return known(NO_FAILURES);
+
+    const key = [baseline.tree, failed.check.command, envFingerprint()].join("\0");
+    let before = this.baselineRuns.get(key);
+    if (!before) {
+      const ran = await this.runOnBaseline(baseline, failed.check, timeoutMs, signal);
+      if ("unknown" in ran) return unknown(ran.unknown);
+      before = ran;
+      this.baselineRuns.set(key, before);
+    }
+    return known(before);
+  }
+
+  /** The same command, on the tree the run started from. */
+  private async runOnBaseline(
+    baseline: TaskBaseline,
+    check: DetectedCheck,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<ParsedTestRun | { unknown: string }> {
+    const laid = await materialiseBaseline(baseline, { signal });
+    if ("unavailable" in laid) return { unknown: laid.unavailable };
+    try {
+      const { exitCode, output, timedOut } = await runCommand(
+        check.command,
+        laid.cwd,
+        timeoutMs,
+        signal,
+      );
+      if (signal?.aborted) return { unknown: "cancelled" };
+      if (timedOut) return { unknown: "the check did not finish on the tree the run started from" };
+      const parsed = parseBunTestRun(output, bothNames(laid.cwd));
+      if (!parsed) {
+        return {
+          unknown: "the check's output on the starting tree is not a test report this can read",
+        };
+      }
+      // A file that would not load there, a total that does not add up, an
+      // exit code that disagrees with the report, or nothing collected at all:
+      // the starting tree did not give an answer that can be matched against.
+      if (!attributable(parsed)) {
+        return { unknown: "something failed on the starting tree that its report does not name" };
+      }
+      if ((exitCode === 0) !== (parsed.fail === 0)) {
+        return { unknown: "the starting tree's exit code and its report disagree" };
+      }
+      if (parsed.pass + parsed.fail === 0) {
+        return { unknown: "the check collected no tests on the starting tree" };
+      }
+      return parsed;
+    } finally {
+      laid.dispose();
+    }
+  }
+
+  /**
+   * The two facts a selection needs from disk, for one verification. Fresh
+   * each time — a build file the run just edited must be read as it is now —
+   * and each answered at most once within it.
+   */
+  private scopeFacts(): ScopeFacts {
+    const root = this.config.workspaceRoot;
+    const calls = new Map<string, boolean>();
+    let elsewhere: readonly string[] | null | undefined;
+    return {
+      callsToolchain: (project, toolchain) => {
+        const key = `${project.ecosystem}\0${project.dir}\0${toolchain}`;
+        let answer = calls.get(key);
+        if (answer === undefined) {
+          const files = BUILD_FILES[project.ecosystem];
+          const words = TOOLCHAIN_WORDS[toolchain];
+          // No way to look means no way to rule it out.
+          answer = !files || !words ? true : buildFilesCall(join(root, project.dir), files, words);
+          calls.set(key, answer);
+        }
+        return answer;
+      },
+      readsDocumentation: (project) => {
+        const key = `docs\0${project.ecosystem}\0${project.dir}`;
+        let answer = calls.get(key);
+        if (answer === undefined) {
+          const dir = join(root, project.dir);
+          const reader = DOC_READERS[project.ecosystem];
+          answer =
+            project.ecosystem === "js"
+              ? jsReadsDocumentation(dir)
+              : // No way to look means no way to rule it out.
+                !reader || buildFilesCall(dir, reader.files, reader.words);
+          calls.set(key, answer);
+        }
+        return answer;
+      },
+      changedElsewhere: () => {
+        if (elsewhere === undefined) elsewhere = this.changedThisRun();
+        return elsewhere;
+      },
+    };
+  }
+
+  /**
+   * Workspace-relative paths that changed since this run began — or, with no
+   * snapshot of where it began, since this session did.
+   *
+   * The snapshot is the better answer and is used whenever there is one: it
+   * is exact, where the session clock also counts whatever the person or an
+   * earlier run in the same session changed.
+   */
+  changedThisRun(): string[] | null {
+    const baseline = this.baseline;
+    if (baseline && baselineIsCurrent(baseline).ok) {
+      const changed = changedSinceBaseline(baseline);
+      if (changed !== null) {
+        const prefix = baseline.prefix === "" ? "" : `${baseline.prefix}/`;
+        return changed
+          .filter((p) => p.startsWith(prefix))
+          .map((p) => p.slice(prefix.length))
+          .filter((p) => !isHarnessOwnedPath(p));
+      }
+    }
+    return changedSince(this.config.workspaceRoot, this.sessionStartMs);
+  }
+
   /**
    * Every check for this workspace, as the structured records the ledger wants
-   * — narrowed to the project(s) `touched` belongs to when it names any.
+   * — narrowed to the project(s) `touched` selects when it names any — and the
+   * record of how that set was chosen.
    *
    * An explicit `[verify] commands` override is never narrowed: the user said
    * exactly what to run, and that is what runs.
    */
-  private checks(touched?: readonly string[]): DetectedCheck[] {
+  private select(touched?: readonly string[]): {
+    checks: DetectedCheck[];
+    selection: CheckSelection;
+    /** Every changed file is documentation and no check reads it. */
+    documentationOnly?: boolean;
+  } {
+    const chosen = (
+      scope: CheckSelection["scope"],
+      checks: DetectedCheck[],
+      decisions: ProjectDecision[] = [],
+    ) => ({ checks, selection: { scope, commands: checks.map((c) => c.command), decisions } });
+
     const override = this.overridden();
     if (override) {
-      return override.map((command) => ({
-        ecosystem: "js" as Ecosystem,
-        kind: classifyCommand(command),
-        project: "",
-        command,
-      }));
+      return chosen(
+        "override",
+        override.map((command) => ({
+          ecosystem: "js" as Ecosystem,
+          kind: classifyCommand(command),
+          project: "",
+          command,
+        })),
+      );
     }
     const projects = detectProjects(this.config.workspaceRoot, this.detectOptions());
     const rel = relativizeTouched(this.config.workspaceRoot, touched ?? []);
     // No usable file list (an older caller, or a run that wrote nothing inside
     // the workspace): grade the whole workspace, exactly as before.
-    if (rel.length === 0) return orderChecks(projects.flatMap((p) => p.checks));
+    if (rel.length === 0)
+      return chosen("workspace", orderChecks(projects.flatMap((p) => p.checks)));
 
-    const scoped = projectsForRun(projects, rel);
     // The run wrote real files that belong to no detected project — a folder of
     // static files beside other people's projects. There is no check for what
     // this run made, and the siblings' checks say nothing about it. Returning
@@ -989,7 +1875,15 @@ export class CommandVerifier implements Verifier {
     // and the signal the doctrine already teaches: static files, not a project.
     // Grading the siblings instead is what sent one run to install pandas for a
     // stranger's test suite.
-    return orderChecks(scoped.flatMap((p) => p.checks));
+    //
+    // And within a directory several ecosystems share, only the ones the
+    // change can reach (verify-scope.ts): a TypeScript edit beside a
+    // `Cargo.toml` does not run cargo.
+    const picked = selectProjects(projects, rel, this.scopeFacts());
+    return {
+      ...chosen("touched", orderChecks(picked.projects.flatMap((p) => p.checks)), picked.decisions),
+      documentationOnly: picked.documentationOnly,
+    };
   }
 
   private commands(): string[] {
@@ -999,7 +1893,21 @@ export class CommandVerifier implements Verifier {
   }
 
   async verify(signal?: AbortSignal, touched?: string[], only?: string[]): Promise<VerifyResult> {
-    let checks = this.checks(touched);
+    const picked = this.select(touched);
+    if (picked.documentationOnly) {
+      // A decision, and said as one: not "nothing runnable" (there is a
+      // project here, with checks) and not a pass (nothing ran).
+      return {
+        ...settle(
+          { status: "inconclusive", reason: "not_required" },
+          [],
+          "No check applies — only documentation changed, and none of this project's checks read it.",
+        ),
+        selection: picked.selection,
+      };
+    }
+    let checks = picked.checks;
+    let selection = picked.selection;
     // ── The impacted set, not the suite (M4 exit R1) ──
     //
     // `only` names the commands a repair turn was about. Re-running the whole
@@ -1012,9 +1920,27 @@ export class CommandVerifier implements Verifier {
     if (only && only.length > 0) {
       const wanted = new Set(only);
       const narrowed = checks.filter((c) => wanted.has(c.command));
-      if (narrowed.length > 0) checks = narrowed;
+      if (narrowed.length > 0) {
+        checks = narrowed;
+        selection = { ...selection, scope: "impacted", commands: narrowed.map((c) => c.command) };
+      }
     }
-    return this.run(checks, this.config.timeoutMs ?? 120_000, signal);
+    const timeoutMs = this.config.timeoutMs ?? 120_000;
+    const failure: { failed?: { check: DetectedCheck; output: string } } = {};
+    const result = await this.run(checks, timeoutMs, signal, failure);
+    if (result.status !== "failed" || !failure.failed) return { ...result, selection };
+    // A real failure. Before it is handed back as the run's to repair: were
+    // these tests already failing where the run started?
+    let attribution: FailureAttribution;
+    try {
+      attribution = await this.attribute(failure.failed, timeoutMs, signal);
+    } catch (err) {
+      attribution = {
+        known: false,
+        why: `could not be determined (${err instanceof Error ? err.message : String(err)})`,
+      };
+    }
+    return { ...result, selection, attribution };
   }
 
   /**
@@ -1045,7 +1971,11 @@ export class CommandVerifier implements Verifier {
     // every step check quietly widened to the whole tree.
     const rel = relativizeTouched(this.config.workspaceRoot, touched ?? []);
     const scoped = projectForFiles(projects, rel);
-    const chosen = scoped.length > 0 ? scoped : projects;
+    // The same narrowing the end-of-turn check gets: a step that edited a
+    // TypeScript file in a root that also holds a `Cargo.toml` does not need
+    // `cargo check` to close.
+    const picked = scoped.length > 0 ? selectProjects(scoped, rel, this.scopeFacts()) : null;
+    const chosen = picked ? picked.projects : projects;
 
     const fast: DetectedCheck[] = [];
     for (const p of chosen) {
@@ -1059,43 +1989,78 @@ export class CommandVerifier implements Verifier {
     }
     if (fast.length === 0) return noFastCheck();
     fast.sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind]);
-    return this.run(fast, timeout, signal);
+    return {
+      ...(await this.run(fast, timeout, signal)),
+      selection: {
+        scope: picked ? "touched" : "workspace",
+        commands: fast.map((c) => c.command),
+        decisions: picked?.decisions ?? [],
+      },
+    };
   }
 
   private async run(
     checks: DetectedCheck[],
     timeoutMs: number,
     signal?: AbortSignal,
+    /** Filled with the check that went red and everything it printed. */
+    failure?: { failed?: { check: DetectedCheck; output: string } },
   ): Promise<VerifyResult> {
     if (checks.length === 0) {
       // Word this as the finding it is: after a session that WROTE files,
       // "nothing runnable" usually means the work produced static files, not a
       // project — the exact signature of a mock delivered as an app. The report
       // reaches both the task-state block and the UI's verification line.
-      return {
-        passed: true,
-        ran: false,
-        runs: [],
-        report:
-          "Nothing runnable detected — no manifest, test, or build configuration found, so no command was executed.",
-      };
+      return settle(
+        { status: "inconclusive", reason: "no_checks" },
+        [],
+        "Nothing runnable detected — no manifest, test, or build configuration found, so no command was executed.",
+      );
     }
 
+    // One pass: every check in it sees what the ones before it built, and what
+    // the pass generated goes when the pass ends — however it ends. A check
+    // that was killed half-way left half a build.
+    //
+    // For the checks Rune chose. A command the person wrote in `[verify]
+    // commands` is theirs, and so is what it builds: the same line H1b draws.
+    const root = this.config.workspaceRoot;
+    const before = this.config.keepGenerated || this.overridden() ? null : await treeBefore(root);
+    let result: VerifyResult;
+    let removed: string[];
+    try {
+      result = await this.runChecks(checks, timeoutMs, signal, failure);
+    } finally {
+      removed = await removeGenerated(root, before);
+    }
+    return removed.length > 0 ? { ...result, removed } : result;
+  }
+
+  private async runChecks(
+    checks: DetectedCheck[],
+    timeoutMs: number,
+    signal?: AbortSignal,
+    failure?: { failed?: { check: DetectedCheck; output: string } },
+  ): Promise<VerifyResult> {
     const reports: string[] = [];
     const runs: CheckRunRecord[] = [];
-    /** Report every command we ran to the check log — pass or fail, always. */
+    /**
+     * Report every command that FINISHED to the check log — pass or fail.
+     *
+     * A command that never started (toolchain absent), or that was killed at
+     * its deadline or by a cancelled run, measured nothing. Logging the last
+     * two as failed checks is what put "`bun run test` last failed" in a
+     * verdict about a suite that was simply slow: the log is read as evidence
+     * about the code, and a kill says nothing about the code.
+     */
     const note = (record: CheckRunRecord): void => {
       runs.push(record);
-      if (record.skipped) return; // a command that never ran is not evidence
+      if (!runCompleted(record)) return;
       try {
         this.config.onCheck?.({
           command: record.command,
           passed: record.passed,
-          summary: record.timedOut
-            ? `timed out after ${timeoutMs}ms`
-            : record.passed
-              ? "ok"
-              : `exit ${record.exitCode}`,
+          summary: record.passed ? "ok" : `exit ${record.exitCode}`,
           exitCode: record.exitCode ?? undefined,
           durationMs: record.durationMs,
         });
@@ -1103,21 +2068,45 @@ export class CommandVerifier implements Verifier {
         // Evidence bookkeeping must never break verification itself.
       }
     };
+    const report = (): string => reports.join("\n\n");
+    const cancelled = (): VerifyResult => {
+      reports.push("[cancelled — the remaining checks did not run]");
+      return settle({ status: "inconclusive", reason: "cancelled" }, runs, report());
+    };
 
     for (const check of checks) {
-      if (signal?.aborted) break;
+      // Cancelled between two checks. The ones before this point may all be
+      // green; the set as a whole was not finished, so it is not a pass.
+      if (signal?.aborted) return cancelled();
       const cmd = check.command;
       const { exitCode, output, timedOut, durationMs } = await runCommand(
         cmd,
         this.config.workspaceRoot,
         timeoutMs,
         signal,
+        // By the check's ecosystem — which only a DETECTED check has. A command
+        // the person wrote in `[verify] commands` carries none of its own (it
+        // is filed under JS, which has no switch), so it runs in exactly the
+        // environment they wrote it for.
+        generatedStateEnv(
+          join(this.config.workspaceRoot, check.project),
+          check.ecosystem,
+          process.env,
+          () => this.cacheDir(),
+        ),
       );
       const base = { command: cmd, ecosystem: check.ecosystem, kind: check.kind, durationMs };
+      if (signal?.aborted) {
+        // Cancelled while this command was running: it was killed, and the
+        // exit code of a killed process is not a verdict on the code.
+        note({ ...base, exitCode: null, passed: false, cancelled: true });
+        reports.push(`$ ${cmd}\n[cancelled]`);
+        return cancelled();
+      }
       if (timedOut) {
-        note({ ...base, exitCode, passed: false, timedOut: true });
-        reports.push(`$ ${cmd}\n[timed out after ${timeoutMs}ms]`);
-        return { passed: false, ran: true, runs, report: reports.join("\n\n") };
+        note({ ...base, exitCode: null, passed: false, timedOut: true });
+        reports.push(`$ ${cmd}\n[timed out after ${timeoutMs}ms — nothing was measured]`);
+        return settle({ status: "inconclusive", reason: "timeout" }, runs, report());
       }
       if (exitCode !== 0) {
         const absent = missingToolchain(cmd, exitCode, output);
@@ -1129,36 +2118,32 @@ export class CommandVerifier implements Verifier {
         }
         note({ ...base, exitCode, passed: false });
         reports.push(`$ ${cmd}  (exit ${exitCode})\n${truncate(output, 2000)}`);
-        return { passed: false, ran: true, runs, report: reports.join("\n\n") };
+        if (failure) failure.failed = { check, output };
+        return settle({ status: "failed" }, runs, report());
       }
       note({ ...base, exitCode, passed: true });
       reports.push(`$ ${cmd}  (ok)`);
     }
 
-    const actuallyRan = runs.some((r) => !r.skipped);
-    if (!actuallyRan) {
-      return {
-        passed: true,
-        ran: false,
+    if (!runs.some(runCompleted)) {
+      // Every selected check was stepped over for an absent toolchain.
+      return settle(
+        { status: "inconclusive", reason: "missing_runner" },
         runs,
-        report:
-          runs.length > 0
-            ? `No check could run — ${runs
-                .map((r) => r.skipped)
-                .filter(Boolean)
-                .join("; ")}.`
-            : "Nothing runnable detected — no command was executed.",
-      };
+        `No check could run — ${runs
+          .map((r) => r.skipped)
+          .filter(Boolean)
+          .join("; ")}.`,
+      );
     }
-    return { passed: true, ran: true, runs, report: reports.join("\n\n") };
+    return settle({ status: "passed" }, runs, report());
   }
 }
 
 function noFastCheck(): VerifyResult {
-  return {
-    passed: true,
-    ran: false,
-    runs: [],
-    report: "No compile-class check detected for a step check.",
-  };
+  return settle(
+    { status: "inconclusive", reason: "no_checks" },
+    [],
+    "No compile-class check detected for a step check.",
+  );
 }

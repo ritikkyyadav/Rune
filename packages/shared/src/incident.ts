@@ -82,6 +82,27 @@ export const INCIDENT_CLASSES = [
   "loop.evidence_gate",
   "loop.delegation_gate",
   "loop.verification_failed",
+  /**
+   * The project's checks were started and reached no verdict — a check was
+   * killed at its deadline. Not a failure of the work, and it buys no repair
+   * turn; counted on its own so a slow suite is not read as a red one.
+   */
+  "loop.verification_inconclusive",
+  /**
+   * The project's checks are red, and every failing test was already failing
+   * on the tree the run started from. Reported as found; no repair turn.
+   */
+  "loop.verification_preexisting",
+  /**
+   * A file tool was aimed outside what the request allowed ("change no code",
+   * with a named place for the answer) and was refused by path.
+   */
+  "loop.scope_refused",
+  /**
+   * Under such a boundary, something else in the workspace differs from when
+   * the run began. Reported, never undone: it may not be the run's.
+   */
+  "loop.scope_outside_changes",
   "loop.consecutive_errors",
   "loop.max_turns",
   "loop.second_wind",

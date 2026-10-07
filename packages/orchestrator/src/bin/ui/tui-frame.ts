@@ -23,6 +23,7 @@ import {
   regions,
   splitPanes,
   zones,
+  zoomPane,
   COMPOSER_MIN_ROWS,
   MIN_COLS,
   MIN_ROWS,
@@ -36,7 +37,8 @@ import {
   type Zones,
 } from "./viewport";
 import { uiLayout } from "./layout";
-import { workingRow } from "./working";
+import { restGlyph } from "./waveform";
+import { stagedRow } from "./working";
 import { arrowRun } from "./keys";
 import { renderBanner } from "./banner";
 import * as F from "./flow";
@@ -51,11 +53,14 @@ import {
   MASK_CELL_UTF8,
 } from "../../first-run";
 import {
+  AGENTS_KEY_HINT,
+  agentBlocks,
+  agentsBack,
+  agentsHint,
   fleetLedger,
-  panelHint,
   renderAgentsPanel,
-  renderAgentsStrip,
   renderSessionPanel,
+  type AgentFocus,
   type SessionReadout,
 } from "./agents-panel";
 import {
@@ -265,9 +270,52 @@ export const FRAME_METHODS = {
     return !this.regionsNow().collapsed;
   },
 
-  /** The workspace, split between the main transcript and one child's. */
-  panesNow(this: Tui, workspaceRows: number): Panes {
-    return splitPanes(workspaceRows, this.childPane != null);
+  /**
+   * The workspace, shared between the main transcript and one child's.
+   *
+   * Two shapes, by the frame: in one column an open transcript TAKES the
+   * workspace (`zoomPane`); in the four-region frame it stacks under the
+   * lead's (`splitPanes`), because there the cards are beside it and the
+   * workspace is tall enough to hold both.
+   */
+  panesNow(this: Tui, workspaceRows: number, collapsed = false): Panes {
+    const open = this.childPane != null;
+    return open && collapsed ? zoomPane(workspaceRows) : splitPanes(workspaceRows, open);
+  },
+
+  /**
+   * Where the agents keys currently go, in the one vocabulary the key table,
+   * the ledger and the hint row share (./agents-panel.ts `AgentFocus`).
+   *
+   * Derived, never stored: `focus`, `panelOverlay` and `childPane` are the
+   * state, and a fourth field that had to be kept in step with them would be
+   * the field that drifted. In one column `focus === "panel"` with no overlay
+   * is the ROW -- the blocks on the rung, in place; with a right column it is
+   * the cards, which are on screen there.
+   */
+  agentFocus(this: Tui): AgentFocus {
+    if (this.inline) return "composer";
+    if (this.panelOverlay) return "cards";
+    if (this.focus === "child" && this.childPane) return "view";
+    if (this.focus === "panel") return this.regionsNow().collapsed ? "row" : "cards";
+    return "composer";
+  },
+
+  /**
+   * Draw the rung again NOW, because where the keys are just changed.
+   *
+   * During a turn the rung's row is built by the turn's renderer and cached
+   * (`turnPreview`); the tick replaces it only when it reads differently, up to
+   * a frame later. A key that moves the selection has to show on the next
+   * paint, not the next tick -- a highlight that trails the key by a tenth of a
+   * second reads as a dropped keystroke.
+   */
+  refreshRung(this: Tui): void {
+    fleetLedger.setFocus(this.agentFocus());
+    if (this.mode === "turn" && this.liveTurn && !this.aborting) {
+      this.turnPreview = this.liveTurn.liveLines();
+    }
+    this.scheduleDraw();
   },
 
   /**
@@ -280,7 +328,9 @@ export const FRAME_METHODS = {
   cycleFocus(this: Tui): void {
     if (this.regionsNow().collapsed) {
       this.panelOverlay = !this.panelOverlay;
-      this.focus = this.panelOverlay ? "panel" : "composer";
+      // Closing the cards returns to what was under them: the transcript that
+      // is open, when one is, and the composer otherwise.
+      this.focus = this.panelOverlay ? "panel" : this.childPane ? "child" : "composer";
       this.scheduleDraw();
       return;
     }
@@ -293,7 +343,7 @@ export const FRAME_METHODS = {
   releaseFocus(this: Tui): boolean {
     if (this.panelOverlay) {
       this.panelOverlay = false;
-      this.focus = "composer";
+      this.focus = this.childPane ? "child" : "composer";
       this.scheduleDraw();
       return true;
     }
@@ -313,6 +363,12 @@ export const FRAME_METHODS = {
     this.childPane = pane;
     this.childScroll = 0;
     this.focus = "child"; // you opened it to read it
+    // The cards give way to the transcript they opened. In one column the
+    // overlay is drawn OVER the workspace, so leaving it up put the pane you
+    // had just asked for behind the list you asked from -- `enter` appeared to
+    // do nothing, and the transcript only showed after an `esc` nobody had a
+    // reason to press.
+    this.panelOverlay = false;
     this.scheduleDraw();
   },
 
@@ -322,7 +378,12 @@ export const FRAME_METHODS = {
     if (!this.childPane) return;
     this.childPane = null;
     this.childScroll = 0;
+    this.lastChildRows = null;
     this.focus = "composer";
+    // The ledger's record of what is open goes with the pane. `ctrl+w` and
+    // `esc` used to leave it set, so the card went on saying OPEN over a
+    // transcript that had been closed.
+    fleetLedger.detachPane();
     this.scheduleDraw();
   },
 
@@ -650,45 +711,71 @@ export const FRAME_METHODS = {
   },
 
   /**
-   * The collapsed one-line agents strip.
+   * The row directly above the composer: the rung.
    *
-   * Below PANEL_MIN_COLS the right column is worth less than the cells it
-   * costs, so it becomes this: always current, and naming the key that opens
-   * the full panel. It names the members it has room for rather than printing
-   * a count -- a count is the thing this phase exists to replace.
+   * It is the same row whether or not a fan-out is running. It used to be
+   * REPLACED by a one-line agents strip the moment a member existed, which hid
+   * the rung's glyph for exactly as long as the most was happening and drew
+   * each member a bar breathing on a timer instead (founder, 2026-10-02: "the
+   * glyph gets hidden ... I don't want that in Rune, just that one Glyph as the
+   * animation"). The members are blocks on the rung now (turn.ts `liveLines`),
+   * and the glyph is struck by all of them.
+   *
+   * What this adds is the key that opens the panel, on the right edge, wherever
+   * there is a member to open -- and it gives way before the rung does.
    */
   stripRow(this: Tui, r: Regions): string {
     const w = r.workspaceCols;
-    // The strip sits directly on top of the composer, so it is measured to the
+    // The row sits directly on top of the composer, so it is measured to the
     // composer's RULES and not to the band: two cells of indent and two of
     // right margin (`bandComposer`'s collapsed width, viewport.regions). Drawn
-    // to the band instead, its `ctrl+f open` overhangs the rule beneath it by
-    // two cells -- which in a fixed frame reads as a misprint, because every
-    // other right edge in the column lands on the same column.
+    // to the band instead, its key hint overhangs the rule beneath it by two
+    // cells -- which in a fixed frame reads as a misprint, because every other
+    // right edge in the column lands on the same column.
     const inner = Math.max(8, w - 4);
     const view = fleetLedger.view(this.focus === "panel");
-    if (view.running.length > 0 || view.finished.length > 0) {
-      return clampVisible(`  ${this.atWidth(w, () => renderAgentsStrip(view, inner))}`, w);
-    }
+    const members = view.running.length > 0 || view.finished.length > 0;
+    // The member the keys are on, when they are on the agents at all. While
+    // they are, the row is the selector and the legend is under the composer;
+    // the key that REACHES the agents is only said while it is still needed.
+    const marked = fleetLedger.marked();
+    const away = this.agentFocus() !== "composer";
+    const keyed = (left: string): string =>
+      members && !away && visLen(left) + visLen(AGENTS_KEY_HINT) + 2 <= inner
+        ? this.atWidth(w, () => F.row(left, faint(AGENTS_KEY_HINT), inner))
+        : clampVisible(left, inner);
     const live = this.mode === "turn" ? this.turnStateLines() : [];
     if (live.length > 0) {
-      // The live rung, alone. The keys that act on the turn (esc, and enter
-      // once something is typed) live on the status line's right edge, the one
-      // place contextual keys are said in every layout.
-      const left = `${accent(glyph("phase"))} ${clampVisible(live[0]!.trimStart(), Math.max(8, inner - 2))}`;
-      return clampVisible(`  ${left}`, w);
+      // The keys that act on the turn (esc, and enter once something is typed)
+      // live on the status line's right edge, the one place contextual keys
+      // are said in every layout.
+      return clampVisible(`  ${keyed(live[0]!.trimStart())}`, w);
     }
-    // At rest, after a turn: `▄ done · 1m 58s`, held still. The last frame is
-    // the one worth keeping on screen -- how long the thing you just watched
-    // actually took -- and it is the only row here that survives the turn it
-    // describes. Before the first turn there is nothing to report, so the row
-    // is empty: it used to say "no agents this session", which is a sentence
-    // about an absence, on screen for the whole of every quiet session. The
-    // row itself stays, so nothing above it moves when a turn starts.
-    if (this.lastTurnMs != null) {
-      return clampVisible(`  ${workingRow({ kind: "done", elapsedMs: this.lastTurnMs })}`, w);
-    }
-    return "";
+    // At rest, after a turn: `▁▁▁▁▁▁▁▁▁▁▁▁ done · 1m 58s`, the mark flat and
+    // dim, held still -- and, when members came back, that they did. The last
+    // frame is the one worth keeping on screen -- how long the thing you just
+    // watched actually took -- and it is the only row here that survives the
+    // turn it describes. Before the first turn there is nothing to report, so
+    // the row is empty: it used to say "no agents this session", which is a
+    // sentence about an absence, on screen for the whole of every quiet
+    // session. The row itself stays, so nothing above it moves when a turn
+    // starts.
+    //
+    // With the keys on the agents the count becomes the blocks themselves, one
+    // of them selected: `3 agents back` is a sentence about members, and a
+    // selection needs the members. They are the same roster in the same order
+    // the live rung drew, so the block you watched is where you left it.
+    const rest =
+      this.lastTurnMs != null
+        ? stagedRow(restGlyph(), { kind: "done", stage: "verify", elapsedMs: this.lastTurnMs })
+        : "";
+    const back = marked
+      ? agentBlocks(fleetLedger.order(), Math.max(10, inner - visLen(rest) - 2), {
+          selectedId: marked,
+        })
+      : faint(agentsBack(view));
+    if (rest) return clampVisible(`  ${keyed(visLen(back) > 0 ? `${rest}  ${back}` : rest)}`, w);
+    return visLen(back) > 0 ? clampVisible(`  ${keyed(back)}`, w) : "";
   },
 
   /**
@@ -748,7 +835,7 @@ export const FRAME_METHODS = {
       // only when it has something situational to say -- a wrapped draft's
       // size, the panel's keys -- and costs the frame nothing otherwise.
       const counts = composerCounts(this.input, composerTextWidth(width));
-      const hint = this.composerHint(counts, width - 2);
+      const hint = this.composerHint(counts, width - 2, r.collapsed);
       if (hint) lines.push(`  ${faint(hint)}`);
       if (wide) {
         lines = lines.map(tighten);
@@ -764,11 +851,22 @@ export const FRAME_METHODS = {
    * and tested beside the field whose rows it counts. What stays here is the
    * one thing that is not the composer's: where the keys currently GO.
    */
-  composerHint(this: Tui, counts: { lines: number; chars: number }, max: number): string {
+  composerHint(
+    this: Tui,
+    counts: { lines: number; chars: number },
+    max: number,
+    collapsed = false,
+  ): string {
     // The keys act on the PANEL, so the hint row names the panel's keys. A
     // legend that went on advertising `enter send` while enter opened an
     // agent's transcript would be the row lying about where the keys go.
-    if (this.focus === "panel") return panelHint(fleetLedger.view(true));
+    //
+    // Only where there is a right column to pay for the row. In one column the
+    // same legend rides the status strip instead (tui.ts `agentsLegend`): a
+    // hint row here comes out of the workspace, so the rung and the field would
+    // hop a row every time the keys moved to the agents and back.
+    const focus = this.agentFocus();
+    if (focus !== "composer" && !collapsed) return agentsHint(focus, fleetLedger.view(true), max);
     return composerHintRow({ streaming: this.mode === "turn", counts, max });
   },
 
@@ -792,7 +890,11 @@ export const FRAME_METHODS = {
     }
     const rule = glyph("rule").repeat(2);
     const paint = this.focus === "child" ? accent : faint;
-    const parts = [pane.name, pane.note ?? "", "ctrl+w close"].filter((p) => p !== "");
+    // The way out, as this frame has it. In one column the transcript took the
+    // workspace and `esc` gives it back; in the four-region frame it is a pane
+    // beside others and `ctrl+w` closes it from any of them.
+    const out = r.collapsed ? "esc back" : "ctrl+w close";
+    const parts = [pane.name, pane.note ?? "", out].filter((p) => p !== "");
     const body = ` ${parts.join(` ${glyph("rule")}${glyph("rule")} `)} `;
     const fill = Math.max(2, w - visLen(body) - rule.length);
     void panes;
@@ -853,7 +955,13 @@ export const FRAME_METHODS = {
     const probe = this.regionsNow();
     const composer = this.bandComposer(probe);
     const r = this.regionsNow(composer.lines.length);
-    const panes = this.panesNow(r.workspaceRows);
+    const panes = this.panesNow(r.workspaceRows, r.collapsed);
+    // Where the keys are, for the ledger's readers; and the open pane's header
+    // refreshed from the paint path, so its clock and its token count advance
+    // with the run. (`panelBlock` did this, and only while the cards were
+    // drawn -- so in one column the header froze at the moment of opening.)
+    fleetLedger.setFocus(this.agentFocus());
+    if (this.childPane) fleetLedger.refreshPane();
     // How many rows the block actually paints, which is not `r.composerRows`
     // when the window is collapsed: there the region stays at its resting
     // height (so the workspace's own arithmetic never depends on what is being
@@ -894,15 +1002,27 @@ export const FRAME_METHODS = {
         )
       : [...main.rows];
     if (panes.headerRows > 0) left.push(this.childHeader(r, panes));
+    // A transcript that has the whole workspace is windowed ABOVE whatever the
+    // composer block covers. The lead's transcript lets the block paint over
+    // its last rows, which costs it nothing at rest; a live transcript's last
+    // rows are the newest thing the child did, and a pane that always hid them
+    // would be one step behind the run it is showing.
+    const zoomed = r.collapsed && panes.open && panes.mainRows === 0;
     if (panes.open && this.childPane) {
+      const rows = zoomed ? Math.max(1, panes.childRows - cover) : panes.childRows;
       const child = this.paneRows(
         this.childPane.lines,
-        panes.childRows,
+        rows,
         this.childScroll,
         r.workspaceCols,
+        (hidden) =>
+          `  ${faint(`${hidden} earlier line${hidden === 1 ? "" : "s"} above -- pgdn to follow the latest`)}`,
       );
       this.childScroll = child.scroll;
+      this.lastChildRows = rows;
       left.push(...child.rows);
+    } else {
+      this.lastChildRows = null;
     }
 
     // Right column: the panel on top, the composer pinned to the bottom of the
@@ -930,7 +1050,9 @@ export const FRAME_METHODS = {
       // BOTTOM of the workspace rather than by shrinking it: every row above
       // stays exactly where it was painted, which is the whole of "nothing
       // moves because somebody typed" once there is no panel to yield them.
-      if (cover > 0) left.length = Math.max(0, left.length - cover);
+      if (cover > 0 && !(zoomed && !this.panelOverlay)) {
+        left.length = Math.max(0, left.length - cover);
+      }
       if (r.stripRows > 0) left.push(this.stripRow(r));
       left.push(...composer.lines.slice(-paintRows));
     } else {
@@ -1127,7 +1249,9 @@ export const FRAME_METHODS = {
   /** The open child pane's height, from the frame actually painted. */
   childRowsNow(this: Tui): number {
     if (!this.childPane) return 0;
-    return this.panesNow(this.regionsNow().workspaceRows).childRows;
+    if (this.lastChildRows != null) return this.lastChildRows;
+    const r = this.regionsNow();
+    return this.panesNow(r.workspaceRows, r.collapsed).childRows;
   },
 
   /** The body height of the frame on screen. Scrolling does not change the

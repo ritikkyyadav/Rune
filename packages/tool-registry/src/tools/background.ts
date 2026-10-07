@@ -67,7 +67,7 @@ export class BackgroundShellManager {
     command: string,
     cwd: string,
     network = false,
-    opts: { unsandboxed?: boolean } = {},
+    opts: { unsandboxed?: boolean; denyWrite?: readonly string[] } = {},
   ): { shellId: string; sandboxed: boolean } {
     let program = "bash";
     let args = ["-lc", command];
@@ -89,7 +89,11 @@ export class BackgroundShellManager {
         );
       const plan = Bun.spawnSync([this.binaryPath, "--workspace", cwd, "shell-plan"], {
         stdin: new TextEncoder().encode(
-          JSON.stringify({ command, network, sandbox_paths: sandboxPathsFor(cwd) }),
+          JSON.stringify({
+            command,
+            network,
+            sandbox_paths: sandboxPathsFor(cwd, opts.denyWrite),
+          }),
         ),
         stdout: "pipe",
         stderr: "pipe",
@@ -452,6 +456,7 @@ export function withBackgroundSupport(
         try {
           started = manager.start(command, input.workspaceRoot, input.args.network === true, {
             unsandboxed: input.args.unsandboxed === true,
+            ...(input.denyWrite ? { denyWrite: input.denyWrite } : {}),
           });
         } catch (error) {
           return {

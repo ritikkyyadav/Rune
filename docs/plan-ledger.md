@@ -2,9 +2,10 @@
 
 Rune keeps a task spine outside the conversation: the goal, the plan, the
 files touched, the verification state. It is re-shown to the model every
-request, survives compaction and resume, and is rendered to
-`.rune/mission.md` in the workspace. This page describes the rules that make a
-step on that plan mean something.
+request, survives compaction and resume, and is rendered to the session's
+mission file — kept under the Rune home (`sessions/<id>/mission.md`), and read
+by the model at the name `.rune/mission.md`. This page describes the rules
+that make a step on that plan mean something.
 
 ## A step is completed by evidence
 

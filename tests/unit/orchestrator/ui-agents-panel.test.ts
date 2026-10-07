@@ -15,6 +15,8 @@
 
 import { describe, expect, it } from "bun:test";
 import {
+  agentBlocks,
+  agentsBack,
   chooseRungs,
   contextBar,
   elapsedWord,
@@ -23,7 +25,6 @@ import {
   panelHint,
   receiptLine,
   renderAgentsPanel,
-  renderAgentsStrip,
   renderCard,
   renderSessionPanel,
   resolveName,
@@ -105,8 +106,8 @@ describe("the column's measure", () => {
         NOW,
       );
       for (const row of rows) expect(visLen(stripAnsi(row))).toBeLessThanOrEqual(width);
-      const strip = renderAgentsStrip(view({ running: [fat] }), width);
-      expect(visLen(stripAnsi(strip))).toBeLessThanOrEqual(width);
+      const blocks = agentBlocks([fat, card({ id: "c2", name: "b" })], width);
+      expect(visLen(stripAnsi(blocks))).toBeLessThanOrEqual(width);
       const session = renderSessionPanel(
         {
           contextPercent: 34,
@@ -142,6 +143,122 @@ describe("the column's measure", () => {
     // of them, so the overflow is counted in words instead.
     const tight = stripAnsi(renderAgentsPanel(view({ running: many }), PANEL_W, 8, NOW).join("\n"));
     expect(tight).toMatch(/\+\d+ more rows|\+\d+$/m);
+  });
+});
+
+describe("the members on the rung", () => {
+  // Founder, 2026-10-02, with a sketch -- the glyph, then a box per agent:
+  // "each agent has its own block to showcase that an agent is live, but there
+  // should be one universal glyph which would showcase the full work."
+  const blocks = (cards: AgentCard[], room = 60) => stripAnsi(agentBlocks(cards, room));
+
+  it("is a name in a box for each member in flight, in dispatch order", () => {
+    expect(
+      blocks([
+        card({ id: "c1", name: "planner" }),
+        card({ id: "c2", name: "builder" }),
+        card({ id: "c3", name: "verifier" }),
+      ]),
+    ).toBe("[planner] [builder] [verifier]");
+    expect(blocks([])).toBe("");
+  });
+
+  it("says a member is back, and how, inside its own box", () => {
+    expect(
+      blocks([
+        card({ id: "c1", name: "planner", state: "queued" }),
+        card({ id: "c2", name: "builder", state: "done" }),
+        card({ id: "c3", name: "verifier", state: "failed" }),
+        card({ id: "c4", name: "docs", state: "skipped" }),
+      ]),
+    ).toBe("[planner] [builder ✓] [verifier ✗] [docs ·]");
+  });
+
+  it("names the members it has room for and counts the rest", () => {
+    const four = ["planner", "builder", "verifier", "reviewer"].map((name, i) =>
+      card({ id: `c${i}`, name }),
+    );
+    expect(blocks(four, 60)).toBe("[planner] [builder] [verifier] [reviewer]");
+    expect(blocks(four, 34)).toBe("[planner] [builder] [verifier] +1");
+    expect(blocks(four, 24)).toBe("[planner] [builder] +2");
+    expect(blocks(four, 12)).toBe("[planner] +3");
+    // No room for a single name: a count with its noun, never a bare number.
+    expect(blocks(four, 9)).toBe("4 agents");
+    expect(blocks([card()], 4)).toBe("1 agent");
+    for (const room of [9, 12, 20, 24, 34, 48, 60]) {
+      expect(visLen(blocks(four, room))).toBeLessThanOrEqual(room);
+    }
+  });
+
+  it("does not move: the same members are the same blocks whenever they are drawn", () => {
+    // A block has no clock in it. agentBlocks does not take one.
+    expect(agentBlocks.length).toBe(2);
+    const cards = [card({ id: "c1", name: "planner" }), card({ id: "c2", name: "builder" })];
+    expect(agentBlocks(cards, 60)).toBe(agentBlocks(cards, 60));
+  });
+
+  it("says how many came back once none are in flight", () => {
+    expect(agentsBack(view())).toBe("");
+    expect(agentsBack(view({ finished: [card({ retired: true, state: "done" })] }))).toBe(
+      "1 agent back",
+    );
+    expect(
+      agentsBack(
+        view({
+          finished: [
+            card({ id: "c1", retired: true, state: "done" }),
+            card({ id: "c2", retired: true, state: "failed" }),
+          ],
+        }),
+      ),
+    ).toBe("2 agents back");
+  });
+});
+
+describe("nothing in the panel animates", () => {
+  // "the pulses of those sub agents ... just follows a deterministic behaviour.
+  // I don't want that in Rune, just that one Glyph as the animation."
+  const RAMP = /[▁▂▃▄▅▆▇█]/;
+  const roster = (count: number) =>
+    Array.from({ length: count }, (_, i) =>
+      card({ id: `c${i}`, name: `agent${i}`, startedAt: 1_000 + i * 700 }),
+    );
+
+  it("draws a running member the same at every moment: no bar, no breath", () => {
+    // Every rung of the ladder: full cards, lines, pairs, initials.
+    for (const count of [1, 3, 9, 14]) {
+      for (const rows of [30, 12, 6]) {
+        const running = roster(count);
+        const marks = (now: number) =>
+          renderAgentsPanel(view({ running }), PANEL_W, rows, now)
+            .map((row) => stripAnsi(row))
+            // The clock is allowed to advance; nothing else is. (Every member
+            // stays between 10s and 59s here, so no clock changes width.)
+            .map((row) => row.replace(/\d/g, "#"));
+        const first = marks(30_000);
+        for (const later of [30_090, 30_540, 31_080, 32_160, 34_320]) {
+          expect(marks(later), `${count} members in ${rows} rows`).toEqual(first);
+        }
+        for (const row of first) expect(row).not.toMatch(RAMP);
+      }
+    }
+  });
+
+  it("marks a running member with one static glyph, faint once it has gone quiet", () => {
+    const live = stripAnsi(
+      renderAgentsPanel(view({ running: [card()] }), PANEL_W, 30, 30_000).join("\n"),
+    );
+    expect(live).toContain("◇");
+    const quiet = stripAnsi(
+      renderAgentsPanel(
+        view({ running: [card({ quietMs: 9_000, pulseStep: 0 })] }),
+        PANEL_W,
+        30,
+        30_000,
+      ).join("\n"),
+    );
+    expect(quiet).toContain("◇");
+    expect(quiet).toContain("quiet 9s");
   });
 });
 

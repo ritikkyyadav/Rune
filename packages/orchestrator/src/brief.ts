@@ -328,13 +328,14 @@ export const READ_BACK_SCHEMA: ToolSchema = {
   name: "read_back",
   version: "1.0.0",
   description:
-    "BEFORE starting any non-trivial task, state what you understood — so the person can correct " +
-    "you in one keystroke instead of after the work. Restate the SYMPTOM they described, not the " +
+    "Before substantial work whose scope needs agreement, state what you understood — so the " +
+    "person can correct you in one keystroke instead of after the work. Restate the SYMPTOM " +
+    "they described, not the " +
     "command they typed. `leave` is the most important field: naming what you are deliberately " +
     "NOT touching is what proves you understood the boundary, and it is where a misread shows up " +
     "first. `done_when` are the criteria you will be held to — write them so an event could " +
-    "settle each one, never as a feeling. You cannot mark them met; only evidence can. Skip this " +
-    "for a one-line question or a trivial lookup; use it for anything that will change a file.",
+    "settle each one, never as a feeling. You cannot mark them met; only evidence can. Skip it " +
+    "for a question, a lookup or a well-specified local change.",
   inputSchema: {
     type: "object",
     properties: {
@@ -360,7 +361,8 @@ export const READ_BACK_SCHEMA: ToolSchema = {
         type: "array",
         description:
           "How you will know you are finished. Each must be settleable by an observable event " +
-          "(a test, an exit code, a file's absence from the diff), never by judgement.",
+          "(a test, an exit code, a file's absence from the diff), never by judgement. Quote any " +
+          "rule the request states (must, must not, never, keep) — do not restate it.",
         items: { type: "string" },
         minItems: 1,
         maxItems: 6,
@@ -626,6 +628,22 @@ export interface ParentRun {
   status: "failed" | "passed" | "inconclusive" | "not-applicable-on-parent";
   commit?: string;
   reason?: string;
+  /**
+   * Set only by the runtime's witness replay (parent-check.ts, `replayWitness`):
+   * the digest of the pinned witness this result is a result of, and its test
+   * files. It is what lets a check the run WROTE be evidence at all, and a
+   * result without it never lifts such a check.
+   */
+  witness?: string;
+  witnessFiles?: string[];
+}
+
+/** What the probe is told about the run it is asked to replay. */
+export interface CitedRun {
+  /** The program path this task wrote, when the cited check is the run's own. */
+  authoredBy?: string;
+  /** The call's cancel signal: a replay is stopped, and cleaned up, when the run is. */
+  signal?: AbortSignal;
 }
 
 /** Every check the runtime ran this session, with the verdict IT read. */
@@ -759,7 +777,16 @@ export type RungVerdict =
  * What a cited command is worth. Pure, and derived only from the runtime's own
  * record — nothing the model wrote reaches this function.
  */
-export function rungForCommand(log: CheckLog, command: string): RungVerdict {
+export function rungForCommand(
+  log: CheckLog,
+  command: string,
+  /**
+   * For a check the run wrote: the witness the caller JUST had replayed. A
+   * parent result on record for the same command but another witness — the
+   * test as it was before an edit — is not a result about this one.
+   */
+  current: { witness?: string } = {},
+): RungVerdict {
   const runs = log.history(command);
   if (runs.length === 0) {
     return {
@@ -804,6 +831,43 @@ export function rungForCommand(log: CheckLog, command: string): RungVerdict {
   // as an execution receipt is: `observed`, never replayed on the parent, and
   // `criterionStatus` reads the verifier name and answers `needs_review`.
   if (last.authoredBy) {
+    // The one way a check the run wrote becomes a measurement (R1): the same
+    // test, laid over the tree the run STARTED from, failed an assertion there
+    // and passes here. The run controls the test; it does not control that
+    // tree. Only a replay of THIS witness counts — `current.witness` is the
+    // one the caller just had replayed — so a result taken before the test
+    // was edited lifts nothing.
+    const replayed = log.parent(command);
+    if (
+      replayed?.status === "failed" &&
+      replayed.witness !== undefined &&
+      replayed.witness === current.witness
+    ) {
+      return {
+        ok: true,
+        rung: "verified",
+        evidence: {
+          ...base,
+          verifier: "witness-replay@1",
+          parentCommitFailed: true,
+          ...(replayed.commit ? { parentCommit: replayed.commit } : {}),
+          witness: replayed.witness,
+          ...(replayed.witnessFiles ? { witnessFiles: replayed.witnessFiles } : {}),
+          detail: joinDetail(
+            last.summary,
+            `this run wrote \`${last.authoredBy}\`; laid over the tree the run started from, ` +
+              `the same test failed there and passes now` +
+              (replayed.reason ? ` (${replayed.reason})` : ""),
+          ),
+        },
+      };
+    }
+    // Why the replay lifted nothing, when one was asked for: the model is
+    // told what the old tree did with its test, or the one shape that is replayed.
+    const tried =
+      replayed && replayed.witness === current.witness && replayed.reason
+        ? ` Replay on the tree the run started from: ${replayed.reason}.`
+        : "";
     return {
       ok: true,
       rung: "observed",
@@ -813,7 +877,8 @@ export function rungForCommand(log: CheckLog, command: string): RungVerdict {
         detail: joinDetail(
           last.summary,
           `this run wrote \`${last.authoredBy}\` — a check the run authored cannot settle a ` +
-            `criterion; cite a check that existed before this run, or a project-wide one`,
+            `criterion; cite a check that existed before this run, or a project-wide one` +
+            tried,
         ),
       },
     };
@@ -999,10 +1064,10 @@ export const RECORD_EVIDENCE_SCHEMA: ToolSchema = {
     "currently failing, is refused. For a passing command the runtime re-runs it ITSELF against " +
     "the pre-change tree in a throwaway checkout: only a command that FAILS there and passes now " +
     "earns 'verified'. If it passes there too, your change is not why it is green, and the " +
-    "receipt will say so. Anything else is weaker, and that is the honest answer. Call this as " +
-    "you go, not at the end — and in the SAME response as the check when you can: put the bash " +
-    "call first and record_evidence after it. The calls run in order, and the runtime reads the " +
-    "check's real exit code before it records, so the citation costs no extra turn.",
+    "receipt will say so. Anything else is weaker, and that is the honest answer. Cite in the " +
+    "SAME response as the check: put the bash call first and record_evidence after it. The " +
+    "calls run in order, and the runtime reads the check's real exit code before it records, " +
+    "so the citation costs no extra turn.",
   inputSchema: {
     type: "object",
     properties: {
@@ -1059,7 +1124,10 @@ export function createRecordEvidenceTool(
    * `verified` is simply unreachable — which is the correct outcome, not a
    * degraded one. A rung nobody can substantiate should not be awarded.
    */
-  probeParent?: (command: string) => ParentRun | undefined,
+  probeParent?: (
+    command: string,
+    cited?: CitedRun,
+  ) => ParentRun | undefined | Promise<ParentRun | undefined>,
   /**
    * The plan, for a citation made with no brief in play: a numbered target is
    * then a plan step. The citation is acknowledged in one line either way —
@@ -1265,21 +1333,70 @@ export function createRecordEvidenceTool(
       // nothing (rungForCommand refuses it either way), and probing twice
       // would spend it again for an answer already on record. An unrelated
       // citation never reaches here, so it never spends one either.
-      if (
-        probeParent &&
-        lastRun?.passed &&
-        lastRun.kind !== "execution" &&
-        !lastRun.authoredBy &&
-        !log.parent(command)
-      ) {
-        const parent = probeParent(command);
-        if (parent) log.recordParent(parent);
+      //
+      // A check the run WROTE is the exception to "once" (R1). It is replayed
+      // as a pinned witness, and asked for on every citation: a result is a
+      // result of the test as it was when it was taken, and the run may have
+      // edited the test since. The probe keeps its own record of witnesses it
+      // has already replayed, so an unchanged test is not run again.
+      let witness: string | undefined;
+      if (probeParent && lastRun?.passed && lastRun.kind !== "execution") {
+        if (lastRun.authoredBy) {
+          const parent = await probeParent(command, {
+            authoredBy: lastRun.authoredBy,
+            ...(input.signal ? { signal: input.signal } : {}),
+          });
+          if (parent) log.recordParent(parent);
+          witness = parent?.witness;
+        } else if (!log.parent(command)) {
+          const parent = await probeParent(
+            command,
+            input.signal ? { signal: input.signal } : undefined,
+          );
+          if (parent) log.recordParent(parent);
+        }
       }
 
-      const verdict = rungForCommand(log, command);
+      const verdict = rungForCommand(log, command, witness ? { witness } : {});
       if (!verdict.ok) return reply(verdict.reason);
 
-      const moved = ledger.record(index, verdict.rung, verdict.evidence);
+      // A witness that lifted a check the run wrote is held to the question
+      // every other check is: does it speak to THIS criterion? While such a
+      // check could only ever be `observed` there was nothing to ask; a test
+      // about something else that happens to fail on the old tree would now
+      // settle a criterion it never read.
+      if (verdict.rung === "verified" && lastRun?.authoredBy && criterion) {
+        const spoken = checkRelatedness(command, { content: criterion.text, touched: named });
+        if (!spoken.related) {
+          const why =
+            spoken.reason === "names_nothing"
+              ? "it names no file at all, and it is not a project-wide check"
+              : `it never reads ${named.slice(0, 3).join(", ")}, which is what this criterion is about`;
+          const kept = ledger.setAside(index, verdict.evidence, why);
+          return reply(
+            `\`${normalizeCommand(command)}\` failed on the tree the run started from and passes ` +
+              `now, but it does not speak to criterion ${index} "${criterion.text.slice(0, 80)}": ` +
+              `${why}. ` +
+              (kept.ok
+                ? "Nothing moved, and the citation is on the contract as set aside. "
+                : `${kept.reason}. `) +
+              `(${ledger.met} of ${ledger.total} criteria verified)` +
+              nextStep,
+          );
+        }
+      }
+
+      // The criterion's standing claim may be about a witness that is gone:
+      // the same command, cited again, with the test edited in between. That
+      // claim is not "already verified" — it is about another test — and it
+      // gives way to what the replay of THIS one found, lower or not.
+      const standing = criterion?.evidence;
+      const superseded =
+        witness !== undefined &&
+        standing?.verifier === "witness-replay@1" &&
+        standing.source === normalizeCommand(command) &&
+        standing.witness !== witness;
+      const moved = ledger.record(index, verdict.rung, verdict.evidence, superseded);
       if (!moved.ok) return reply(moved.reason);
       return reply(
         `Recorded as ${verdict.rung}: ${RUNG_MEANING[verdict.rung]} ` +

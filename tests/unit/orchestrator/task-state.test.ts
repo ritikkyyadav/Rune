@@ -143,7 +143,7 @@ describe("task boundary rule (beginTurn)", () => {
     const s = finished("build the parser");
     s.noteFileWritten("src/parser.ts");
     s.addDecision("recursive descent, not a generator");
-    s.noteVerification(true, true, "12 tests passed");
+    s.noteVerification({ status: "passed" }, "12 tests passed");
     expect(s.beginTurn("now migrate the whole CLI to use the new parser end to end")).toBe(true);
     s.setTodos([{ content: "inventory the call sites", status: "in_progress" }]);
     const snap = s.snapshot();
@@ -375,7 +375,7 @@ describe("renderBlock", () => {
       { content: "run tests", status: "pending" },
     ]);
     s.noteFileWritten("src/auth.ts");
-    s.noteVerification(true, false, "FAIL: auth.test.ts 2 failures");
+    s.noteVerification({ status: "failed" }, "FAIL: auth.test.ts 2 failures");
     const block = s.renderBlock()!;
     expect(block).toContain("[Task state — maintained by the harness");
     expect(block).toContain("Goal: refactor auth");
@@ -393,7 +393,7 @@ describe("renderBlock", () => {
     s.setTodos([{ content: "the one todo", status: "in_progress" }]);
     for (let i = 0; i < 30; i++) s.noteFileRead(`some/long/path/file-${i}.ts`);
     for (let i = 0; i < 10; i++) s.addDecision(`decision number ${i} with a fair amount of text`);
-    s.noteVerification(true, false, "x".repeat(400));
+    s.noteVerification({ status: "failed" }, "x".repeat(400));
     const block = s.renderBlock(60)!; // very tight
     expect(block).toContain("goal text");
     expect(block).toContain("the one todo");
@@ -453,8 +453,7 @@ describe("renderBlock", () => {
   test("verification 'unavailable' always states WHY — the nothing-runnable red flag", () => {
     const s = finished("build me an app");
     s.noteVerification(
-      false,
-      true,
+      { status: "inconclusive", reason: "no_checks" },
       "Nothing runnable detected — no manifest, test, or build configuration found, so no command was executed.",
     );
     const block = s.renderBlock(5_000)!;
@@ -495,7 +494,7 @@ describe("renderMissionFile", () => {
     s.noteFileWritten("src/app.ts");
     s.addDecision("SQLite over Postgres for the local case");
     s.addClarification("which platform?", "web");
-    s.noteVerification(true, false, "2 failures in core.test.ts");
+    s.noteVerification({ status: "failed" }, "2 failures in core.test.ts");
     const doc = s.renderMissionFile();
     expect(doc).toContain("# Mission");
     expect(doc).toContain(spec); // VERBATIM — the whole point

@@ -14,6 +14,7 @@
 // desktop fleet view) has it.
 
 import type { AgentTurnEvent, ChildAgentEvent, WorkflowNodeContext } from "@rune/protocol";
+import { describeVerification, verificationOutcome } from "@rune/protocol";
 
 /** How a sub-agent event is announced upward. */
 export type ChildEventSink = (child: ChildAgentEvent) => void;
@@ -130,8 +131,16 @@ export function projectChildEvent(agentId: string, event: AgentTurnEvent): strin
       return clip(`${tag}↻ ${event.attempt} of ${event.of}`);
     case "verification_started":
       return clip(`${tag}verifying`);
-    case "verification_completed":
-      return clip(`${tag}${event.passed ? "checks passed" : "checks failed"}`);
+    case "verification_completed": {
+      // Read `passed` alone and a child whose checks never ran — or were
+      // killed at their deadline — announced "checks passed" to its parent.
+      const outcome = verificationOutcome(event);
+      return clip(
+        outcome.status === "inconclusive"
+          ? `${tag}checks: ${describeVerification(outcome)}`
+          : `${tag}checks ${describeVerification(outcome)}`,
+      );
+    }
     case "step_check":
       return clip(`${tag}${event.passed ? "check passed" : "check failed"} — ${event.step}`);
     case "replanning":
@@ -204,18 +213,55 @@ function exhaustive(event: never): null {
  * JSON on the parent's queue, which no surface reads and which is the one
  * channel that genuinely scales with the size of a tool call.
  *
- * So the gate moves here and names what it drops, both for the same reason:
- * nothing reads them.
- *
- *   `tool_call_args_delta` — a pane shows the call's NAME when it opens and its
- *   result when it lands; the arguments arriving one fragment at a time are
- *   volume with no reader.
+ * So the gate moves here and names what it drops:
  *
  *   `tool_progress` — a nested projection. Re-projecting one is how a
  *   grandchild's heartbeat would arrive twice, wearing two names.
+ *
+ * `tool_call_args_delta` used to be dropped here too, on the reasoning that a
+ * pane shows a call's NAME when it opens and its result when it lands. That
+ * left the one question a person opens a child's transcript to ask — what is
+ * it running RIGHT NOW — unanswerable for exactly the calls that take long
+ * enough to ask it about: a two-minute test run sat in the pane as the single
+ * word `run`, with the command arriving only once it was over. The arguments
+ * cross now, and what keeps them from being the channel that scales with the
+ * size of a call is a ceiling rather than a refusal: see
+ * `CHILD_ARGS_FORWARD_BYTES`.
  */
 export function childEventCarriesSurface(event: AgentTurnEvent): boolean {
-  return event.type !== "tool_call_args_delta" && event.type !== "tool_progress";
+  return event.type !== "tool_progress";
+}
+
+/**
+ * How much of ONE child call's argument JSON crosses to the parent.
+ *
+ * A pane needs the head of the arguments — the path, the command, the pattern —
+ * to name what a running call is about. It never needs the body: a
+ * `write_file` carries the whole file as an argument, and forwarding that a
+ * token at a time is megabytes of traffic to render one path. Four kibibytes
+ * holds every target a tool row can show and is spent in the first few dozen
+ * tokens of an ordinary call.
+ */
+export const CHILD_ARGS_FORWARD_BYTES = 4 * 1024;
+
+/**
+ * Meter one child's argument stream against that ceiling.
+ *
+ * Returns the function the loop asks before forwarding a child event: true to
+ * carry it, false once that call's allowance is spent. Anything that is not an
+ * argument delta is always carried. The ledger is per parent tool batch, which
+ * is the lifetime of the calls it counts.
+ */
+export function childArgsMeter(): (child: ChildAgentEvent) => boolean {
+  const spent = new Map<string, number>();
+  return (child) => {
+    if (child.event.type !== "tool_call_args_delta") return true;
+    const key = `${child.agentId}\u0000${child.event.callId}`;
+    const used = spent.get(key) ?? 0;
+    if (used >= CHILD_ARGS_FORWARD_BYTES) return false;
+    spent.set(key, used + child.event.partialJson.length);
+    return true;
+  };
 }
 
 /**
