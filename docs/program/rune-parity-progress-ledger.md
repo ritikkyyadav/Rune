@@ -1901,9 +1901,11 @@ extra reviewer calls.
   for them and one made stricter. Two on the printed line. Four in the engine: three caught by the
   real-process test; "close ignores the run still in its turn" survived until an
   engine-level test was added.
-- **Not run:** the full unit and integration suites, and anything on Linux or Windows.
-  The live sitting below was measuring wall time on this machine, and nothing is pushed,
-  so the lane has not run it.
+- **After the sitting ended, in a fresh clone at `66aa98f`** (so without the other
+  session's uncommitted edits): type-check 15 of 15 packages; repo-wide format check
+  clean; unit 7,387 pass, 19 skip, 0 fail; the reviewer-cost file 10 pass.
+- **Not run:** the full integration suite, and anything on Linux or Windows. Nothing is
+  pushed, so the lane has not run it.
 
 **What the real-process arms showed, beyond the change.**
 
