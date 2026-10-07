@@ -1925,3 +1925,74 @@ as open, which is true of 1.3.3: the change is unreleased.
 **Next step.** The founder's word to push: lane first, then `main`, as before. Then the
 full suites in a fresh clone. Whether to record a failed background review the same
 way is theirs to decide.
+
+## The serious sitting on 1.3.3, 2026-10-07 · **ended at three scored pairs: the Codex window ran out**
+
+**Authorised by the founder** for this run: six hard tasks, Rune 1.3.3 against OpenCode,
+both `gpt-6-sol` on the Codex subscription, stop at 70% of the window. Manifest
+`docs/evidence/b2-s4-serious-manifest-20261006.json`; result summary
+`docs/evidence/b2-s4-serious-result-20261007.json`; raw evidence in
+`~/rune-evidence/b2-s4-serious-20261007`. Rune ran from a clean clone at the tag.
+
+**Result: PROVISIONAL, PI 96.0 on three pairs.** O 100, R 100, S 80, E not scored (it
+needs four pairs where both succeed). Six scored pairs are needed for a status.
+
+| Task                   | Arm      |   Hidden | Regressions | Scope |  Wall | Calls | List cost | Ended          |
+| ---------------------- | -------- | -------: | ----------: | ----: | ----: | ----: | --------: | -------------- |
+| model-catalog-cache    | Rune     |    17/17 |           0 |   0.5 | 449 s |    23 |     $0.45 | incomplete     |
+|                        | OpenCode |    17/17 |           0 |   0.5 | 304 s |    27 |     $0.39 | completed      |
+| header-version-session | Rune     |      4/4 |           0 |   0.5 | 511 s |    39 |     $1.03 | incomplete     |
+|                        | OpenCode |      4/4 |           0 |     1 | 425 s |    42 |     $0.95 | completed      |
+| startup-selection      | Rune     |    15/15 |           0 |     1 | 422 s |    27 |     $0.66 | incomplete     |
+|                        | OpenCode |    15/15 |           0 |     1 | 424 s |    40 |     $0.69 | completed      |
+| tilde-user-home        | Rune     | unscored |             |       | 179 s |    18 |     $0.39 | refused: quota |
+|                        | OpenCode |      3/3 |           0 |   0.5 | 226 s |    15 |     $0.31 | completed      |
+
+Not started: `toml-config`, `checkpoint-report-matches-prune`.
+
+**The window, and the approval it went past.** The founder approved about 60 points of
+the five-hour window with a stop at 70%. The window went from 7% to 99% in 47 minutes
+and refused Rune's fourth run; it resets at 02:11 IST on the 8th. The weekly window went
+from 34% to 48%. Two causes, both measured:
+
+- A second Rune session, in `~/Project/Alantests`, made 185 calls on the same
+  subscription during the sitting. The sitting made 231.
+- The rig checks the stop line between pairs, against the last reading Rune's own arm
+  carried. OpenCode's runs carry none. The check before the fourth pair read 59%; the
+  window stood at 78%.
+
+**What the runs showed.**
+
+- **Correctness: nothing between them.** Both passed every hidden check on the three
+  scored tasks with no regression.
+- **Rune called three finished runs unfinished.** Its verdict was "unmet: no criteria
+  stated" once and "partial" twice, over criteria it had inferred and never assessed,
+  with exit code 1 on those two. The index counts completion by the hidden checks, so
+  this costs no points. A person or a script reading Rune's answer is told the work is
+  not done.
+- **The end-of-turn check timed out on two of three.** `bun run test` hit the 120 s
+  limit and measured nothing. This is the parked founder decision, now with two live
+  cases.
+- **A failure that was there before the run was handed to the agent.** On the first
+  task the suite was red on one test in a file the run had not touched, for want of a
+  built web app. Rune asked for a fix, and the agent rewrote the repository's `test`
+  script in the root `package.json` to build the web app first. The hidden checks do
+  not look there. Why the baseline replay did not call that failure existing is **not
+  established**.
+- **Scope.** Rune left generated files behind twice, mostly `.turbo/cache` and package
+  build output: once after the timed-out check, which removed nothing, once from
+  commands run outside the check. OpenCode left a web build behind once.
+- **Calls and cost.** Rune made fewer calls on all three (23/27, 39/42, 27/40), at
+  about the same list cost (1.14×, 1.09×, 0.94×), and took longer on two (1.48×, 1.20×,
+  1.00×). On 2026-10-05 one hard task took Rune 38 calls to OpenCode's 19.
+
+**Limitations.** Three pairs, one run each. Every task is F7, mined from Rune's own
+history. Wall time carries noise: focused tests ran on this machine during the first
+two pairs, and the second session was calling the same provider throughout. The build
+is 1.3.3; another session's uncommitted work on completion verdicts is not in it.
+
+**Next step.** No live run without a new go-ahead. Zero spend, on the kept run trees:
+replay the verifier on the first task to learn why the pre-existing failure was not
+called existing. For the rig: read the window before each arm, from every source on the
+machine, not only Rune's last row. The three pairs still owed need the founder's word
+and a window nothing else is spending.

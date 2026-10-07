@@ -1,0 +1,163 @@
+{
+  "schema": "rune-live-sitting@1",
+  "what": "The six-pair serious sitting on Rune 1.3.3 against OpenCode, both on gpt-6-sol on the one Codex subscription. It ended after three scored pairs: the five-hour window ran out during the fourth.",
+  "ranAt": {
+    "started": "2026-10-07T17:18:22Z",
+    "finished": "2026-10-07T18:08:00Z"
+  },
+  "authorisedBy": "the founder, 2026-10-07, answering a question that named it: six hard tasks, Rune 1.3.3 against OpenCode, both on gpt-6-sol, 12 agent runs, up to three hours, stop at 70% of the window",
+  "manifest": {
+    "path": "docs/evidence/b2-s4-serious-manifest-20261006.json",
+    "sha256": "54d97fc4772d79f930c67a6b772381ef0cd5c2a9d4e33ae2f7d20b2eb07b4aed"
+  },
+  "rawEvidence": {
+    "note": "machine-local, not in the repository",
+    "dir": "~/rune-evidence/b2-s4-serious-20261007",
+    "resultsSha256": "6185782fc8d00016c57d8720633fdd767a87d62f755c6afdac2be206c83d621b",
+    "report": "~/rune-evidence/b2-s4-serious-20261007/report/parity-report.md",
+    "reportJsonSha256": "6611da2bcbaf7707a1e7af0145613e365905b5a90270f25daea5190f93853a9b"
+  },
+  "build": {
+    "rune": "ab7ca04dfa243273b65c46cf12dece90905a32a673e53b29a8aa9f6bbf44835c",
+    "source": "a clean clone at tag v1.3.3 (96bf372), run from source, so it reports itself as Rune v1.3.3-dev; rune-tools is the released 1.3.3 binary",
+    "roster": ["codex/gpt-6-astra", "codex/gpt-6-luna", "codex/gpt-6-sol"],
+    "modelsCalled": ["codex/gpt-6-sol"],
+    "opencode": "1.18.30"
+  },
+  "pairs": [
+    {
+      "task": "f7-93eca44-model-catalog-cache",
+      "order": "rune, then opencode",
+      "rune": {
+        "hidden": "17/17",
+        "regressions": 0,
+        "scope": 0.5,
+        "leftBehind": "144 generated files, mostly .turbo/cache (75) and build output under packages/ and apps/",
+        "ending": "incomplete",
+        "exitCode": 0,
+        "verdict": "unmet: no criteria stated",
+        "wallS": 449.2,
+        "calls": 23,
+        "listUsd": 0.4484
+      },
+      "opencode": {
+        "hidden": "17/17",
+        "regressions": 0,
+        "scope": 0.5,
+        "leftBehind": "apps/web/dist (8 files), tests/eval/results (2 files)",
+        "ending": "completed",
+        "wallS": 303.5,
+        "calls": 27,
+        "listUsd": 0.3919
+      }
+    },
+    {
+      "task": "f7-44d4c1a-header-version-session",
+      "order": "opencode, then rune",
+      "rune": {
+        "hidden": "4/4",
+        "regressions": 0,
+        "scope": 0.5,
+        "leftBehind": "114 generated files, mostly .turbo/cache (63) and build output under packages/",
+        "ending": "incomplete",
+        "exitCode": 1,
+        "verdict": "partial: four criteria it inferred, all left unassessed",
+        "wallS": 511.3,
+        "calls": 39,
+        "listUsd": 1.033
+      },
+      "opencode": {
+        "hidden": "4/4",
+        "regressions": 0,
+        "scope": 1,
+        "ending": "completed",
+        "wallS": 424.9,
+        "calls": 42,
+        "listUsd": 0.947
+      }
+    },
+    {
+      "task": "f7-6af7bb5-startup-selection",
+      "order": "rune, then opencode",
+      "rune": {
+        "hidden": "15/15",
+        "regressions": 0,
+        "scope": 1,
+        "ending": "incomplete",
+        "exitCode": 1,
+        "verdict": "partial: three criteria it inferred, one observed, two left unassessed",
+        "wallS": 422.2,
+        "calls": 27,
+        "listUsd": 0.655
+      },
+      "opencode": {
+        "hidden": "15/15",
+        "regressions": 0,
+        "scope": 1,
+        "ending": "completed",
+        "wallS": 424.2,
+        "calls": 40,
+        "listUsd": 0.694
+      }
+    },
+    {
+      "task": "f7-5553813-tilde-user-home",
+      "order": "opencode, then rune",
+      "scored": false,
+      "rune": {
+        "unscored": "provider_quota: the Codex request was refused with usage_limit_reached at turn 19",
+        "hiddenWhenCut": "3/3",
+        "wallS": 178.9,
+        "calls": 18,
+        "listUsd": 0.394
+      },
+      "opencode": {
+        "hidden": "3/3",
+        "regressions": 0,
+        "scope": 0.5,
+        "leftBehind": "scripts/tui-capture (2 files)",
+        "ending": "completed",
+        "wallS": 225.8,
+        "calls": 15,
+        "listUsd": 0.312
+      }
+    }
+  ],
+  "notRun": ["f7-653698d-toml-config", "f7-a218abc-checkpoint-report-matches-prune"],
+  "report": {
+    "status": "PROVISIONAL",
+    "why": "three scored pairs where six are needed, and three pairs where both arms succeeded where the efficiency axis needs four",
+    "family": "F7",
+    "pairs": 3,
+    "PI": 96.0,
+    "axes": { "O": 100, "E": null, "R": 100, "S": 80 },
+    "interval80WithinTasks": "96.0–96.0",
+    "interval95AcrossTasks": "90.0–100.0",
+    "pairedMedianRuneOverOpencode": { "listCost": 1.09, "wallTime": 1.2 },
+    "callsRuneOverOpencode": [0.85, 0.93, 0.68],
+    "flagsNeeded": "none"
+  },
+  "theWindow": {
+    "approved": "about 60 points of the five-hour window and about 10 of the weekly, stopping at 70%",
+    "happened": "the five-hour window went from 7% at 17:20Z to 99% at 18:07Z and refused Rune's fourth run; the weekly went from 34% to 48%. It resets at 2026-10-07T20:41Z (02:11 IST on the 8th).",
+    "why": [
+      "A second Rune session, in ~/Project/Alantests, made 185 calls on the same subscription between 17:20Z and 18:07Z. The sitting made 231 (Rune 107, OpenCode 124).",
+      "The stop line is checked between pairs, against the last reading Rune's own arm carried. That was 59%, taken before OpenCode's third run; OpenCode's runs carry no reading at all. When the fourth pair started, at 18:01Z, the window stood at 78%."
+    ]
+  },
+  "whatTheRunsShowed": {
+    "outcome": "On the three scored tasks both tools passed every hidden check with no regression. There is nothing between them on correctness here.",
+    "rune_calls_its_finished_work_unfinished": "Three runs that passed everything ended with Rune's own verdict saying otherwise: 'unmet: no criteria stated' once, 'partial' with criteria it had inferred and never assessed twice, and exit code 1 on those two. OpenCode said 'completed' four times. The index counts completion by the hidden checks, so this costs no points; a person or a script reading Rune's answer would be told the work is not done.",
+    "the_end_of_turn_check_timed_out_twice": "On two of the three, Rune's own check of the whole suite ('bun run test') hit its 120-second limit and measured nothing. The verdicts above were reached with no check behind them.",
+    "a_check_that_was_red_before_the_run_was_handed_to_the_agent": "On the first task the suite failed on one test in a file the run had not touched, for want of a built web app. Rune asked the agent to fix it, and the agent changed the repository's own 'test' script in the root package.json to build the web app first. The hidden checks did not look there. Whether Rune's baseline replay ran, and why it did not call that failure existing, is not established.",
+    "scope": "Rune left generated files behind twice, mostly .turbo/cache and package build output: once after a timed-out check, which removed nothing, and once from commands run outside the check. OpenCode left a web build and result files behind on one scored task. S is 80.",
+    "economics": "Rune made fewer calls than OpenCode on all three (23/27, 39/42, 27/40) at about the same list cost (1.14x, 1.09x, 0.94x) and took longer on two (1.48x, 1.20x, 1.00x). On 2026-10-05 one hard task took Rune 38 calls to OpenCode's 19."
+  },
+  "limitations": [
+    "Three pairs, one run each: PROVISIONAL, and no efficiency score.",
+    "Every task is F7 and mined from Rune's own history: the tool under test is editing an older copy of itself.",
+    "Wall time carries noise: focused tests were run on this machine during the first two pairs, and the second Rune session was calling the same provider throughout.",
+    "The build is 1.3.3. Uncommitted work on completion verdicts by another session is not in it.",
+    "The fourth pair is unscored and two tasks were never started."
+  ]
+}
