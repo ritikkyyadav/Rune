@@ -1610,7 +1610,7 @@ finished" to the rig whatever the process exited with.
 and two Gradle build-cache folders under a test fixture. Everything else in the tree
 is in it.
 
-## CI after the release, 2026-10-07 · **fixed on `lane/ci-green`; `main` waits for a green run**
+## CI after the release, 2026-10-07 · **done: `main` is green at `3b688d4`**
 
 **The release itself is out and checked.** Four commits (`6d9c6e4`, `74e4ef6`,
 `e561fa9`, `c15baeb`), `main` and the branch at `c15baeb`, tag `v1.3.2` there. Release
@@ -1806,4 +1806,23 @@ thirty seconds instead of five.
 has uncommitted edits to `brief.ts`, `contract.ts`, `roundtrips.ts`, the parity rig and
 three unit-test files. They are not in these commits and were not gated here.
 
-**Still open.** Whether the reader fix ships as 1.3.3 is the founder's decision.
+**The lane, sixth run (`37632169994`, `3b688d4`): all 22 jobs passed. `main` and the
+working branch were fast-forwarded to it, and `main`'s own run (`37633942430`) passed
+all 22 as well.** The CI runs on record here go back to 27 September, and it is the
+first green one on `main` among them.
+
+Seven commits after the release, in order: `75dc589`, `4b09d54`, `fd92b9c`, `6203c44`,
+`c068d9e`, `6af2c02`, `3b688d4`. One changes Rune — `75dc589`, the reader of the test
+report. The rest change tests, one call in the benchmark rig, and the suite's preload.
+Six lane runs and four runs on `main` were needed: a lane run that passes does not make
+the next run pass while a test depends on the clock.
+
+**Limits.** One green run on `main` is one run. Each of the four timing failures showed
+up exactly once across that day's runs. The suite-wide limit takes the
+five-second clock away as a cause; it does nothing about a count that batching moves or
+a forced delete, wherever else one is relied on. The nightly run is the next evidence.
+
+**Still open, each the founder's decision.** Whether the reader fix ships as 1.3.3.
+Whether a headless run waits for its supervisor or writes down what it left unread.
+Not decisions, only noted: the working row's squeezed phrase, and three test files
+that set the terminal width and do not put it back.
