@@ -32,9 +32,19 @@ import {
   resetSandboxPolicyForTest,
   setSandboxMode,
 } from "../../../packages/tool-registry/src/sandbox-mode";
+import { describeNativeBinary, resolveRuneToolsBinary } from "../../helpers/native-binary";
 import { rmTemp } from "../../helpers/tmp";
 
 const POSIX = process.platform !== "win32";
+// The engine's bash runs through the native tools binary, background shells
+// included. This test named it `rune-tools` and left the finding to $PATH, so
+// it passed on a machine with Rune installed and failed everywhere else — CI's
+// unit job, which builds no Rust, among them — with "Executable not found".
+// It now uses the binary this checkout built, and says so when there is none.
+const native = resolveRuneToolsBinary();
+if (!native.exists) {
+  console.warn(`[t20-background-lifecycle] one test skipped: ${describeNativeBinary(native)}`);
+}
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function alive(pid: number): boolean {
@@ -84,42 +94,47 @@ afterEach(() => {
 });
 
 describe.skipIf(!POSIX)("T20 — a background shell ends with what started it", () => {
-  test("closing an engine stops the background shells its bash started", async () => {
-    const engine = new Engine({
-      model: "llama3",
-      provider: "ollama",
-      workspaceRoot: root,
-      dbPath: join(root, "rune.db"),
-      toolsBinaryPath: "rune-tools",
-      permissionMode: "auto",
-      enableCheckpoints: false,
-      enableSecurity: false,
-      enableRateLimiting: false,
-      enableHooks: false,
-      enableMcp: false,
-      enableSkills: false,
-      enableVerification: false,
-      memory: { enabled: false },
-    });
-    const sessionId = engine.createSession();
-    const bash = (engine as unknown as { registry: { get(n: string): any } }).registry.get("bash");
-    const pidFile = join(root, "server.pid");
-    const out = await bash.execute({
-      toolName: "bash",
-      callId: "c1",
-      args: { command: `echo $$ > "${pidFile}"; exec sleep 30`, run_in_background: true },
-      sessionId,
-      workspaceRoot: root,
-    });
-    expect(out.success).toBe(true);
-    const pid = await pidFrom(pidFile);
-    strays.push(pid);
-    expect(alive(pid)).toBe(true);
+  test.skipIf(!native.exists)(
+    "closing an engine stops the background shells its bash started",
+    async () => {
+      const engine = new Engine({
+        model: "llama3",
+        provider: "ollama",
+        workspaceRoot: root,
+        dbPath: join(root, "rune.db"),
+        toolsBinaryPath: native.path,
+        permissionMode: "auto",
+        enableCheckpoints: false,
+        enableSecurity: false,
+        enableRateLimiting: false,
+        enableHooks: false,
+        enableMcp: false,
+        enableSkills: false,
+        enableVerification: false,
+        memory: { enabled: false },
+      });
+      const sessionId = engine.createSession();
+      const bash = (engine as unknown as { registry: { get(n: string): any } }).registry.get(
+        "bash",
+      );
+      const pidFile = join(root, "server.pid");
+      const out = await bash.execute({
+        toolName: "bash",
+        callId: "c1",
+        args: { command: `echo $$ > "${pidFile}"; exec sleep 30`, run_in_background: true },
+        sessionId,
+        workspaceRoot: root,
+      });
+      expect(out.success).toBe(true);
+      const pid = await pidFrom(pidFile);
+      strays.push(pid);
+      expect(alive(pid)).toBe(true);
 
-    engine.close();
-    await waitFor(() => !alive(pid), 4000);
-    expect(alive(pid)).toBe(false);
-  });
+      engine.close();
+      await waitFor(() => !alive(pid), 4000);
+      expect(alive(pid)).toBe(false);
+    },
+  );
 
   test("stopping a manager stops a shell that ignores SIGTERM", async () => {
     const m = new BackgroundShellManager();

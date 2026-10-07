@@ -36,7 +36,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { CLAUDE_PARITY_CONFIG_ENV } from "../../eval/comparison/arms/claude-code";
 import {
@@ -1369,7 +1369,8 @@ describe("one manifest: every task there is, from the loaders that already read 
         rune: { usedPct: 12.5, stopAtPct: 80 },
         "claude-code": { usedPct: null, stopAtPct: 70 },
       },
-      writeManifest: "/tmp/x/approved.json",
+      // Resolved, as the CLI resolves it: on Windows that adds the drive.
+      writeManifest: resolve("/tmp/x/approved.json"),
     });
     expect(() => parseCli([...base, "--max-pairs", "3"])).toThrow(
       /one budget: give all three or none/,
@@ -1755,23 +1756,32 @@ async function gradeWith(
 describe("the corpus grader, against real trees", () => {
   const coding = corpusParityTasks().filter((task) => !task.browser);
 
-  test("every criterion runs: the corpus's own solution passes all of them", async () => {
-    for (const task of coding) {
-      const { outcome, evidence } = await gradeWith(task.id, "solution");
-      expect({ task: task.id, outcome }).toEqual({
-        task: task.id,
-        outcome: {
-          hiddenPassed: task.criteria.length,
-          hiddenTotal: task.criteria.length,
-          regressionsIntroduced: 0,
-          buildBroken: false,
-          impossible: [],
-        },
-      });
-      const graded = JSON.parse(readFileSync(join(evidence, "grade.json"), "utf8"));
-      expect(graded.map((r: { id: string }) => r.id)).toEqual(task.criteria.map((c) => c.id));
-    }
-  }, 120_000);
+  // The corpus's checks assert POSIX file semantics in places. `dependent-migration`
+  // proves an atomic save by renaming over a destination that is read-only, which
+  // a directory's permission allows on POSIX and Windows refuses — so there the
+  // corpus's own solution cannot pass its third criterion. The checks are the
+  // benchmark's and are not bent to a platform the rig is not run on.
+  test.skipIf(process.platform === "win32")(
+    "every criterion runs: the corpus's own solution passes all of them",
+    async () => {
+      for (const task of coding) {
+        const { outcome, evidence } = await gradeWith(task.id, "solution");
+        expect({ task: task.id, outcome }).toEqual({
+          task: task.id,
+          outcome: {
+            hiddenPassed: task.criteria.length,
+            hiddenTotal: task.criteria.length,
+            regressionsIntroduced: 0,
+            buildBroken: false,
+            impossible: [],
+          },
+        });
+        const graded = JSON.parse(readFileSync(join(evidence, "grade.json"), "utf8"));
+        expect(graded.map((r: { id: string }) => r.id)).toEqual(task.criteria.map((c) => c.id));
+      }
+    },
+    120_000,
+  );
 
   test("…and a partial tree gets partial credit, not the first failure's zero", async () => {
     // The fixture is the untouched starting point: some criteria pass on it

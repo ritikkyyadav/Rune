@@ -117,6 +117,14 @@ async function laidOut(baseline: TaskBaseline): Promise<MaterialisedBaseline> {
   return out;
 }
 
+/**
+ * The ignored environment is carried over by cloning it, and `baseline.ts` has
+ * a command for that on macOS and Linux only. Anywhere else a baseline with an
+ * environment to carry is "unavailable" — which is the answer, and is held to
+ * below — so the tests about what a clone contains have nothing to look at.
+ */
+const CLONES = process.platform === "darwin" || process.platform === "linux";
+
 /** For the tests that expect `unavailable`: if one is handed a tree, it is still removed. */
 async function attempt(...args: Parameters<typeof materialiseBaseline>) {
   const out = await materialiseBaseline(...args);
@@ -292,7 +300,7 @@ describe("baselineIsCurrent — a baseline goes stale when the branch moves", ()
   });
 });
 
-describe("materialiseBaseline — old source, today's environment", () => {
+describe.skipIf(!CLONES)("materialiseBaseline — old source, today's environment", () => {
   test("the source is the baseline's; the run's later edits are not in it", async () => {
     const root = repo();
     writeFileSync(join(root, "src/a.ts"), "export const a = 2; // their WIP\n");
@@ -384,18 +392,22 @@ describe("materialiseBaseline — when it cannot be faithful it says so", () => 
     expect(leftovers()).toEqual(before);
   }, 15_000);
 
-  test("…but a cache a check run writes into is not the environment changing", async () => {
-    const root = repo();
-    await new Promise((resolve) => setTimeout(resolve, 2_100));
-    const baseline = captureBaseline(root)!;
-    put(root, {
-      "node_modules/.cache/vite/deps.json": "{}\n",
-      "node_modules/dep/__pycache__/x.pyc": "x",
-    });
-    const out = await attempt(baseline);
-    expect("unavailable" in out).toBe(false);
-    if (!("unavailable" in out)) out.dispose();
-  }, 15_000);
+  test.skipIf(!CLONES)(
+    "…but a cache a check run writes into is not the environment changing",
+    async () => {
+      const root = repo();
+      await new Promise((resolve) => setTimeout(resolve, 2_100));
+      const baseline = captureBaseline(root)!;
+      put(root, {
+        "node_modules/.cache/vite/deps.json": "{}\n",
+        "node_modules/dep/__pycache__/x.pyc": "x",
+      });
+      const out = await attempt(baseline);
+      expect("unavailable" in out).toBe(false);
+      if (!("unavailable" in out)) out.dispose();
+    },
+    15_000,
+  );
 
   test("a large untracked file the run rewrote: unavailable", async () => {
     const root = repo();
@@ -409,26 +421,58 @@ describe("materialiseBaseline — when it cannot be faithful it says so", () => 
     expect(changedSinceBaseline(baseline)).toContain("big.bin");
   }, 15_000);
 
-  test("a dependency link that points back into the working tree: unavailable", async () => {
-    const root = repo();
-    // An ABSOLUTE link into the repository — a baseline run through it would
-    // execute the run's own source.
-    symlinkSync(join(root, "src"), join(root, "node_modules/linked-src"));
-    const out = await attempt(settled(captureBaseline(root)!));
-    expect("unavailable" in out && out.unavailable).toContain("points into the working tree");
-  });
+  test.skipIf(!CLONES)(
+    "a dependency link that points back into the working tree: unavailable",
+    async () => {
+      const root = repo();
+      // An ABSOLUTE link into the repository — a baseline run through it would
+      // execute the run's own source.
+      symlinkSync(join(root, "src"), join(root, "node_modules/linked-src"));
+      const out = await attempt(settled(captureBaseline(root)!));
+      expect("unavailable" in out && out.unavailable).toContain("points into the working tree");
+    },
+  );
 
-  test("a relative workspace link stays inside the baseline, and is fine", async () => {
-    const root = repo();
-    symlinkSync("../src", join(root, "node_modules/workspace-pkg"));
-    writeFileSync(join(root, "src/a.ts"), "export const a = 2; // before the run\n");
-    const baseline = settled(captureBaseline(root)!);
-    writeFileSync(join(root, "src/a.ts"), "export const a = 99; // the run's edit\n");
-    const out = await laidOut(baseline);
-    // Through the link, the baseline's source — not the run's.
-    expect(read(out.cwd, "node_modules/workspace-pkg/a.ts")).toContain("before the run");
-    out.dispose();
-  });
+  test.skipIf(!CLONES)(
+    "a relative workspace link stays inside the baseline, and is fine",
+    async () => {
+      const root = repo();
+      symlinkSync("../src", join(root, "node_modules/workspace-pkg"));
+      writeFileSync(join(root, "src/a.ts"), "export const a = 2; // before the run\n");
+      const baseline = settled(captureBaseline(root)!);
+      writeFileSync(join(root, "src/a.ts"), "export const a = 99; // the run's edit\n");
+      const out = await laidOut(baseline);
+      // Through the link, the baseline's source — not the run's.
+      expect(read(out.cwd, "node_modules/workspace-pkg/a.ts")).toContain("before the run");
+      out.dispose();
+    },
+  );
+
+  test.skipIf(CLONES)(
+    "no way to clone the environment here: unavailable, nothing left on disk",
+    async () => {
+      const root = repo();
+      const before = leftovers();
+      const out = await attempt(settled(captureBaseline(root)!));
+      expect("unavailable" in out && out.unavailable).toBe(
+        "this platform has no way to clone the environment",
+      );
+      expect(leftovers()).toEqual(before);
+      // With nothing ignored there is nothing to clone, and the source alone is laid out.
+      const bare = scratch();
+      put(bare, { "src/a.ts": "export const a = 1;\n" });
+      git(bare, "init", "-q");
+      git(bare, "add", "-A");
+      git(bare, "commit", "-q", "-m", "base");
+      const baseline = settled(captureBaseline(bare)!);
+      writeFileSync(join(bare, "src/a.ts"), "export const a = 99; // the run's edit\n");
+      const laid = await laidOut(baseline);
+      // `toContain`: where git is set to check text out with CRLF, it does so here too.
+      expect(read(laid.cwd, "src/a.ts")).toContain("export const a = 1;");
+      expect(read(laid.cwd, "src/a.ts")).not.toContain("the run's edit");
+      laid.dispose();
+    },
+  );
 
   test("cancelled before it starts: unavailable, nothing left on disk", async () => {
     const root = repo();

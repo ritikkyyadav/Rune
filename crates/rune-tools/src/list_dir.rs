@@ -242,7 +242,14 @@ mod tests {
         .unwrap();
 
         let paths: Vec<&str> = output.entries.iter().map(|e| e.path.as_str()).collect();
-        assert_eq!(paths, vec!["node_modules/pkg", "node_modules/pkg/index.js"]);
+        // Written as the tool writes them: with the platform's own separator,
+        // so `node_modules\pkg` on Windows.
+        let pkg = Path::new("node_modules").join("pkg");
+        let expected = vec![
+            pkg.display().to_string(),
+            pkg.join("index.js").display().to_string(),
+        ];
+        assert_eq!(paths, expected);
     }
 
     #[test]

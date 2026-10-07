@@ -11,6 +11,24 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+### Fixed
+
+- **A failing test in a file the run edited is the run's, in GitHub Actions and on Windows too.**
+  1.3.2 tells a failure that was already there from one the run made, and a test in a file the run
+  changed always counts as the run's. That last rule did not hold in two places. Inside GitHub
+  Actions Bun opens each test file with `::group::`, and on Windows it writes `unit\a.test.ts`;
+  Rune kept both as part of the file's name, so the name matched no changed file. A failing test
+  the run had edited was then called "already failing", and when it was the only failure no repair
+  was asked for. The check was still reported red. File names in a test report are now read
+  without the prefix and with `/`.
+
+- **The tests hold on Linux and Windows, not only on a Mac.** CI had been red since late September
+  on two tests, and 1.3.2 added thirty-four more that had only ever been run on a Mac. Apart from
+  the fault above, none was a fault in Rune: the tests assumed `/` in paths, a file system that can
+  clone, a `#!` script, LF line endings, a `rune-tools` on the path, or a sub-agent list no earlier
+  test file had written to. Each now holds on every platform, or says what it needs and is skipped
+  by name where the platform cannot give it.
+
 ## [1.3.2] - 2026-10-07
 
 **Checks that tell the truth and leave nothing behind, sub-agents you can open, and runs that stop

@@ -20,7 +20,7 @@
  * What is asserted in their place is their ABSENCE: this module exports
  * nothing that draws a frame, and the rung takes its mark from the glyph.
  */
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { readFileSync } from "fs";
 import { join } from "path";
 import {
@@ -487,6 +487,13 @@ describe("the clock", () => {
 // set nothing can produce is as useless as an open one.
 
 import { TurnRenderer, type TurnSink } from "../../../packages/orchestrator/src/bin/ui/turn";
+import { fleetLedger } from "../../../packages/orchestrator/src/bin/ui/agents-panel";
+
+// One ledger per process, shared by every test file in it: a member left there
+// by another file is drawn on this file's rung, in place of what the rung was
+// about to say. Every test starts from an empty ledger, and leaves one.
+beforeEach(() => fleetLedger.reset());
+afterEach(() => fleetLedger.reset());
 
 /** The live rung, as the frame tick would paint it. */
 function rungHarness() {

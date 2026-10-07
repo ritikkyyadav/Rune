@@ -1609,3 +1609,93 @@ finished" to the rig whatever the process exited with.
 **Left out of the release.** `videos/` (a 7.9 MB reel the founder has not reviewed)
 and two Gradle build-cache folders under a test fixture. Everything else in the tree
 is in it.
+
+## CI after the release, 2026-10-07 · **diagnosed and fixed in the tree; not pushed, Windows unproven**
+
+**The release itself is out and checked.** Four commits (`6d9c6e4`, `74e4ef6`,
+`e561fa9`, `c15baeb`), `main` and the branch at `c15baeb`, tag `v1.3.2` there. Release
+run `37583047747`: 13 jobs green, 11 assets, marked Latest. The published macOS binary
+matches its checksum and reports `Rune v1.3.2`.
+
+**CI on `main` was red (run `37583044264`), and had been for longer than this
+release.** Every scheduled run since 27 September failed; the last, on 6 October, on
+two tests. The release added 34 failing tests of its own: 8 on Linux, all 34 on
+Windows. All 34 are in test files that had only ever been run on this Mac.
+
+**One of them was a fault in Rune** (`check-failures.ts`, the reader of Bun's test
+report). Inside GitHub Actions Bun opens each test file with a `::group::` prefix; on
+Windows it writes the path with backslashes. The reader kept both in the file's name.
+The rule "a failing test in a file the run changed is the run's" compares that name
+with git's list of changed files, so it never matched. A failing test the run had
+edited was called existing; when it was the only failure the loop asked for no repair.
+The check was reported red throughout. The name is now read without the prefix and
+with forward slashes. This is in the shipped 1.3.2 binaries and is not yet released.
+
+**The rest were assumptions in tests, not faults in Rune.**
+
+| Where                                                          | What the test assumed                               | What was done                                           |
+| -------------------------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------- |
+| `baseline.test.ts` (9), `verification-baseline.test.ts` (1)    | the ignored environment can be cloned               | gated on macOS and Linux; the refusal elsewhere tested  |
+| `workspace-hygiene.test.ts` (4), `parity-fairness.test.ts` (2) | `/` between path parts                              | expectations built with `node:path`                     |
+| `parity-run-pairs.test.ts` (1)                                 | a path the CLI resolves stays as typed              | expectation resolved the same way                       |
+| `parity-fairness.test.ts` (1)                                  | a `#!` script can be executed                       | skipped on Windows, by name                             |
+| `parity-run-pairs.test.ts` (1)                                 | rename may replace a read-only file                 | skipped on Windows; the corpus check is left alone      |
+| `serious-source.test.ts` (1)                                   | `git archive` writes LF                             | the rig now asks for the commit's own bytes             |
+| `delegation-replay.test.ts` (3)                                | an open database can be deleted                     | the store is closed first                               |
+| `ui-agent-inspect.test.ts` (2)                                 | a file URL's path is a file path                    | imports by URL                                          |
+| `ui-turn.test.ts` (1), `ui-working.test.ts` (1)                | no earlier test file left a sub-agent in the ledger | the ledger is reset around each test, and by its source |
+
+The last row is not about Windows. The sub-agent ledger is one per process and test
+files share the process. `ui-fleet.test.ts` reset it before each of its tests and
+never after the last, so a finished agent stayed. Windows runs files in name order,
+which puts that file ahead of the two that failed; Linux and macOS happened not to.
+
+**The two older failures.** `t20-background-lifecycle.test.ts` asked the engine for
+`rune-tools` by bare name, so it passed only where Rune is installed; it now uses the
+binary the checkout built and is skipped, with a printed note, where there is none.
+`list_dir.rs` expected `/` in a path the tool writes with the platform's separator.
+
+**Each cause was reproduced on this Mac before it was fixed**, which is the only
+evidence there is for Windows until CI runs:
+
+- annotations: `GITHUB_ACTIONS=true AGENT=0` makes Bun write them even under an agent
+  (Bun leaves them out when it believes an agent is reading, which is why a plain
+  `GITHUB_ACTIONS=true` reproduced nothing here). The 8 Linux failures appeared, exactly.
+- no way to clone: the clone command disabled in a throwaway edit. The same 9 failed.
+- CRLF: `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.autocrlf GIT_CONFIG_VALUE_0=true`.
+  The same test failed.
+- the leaked sub-agent: a preload that leaves one finished agent in the ledger. Both
+  failures appeared with the runner's exact text.
+- no `rune-tools`: the installed folder taken off the path. The same test failed.
+
+Not reproduced, reasoned from the code only: the path-shape cases, the file-URL
+import, the open database handle, and the read-only rename.
+
+**Mutation.** Removing the prefix handling fails 3 tests, removing the separator
+handling fails 1, and removing the new cleanup from `ui-fleet.test.ts` leaves an agent
+behind for the next file. 3 of 3 caught.
+
+**Seen and not changed.** With a finished sub-agent in the ledger, the working row at
+the checking stage shortens "running checks" to make room it does not then use. It is
+what made the leak visible. It is cosmetic and it is in 1.3.2. Three more test files set
+the terminal width and never put it back (`ui-grammar`, `mcp-panel`, `ui-band`).
+Nothing fails on that today; a different file order could change it.
+
+**Gates on this tree, 2026-10-07 13:42.** `cargo fmt` and clippy clean, `cargo test`
+118 pass; typecheck 15 of 15, lint 7 of 7, `tsc -p tests/eval` clean, `bun audit` clean;
+unit 7,392 pass, 4 skip, 0 fail; integration 453 pass, 7 skip, 0 fail; offline eval 63
+of 63. Unit and integration were each run a second time the way the runner runs them —
+annotations on, no agent variable, no installed `rune-tools` on the path — with the
+same totals. The unit suite also ran in a fresh clone with nothing built: 7,377 pass,
+19 skip, 0 fail, the extra skips being the tests that need the native binary. The
+repo-wide format check flags one file, a résumé kept out of the repository by a local
+exclude. The tree's fingerprint was the same before and after.
+
+**What a green unit job will uncover.** In CI the format check and the audit run after
+the unit tests, and the build, integration and eval jobs wait on them. None of those
+has run since late September. Integration has therefore never run on Linux with this
+release's tests in it. CI installs the newest Bun (1.4.2 that day); this Mac has 1.3.14.
+
+**Next.** Push needs the founder's word: the release go-ahead covered v1.3.2. A branch
+named `lane/…` runs the whole of CI without touching `main`, which is the way to prove
+the Windows half. Whether the reader fix ships as 1.3.3 is the founder's decision.

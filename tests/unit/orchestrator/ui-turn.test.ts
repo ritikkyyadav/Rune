@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   TurnRenderer,
   isVerificationCommand,
@@ -9,6 +9,14 @@ import {
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
 import { setTermWidthOverride } from "../../../packages/orchestrator/src/bin/ui/render";
 import type { TranscriptLineView } from "../../../packages/orchestrator/src/bin/ui/activity";
+import { fleetLedger } from "../../../packages/orchestrator/src/bin/ui/agents-panel";
+
+// The sub-agent ledger is one per process (it is session state in the product),
+// and test files share the process. A member another file left in it sits on
+// this file's working row and takes the room its words need, so every test
+// here starts from an empty one — and leaves one.
+beforeEach(() => fleetLedger.reset());
+afterEach(() => fleetLedger.reset());
 
 function harness() {
   const commits: string[] = [];

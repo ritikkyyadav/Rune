@@ -31,7 +31,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 
 import {
   MISSION_ROUTE,
@@ -216,10 +216,14 @@ describe("the route is one path, not a way into the Rune home", () => {
     const home = scratch("rune-hygiene-home-");
     for (const id of ["../../etc", "..", "a/../../b", "/abs/olute", "", "..\\..\\x"]) {
       const path = missionFilePath(id, home);
-      expect(path.startsWith(join(home, "sessions") + "/")).toBe(true);
-      expect(path.endsWith("/mission.md")).toBe(true);
+      // `sep`, not "/": the path is the platform's, and so is its separator.
+      const sessions = join(home, "sessions") + sep;
+      expect(path.startsWith(sessions)).toBe(true);
+      expect(path.endsWith(`${sep}mission.md`)).toBe(true);
       // Exactly `<home>/sessions/<one segment>/mission.md`.
-      expect(path.slice(join(home, "sessions").length + 1).split("/").length).toBe(2);
+      const below = path.slice(sessions.length).split(sep);
+      expect(below.length).toBe(2);
+      expect(below[0]).toMatch(/^[A-Za-z0-9_][A-Za-z0-9._-]*$/);
     }
   });
 
@@ -331,7 +335,7 @@ describe("generatedStateEnv — a check's build state stays out of a project tha
     const dir = scratch("rune-hygiene-crate-");
     put(dir, { "Cargo.toml": "[package]\nname='x'\n" });
     expect(generatedStateEnv(dir, "rust", NONE, cache)).toEqual({
-      CARGO_TARGET_DIR: "/cache/cargo-target",
+      CARGO_TARGET_DIR: join("/cache", "cargo-target"),
     });
   });
 
@@ -378,7 +382,7 @@ describe("generatedStateEnv — a check's build state stays out of a project tha
       "Cargo.toml": "[package]\nname='q'\n",
     });
     expect(generatedStateEnv(quiet, "rust", NONE, cache)).toEqual({
-      CARGO_TARGET_DIR: "/cache/cargo-target",
+      CARGO_TARGET_DIR: join("/cache", "cargo-target"),
     });
   });
 
@@ -396,14 +400,14 @@ describe("generatedStateEnv — a check's build state stays out of a project tha
     const dir = scratch("rune-hygiene-py-");
     put(dir, { "pyproject.toml": "[project]\nname='x'\n" });
     expect(generatedStateEnv(dir, "python", NONE, cache)).toEqual({
-      PYTHONPYCACHEPREFIX: "/cache/pycache",
+      PYTHONPYCACHEPREFIX: join("/cache", "pycache"),
       PYTEST_ADDOPTS: "-p no:cacheprovider",
-      MYPY_CACHE_DIR: "/cache/mypy",
-      RUFF_CACHE_DIR: "/cache/ruff",
+      MYPY_CACHE_DIR: join("/cache", "mypy"),
+      RUFF_CACHE_DIR: join("/cache", "ruff"),
     });
     put(dir, { ".pytest_cache/x": "", ".mypy_cache/x": "", ".ruff_cache/x": "" });
     expect(generatedStateEnv(dir, "python", NONE, cache)).toEqual({
-      PYTHONPYCACHEPREFIX: "/cache/pycache",
+      PYTHONPYCACHEPREFIX: join("/cache", "pycache"),
     });
   });
 

@@ -75,6 +75,13 @@ afterAll(() => {
 });
 
 /**
+ * A path written here with `/`, in the shape `node:path` gives it on this
+ * platform. The plans below build their paths with `join`, so on Windows
+ * `/evidence/run/profile` comes back as `\evidence\run\profile`.
+ */
+const native = (path: string): string => join(path);
+
+/**
  * Run `body` with some of this process's environment replaced, then put it
  * back. The pilot profile reads `XDG_DATA_HOME` to find OpenCode's credential
  * store; pointing it at a scratch directory keeps these tests from so much as
@@ -732,53 +739,59 @@ describe("a series stops only when MORE than a quarter is unscored", () => {
     expect(tooManyUnscored(1, 1)).toBe(true);
   });
 
-  test("runPilot records an unscored row and goes on, instead of `break tasksRun`", async () => {
-    // Every run of this fake reports a terminal quota refusal and exits 1, so
-    // every row is unscored. Two tasks × two arms = four planned rows: the
-    // first unscored row (1 of 4) must NOT stop the series; the second (2 of
-    // 4, more than a quarter) must.
-    const dir = temp("pilot-stop-");
-    const fake = join(dir, "refused");
-    writeFileSync(
-      fake,
-      `#!${process.execPath}\n` +
-        `if (process.argv.includes("--version")) { console.log("fake 0"); process.exit(0); }\n` +
-        `console.log(JSON.stringify({ type: "error", error: "Quota exceeded: usage limit" }));\n` +
-        `process.exit(1);\n`,
-    );
-    chmodSync(fake, 0o755);
-    const lines: string[] = [];
-    const log = console.log;
-    console.log = (...args: unknown[]) => void lines.push(args.join(" "));
-    let report: Awaited<ReturnType<typeof runPilot>>;
-    try {
-      report = await withEnv({ XDG_DATA_HOME: join(dir, "xdg") }, () =>
-        runPilot({
-          out: join(dir, "report"),
-          model: "synthetic-model",
-          runeProvider: "codex",
-          opencodeProvider: "openai",
-          budgetUsd: 1,
-          timeoutMs: 20_000,
-          runs: 1,
-          tasks: ["csv-state-machine", "off-by-one-window"],
-          corpus: join(import.meta.dir, "../../eval/corpus"),
-          runeCommand: [fake],
-          opencodeCommand: [fake],
-          route: "scripted",
-        }),
+  // The stand-in is a script with a `#!` line, which Windows will not execute.
+  const SHEBANG = process.platform !== "win32";
+  test.skipIf(!SHEBANG)(
+    "runPilot records an unscored row and goes on, instead of `break tasksRun`",
+    async () => {
+      // Every run of this fake reports a terminal quota refusal and exits 1, so
+      // every row is unscored. Two tasks × two arms = four planned rows: the
+      // first unscored row (1 of 4) must NOT stop the series; the second (2 of
+      // 4, more than a quarter) must.
+      const dir = temp("pilot-stop-");
+      const fake = join(dir, "refused");
+      writeFileSync(
+        fake,
+        `#!${process.execPath}\n` +
+          `if (process.argv.includes("--version")) { console.log("fake 0"); process.exit(0); }\n` +
+          `console.log(JSON.stringify({ type: "error", error: "Quota exceeded: usage limit" }));\n` +
+          `process.exit(1);\n`,
       );
-    } finally {
-      console.log = log;
-    }
-    expect(report.results).toHaveLength(2);
-    expect(report.results.map((row) => row.unscoredReason)).toEqual([
-      "provider_quota",
-      "provider_quota",
-    ]);
-    expect((report as Record<string, unknown>).stoppedEarly).toMatch(/2 of 4 planned row/);
-    expect(lines.join("\n")).toContain("more than a quarter");
-  }, 60_000);
+      chmodSync(fake, 0o755);
+      const lines: string[] = [];
+      const log = console.log;
+      console.log = (...args: unknown[]) => void lines.push(args.join(" "));
+      let report: Awaited<ReturnType<typeof runPilot>>;
+      try {
+        report = await withEnv({ XDG_DATA_HOME: join(dir, "xdg") }, () =>
+          runPilot({
+            out: join(dir, "report"),
+            model: "synthetic-model",
+            runeProvider: "codex",
+            opencodeProvider: "openai",
+            budgetUsd: 1,
+            timeoutMs: 20_000,
+            runs: 1,
+            tasks: ["csv-state-machine", "off-by-one-window"],
+            corpus: join(import.meta.dir, "../../eval/corpus"),
+            runeCommand: [fake],
+            opencodeCommand: [fake],
+            route: "scripted",
+          }),
+        );
+      } finally {
+        console.log = log;
+      }
+      expect(report.results).toHaveLength(2);
+      expect(report.results.map((row) => row.unscoredReason)).toEqual([
+        "provider_quota",
+        "provider_quota",
+      ]);
+      expect((report as Record<string, unknown>).stoppedEarly).toMatch(/2 of 4 planned row/);
+      expect(lines.join("\n")).toContain("more than a quarter");
+    },
+    60_000,
+  );
 });
 
 // ─── The Claude Code arm: two modes, flag for flag ───
@@ -902,7 +915,7 @@ describe("the Claude Code arm's two modes", () => {
     const keyed = plan({ PATH: "/usr/bin", ANTHROPIC_API_KEY: "sk-synthetic" });
     expect(keyed.refusal).toBeUndefined();
     expect(keyed.env.CLAUDE_CONFIG_DIR).toBe(harnessConfigDir("/evidence/run"));
-    expect(keyed.env.CLAUDE_CONFIG_DIR!.startsWith("/evidence/run/")).toBe(true);
+    expect(keyed.env.CLAUDE_CONFIG_DIR!.startsWith(native("/evidence/run/"))).toBe(true);
   });
 });
 
@@ -1120,7 +1133,7 @@ describe("the parity harness profile", () => {
       "/evidence/run/workspace",
       PROMPT,
     );
-    const config = plan.files["/evidence/run/profile/config.toml"];
+    const config = plan.files[native("/evidence/run/profile/config.toml")];
     expect(config).toBe(PARITY_RUNE_CONFIG);
     // Every line a comment: no maxTurns, no secondWinds, no maxSessionUsd, no
     // effort, no subagent or notebook setting — nothing a customer would not have.
@@ -1143,10 +1156,10 @@ describe("the parity harness profile", () => {
     ]);
     // Isolation: a fresh home, database and config per run; the founder's
     // saved sign-ins READ through their paths, never copied.
-    expect(plan.env.RUNE_HOME).toBe("/evidence/run/profile");
-    expect(plan.env.RUNE_DB_PATH).toBe("/evidence/run/profile/rune.db");
-    expect(plan.env.RUNE_CONFIG_PATH).toBe("/evidence/run/profile/config.toml");
-    expect(plan.env.RUNE_CREDENTIALS_PATH).toBe("/home/founder/.rune/credentials.json");
+    expect(plan.env.RUNE_HOME).toBe(native("/evidence/run/profile"));
+    expect(plan.env.RUNE_DB_PATH).toBe(native("/evidence/run/profile/rune.db"));
+    expect(plan.env.RUNE_CONFIG_PATH).toBe(native("/evidence/run/profile/config.toml"));
+    expect(plan.env.RUNE_CREDENTIALS_PATH).toBe(native("/home/founder/.rune/credentials.json"));
     expect(plan.env.RUNE_SANDBOX).toBeUndefined();
     expect(plan.env.RUNE_MODEL).toBeUndefined();
     expect(plan.env.OPENAI_API_KEY).toBe("sk-openai-synthetic");

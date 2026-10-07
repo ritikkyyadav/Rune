@@ -18,7 +18,7 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -30,6 +30,7 @@ import {
   delegationEntries,
   listStoredDelegations,
 } from "../../../packages/orchestrator/src/delegation-replay";
+import { rmTemp } from "../../helpers/tmp";
 
 const cleanup: Array<() => void> = [];
 afterEach(() => {
@@ -38,8 +39,13 @@ afterEach(() => {
 
 function store(): { sessions: SessionManager; session: string } {
   const dir = mkdtempSync(join(tmpdir(), "delegation-replay-"));
-  cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
   const sessions = new SessionManager(join(dir, "rune.db"));
+  // The store is closed before its directory goes: Windows will not delete a
+  // database that is still open, and `rmTemp` rides out the moment after.
+  cleanup.push(() => {
+    sessions.close();
+    rmTemp(dir);
+  });
   const session = sessions.createSession(dir, "test-model", "test").id;
   return { sessions, session };
 }

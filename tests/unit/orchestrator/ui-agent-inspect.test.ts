@@ -471,7 +471,9 @@ describe("in a colour terminal", () => {
    * theme can.
    */
   function inColour(body: string): { colour: boolean; plain: string; raw: string } {
-    const ui = new URL("../../../packages/orchestrator/src/bin/ui", import.meta.url).pathname;
+    // The URL itself, not its `.pathname`: on Windows that is `/D:/a/…`, which
+    // names no file, while `file:///D:/a/…` imports the same everywhere.
+    const ui = new URL("../../../packages/orchestrator/src/bin/ui", import.meta.url).href;
     const script = `
       Object.defineProperty(process.stdout, "isTTY", { value: true });
       process.env.COLORTERM = "truecolor";

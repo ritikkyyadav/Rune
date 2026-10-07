@@ -11,7 +11,7 @@
  * old line could not state: who, doing what, since when, and how many are back.
  */
 
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { TurnRenderer, type TurnSink } from "../../../packages/orchestrator/src/bin/ui/turn";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
 import { setTermWidthOverride } from "../../../packages/orchestrator/src/bin/ui/render";
@@ -59,6 +59,16 @@ function harness() {
     rows: () => stripAnsi(turn.liveLines().join("\n")).split("\n"),
   };
 }
+
+// The ledger and the width are process globals, and every test file shares the
+// process: what the last test here leaves in them is what the next FILE starts
+// with. On a runner that orders files by name, a finished `deploy` from this
+// file was on the working row of `ui-turn` and `ui-working` — and took the
+// room the row needed for the words those tests look for.
+afterEach(() => {
+  fleetLedger.reset();
+  setTermWidthOverride(null);
+});
 
 /** Dispatch one delegation, exactly as the stream delivers it. */
 function dispatch(

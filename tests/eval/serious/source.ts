@@ -149,9 +149,27 @@ export async function buildBaseTree(
   const scratch = mkdtempSync(join(process.env.TMPDIR || tmpdir(), "serious-archive-"));
   try {
     const tar = join(scratch, "base.tar");
-    const archive = spawnSync("git", ["-C", repoRoot, "archive", "--format=tar", "-o", tar, rev], {
-      encoding: "utf8",
-    });
+    // The commit's own bytes. A git set to check text out with CRLF (Git for
+    // Windows is, by default) converts what `archive` writes as well, and the
+    // base tree would then differ from the overlay `writeRevisionFiles` lays
+    // on it, which is always byte for byte.
+    const archive = spawnSync(
+      "git",
+      [
+        "-C",
+        repoRoot,
+        "-c",
+        "core.autocrlf=false",
+        "-c",
+        "core.eol=lf",
+        "archive",
+        "--format=tar",
+        "-o",
+        tar,
+        rev,
+      ],
+      { encoding: "utf8" },
+    );
     if (archive.status !== 0)
       throw new BaseTreeError("archive", `git archive ${rev}: ${(archive.stderr || "").trim()}`);
     const extract = spawnSync("tar", ["-xf", tar, "-C", dest], { encoding: "utf8" });
