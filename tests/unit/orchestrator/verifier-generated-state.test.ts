@@ -77,10 +77,26 @@ const BIRTH_TIMES = ((): boolean => {
 let root: string;
 let outside: string;
 
+/**
+ * `maintenance.auto=false`: after every commit git starts a detached
+ * `git maintenance run --auto`, which can still be at work in `.git` after the
+ * commit has returned. A fixture that goes on to delete its repository must not
+ * have anything else running in it.
+ */
 function git(...args: string[]): string {
   return execFileSync(
     "git",
-    ["-c", "user.name=T", "-c", "user.email=t@localhost", "-c", "commit.gpgSign=false", ...args],
+    [
+      "-c",
+      "user.name=T",
+      "-c",
+      "user.email=t@localhost",
+      "-c",
+      "commit.gpgSign=false",
+      "-c",
+      "maintenance.auto=false",
+      ...args,
+    ],
     { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
   ).trim();
 }
@@ -460,7 +476,14 @@ describe.skipIf(!POSIX_SHELL)("what is not the pass's to remove", () => {
 
   test("a tree that is not a git repository: nothing is listed, nothing is removed", async () => {
     const verifier = project({ typecheck: writes(["dist/out.js", "build.log"]) });
-    rmSync(join(root, ".git"), { recursive: true, force: true });
+    // No `force`. With it, Bun's `rmSync` returns normally and leaves the
+    // folder where it was when anything inside vanishes while it walks: about
+    // one time in seven under a deliberate race, on Bun 1.3 and 1.4. This test
+    // once failed on a macOS runner with the listing below empty instead of
+    // null, which is what a repository still being there looks like. Without
+    // `force` that is an error here, and the premise is checked, not assumed.
+    rmSync(join(root, ".git"), { recursive: true });
+    expect(there(".git")).toBe(false);
     expect(await ignoredPaths(root)).toBeNull();
     expect(await treeBefore(root)).toBeNull();
     const result = await verifier.verify();

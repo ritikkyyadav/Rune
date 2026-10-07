@@ -1721,6 +1721,31 @@ on the path, the runner's variables — reproduced the same 5. After the fix it 
 454 pass, 7 skip, 0 fail. Integration on macOS was cancelled in CI when Linux failed,
 so that run is the only evidence for it so far.
 
+**The lane, second run (`37611760494`, `fd92b9c`): all 22 jobs passed**, and `main` and
+the working branch were fast-forwarded to it.
+
+**`main`'s own run of the same commit (`37613435082`) then failed one test on macOS**
+that had passed in both lane runs and passes here. `verifier-generated-state.test.ts`
+deletes its fixture's `.git` and expects git to answer "not a repository"; git listed
+an empty set instead. File order was identical in all three runs, so it was not
+ordering. A repository above the temp folder would have failed seven other tests
+(measured by running the suite that way), and none of them failed.
+
+What was measured: Bun's `rmSync` with `force` returns normally and leaves the folder
+where it was when anything inside it vanishes during the walk. Under a deliberate race
+that happened 50 times in 300 on Bun 1.4.2 and 41 in 300 on 1.3.14, each time leaving a
+complete git directory; on Node, never. The test's delete had `force`. What was not
+observed is what raced with it on the runner: the only thing still running in a
+fixture's `.git` after a commit is git's detached maintenance, and on this Mac that
+could not be caught holding anything. The fixture's commits no longer start it, the
+delete has no `force` so a failure is an error, and the premise is asserted. Twelve
+runs of the file on Bun 1.4.2 pass; removing the delete fails the test at the premise.
+
+The product's own cleanup deletes without `force`. Under the same race that call throws
+(37 times in 200 on Bun 1.4.2), and a path whose delete threw is not reported as
+removed. It did not once return normally with the folder still there. A delete with
+`force`, in product or test, can leave what it was asked to remove and say nothing.
+
 **A second session resumed in this checkout at about 16:13**, after these commits. It
 has uncommitted edits to `brief.ts`, `contract.ts`, `roundtrips.ts`, the parity rig and
 three unit-test files. They are not in these commits and were not gated here.
