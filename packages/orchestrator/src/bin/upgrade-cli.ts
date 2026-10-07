@@ -317,6 +317,28 @@ function promote(target: string, bytes: Uint8Array, keepBackup: boolean): void {
   renameSync(staged, target);
 }
 
+/**
+ * Move aside the record a source install keeps of the build it replaced.
+ *
+ * `scripts/install.sh` writes `rune-compiled.meta` beside the binary: which
+ * commit of which checkout it was built from. The launcher reads it on every
+ * start and warns when that checkout has moved on. Once a release binary has
+ * taken the build's place the file describes something that is no longer
+ * there, and the launcher went on telling the user to rebuild a binary they
+ * had just upgraded (the founder's machine, 2026-10-07). It is kept as
+ * `.backup`, like the binary it described, so rolling back restores both.
+ */
+export function retireSourceBuildRecord(installDir: string): boolean {
+  const meta = join(installDir, "rune-compiled.meta");
+  if (!existsSync(meta)) return false;
+  const backup = `${meta}.backup`;
+  clearImmutable(meta);
+  clearImmutable(backup);
+  rmSync(backup, { force: true });
+  renameSync(meta, backup);
+  return true;
+}
+
 export interface UpgradeResult {
   code: number;
   /** The version now installed, when something was installed. */
@@ -437,6 +459,12 @@ export async function runUpgrade(
     mkdirSync(env.installDir, { recursive: true });
     promote(cliTarget(env.installDir), cliBytes, true);
     if (toolsBytes) promote(join(env.installDir, "rune-tools"), toolsBytes, true);
+    try {
+      retireSourceBuildRecord(env.installDir);
+    } catch {
+      // The new binary is in place either way; a stale record only costs a
+      // warning at launch, and that must not read as a failed upgrade.
+    }
   } catch (err) {
     log(`  Install failed: ${err instanceof Error ? err.message : String(err)}`);
     log(`  The previous binary is untouched (or restorable from its .backup).`);

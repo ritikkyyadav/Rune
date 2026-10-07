@@ -11,6 +11,14 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+### Fixed
+
+- **`rune upgrade` over a source install no longer leaves Rune telling you to rebuild.** A source
+  install keeps a record of the commit it was built from, and the launcher warns when that checkout
+  has moved on. `rune upgrade` replaced the binary and left the record, so every start said the
+  build was older than its source tree and gave the command to rebuild it. The record is now moved
+  aside with the build it described, as `rune-compiled.meta.backup`.
+
 ## [1.3.3] - 2026-10-07
 
 **The rule for whose failure it is holds in CI and on Windows, and the tests have now run on all

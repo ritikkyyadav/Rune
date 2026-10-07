@@ -1826,3 +1826,39 @@ a forced delete, wherever else one is relied on. The nightly run is the next evi
 Whether a headless run waits for its supervisor or writes down what it left unread.
 Not decisions, only noted: the working row's squeezed phrase, and three test files
 that set the terminal width and do not put it back.
+
+## v1.3.3, 2026-10-07 · **shipped on the founder's word ("well then proceed")**
+
+The reader fix was in the 1.3.2 binaries and on `main` unreleased. It is released.
+
+- **Commit and tag.** `96bf372`, "release: Rune is 1.3.3": the same thirteen files a
+  release touches, and nothing else. Tag `v1.3.3` there.
+- **Gated before the tag.** The commit's exact content in a fresh clone: unit 7,377 pass,
+  19 skip, 0 fail, and the repo-wide format check clean. Then the lane: run
+  `37646340441`, all 22 jobs. `main` and the working branch were fast-forwarded only
+  after that, and the tag pushed after them.
+- **Published.** Release run `37648178456`, all 13 jobs. Eleven assets, marked Latest.
+  The downloaded macOS arm64 pair matches `SHA256SUMS`, prints `Rune v1.3.3`, and
+  contains the fix.
+- **Installed here through `rune upgrade`**, not by compiling this checkout, which holds
+  another session's unfinished edits: a build of it at the tag would have called itself
+  1.3.3. The upgrade downloaded, verified and promoted; the installed binaries match
+  the release's checksums; `doctor` and `tools-smoke` pass. The install it replaced was a
+  dev build the other session had put there at 16:11 (`1.3.2-dev+4b09d54`), kept as
+  `.backup`.
+
+**What that first live upgrade of a source install found.** The launcher went on
+warning that the build was older than its source tree, with the command to rebuild it.
+`scripts/install.sh` leaves a record of the build beside the binary, the launcher reads
+it on every start, and `rune upgrade` replaced the binary without touching the record.
+The record is now moved aside with the build it described. Two tests; removing the call,
+or deleting the record instead of keeping it, fails one. The stale record on this
+machine was moved aside by hand the same way. Not released: it is on `main` for the
+next version.
+
+**Not done, and why.** The six-pair serious sitting was not started. It spends the
+Codex window and needs the founder's numbers; and a second session is working in this
+checkout on the same hard task, with its own rig changes uncommitted and a one-pair
+manifest for a Claude Code arm on disk. Whether a headless run waits for its supervisor
+is still the founder's decision. `rune doctor` on this machine gives one fact for it:
+of 116 background screens, 15 raised a flag and none was confirmed.

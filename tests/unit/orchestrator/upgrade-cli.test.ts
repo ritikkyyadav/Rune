@@ -16,7 +16,15 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -24,6 +32,7 @@ import {
   assetSuffix,
   cachedUpdateNag,
   cliTarget,
+  retireSourceBuildRecord,
   compareVersions,
   parseChecksums,
   refreshUpdateCheck,
@@ -212,6 +221,47 @@ describe("rune upgrade", () => {
     expect(readFileSync(join(bin, "rune-compiled"), "utf8")).toBe(r.cli);
     // The wrapper, which carries the env loading, is untouched.
     expect(readFileSync(join(bin, "rune"), "utf8")).toContain("exec rune-compiled");
+  });
+
+  test("a source install's build record goes with the build it described", async () => {
+    // The launcher reads `rune-compiled.meta` on every start and warns when the
+    // checkout it names has moved on. Left beside a release binary, it told the
+    // user to rebuild what they had just upgraded.
+    const dir = tempDir();
+    const bin = join(dir, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "rune"), '#!/bin/sh\nexec rune-compiled "$@"\n');
+    writeFileSync(join(bin, "rune-compiled"), "OLD BINARY");
+    const record = "RUNE_SOURCE_ROOT=/src\nRUNE_SOURCE_COMMIT=abc123\n";
+    writeFileSync(join(bin, "rune-compiled.meta"), record);
+    // An older record already moved aside is replaced, not an obstacle.
+    writeFileSync(join(bin, "rune-compiled.meta.backup"), "AN EARLIER RECORD");
+
+    const r = fakeRelease({ tag: "v0.4.0", suffix: "linux-x64" });
+    const code = await runUpgrade(
+      [],
+      env({ installDir: bin, statePath: join(dir, "state.json"), fetch: r.fetcher }),
+    );
+    expect(code).toBe(0);
+    expect(existsSync(join(bin, "rune-compiled.meta"))).toBe(false);
+    // Kept, like the binary it described: rolling back can restore both.
+    expect(readFileSync(join(bin, "rune-compiled.meta.backup"), "utf8")).toBe(record);
+    expect(readFileSync(join(bin, "rune-compiled.backup"), "utf8")).toBe("OLD BINARY");
+  });
+
+  test("a release install has no build record, and nothing is invented for it", async () => {
+    const dir = tempDir();
+    const bin = join(dir, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "rune"), "OLD CLI");
+    const r = fakeRelease({ tag: "v0.4.0", suffix: "linux-x64" });
+    const code = await runUpgrade(
+      [],
+      env({ installDir: bin, statePath: join(dir, "state.json"), fetch: r.fetcher }),
+    );
+    expect(code).toBe(0);
+    expect(retireSourceBuildRecord(bin)).toBe(false);
+    expect(readdirSync(bin).filter((name) => name.includes("meta"))).toEqual([]);
   });
 
   test("a checksum mismatch installs NOTHING and leaves the old binary in place", async () => {
