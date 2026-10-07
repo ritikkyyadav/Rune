@@ -16,7 +16,9 @@ pub fn plan_shell(config: SandboxConfig, command: &str) -> Result<ShellPlan, San
     guard.allow_extra_write_paths(config.extra_write_paths.clone());
     guard.deny_extra_write_paths(config.deny_write_paths.clone());
     guard.validate_command(command)?;
-    let mut env = guard.curate_env();
+    // Every plan this returns is a contained one, so it gets what a contained
+    // foreground shell gets.
+    let mut env = guard.contained_env();
     env.extend(config.env_overrides.clone());
     #[cfg(target_os = "macos")]
     {

@@ -98,6 +98,12 @@ What the profile enforces, and `/sandbox config` prints:
 - **Network** is denied unless a call sets `network: true`; loopback stays open so a dev server on
   `127.0.0.1` and a `curl` against it work. `network: true` never permits writes outside the
   workspace.
+- **Bun's install cache** is kept inside the workspace, at `node_modules/.cache/bun`
+  (`BUN_INSTALL_CACHE_DIR`). Its usual place is under `~/.bun`, which a sandboxed command may not
+  write — and Bun reports that as "unable to write files to tempdir", so `bun add` could not run
+  even with `network: true`. With the cache in the workspace it can, nothing is written outside
+  the workspace, and one project's packages are never another's cache. npm's, pip's and cargo's
+  caches are not moved: an install with those still needs its cache under `allowWrite`.
 
 Paths are resolved against the workspace (relative) or the home directory (`~`, `$HOME`) before
 they cross into the Rust profile, which matches resolved paths only. On macOS the deny lists are

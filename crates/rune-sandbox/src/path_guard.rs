@@ -415,6 +415,40 @@ impl PathGuard {
         env
     }
 
+    /// The environment of a shell that is actually CONTAINED: `curate_env`,
+    /// plus a place for the one piece of state a contained command cannot keep
+    /// where it normally does.
+    ///
+    /// Bun's install cache lives under the home directory, which no contained
+    /// shell may write, and Bun reports that as "unable to write files to
+    /// tempdir" — so the reason cannot be seen from inside. With a network
+    /// granted, `bun add` therefore still could not run (measured 2026-10-05:
+    /// two failed installs, and the detour after them, cost a live run six of
+    /// its 38 calls). The cache is given a folder INSIDE the workspace. Nothing
+    /// new is written outside it, and one project's packages are never another
+    /// project's cache — a cache shared between projects and writable by every
+    /// contained command would be a way from one into the next.
+    ///
+    /// Not for the executor that contains nothing (`noop`): there Bun writes
+    /// where it always has, and the warm cache it finds is the person's own.
+    pub fn contained_env(&self) -> HashMap<String, String> {
+        let mut env = self.curate_env();
+        env.insert(
+            "BUN_INSTALL_CACHE_DIR".to_string(),
+            self.contained_bun_cache().display().to_string(),
+        );
+        env
+    }
+
+    /// Where a contained shell's Bun keeps its install cache: under the
+    /// workspace's `node_modules`, which is where an install writes anyway.
+    pub fn contained_bun_cache(&self) -> PathBuf {
+        self.workspace_root
+            .join("node_modules")
+            .join(".cache")
+            .join("bun")
+    }
+
     /// Return the workspace root this guard was created for.
     pub fn workspace_root(&self) -> &Path {
         &self.workspace_root
@@ -471,5 +505,28 @@ mod tests {
         let env = guard.curate_env();
         assert_eq!(env.get("RUNE_WORKSPACE").unwrap(), "/tmp/ws");
         assert_eq!(env.get("NO_COLOR").unwrap(), "1");
+    }
+
+    /// A contained shell is told where Bun may keep its install cache, and
+    /// that place is inside the workspace it may already write.
+    #[test]
+    fn contained_env_gives_bun_a_cache_inside_the_workspace() {
+        let guard = PathGuard::new(PathBuf::from("/tmp/ws"));
+        let env = guard.contained_env();
+        let cache = PathBuf::from(env.get("BUN_INSTALL_CACHE_DIR").unwrap());
+        assert_eq!(cache, PathBuf::from("/tmp/ws/node_modules/.cache/bun"));
+        assert!(cache.starts_with(guard.workspace_root()));
+        assert_eq!(cache, guard.contained_bun_cache());
+        // Everything a curated environment has is still there, unchanged.
+        for (name, value) in guard.curate_env() {
+            assert_eq!(env.get(&name), Some(&value), "{name} changed");
+        }
+    }
+
+    /// The executor that contains nothing does not move anyone's cache.
+    #[test]
+    fn curate_env_leaves_bun_where_it_is() {
+        let guard = PathGuard::new(PathBuf::from("/tmp/ws"));
+        assert!(!guard.curate_env().contains_key("BUN_INSTALL_CACHE_DIR"));
     }
 }

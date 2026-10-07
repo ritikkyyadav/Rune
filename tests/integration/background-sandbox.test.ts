@@ -160,6 +160,64 @@ test.skipIf(!native)(
   30_000,
 );
 
+// ─── Where a contained shell's Bun keeps its install cache ───
+//
+// 2026-10-05, a live run: `bun add smol-toml` with a network granted failed
+// twice with "unable to write files to tempdir". Bun's cache is under the home
+// directory, which no contained shell may write, and Bun names the wrong
+// directory when it says why. A contained shell is now told to keep that cache
+// inside the workspace — the one place it could always write.
+
+test.skipIf(!native)(
+  "a foreground sandboxed shell is given a Bun cache inside the workspace, and can write it",
+  () => {
+    const dir = mkdtempSync(join(tmpdir(), "rune-bun-cache-"));
+    dirs.push(dir);
+    const workspace = join(dir, "workspace");
+    mkdirSync(workspace);
+    const proc = Bun.spawnSync([binary, "--sandbox", "--workspace", workspace, "bash"], {
+      stdin: new TextEncoder().encode(
+        JSON.stringify({
+          command:
+            'mkdir -p "$BUN_INSTALL_CACHE_DIR" && echo cached > "$BUN_INSTALL_CACHE_DIR/probe" && printf %s "$BUN_INSTALL_CACHE_DIR"',
+          timeout_ms: 15_000,
+        }),
+      ),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const parsed = JSON.parse(new TextDecoder().decode(proc.stdout)) as {
+      success?: boolean;
+      result?: { sandboxed?: boolean; exit_code?: number; stdout?: string; stderr?: string };
+    };
+    expect(parsed.success).toBe(true);
+    expect(parsed.result?.sandboxed).toBe(true);
+    expect([parsed.result?.exit_code, parsed.result?.stderr]).toEqual([0, ""]);
+    expect(parsed.result?.stdout).toEndWith(join("workspace", "node_modules", ".cache", "bun"));
+    expect(existsSync(join(workspace, "node_modules", ".cache", "bun", "probe"))).toBe(true);
+  },
+  30_000,
+);
+
+test.skipIf(!native)(
+  "a background sandboxed shell is given the same one",
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "rune-bun-cache-bg-"));
+    dirs.push(dir);
+    const workspace = join(dir, "workspace");
+    mkdirSync(workspace);
+    const manager = new BackgroundShellManager(binary);
+    managers.push(manager);
+    setSandboxMode("on");
+    const started = manager.start('printf %s "$BUN_INSTALL_CACHE_DIR"', workspace, false);
+    expect(started.sandboxed).toBe(true);
+    const done = await finished(manager, started.shellId);
+    expect(done.status).toBe("completed");
+    expect(done.output).toEndWith(join("workspace", "node_modules", ".cache", "bun"));
+  },
+  30_000,
+);
+
 test("a missing native planner cannot silently launch a host background process", () => {
   setSandboxMode("on");
   for (const unavailable of [undefined, "/nonexistent/rune-tools"]) {

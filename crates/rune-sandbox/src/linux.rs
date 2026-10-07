@@ -288,7 +288,7 @@ impl Sandbox for LinuxSandbox {
 
             let working_dir = cwd.unwrap_or(&self.config.workspace_root);
             let timeout = timeout_ms.unwrap_or(self.config.timeout_ms);
-            let env = self.path_guard.curate_env();
+            let env = self.path_guard.contained_env();
             let args = self.bwrap_args(command, working_dir);
 
             debug!(

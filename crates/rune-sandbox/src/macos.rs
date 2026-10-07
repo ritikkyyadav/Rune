@@ -237,7 +237,7 @@ impl Sandbox for MacOsSandbox {
 
             let working_dir = cwd.unwrap_or(&self.config.workspace_root);
             let timeout = timeout_ms.unwrap_or(self.config.timeout_ms);
-            let env = self.path_guard.curate_env();
+            let env = self.path_guard.contained_env();
             let profile = self.seatbelt_profile();
 
             debug!(
@@ -645,6 +645,44 @@ mod tests {
             .expect("sandbox execute failed");
         assert_eq!(r.exit_code, 0, "stderr={:?}", r.stderr);
         assert!(ws.path().join("marker.txt").exists());
+    }
+
+    /// A contained shell is told where Bun's install cache goes, and can write
+    /// there: inside the workspace. Bun's own place for it is under the home
+    /// directory, which this profile never opens — and Bun reports that as a
+    /// temp-directory error, so `bun add` could not run even with a network.
+    #[tokio::test]
+    async fn bun_install_cache_is_inside_the_workspace_and_writable() {
+        if !MacOsSandbox::is_available() {
+            return;
+        }
+        let ws = tempfile::TempDir::new().unwrap();
+        let sb = MacOsSandbox::new(cfg(ws.path().to_path_buf(), false));
+        let r = sb
+            .execute(
+                "mkdir -p \"$BUN_INSTALL_CACHE_DIR\" && echo cached > \"$BUN_INSTALL_CACHE_DIR/probe\" && printf %s \"$BUN_INSTALL_CACHE_DIR\"",
+                None,
+                Some(15_000),
+            )
+            .await
+            .expect("sandbox execute failed");
+        assert_eq!(r.exit_code, 0, "stderr={:?}", r.stderr);
+        assert!(
+            r.stdout.ends_with("node_modules/.cache/bun"),
+            "stdout={:?}",
+            r.stdout
+        );
+        assert!(ws.path().join("node_modules/.cache/bun/probe").exists());
+        // The home directory's own Bun cache is still not this shell's to write.
+        let outside = sb
+            .execute(
+                "mkdir -p \"$HOME/.bun/install/cache\" 2>/dev/null; touch \"$HOME/.bun/install/cache/.rune-contained-probe\"",
+                None,
+                Some(15_000),
+            )
+            .await
+            .expect("sandbox execute failed");
+        assert_ne!(outside.exit_code, 0, "the home cache must stay closed");
     }
 
     #[tokio::test]
