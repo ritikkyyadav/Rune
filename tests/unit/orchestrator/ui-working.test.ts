@@ -538,7 +538,9 @@ describe("the rung says what the events say", () => {
       expect(h.rung(), `${toolName}`).not.toContain(phrase[0]!.toUpperCase() + phrase.slice(1));
       expect(h.rung()).not.toContain("✻");
     }
-  });
+    // Five cases, each waited out past the rung's dwell: about four seconds of
+    // the default five on a CI runner, before anything is slow.
+  }, 15_000);
 
   it("says waiting for you when the agent asked a question", async () => {
     const h = rungHarness();

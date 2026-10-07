@@ -14,7 +14,7 @@
  * that the detected commands are the right ones by running them.
  */
 
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, setDefaultTimeout } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +23,14 @@ import { CommandVerifier } from "../../../packages/orchestrator/src/verifier";
 import { TaskStateStore } from "../../../packages/orchestrator/src/task-state";
 
 const POSIX_SHELL = process.platform !== "win32";
+
+// Three tests below let the verifier run whatever the machine has: `go build`
+// and `cargo check`, each under the verifier's own five-second deadline. Bun's
+// default for a test is the same five seconds, so where a cold toolchain used
+// its whole deadline the test was timed out in the instant its answer arrived
+// — 5,003 ms on a Linux runner, with `cargo check` at 4,792 ms beside it. What
+// they assert is which command was chosen, and that holds however it ended.
+setDefaultTimeout(30_000);
 
 function workspace(): string {
   return mkdtempSync(join(tmpdir(), "rune-step-check-"));

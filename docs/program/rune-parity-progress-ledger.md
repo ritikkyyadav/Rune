@@ -1768,6 +1768,25 @@ it stays up and hears the verdict. Whether a headless run should wait a bounded 
 or write down what it left unread, is a decision about cost and exit time, and it is
 the founder's.
 
+**The lane, fourth run (`37620214639`, `c068d9e`) failed a third test, on Linux, in the
+unit job.** `verifier-step-check.test.ts` lets the verifier run a real `go build` under
+the verifier's own five-second deadline, and Bun's default limit for a test is the same
+five seconds. On a cold toolchain the command used its whole deadline and the test was
+timed out at 5,003 ms. In the same log `cargo check`, in the same file, took 4,792 ms,
+and one interface test takes about four of its five seconds on every runner. All three
+now have room above their own deadlines. What they assert has not changed.
+
+Three flakes in three runs is the suite meeting a CI runner after weeks of not reaching
+one, not three regressions: two of the three tests date from September. Each was
+fixed at its cause — a forced delete that did not delete, a count that batching moves,
+a limit equal to the deadline inside it.
+
+To look for a fourth before CI found it, each suite was run once here under load: one
+copy, default limits, the runner's environment, six processes burning CPU beside it.
+Unit 7,388 pass and integration 454 pass, both about 1.4 times slower than unloaded,
+and no test without a limit of its own took more than 3.9 seconds. (Several copies of
+a suite at once prove nothing: they collide in the temp folder and in the checkout.)
+
 **A second session resumed in this checkout at about 16:13**, after these commits. It
 has uncommitted edits to `brief.ts`, `contract.ts`, `roundtrips.ts`, the parity rig and
 three unit-test files. They are not in these commits and were not gated here.
