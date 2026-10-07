@@ -125,3 +125,26 @@ function scrubProviderKeys(): void {
   }
 }
 scrubProviderKeys();
+
+// ── A test's clock ──
+//
+// Bun gives every test, and every hook, five seconds unless it is told
+// otherwise. Five seconds is a long time on the machine a test is written on
+// and not on a shared CI runner, where starting a toolchain or `npm` cold can
+// take that by itself. On 2026-10-07 two CI runs in a row were lost to that
+// clock and to nothing else: a `go build` the verifier had given five seconds
+// of its own, and the hook that packs the SDK.
+//
+// `bun test --timeout`, which the Windows job already passes for this reason,
+// does not reach hooks: a six-second `beforeAll` still dies at five under
+// `--timeout 30000` (measured on Bun 1.3.14 and 1.4.2). A default set here
+// does reach them, and a file or a test that sets its own still wins.
+//
+// Raised, not removed: a test that hangs still fails, thirty seconds later.
+// `require`, and guarded, because the eval runner preloads this file too and
+// is not a test run.
+try {
+  (require("bun:test") as { setDefaultTimeout(ms: number): void }).setDefaultTimeout(30_000);
+} catch {
+  // Not under `bun test`: there is no clock to set.
+}

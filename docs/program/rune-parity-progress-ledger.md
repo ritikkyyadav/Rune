@@ -1787,6 +1787,21 @@ Unit 7,388 pass and integration 454 pass, both about 1.4 times slower than unloa
 and no test without a limit of its own took more than 3.9 seconds. (Several copies of
 a suite at once prove nothing: they collide in the temp folder and in the checkout.)
 
+**The lane, fifth run (`37626796403`, `6af2c02`): all 22 jobs passed**, and `main` was
+fast-forwarded. **`main`'s run of it (`37628515211`) lost a fourth test to the same
+clock**: the hook that packs the SDK, in integration on Linux, was stopped at 5,004 ms.
+
+Two runs in a row lost to Bun's five-second default and to nothing else, so the
+default itself was measured, on Bun 1.3.14 and 1.4.2. Every test and every hook gets
+five seconds. `bun test --timeout`, which the Windows job passes for this reason,
+raises it for tests and not for hooks: a six-second `beforeAll` still dies at five
+under `--timeout 30000`. A default set in a preload raises it for both, and a file's
+or a test's own limit still wins. The suite's preload now sets thirty seconds, the
+Windows job's number, and the SDK hook has a limit of its own. A rough scan of both
+suites found 53 hooks that start processes or wait on work with no limit; of the ones
+read, that was the only one that builds anything. A test that hangs now fails after
+thirty seconds instead of five.
+
 **A second session resumed in this checkout at about 16:13**, after these commits. It
 has uncommitted edits to `brief.ts`, `contract.ts`, `roundtrips.ts`, the parity rig and
 three unit-test files. They are not in these commits and were not gated here.

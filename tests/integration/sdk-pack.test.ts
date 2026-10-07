@@ -66,7 +66,9 @@ beforeAll(() => {
     return;
   }
   packed = true;
-});
+  // `npm pack` runs the build first. A hook has five seconds unless it says
+  // otherwise, and on a CI runner a cold `npm` once took all of them.
+}, 120_000);
 
 afterAll(() => {
   if (work) rmSync(work, { recursive: true, force: true });
