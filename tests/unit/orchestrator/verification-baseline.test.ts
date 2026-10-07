@@ -106,7 +106,82 @@ error: Cannot find module './does-not-exist' from '/ws/app/unit/nested/b.test.ts
 Ran 2 tests across 2 files. [20.00ms]
 `;
 
+/**
+ * Bun 1.3's own output inside GitHub Actions (`GITHUB_ACTIONS=true`): every
+ * file opened and closed by a workflow command, every error said twice.
+ */
+const ANNOTATED = `bun test v1.3.14 (0d9b296a)
+
+::group::unit/old.test.ts:
+3 | test("was never true", () => { expect(value).toBe(41); });
+                                                 ^
+error: expect(received).toBe(expected)
+
+Expected: 41
+Received: 1
+
+      at <anonymous> (/ws/app/unit/old.test.ts:3:46)
+
+::error file=unit/old.test.ts,line=3,col=46,title=error: expect(received).toBe(expected)::Expected: 41%0AReceived: 1%0A%0A      at <anonymous> (/ws/app/unit/old.test.ts:3:46)
+(fail) was never true [2.68ms]
+
+::endgroup::
+
+::group::unit/nested/b.test.ts:
+error: boom
+      at <anonymous> (/ws/app/unit/nested/b.test.ts:2:72)
+
+::error file=unit/nested/b.test.ts,line=2,col=72,title=error: boom::%0A      at <anonymous> (/ws/app/unit/nested/b.test.ts:2:72)
+(fail) outer > throws [0.18ms]
+(pass) outer > fine [0.01ms]
+::error title=error: Test "slow" timed out after 50ms::
+(fail) outer > slow [50.64ms]
+  ^ this test timed out after 50ms.
+
+::endgroup::
+
+ 1 pass
+ 3 fail
+ 2 expect() calls
+Ran 4 tests across 2 files. [115.00ms]
+`;
+
 describe("parseBunTestRun", () => {
+  test("inside GitHub Actions the workflow commands are not part of any name", () => {
+    const annotated = parseBunTestRun(ANNOTATED, ["/ws/app"])!;
+    expect(annotated.failing.map((t) => [t.file, t.name])).toEqual([
+      ["unit/old.test.ts", "was never true"],
+      ["unit/nested/b.test.ts", "outer > throws"],
+      ["unit/nested/b.test.ts", "outer > slow"],
+    ]);
+    expect(attributable(annotated)).toBe(true);
+    // The same run with the workflow commands taken out reads identically:
+    // a failure is the same failure whichever of the two wrote it down.
+    const plain = ANNOTATED.split("\n")
+      .filter((line) => !/^::(?:error|endgroup)\b/.test(line))
+      .map((line) => line.replace(/^::group::/, ""))
+      .join("\n");
+    expect(plain).not.toContain("::group::");
+    expect(annotated).toEqual(parseBunTestRun(plain, ["/ws/app"])!);
+  });
+
+  test("a file is named with `/`, however the runner's platform writes it", () => {
+    // Windows: `unit\a.test.ts:` — and, in a workflow there, `::group::unit\a.test.ts:`.
+    const windows = REPORT.replace(/^unit\/(.+:)$/gm, "unit\\$1");
+    expect(windows).toContain("unit\\a.test.ts:");
+    expect(parseBunTestRun(windows)!.failing).toEqual(parseBunTestRun(REPORT)!.failing);
+    const both = ANNOTATED.replace(
+      /^(::group::)(.+:)$/gm,
+      (_, command: string, path: string) => command + path.replaceAll("/", "\\"),
+    );
+    expect(both).toContain("::group::unit\\nested\\b.test.ts:");
+    expect(parseBunTestRun(both)!.failing.map((t) => t.file)).toEqual([
+      "unit/old.test.ts",
+      "unit/nested/b.test.ts",
+      "unit/nested/b.test.ts",
+    ]);
+  });
+
   test("names every failing test by file and describe path", () => {
     const run = parseBunTestRun(REPORT)!;
     expect(run.failing.map((t) => [t.file, t.name])).toEqual([
@@ -316,6 +391,13 @@ function project(extra: Record<string, string> = {}): string {
   return root;
 }
 
+/**
+ * An ignored environment reaches the starting tree by being cloned, which
+ * `baseline.ts` can do on macOS and Linux. Elsewhere the answer is "unknown",
+ * said in so many words — `baseline.test.ts` holds it to that.
+ */
+const CLONES = process.platform === "darwin" || process.platform === "linux";
+
 const OLD = "unit/old.test.ts :: was never true";
 const OK = "unit/ok.test.ts :: value is one";
 const known = (a: FailureAttribution | undefined) => {
@@ -413,6 +495,40 @@ describe("CommandVerifier — whose failures are these", () => {
     const a = known((await v.verify(undefined, [join(root, "unit/old.test.ts")])).attribution);
     expect(a.existing).toEqual([]);
     expect(a.introduced).toEqual(["unit/old.test.ts :: was never true (renamed)"]);
+  });
+
+  test("inside GitHub Actions the report is annotated, and each failure is still called what it is", async () => {
+    // Bun wraps every file in `::group::` there. The prefix used to stay on the
+    // file's name, so a failing test in a file the run had edited matched no
+    // changed file — and was excused as someone else's.
+    // `AGENT=0`: Bun leaves the annotations out when it thinks an agent reads.
+    const saved = { GITHUB_ACTIONS: process.env.GITHUB_ACTIONS, AGENT: process.env.AGENT };
+    process.env.GITHUB_ACTIONS = "true";
+    process.env.AGENT = "0";
+    try {
+      const untouched = project();
+      const v = new CommandVerifier({ workspaceRoot: untouched });
+      v.beginChanges();
+      writeFileSync(join(untouched, "src/other.ts"), "export const other = 2;\n");
+      const r = await v.verify(undefined, [join(untouched, "src/other.ts")]);
+      expect(r.report).toContain("::group::"); // the annotated report is what was read
+      expect(known(r.attribution)).toEqual({ known: true, existing: [OLD], introduced: [] });
+
+      const edited = project();
+      const w = new CommandVerifier({ workspaceRoot: edited });
+      w.beginChanges();
+      writeFileSync(
+        join(edited, "unit/old.test.ts"),
+        `${T("was never true", "expect(value).toBe(41);")}// touched\n`,
+      );
+      const a = known((await w.verify(undefined, [join(edited, "unit/old.test.ts")])).attribution);
+      expect(a).toEqual({ known: true, existing: [], introduced: [OLD] });
+    } finally {
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
   });
 
   test("changed dependencies: no comparison is made", async () => {
@@ -553,23 +669,27 @@ describe("CommandVerifier — whose failures are these", () => {
     expect(temps()).toEqual(before.temps);
   });
 
-  test("the starting tree is asked once: a second failure reuses what it said", async () => {
-    const root = project({ ".gitignore": "vendor/\n" });
-    put(root, { "vendor/lib.js": "module.exports = 1;\n" });
-    await new Promise((resolve) => setTimeout(resolve, 2_100));
-    const v = new CommandVerifier({ workspaceRoot: root });
-    v.beginChanges();
-    writeFileSync(join(root, "src/other.ts"), "export const other = 2;\n");
-    expect(
-      known((await v.verify(undefined, [join(root, "src/other.ts")])).attribution).existing,
-    ).toEqual([OLD]);
-    // Now the environment moves. A fresh baseline run would refuse — but what
-    // the starting tree said was said before that, and is still what it said.
-    writeFileSync(join(root, "vendor/lib.js"), "module.exports = 2;\n");
-    expect(
-      known((await v.verify(undefined, [join(root, "src/other.ts")])).attribution).existing,
-    ).toEqual([OLD]);
-  }, 20_000);
+  test.skipIf(!CLONES)(
+    "the starting tree is asked once: a second failure reuses what it said",
+    async () => {
+      const root = project({ ".gitignore": "vendor/\n" });
+      put(root, { "vendor/lib.js": "module.exports = 1;\n" });
+      await new Promise((resolve) => setTimeout(resolve, 2_100));
+      const v = new CommandVerifier({ workspaceRoot: root });
+      v.beginChanges();
+      writeFileSync(join(root, "src/other.ts"), "export const other = 2;\n");
+      expect(
+        known((await v.verify(undefined, [join(root, "src/other.ts")])).attribution).existing,
+      ).toEqual([OLD]);
+      // Now the environment moves. A fresh baseline run would refuse — but what
+      // the starting tree said was said before that, and is still what it said.
+      writeFileSync(join(root, "vendor/lib.js"), "module.exports = 2;\n");
+      expect(
+        known((await v.verify(undefined, [join(root, "src/other.ts")])).attribution).existing,
+      ).toEqual([OLD]);
+    },
+    20_000,
+  );
 
   test("a new run takes a new baseline: last run's break is this run's inheritance", async () => {
     const root = project({ "unit/old.test.ts": T("was never true", "expect(value).toBe(1);") });

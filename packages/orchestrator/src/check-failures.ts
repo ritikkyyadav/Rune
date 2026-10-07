@@ -25,7 +25,7 @@
 // Pure: strings in, records out.
 
 export interface FailingTest {
-  /** The test file, as the runner printed it — relative to where it ran. */
+  /** The test file, relative to where the runner ran, with `/` between its parts. */
   file: string;
   /** The describe path and the test's name, as the runner prints them. */
   name: string;
@@ -47,7 +47,9 @@ export interface ParsedTestRun {
 }
 
 const HEADER = /^bun test v\d/m;
-const FILE = /^(\S(?:.*\S)?\.[cm]?[jt]sx?):$/;
+// Inside GitHub Actions Bun opens each file with a workflow command —
+// `::group::unit/a.test.ts:` — and that prefix is not part of the file's name.
+const FILE = /^(?:::group::)?(\S(?:.*\S)?\.[cm]?[jt]sx?):$/;
 const FAIL = /^\(fail\) (.+?)(?: \[\d+(?:\.\d+)?ms\])?$/;
 const OTHER_VERDICT = /^\((?:pass|skip|todo)\) /;
 const TIMEOUT_NOTE = /^\s*\^ (this test timed out after .+)$/;
@@ -94,7 +96,10 @@ export function parseBunTestRun(
     const line = lines[i]!.replace(/\r$/, "");
     const header = line.match(FILE);
     if (header) {
-      file = header[1]!.replace(/^(?:\.\/)+/, "");
+      // One spelling for one file: `/`, as git and every changed-files list
+      // here write it. On Windows the runner prints `unit\a.test.ts`, and a
+      // name that matches nothing is a test in a file "nobody changed".
+      file = header[1]!.replace(/\\/g, "/").replace(/^(?:\.\/)+/, "");
       words = [];
       continue;
     }
