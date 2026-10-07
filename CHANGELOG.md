@@ -11,7 +11,85 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-10-07
+
+**Checks that tell the truth and leave nothing behind, sub-agents you can open, and runs that stop
+cleanly.** A patch on 1.3.1. Full notes: [`docs/releases/v1.3.2.md`](docs/releases/v1.3.2.md).
+
+### Added
+
+- **A sub-agent can be opened and watched while it works.** With the composer empty, the right
+  arrow steps onto the agent blocks on the working row; left and right move between them, and
+  enter opens the selected agent's transcript in place of the main one:
+
+      ── 1  planner ── running 48s · 12.4k tok · 2 tools ── esc back ──────────────
+       Map where settings are defined, validated and persisted.
+
+      ◇ Starting from the config table, then its loader.
+      ┌ read  packages/orchestrator/src/config-settings.ts ──────────────────────┐
+      │ export const CONFIG_SETTINGS: ConfigSetting[] = [                        │
+      └ · observed · lines 1-40 · 240ms ─────────────────────────────────────────┘
+        │ › run   bun test tests/unit/orchestrator/config-settings.test.ts
+
+  The transcript opens with what the agent was asked, then its reasoning, what it wrote, and every
+  call drawn the way the main transcript draws one — a file read with its contents, an edit with
+  its diff, a command with its output and exit code. A call appears the moment it starts and names
+  its file or command while it is still running. The transcript keeps filling while it is open.
+  Inside it, left and right switch to the next agent, up/down and page keys scroll, and `esc` goes
+  back. The working row stays on screen the whole time, with the open agent's block marked.
+  `ctrl+f` opens the fuller list, one card per agent with its tokens, tool count and last verdict;
+  enter there opens the same transcript. The status line shows the keys for wherever you are.
+
+- **Finished sub-agents stay readable, including after a restart.** When a turn ends, the right
+  arrow still selects the agents that came back and enter opens what each one did. Reopening a
+  session (`/sessions`, `rune --resume <id>`, or the picker at launch) brings its sub-agents back
+  under the names they ran as, read from the session's own record in `~/.rune/rune.db`. A restored
+  agent's card says `from the session log` instead of a token count, because this process did not
+  measure one, and its transcript is loaded when you open it. Long tool results in a stored
+  transcript are cut to their first 1,500 characters and say so.
+  `Engine.listDelegations(sessionId)` and `Engine.getDelegationTranscript(sessionId, taskId)`
+  expose the same record to the SDK.
+
 ### Changed
+
+- **The working row shows where the turn is and how hard it is working.** The row above the
+  composer was one bar breathing on a timer beside a phrase with a glow sweeping across it, so a
+  fast stream and a stalled call drew the same thing. It now reads:
+
+      ▁▂▅▂▁▁▁▂▄▂▁▁ building · small, steady edits · editing turn.ts · 1m 05s  step 3 of 7
+
+  The mark is the glyph from Say's dictation overlay — twelve columns standing on one base, in
+  Say's colour — and it is struck by the turn's own output. What arrives is gathered into beats:
+  about 67 a minute for a trickle, up to about 167 when the model is streaming flat out, and none
+  when nothing arrives. Each beat lands as evenly spaced strokes that step one column to the right,
+  taller the more arrived and more of them the harder the run is working; one tool call opening is
+  one stroke. While a turn is in flight and silent — a command running, the model thinking — a
+  single low hump sweeps the row. Waiting on you, or finished, it is flat, dim and still.
+  The first word is the stage: `starting`, `looking`, `planning`, `building`, `checking`,
+  `answering`, `housekeeping` while the context is compacted, `over to you` on a question. After the
+  clock the row says where the plan is (`step 3 of 7`) and, when it is true, that the run is
+  struggling: `second pass` after a failed check, `2 misses` after calls fail in a row, beside the
+  existing `quiet 12s` and `retry 2 of 5`. Nothing but the mark moves. On a narrow window the voice
+  line gives way before a file name is shortened. The token count and `thought for 5.1s` left the
+  row and are in the `/details` header. A seven-bit terminal draws the mark with `_.,-=+*#`;
+  `NO_COLOR` keeps the shapes and drops the colour.
+
+- **Sub-agents are blocks on the working row, under one mark.** Launching sub-agents used to
+  replace the working row with a separate agents strip, which hid the mark and gave each agent a
+  small bar that rose and fell on a timer whatever the agent was doing. The working row now stays,
+  and each agent in flight is a block after it:
+
+      ▂▄▇▃▂▃▆▃▂▄█▄ looking · many hands · 6s  [planner] [builder] [verifier ✓]
+
+  The one mark is struck by every agent's output together — the text each one writes, its
+  reasoning, each call it opens and closes — so one agent working is a calm beat and three working
+  at once is a faster, taller one. A block does not animate: it is in the normal ink while its
+  agent's output is arriving, faint while the agent is queued or has gone quiet, and carries `✓` or
+  `✗` once the agent is back. Blocks that do not fit are counted (`+2`), the newest thing any agent
+  proved follows them when there is room, and `-> agents` on the right names the key that reaches
+  them (see "A sub-agent can be opened and watched" below). In the panel, a running agent's cell is
+  one static `◇` rather than a moving bar. After a turn the row says how many came back
+  (`3 agents back`).
 
 - **The tab's working mark is a pill, paced by the work.** The four-frame `| / - \` in the tab
   title is now `[⬬  ]`: a small solid pill centred inside a pill, gathering speed to the right and
@@ -23,6 +101,40 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
   space at a time; elsewhere, and inside tmux or screen, it is a square, `[■  ]`, that moves in
   three steps (`RUNE_TITLE_STRIP=smooth|cells` overrides the choice). A seven-bit terminal
   (`RUNE_ASCII=1`, or a locale that is not UTF-8) gets `[#  ]` and `[-  ]`.
+
+- **The Auto-mode reviewer has thirty seconds to answer, not twelve.** A risky command waits for an
+  independent review. Its first attempt had ten seconds and ordinarily takes about nine, so on a
+  slow evening the review timed out and the command was refused for the reviewer's slowness, not
+  for anything it did. `[permissions.autoMode] timeoutMs` now defaults to 30000 (1000 to 60000).
+  Who reviews and what is refused are unchanged: a reviewer that never answers still ends in a
+  refusal, eighteen seconds later than before.
+
+- **A read-back keeps a rule you stated in your own words.** When Rune restates a task before
+  starting, a rule the request states — must, must not, never, keep — now goes into its completion
+  criteria as you wrote it. Twice on one task a restated rule had become a narrower one, and the
+  run built and tested the narrower one. Whether the change helps has not yet been shown in live
+  runs.
+
+- **A session keeps one prompt-cache key.** On Codex the key was made per process and per provider
+  instance, so `/model`, `/login` and a resumed session each started cold, and every session in a
+  process shared one. It now comes from the session. What that saves has not been measured.
+
+- **Six tool descriptions no longer contradict the instructions.** `read_back`, `record_evidence`,
+  `todo_write` and three others told the model to use them more often than Rune's own instructions
+  do.
+
+- **The instructions sent with every request are about a third shorter.** Repeated rules were
+  consolidated: the full set goes from 7,807 tokens to 5,402, and the opening prompt from 24,220
+  bytes to 15,267. What that saves on a real bill has not been measured.
+
+- **A headless run exits 1 when a change did not meet the terms it was held to.** `rune -P` exited
+  0 whenever the model stopped by itself, even when Rune's own verdict on the task was `unmet`. It
+  now exits 1, with `ok: false` in the JSON envelope, when the verdict is `partial` or `unmet` and
+  either the run stated what done means and changed files, or it was held to a criterion from
+  outside itself (yours, or an `--acceptance` check). A run that stated no criteria — a greeting, a
+  question — and a run that changed nothing, such as a review, are judged by whether they ran, as
+  before. The answer and its evidence are printed either way. Details:
+  [`docs/ci.md`](docs/ci.md).
 
 ### Removed
 
@@ -37,10 +149,101 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ### Fixed
 
+- **`ctrl+f` and `esc` work on the agents while a turn is running.** `ctrl+f` did nothing for the
+  whole of a running turn, which is the only time a sub-agent is live, although the working row
+  advertised it throughout. `esc` pressed with the agents list focused interrupted the run instead
+  of closing the list. Both now behave the same whether or not a turn is running: `ctrl+f` opens
+  the list, and `esc` steps back one level and interrupts only from the composer. The status line
+  no longer says `esc stop` while `esc` would go back.
+
+- **Enter on an agent's card shows its transcript.** In the default single-column layout the
+  transcript opened behind the agents list, so enter appeared to do nothing until the list was
+  closed by hand.
+
+- **An agent's transcript shows what its calls did.** Each tool call was drawn as the tool's verb
+  alone — `read`, with no file and no result — and a failed call looked the same as a successful
+  one.
+
+- **An agent writing a large file is no longer reported as quiet.** The time an agent spent
+  writing a tool call's arguments was not counted as activity, so its card read `quiet 12s` while
+  it was working.
+
+- **The working row no longer ends on a stray `·` in a colour terminal** when sub-agents are
+  running and none has reported a verdict yet.
+
+- **A closed transcript is no longer marked `OPEN` on its card** after `ctrl+w` or `esc`.
+
 - **A failed Anthropic request is no longer retried behind Rune's back.** The Anthropic SDK
   retried twice on its own under each of Rune's retries, so one overloaded response could turn into
   a dozen requests before Rune saw a failure. Rune's own retries and fallback now handle it alone,
   as they already did for OpenAI-compatible providers.
+
+- **Rune's own checks no longer leave build output in your repository.** At the end of a turn Rune
+  runs the project's checks, and in a turbo workspace `typecheck` builds every package: one run
+  left 129 git-ignored files behind (`.turbo/`, a `dist/` in each package). When a pass of checks
+  Rune chose ends — passed, failed, timed out or cancelled — the git-ignored paths it created are
+  removed again. Only those: a folder that was already there keeps what the check put in it, a new
+  file git does not ignore is left for you to see, and `node_modules`, virtualenvs, `.env*` and
+  editor folders are never taken. A command you wrote in `[verify] commands` keeps what it builds.
+  `[verify] keepGenerated = true` turns the removal off. Details:
+  [`docs/verification.md`](docs/verification.md).
+
+- **`bun add` works in the sandbox once a call has network.** Bun's install cache is under your
+  home directory, which a sandboxed command may not write, and Bun reported that as "unable to
+  write files to tempdir" — so an install failed even with `network: true`. A sandboxed shell now
+  keeps Bun's cache inside the project, at `node_modules/.cache/bun`. Nothing is written outside
+  the project. npm's, pip's and cargo's caches are not moved yet.
+
+- **A check that ran out of time is not a failed check.** Verification has three outcomes now:
+  passed, failed, or inconclusive (timed out, cancelled, no runner on this machine, nothing to
+  run). An inconclusive check no longer sends Rune to repair working code, and a slow suite is no
+  longer reported as red. The time limit also stops the whole command, not only its shell:
+  `cd api && go test ./...` used to run on past its deadline.
+
+- **A project's own `test` script is what runs.** For a Bun project Rune ran `bun test` — Bun's own
+  runner, over every test file — instead of the script the project declares. It now runs
+  `bun run test`.
+
+- **A test that was already failing is not the run's to fix.** When a check goes red, Rune runs the
+  same command on the tree the run started from. A failure that was already there, with the same
+  assertion, is named and left alone; only new failures are repaired.
+
+- **Editing TypeScript does not run the Rust checks beside it.** A change confined to JS, TS or
+  Python no longer selects a Rust or JVM project in the same folder unless its build files call
+  that toolchain, and a documentation-only change runs only the checks that read documentation.
+
+- **"Explain", "review" and "change no code" are held.** When a request says not to change code, or
+  names the one file to write, edits and shell writes outside that are refused.
+
+- **Rune's mission file is no longer written into your project.** It lives under Rune's home, one
+  per session. Cargo's and Python's generated state from Rune's own checks also stays out of a
+  project that had none.
+
+- **A regression test the run wrote can prove the fix.** It is replayed on the tree the run
+  started from, your uncommitted work included, and counts as verified only if it failed there and
+  passes now. Editing the test afterwards takes that back.
+
+- **A provider that stops answering ends the run after ten minutes, with the work kept.** A
+  provider that stalled instead of failing could hold a run through about eighteen minutes of
+  retries. `[reliability] providerDeadlineSecs` (default 600, 0 turns it off) bounds it, and
+  `rune resume` continues from where it stopped.
+
+- **`kill`, a closed terminal and a shutdown stop a run cleanly.** On SIGTERM and SIGHUP — and on
+  Ctrl-C in a headless run — Rune stops the commands it started, records that the run was
+  interrupted, removes what its checks had laid out, and exits with the signal's code. The next
+  run of that session continues it.
+
+- **A run killed in the middle of a command resumes knowing the command may have run.** The call
+  is recorded before it starts. On resume the model is told that its result is unknown, and to
+  check before repeating it.
+
+- **A provider cap waits until the moment the provider named.** A Codex plan limit now says what
+  it is and when it lifts ("resume this session in ~2h 42m (at 14:08)") instead of a guessed
+  fifteen minutes, and Rune does not walk back into the same wall an hour later.
+
+- **Google's metadata server is asked only when Vertex is in use.** The startup credential scan
+  used to send a request to `metadata.google.internal` on any machine without a key file,
+  including one whose only provider is Codex.
 
 ## [1.3.1] - 2026-09-28
 

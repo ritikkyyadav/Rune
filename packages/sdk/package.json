@@ -1,6 +1,6 @@
 {
   "name": "@rune/sdk",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "Drive a Rune agent session over the Rune protocol \u2014 from Node, Bun, a browser, an editor extension or a CI step.",
   "license": "Apache-2.0",
   "type": "module",
