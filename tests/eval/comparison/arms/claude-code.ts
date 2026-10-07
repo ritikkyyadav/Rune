@@ -15,7 +15,9 @@
 //             own best model. The login lives in a DEDICATED profile —
 //             `CLAUDE_CONFIG_DIR` from `RUNE_PARITY_CLAUDE_CONFIG_DIR` — that
 //             the founder signs into once by hand (`CLAUDE_CONFIG_DIR=<dir>
-//             claude`, then `/login`). The arm refuses to run without it.
+//             claude`, then `/login`). Without it, an explicit
+//             `RUNE_PARITY_CLAUDE_DEFAULT_AUTH=1` uses the normal login with
+//             `--safe-mode` to disable personal customizations.
 //             This replaces the first version, which ran on the founder's own
 //             `~/.claude`: their settings, their hooks, their CLAUDE.md and
 //             their plugins all took part in the measurement.
@@ -96,6 +98,26 @@ export const CLAUDE_CODE_PINNED_VERSION = "2.1.284";
  * founder signed into ONCE, by hand, for evaluation and nothing else.
  */
 export const CLAUDE_PARITY_CONFIG_ENV = "RUNE_PARITY_CLAUDE_CONFIG_DIR";
+export const CLAUDE_DEFAULT_AUTH_ENV = "RUNE_PARITY_CLAUDE_DEFAULT_AUTH";
+/** The earliest CLI version whose help we verified documents --safe-mode. */
+export const CLAUDE_CODE_SAFE_MODE_MIN_VERSION = "2.1.291";
+
+export function supportsClaudeSafeMode(version: string | null): boolean {
+  const match = version?.match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return false;
+  const [major, minor, patch] = match.slice(1).map(Number);
+  return major! > 2 || (major === 2 && (minor! > 1 || (minor === 1 && patch! >= 291)));
+}
+
+/** Dedicated profile takes precedence even when default auth is opted into. */
+export function defaultAuthSafeMode(limits: ArmLimits): boolean {
+  const source = limits.env ?? process.env;
+  return (
+    modeOf(limits) === "product" &&
+    !source[CLAUDE_PARITY_CONFIG_ENV]?.trim() &&
+    source[CLAUDE_DEFAULT_AUTH_ENV] === "1"
+  );
+}
 
 /**
  * The names each mode keeps beyond the neutral base (`armEnv`).
@@ -156,6 +178,7 @@ export function claudeCodeArgv(prompt: string, limits: ArmLimits): string[] {
     ...bin,
     "--print",
     ...(modeOf(limits) === "harness" ? ["--bare"] : []),
+    ...(defaultAuthSafeMode(limits) ? ["--safe-mode"] : []),
     "--output-format",
     "json",
     ...(limits.model ? ["--model", limits.model] : []),
@@ -182,10 +205,10 @@ export const harnessConfigDir = (dir: string): string => join(dir, "claude-confi
 /**
  * The child's environment for a mode, and why a live run would be refused.
  *
- * Product mode: the neutral base plus `CLAUDE_CONFIG_DIR`, set from
- * `RUNE_PARITY_CLAUDE_CONFIG_DIR`. Refused when that is unset, relative, or
- * not a directory — the arm never falls back to `~/.claude`. Only the
- * directory's existence is checked; nothing inside it is read.
+ * Product mode: a dedicated `CLAUDE_CONFIG_DIR` if provided, or normal auth
+ * with `--safe-mode` when explicitly opted in. The opt-in never forwards an
+ * inherited `CLAUDE_CONFIG_DIR` or API key. Only the dedicated directory's
+ * existence is checked; nothing inside it is read.
  *
  * Harness mode: the neutral base plus `ANTHROPIC_API_KEY`, with
  * `CLAUDE_CONFIG_DIR` set to a scratch directory in the evidence folder.
@@ -211,6 +234,7 @@ export function claudeCodeEnv(
   }
   const profile = source[CLAUDE_PARITY_CONFIG_ENV]?.trim();
   delete env.CLAUDE_CONFIG_DIR;
+  if (defaultAuthSafeMode(limits)) return { env };
   if (!profile)
     return {
       env,
@@ -411,7 +435,14 @@ export const claudeCodeArm: ComparatorArm = {
       command: claudeCodeArgv(task.prompt, limits),
       cwd: workspaceOf(dir),
       env,
-      parityGaps: CLAUDE_CODE_PARITY_GAPS,
+      parityGaps: [
+        ...CLAUDE_CODE_PARITY_GAPS,
+        modeOf(limits) === "harness"
+          ? "auth route: scratch config and API key under --bare."
+          : defaultAuthSafeMode(limits)
+            ? "auth route: normal Claude login under --safe-mode (supported by Claude Code 2.1.291+); personal CLAUDE.md, plugins, hooks, skills and MCP customizations are disabled."
+            : "auth route: dedicated CLAUDE_CONFIG_DIR evaluation profile.",
+      ],
       ...(refusal ? { refusal } : {}),
     };
   },
@@ -421,6 +452,13 @@ export const claudeCodeArm: ComparatorArm = {
     // Refused BEFORE anything is created or spawned: a run on the wrong
     // profile is not a run of the product this arm names.
     if (plan.refusal) throw new Error(plan.refusal);
+    if (defaultAuthSafeMode(limits)) {
+      const version = this.version(limits);
+      if (!supportsClaudeSafeMode(version))
+        throw new Error(
+          `Claude Code --safe-mode needs version ${CLAUDE_CODE_SAFE_MODE_MIN_VERSION} or newer; found ${version ?? "unknown"}.`,
+        );
+    }
     mkdirSync(dir, { recursive: true });
     if (modeOf(limits) === "harness") mkdirSync(harnessConfigDir(dir), { recursive: true });
     const stdoutPath = `${dir}/stdout.json`;

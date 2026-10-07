@@ -1,0 +1,518 @@
+{
+  "schema": "rune-breadth-sitting@1",
+  "card": "B2 — held-out breadth, first sitting (families F1–F3)",
+  "ranAt": {
+    "started": "2026-10-05T10:22:35Z",
+    "finished": "2026-10-05T11:36:44Z",
+    "wallMinutes": 74.2
+  },
+  "authorisedBy": "the founder, 2026-10-05, answering a question that named it: 18 pairs, 36 agent runs, the Codex subscription, stop at 70%",
+  "manifest": {
+    "path": "docs/evidence/b2-s1-manifest-20261005.json",
+    "sha256": "ae860fa5aaedf515fd507ed13a88a918512e61b24e0ea1a1e98b0f74585cca90"
+  },
+  "sourceHead": "c8410316b4d3a1315f4e42cfe8d625fcc800b576",
+  "sourceDirty": true,
+  "arms": {
+    "rune": "from source, gpt-6-sol via codex, shipped defaults",
+    "opencode": "1.18.30, openai/gpt-6-sol, --variant high"
+  },
+  "rawEvidence": {
+    "note": "machine-local, not in the repository",
+    "dir": "~/rune-evidence/b2-s1-20261005",
+    "resultsSha256": "68d8ad4c528b00ab520c7df5013c9370a47745d8627975d1baaef5cb41121adf",
+    "report": "~/rune-evidence/b2-s1-20261005-report/parity-report.md"
+  },
+  "report": {
+    "status": "PROVISIONAL",
+    "flag": "--allow-mixed-config",
+    "heldAtProvisionalBy": "Rune's rows carry two model rosters: 10 of its 18 runs made supervisor calls on gpt-6-astra, 8 did not",
+    "families": {
+      "F1": {
+        "n": 6,
+        "tasks": 3,
+        "O": 100.0,
+        "E": 100.0,
+        "R": 100.0,
+        "S": 100.0,
+        "PI": 100.0,
+        "interval80": "98.4–100.0"
+      },
+      "F2": {
+        "n": 6,
+        "tasks": 3,
+        "O": 100.0,
+        "E": 100.0,
+        "R": 100.0,
+        "S": 100.0,
+        "PI": 100.0,
+        "interval80": "100.0–100.0"
+      },
+      "F3": {
+        "n": 6,
+        "tasks": 3,
+        "O": 100.0,
+        "E": 96.3,
+        "R": 100.0,
+        "S": 100.0,
+        "PI": 99.1,
+        "interval80": "96.2–100.0"
+      }
+    }
+  },
+  "absolute": {
+    "rune": {
+      "attempts": 18,
+      "complete": 18,
+      "clean": 18,
+      "wallMin": 36.3,
+      "listUsd": 2.58,
+      "calls": 197
+    },
+    "opencode": {
+      "attempts": 18,
+      "complete": 18,
+      "clean": 18,
+      "wallMin": 37.5,
+      "listUsd": 1.7,
+      "calls": 181
+    }
+  },
+  "runeOverOpencode": {
+    "median": {
+      "wall": 0.94,
+      "listUsd": 1.56,
+      "calls": 1.2
+    },
+    "runeFasterIn": 11,
+    "runeCheaperIn": 3,
+    "of": 18
+  },
+  "runeHarness": {
+    "gateRePrompts": 0,
+    "harnessMessages": {
+      "nudge:harness-notes": 7
+    },
+    "endOfTurnVerification": {
+      "passed": 18
+    },
+    "callsByRoute": {
+      "gpt-6-sol primary": {
+        "calls": 183,
+        "listUsd": 2.223
+      },
+      "gpt-6-astra supervisor": {
+        "calls": 14,
+        "listUsd": 0.353
+      }
+    },
+    "promptTokensPerCall": 15755,
+    "cachedShare": 0.78,
+    "streamRestarts": 2
+  },
+  "quota": {
+    "account": "one Codex subscription (plan: plus), both arms",
+    "fullerWindowPct": {
+      "first": 28,
+      "last": 35
+    }
+  },
+  "pairs": [
+    {
+      "task": "off-by-one-window",
+      "family": "F1",
+      "run": 1,
+      "rune": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 55.0,
+        "calls": 6,
+        "listUsd": 0.075,
+        "models": ["codex/gpt-6-sol"]
+      },
+      "opencode": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 90.7,
+        "calls": 7,
+        "listUsd": 0.0684
+      }
+    },
+    {
+      "task": "json-output-flag",
+      "family": "F2",
+      "run": 1,
+      "rune": {
+        "hidden": "4/4",
+        "scope": 1,
+        "clean": true,
+        "wallS": 90.1,
+        "calls": 12,
+        "listUsd": 0.1723,
+        "models": ["codex/gpt-6-astra", "codex/gpt-6-sol"]
+      },
+      "opencode": {
+        "hidden": "4/4",
+        "scope": 1,
+        "clean": true,
+        "wallS": 80.1,
+        "calls": 10,
+        "listUsd": 0.1031
+      }
+    },
+    {
+      "task": "queue-race",
+      "family": "F1",
+      "run": 1,
+      "rune": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 157.5,
+        "calls": 13,
+        "listUsd": 0.2188,
+        "models": ["codex/gpt-6-astra", "codex/gpt-6-sol"]
+      },
+      "opencode": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 117.5,
+        "calls": 9,
+        "listUsd": 0.0695
+      }
+    },
+    {
+      "task": "note-field-and-exporter",
+      "family": "F2",
+      "run": 1,
+      "rune": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 62.1,
+        "calls": 9,
+        "listUsd": 0.1428,
+        "models": ["codex/gpt-6-astra", "codex/gpt-6-sol"]
+      },
+      "opencode": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 102.3,
+        "calls": 11,
+        "listUsd": 0.0952
+      }
+    },
+    {
+      "task": "dependent-migration",
+      "family": "F3",
+      "run": 1,
+      "rune": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 210.7,
+        "calls": 17,
+        "listUsd": 0.2161,
+        "models": ["codex/gpt-6-astra", "codex/gpt-6-sol"]
+      },
+      "opencode": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 225.8,
+        "calls": 13,
+        "listUsd": 0.1644
+      }
+    },
+    {
+      "task": "rename-quantity-field",
+      "family": "F3",
+      "run": 1,
+      "rune": {
+        "hidden": "4/4",
+        "scope": 1,
+        "clean": true,
+        "wallS": 66.9,
+        "calls": 4,
+        "listUsd": 0.0765,
+        "models": ["codex/gpt-6-sol"]
+      },
+      "opencode": {
+        "hidden": "4/4",
+        "scope": 1,
+        "clean": true,
+        "wallS": 140.1,
+        "calls": 12,
+        "listUsd": 0.1329
+      }
+    },
+    {
+      "task": "health-endpoint-and-changelog",
+      "family": "F2",
+      "run": 1,
+      "rune": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 147.9,
+        "calls": 14,
+        "listUsd": 0.1333,
+        "models": ["codex/gpt-6-sol"]
+      },
+      "opencode": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 122.1,
+        "calls": 11,
+        "listUsd": 0.0662
+      }
+    },
+    {
+      "task": "csv-state-machine",
+      "family": "F1",
+      "run": 1,
+      "rune": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 103.0,
+        "calls": 9,
+        "listUsd": 0.1324,
+        "models": ["codex/gpt-6-sol"]
+      },
+      "opencode": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 131.0,
+        "calls": 9,
+        "listUsd": 0.0744
+      }
+    },
+    {
+      "task": "three-module-dependent",
+      "family": "F3",
+      "run": 1,
+      "rune": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 244.3,
+        "calls": 19,
+        "listUsd": 0.2309,
+        "models": ["codex/gpt-6-astra", "codex/gpt-6-sol"]
+      },
+      "opencode": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 110.9,
+        "calls": 12,
+        "listUsd": 0.1083
+      }
+    },
+    {
+      "task": "queue-race",
+      "family": "F1",
+      "run": 2,
+      "rune": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 88.3,
+        "calls": 7,
+        "listUsd": 0.0954,
+        "models": ["codex/gpt-6-astra", "codex/gpt-6-sol"]
+      },
+      "opencode": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 152.1,
+        "calls": 9,
+        "listUsd": 0.0759
+      }
+    },
+    {
+      "task": "json-output-flag",
+      "family": "F2",
+      "run": 2,
+      "rune": {
+        "hidden": "4/4",
+        "scope": 1,
+        "clean": true,
+        "wallS": 94.2,
+        "calls": 12,
+        "listUsd": 0.2091,
+        "models": ["codex/gpt-6-astra", "codex/gpt-6-sol"]
+      },
+      "opencode": {
+        "hidden": "4/4",
+        "scope": 1,
+        "clean": true,
+        "wallS": 121.3,
+        "calls": 10,
+        "listUsd": 0.0793
+      }
+    },
+    {
+      "task": "dependent-migration",
+      "family": "F3",
+      "run": 2,
+      "rune": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 195.3,
+        "calls": 17,
+        "listUsd": 0.1975,
+        "models": ["codex/gpt-6-astra", "codex/gpt-6-sol"]
+      },
+      "opencode": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 208.4,
+        "calls": 11,
+        "listUsd": 0.1199
+      }
+    },
+    {
+      "task": "note-field-and-exporter",
+      "family": "F2",
+      "run": 2,
+      "rune": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 59.9,
+        "calls": 6,
+        "listUsd": 0.0947,
+        "models": ["codex/gpt-6-sol"]
+      },
+      "opencode": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 121.1,
+        "calls": 11,
+        "listUsd": 0.0991
+      }
+    },
+    {
+      "task": "off-by-one-window",
+      "family": "F1",
+      "run": 2,
+      "rune": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 56.4,
+        "calls": 7,
+        "listUsd": 0.0638,
+        "models": ["codex/gpt-6-sol"]
+      },
+      "opencode": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 42.9,
+        "calls": 5,
+        "listUsd": 0.0581
+      }
+    },
+    {
+      "task": "three-module-dependent",
+      "family": "F3",
+      "run": 2,
+      "rune": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 218.9,
+        "calls": 16,
+        "listUsd": 0.1605,
+        "models": ["codex/gpt-6-astra", "codex/gpt-6-sol"]
+      },
+      "opencode": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 133.9,
+        "calls": 12,
+        "listUsd": 0.0995
+      }
+    },
+    {
+      "task": "csv-state-machine",
+      "family": "F1",
+      "run": 2,
+      "rune": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 97.4,
+        "calls": 6,
+        "listUsd": 0.0913,
+        "models": ["codex/gpt-6-sol"]
+      },
+      "opencode": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 93.7,
+        "calls": 8,
+        "listUsd": 0.065
+      }
+    },
+    {
+      "task": "health-endpoint-and-changelog",
+      "family": "F2",
+      "run": 2,
+      "rune": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 98.4,
+        "calls": 14,
+        "listUsd": 0.1583,
+        "models": ["codex/gpt-6-astra", "codex/gpt-6-sol"]
+      },
+      "opencode": {
+        "hidden": "3/3",
+        "scope": 1,
+        "clean": true,
+        "wallS": 121.9,
+        "calls": 9,
+        "listUsd": 0.0666
+      }
+    },
+    {
+      "task": "rename-quantity-field",
+      "family": "F3",
+      "run": 2,
+      "rune": {
+        "hidden": "4/4",
+        "scope": 1,
+        "clean": true,
+        "wallS": 129.6,
+        "calls": 9,
+        "listUsd": 0.1076,
+        "models": ["codex/gpt-6-sol"]
+      },
+      "opencode": {
+        "hidden": "4/4",
+        "scope": 1,
+        "clean": true,
+        "wallS": 132.3,
+        "calls": 12,
+        "listUsd": 0.155
+      }
+    }
+  ]
+}

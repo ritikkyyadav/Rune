@@ -17,6 +17,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -310,6 +311,34 @@ export async function gradeTree(
   return graded;
 }
 
+/**
+ * What grades a mined task, as one digest: the fix commit its hidden tests are
+ * copied from, which files those are, and every check's pinned role — to pass,
+ * to stay passing, impossible here, flaky — with the typecheck it is held to.
+ * The files' bytes are the commit's, so its id stands for them.
+ */
+export function seriousGraderSha256(spec: SeriousTaskSpec): string {
+  const sorted = (list: readonly string[] | undefined) => [...(list ?? [])].sort();
+  const held = (clean: Record<string, boolean> | undefined) =>
+    Object.entries(clean ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        sha: spec.sha,
+        hiddenFiles: sorted(spec.hiddenFiles),
+        testFiles: sorted(spec.testFiles),
+        f2p: sorted(spec.f2p),
+        p2p: sorted(spec.p2p),
+        impossible: sorted(spec.impossible),
+        flaky: sorted(spec.flaky),
+        typecheckPackages: sorted(spec.typecheckPackages),
+        typecheckBaseClean: held(spec.typecheckBaseClean),
+        typecheckFixedClean: held(spec.typecheckFixedClean),
+      }),
+    )
+    .digest("hex");
+}
+
 /** One mined task as a ParityTask. */
 export function seriousTask(
   spec: SeriousTaskSpec,
@@ -321,6 +350,7 @@ export function seriousTask(
     family: "F7",
     prompt: spec.prompt,
     size: "serious",
+    grader: seriousGraderSha256(spec),
     async prepare(workspace: string) {
       await buildBaseTree(repoRoot, spec.parent, workspace);
     },

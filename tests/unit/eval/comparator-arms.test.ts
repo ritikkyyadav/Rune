@@ -39,6 +39,7 @@ import {
   parseCodexOutput,
 } from "../../eval/comparison/arms/codex";
 import { opencodeArm } from "../../eval/comparison/arms/opencode";
+import { runeArm, runeRoster } from "../../eval/comparison/arms/rune";
 import { planSeries } from "../../eval/comparison/arms/run-arms";
 import type { ArmCapture, ArmLimits } from "../../eval/comparison/arms/types";
 import { armEnv, classifyOutcome, credentialShaped } from "../../eval/comparison/arms/types";
@@ -67,6 +68,43 @@ const capture = (overrides: Partial<ArmCapture> = {}): ArmCapture => ({
   exitCode: 0,
   durationMs: 1000,
   ...overrides,
+});
+
+describe("the models Rune's shipped configuration names", () => {
+  // Asked of the product's own tier resolver, so the rig cannot hold a list of
+  // its own that the product has moved on from.
+  test("the session's model and the one each tier resolves to", () => {
+    expect(runeRoster("codex", "gpt-6-sol")).toEqual([
+      "codex/gpt-6-astra",
+      "codex/gpt-6-luna",
+      "codex/gpt-6-sol",
+    ]);
+    // A session model that is no tier's default is still one of them.
+    expect(runeRoster("codex", "gpt-5.6-terra")).toEqual([
+      "codex/gpt-5.6-terra",
+      "codex/gpt-6-astra",
+      "codex/gpt-6-luna",
+      "codex/gpt-6-sol",
+    ]);
+  });
+
+  test("a provider with no tier table has one model: the session's", () => {
+    expect(runeRoster("no-such-provider", "some-model")).toEqual(["no-such-provider/some-model"]);
+  });
+
+  test("the arm answers for the provider it would run on", () => {
+    expect(runeArm.roster!({ model: "gpt-6-sol" })).toEqual(runeRoster("codex", "gpt-6-sol"));
+    expect(runeArm.roster!({ model: "gpt-6-sol", provider: "openai" })).toEqual(
+      runeRoster("openai", "gpt-6-sol"),
+    );
+    expect(runeRoster("openai", "gpt-6-sol").every((name) => name.startsWith("openai/"))).toBe(
+      true,
+    );
+  });
+
+  test("the comparators state none, and are held to the same models on every run", () => {
+    expect(opencodeArm.roster).toBeUndefined();
+  });
 });
 
 describe("the exact argv, cwd and environment", () => {

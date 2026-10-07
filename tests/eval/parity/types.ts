@@ -12,7 +12,17 @@
 //
 // Nothing in this file spawns anything or reads the disk.
 
-export const SCHEMA = "parity-run/1" as const;
+/** What a row written NOW says it is. */
+export const SCHEMA = "parity-run/2" as const;
+
+/**
+ * Every schema a report can still READ. A `parity-run/1` row is old evidence,
+ * not a malformed row: it was scored by the rules of its day (no coding-task
+ * scope, a crash could be `clean`) and never recorded how its run ended or what
+ * graded it. It stays readable and is never mixed, unsaid, with rows that did.
+ */
+export const READABLE_SCHEMAS = ["parity-run/1", "parity-run/2"] as const;
+export type RowSchema = (typeof READABLE_SCHEMAS)[number];
 
 /**
  * The seven task families the gate is held to, each on its own floor.
@@ -99,32 +109,129 @@ export function quality(o: Outcome): number | null {
 /** 1 = inside the task's scope, 0.5 = artifacts left only, 0 = out of scope. */
 export type ScopeScore = 0 | 0.5 | 1;
 
+/**
+ * How a run ended, in words every arm can say (`terminalOf`, beside the one
+ * classifier in tests/eval/comparison/arms/types.ts).
+ *
+ *   completed    ended by itself and reported success
+ *   incomplete   ended by itself and reported that it had NOT finished: its own
+ *                turn or budget ceiling (or the rig's cost watcher standing in
+ *                for a ceiling the tool lacks), or its own named stop
+ *   stopped      the rig ended it: the wall clock, or any other kill
+ *   crashed      ended without saying how: the process died, or its report
+ *                held only an error
+ *   refused      the provider refused the run (quota, auth, outage)
+ *   not_started  the tool never ran
+ *
+ * It says how the PROCESS ended and what it CLAIMED. Whether the work is right
+ * is the grader's, and is `outcome`.
+ */
+export type Terminal =
+  "completed" | "incomplete" | "stopped" | "crashed" | "refused" | "not_started";
+
+export const TERMINALS: readonly Terminal[] = [
+  "completed",
+  "incomplete",
+  "stopped",
+  "crashed",
+  "refused",
+  "not_started",
+];
+
+/**
+ * What a row was measured WITH, as three digests, so that two rows can be shown
+ * to answer the same question instead of being assumed to.
+ *
+ *   task     the task as the arm was given it: its id, the prompt's bytes, the
+ *            seeded tree, the uncommitted work in it, and the wall limit. Null
+ *            only when the tree could not be prepared and the tool never ran.
+ *   grader   what graded it: the hidden checks and what they are expected to
+ *            say (`ParityTask.grader`). It covers what is checked, not the code
+ *            that runs the check.
+ *   config   the arm's settings: arm, mode, model, provider, reasoning effort.
+ *
+ * Two rows for one task with different `task` or `grader` digests did not sit
+ * the same exam, and no report pairs them.
+ */
+export interface Fingerprints {
+  task: string | null;
+  grader: string;
+  config: string;
+}
+
 /** One arm's run of one task instance — one line of `results.jsonl`. */
 export interface ParityRunResult {
-  schema: typeof SCHEMA;
+  schema: RowSchema;
   task: string;
   family: Family;
   /** Repetition number; a pair is (task, run, mode) across two arms. */
   run: number;
+  /**
+   * Which try at this (task, run) the row is, when it is not the first: 2 on
+   * the one retry an unscored row gets. The LATEST attempt is the row that is
+   * paired and scored; an earlier one stays in the file as evidence, is never
+   * scored, and is still counted among the arm's attempts. Absent means 1.
+   */
+  attempt?: number;
   arm: ParityArm;
   mode: ParityMode;
+  /** The model the arm was TOLD to run. What it reports having run is `models`. */
   model: string;
   provider?: string;
+  /** The reasoning setting the arm was given, where the series named one. */
+  reasoningEffort?: string;
+  /**
+   * Every model the tool reported using, sorted: a sub-agent's, a reviewer's or
+   * a fallback's included. Empty when the tool named none. On every
+   * `parity-run/2` row.
+   */
+  models?: string[];
+  /** On every `parity-run/2` row. A `parity-run/1` row recorded none. */
+  fingerprints?: Fingerprints;
   /** What the tool's own `--version` said. A row without it is not evidence. */
   version: string;
   /** sha256 of the executable measured, when it is a single file. */
   binarySha256?: string;
+  /**
+   * Fingerprint of the source the tool was run from, when it is not one file:
+   * Rune's arm runs its TypeScript, so its rows have no `binarySha256` and every
+   * build of one working tree answers the same `--version`. Without this a
+   * report could not see that the source had changed between two series.
+   */
+  sourceBuild?: string;
+  /**
+   * Every model the arm's configuration names — what it MAY call, sorted, in
+   * the names `models` uses. Where a row states one, `models` is held to it
+   * rather than to being the same on every row: a configured helper that one
+   * run called and another did not is one configuration.
+   */
+  roster?: string[];
 
   scored: boolean;
   unscoredReason?: UnscoredReason;
 
   outcome: Outcome;
-  /** Ended by itself, inside the wall limit, with no false completion. */
+  /**
+   * How the run ended. On every `parity-run/2` row; a `parity-run/1` row never
+   * recorded it and it is not guessed from what that row does hold.
+   */
+  terminal?: Terminal;
+  /**
+   * Ended by itself — `completed` or `incomplete` — inside the wall limit, with
+   * no false completion. A crash is never clean. (`parity-run/1` asked only
+   * that the rig had not stopped it, so a process that died fast was clean.)
+   */
   clean: boolean;
   /** The tool reported success while quality < 1. */
   falseCompletion: boolean;
   scope: ScopeScore;
   scopeNotes?: string[];
+  /**
+   * What the `parity-run/1` rules say of this same run, so the index those
+   * rules produce can still be computed beside the current one and the two
+   * compared. On every `parity-run/2` row.
+   */
+  legacy?: { clean: boolean; scope: ScopeScore };
 
   wallMs: number;
   /** Model calls, counted from the tool's own ledger. Null when it keeps none. */
@@ -160,6 +267,27 @@ export interface ParityTask {
   noCode?: boolean;
   /** Paths the task expects the arm to create (e.g. ANSWER.md, PLAN.md). */
   expectedNewFiles?: string[];
+  /**
+   * Paths the task's own words put out of bounds ("Do not change money.ts",
+   * "window.test.ts must not be edited"): an exact path, or a directory named
+   * with a trailing slash. A run that leaves different bytes there is out of
+   * scope, on any task. Staging or committing the file as it was is not a
+   * change to it.
+   */
+  protectedPaths?: string[];
+  /**
+   * A coding task's boundary, where its source states one: the EXISTING paths
+   * the work may modify or delete, in the same two spellings. Absent means no
+   * boundary was declared and none is enforced. New files are never held to it
+   * — a new test or a new module is the work.
+   */
+  allowedPaths?: string[];
+  /**
+   * sha256 over what grades this task: its hidden checks and what they are
+   * expected to say. Every row it produces carries it (`fingerprints.grader`),
+   * so a results file graded by other checks cannot be scored beside this one.
+   */
+  grader: string;
   prepare(workspace: string): Promise<void>;
   grade(workspace: string, evidenceDir: string): Promise<Outcome>;
 }

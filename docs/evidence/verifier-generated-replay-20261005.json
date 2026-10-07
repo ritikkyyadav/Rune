@@ -1,0 +1,105 @@
+{
+  "schema": "rune-verifier-replay@1",
+  "what": "The verifier from the working tree, run on a copy of the tree B1's serious Rune run left behind. The project's own checks only: zero model calls, zero network.",
+  "ranAt": "2026-10-05",
+  "sourceHead": "c8410316b4d3a1315f4e42cfe8d625fcc800b576",
+  "sourceDirty": true,
+  "tree": {
+    "from": "~/rune-evidence/b1-20261005/f7-653698d-toml-config/run-1/rune/workspace (machine-local; copied, never written to)",
+    "task": "f7-653698d-toml-config",
+    "preparedBy": "removing .turbo/, packages/*/.turbo/ and packages/*/dist/ from the copy, so it is as it was before the first check of that run; node_modules and the run's own edits kept"
+  },
+  "b1Finding": {
+    "newIgnoredPathsLeftByTheRun": 129,
+    "byCreationTime": {
+      "typecheck passes (step check 08:28:48Z, end of turn 08:31:36Z)": {
+        ".turbo/": 78,
+        "packages/*/.turbo/": 14,
+        "packages/*/dist/": 34,
+        "tests/eval/.turbo/": 1
+      },
+      "test check (the unit suite, cut at 120 s)": {
+        "scripts/tui-capture/__pycache__/": 2
+      }
+    },
+    "note": "every one of the 129 was created inside a pass of checks the harness ran; none by the model"
+  },
+  "replay": {
+    "stepCheck": {
+      "command": "CommandVerifier.verifyFast() twice on each copy — the step check, as in the run",
+      "cleanupOn": [
+        {
+          "pass": 1,
+          "status": "passed",
+          "bun run typecheck ms": 5381,
+          "cargo check --quiet ms": 7075,
+          "removedEntries": 15,
+          "newIgnoredEntriesLeft": 0
+        },
+        {
+          "pass": 2,
+          "status": "passed",
+          "bun run typecheck ms": 4223,
+          "cargo check --quiet ms": 70,
+          "removedEntries": 15,
+          "newIgnoredEntriesLeft": 0
+        }
+      ],
+      "keepGenerated": [
+        {
+          "pass": 1,
+          "status": "passed",
+          "bun run typecheck ms": 4843,
+          "cargo check --quiet ms": 6495,
+          "removedEntries": 0,
+          "newIgnoredEntriesLeft": 15,
+          "newIgnoredFiles": 93
+        },
+        {
+          "pass": 2,
+          "status": "passed",
+          "bun run typecheck ms": 85,
+          "cargo check --quiet ms": 68,
+          "removedEntries": 0,
+          "newIgnoredEntriesLeft": 15,
+          "newIgnoredFiles": 93
+        }
+      ],
+      "treeAfterwards": "the same two modified files and one untracked file in both copies; 18 ignored entries with the cleanup (all there before), 33 without"
+    },
+    "endOfTurn": {
+      "command": "CommandVerifier.verify(touched = the two files the run wrote) on a fresh copy, returned to its state before the first check; the suite's own scratch-home preload and a scratch RUNE_HOME",
+      "status": "inconclusive",
+      "reason": "timeout",
+      "checks": {
+        "bun run typecheck ms": 4683,
+        "bun run test ms": 120009,
+        "bun run test": "cut at the 120 s deadline, as in B1"
+      },
+      "passMs": 124836,
+      "removedEntries": 17,
+      "removed": [
+        ".turbo/",
+        "packages/<each of 7>/.turbo/",
+        "packages/<each of 7>/dist/",
+        "scripts/tui-capture/__pycache__/",
+        "tests/eval/.turbo/"
+      ],
+      "newPathsRightAfter": 0,
+      "newPathsTwentySecondsLater": 0,
+      "listedBy": "git status --porcelain --ignored --untracked-files=all, node_modules aside — the listing the benchmark's scope rule reads",
+      "treeAfterwards": "the run's two modified files and the seven ignored files that were there before; no process left running from the copy"
+    }
+  },
+  "reads": {
+    "fixed": "with the rule, neither the step check nor the end-of-turn pass leaves a new path on this tree — the 129 of B1 become 0",
+    "cost": "each later pass rebuilds: 4.2 s against 0.09 s for typecheck here, because turbo's cache is in the .turbo/ that is removed",
+    "notShown": "the scope score itself, and what the model does on another run — only a live pair, graded by the runner, gives those"
+  },
+  "listingCostOnThisRepository": {
+    "ignored listing ms (median of 9)": 28,
+    "entries": 401,
+    "unignored listing ms": 23,
+    "unignoredEntries": 73
+  }
+}

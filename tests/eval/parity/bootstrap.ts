@@ -7,6 +7,14 @@
 // into the report, so the same results files give the same interval on every
 // machine (docs/program/parity-index.md).
 //
+// That interval answers one question: how far would the number move if THESE
+// tasks were run again? It holds the tasks fixed, so it says nothing about
+// tasks that were not run. `bootstrapClustered` answers the other one: each
+// replicate draws whole TASKS with replacement, every drawn task bringing all
+// its pairs. It is wider, often much wider, and with three tasks it is coarse
+// — which is the fact it is there to show. The two are reported side by side
+// under their own names; the gate reads the first, as it always has.
+//
 // Pure: no clock, no disk, no Math.random.
 
 /** Replicates per interval. */
@@ -14,6 +22,12 @@ export const BOOTSTRAP_B = 2000;
 
 /** The interval's quantiles: 80%, from the 10th to the 90th percentile. */
 export const INTERVAL_QUANTILES = [0.1, 0.9] as const;
+
+/** The task-level interval's quantiles: 95%, from the 2.5th to the 97.5th percentile. */
+export const TASK_INTERVAL_QUANTILES = [0.025, 0.975] as const;
+
+/** Fewer tasks than this and there is no spread across tasks to resample. */
+export const MIN_TASKS_FOR_TASK_INTERVAL = 2;
 
 /** The seed used when the caller does not name one (the contract's date). */
 export const DEFAULT_SEED = 20260928;
@@ -65,6 +79,18 @@ export function resampleStratified<T>(groups: readonly (readonly T[])[], rng: ()
 }
 
 /**
+ * One task-level replicate: as many strata as the input has, each drawn whole
+ * and with replacement. A stratum drawn twice brings its items twice; one not
+ * drawn brings none, so a replicate's size varies with the strata it drew.
+ */
+export function resampleClusters<T>(groups: readonly (readonly T[])[], rng: () => number): T[] {
+  const out: T[] = [];
+  const k = groups.length;
+  for (let i = 0; i < k; i++) out.push(...groups[Math.floor(rng() * k)]!);
+  return out;
+}
+
+/**
  * The p-quantile of `values` by linear interpolation between order statistics
  * (the "type 7" rule numpy and R use by default). Null for an empty list.
  */
@@ -105,12 +131,51 @@ export function bootstrapStratified<T, K extends string>(
   names: readonly K[],
   options: BootstrapOptions,
 ): Record<K, Interval | null> {
+  return intervals(
+    strata(items, stratumOf),
+    resampleStratified,
+    statistic,
+    names,
+    options,
+    INTERVAL_QUANTILES,
+  );
+}
+
+/**
+ * The same statistics over task-level resamples (`resampleClusters`), as a 95%
+ * interval. Every name is null with fewer than two tasks: one task resampled
+ * is that task every time, and an interval of zero width would say the result
+ * is certain when it is only unexamined.
+ *
+ * It starts its own generator from the same recorded seed, so asking for it
+ * never moves a draw of `bootstrapStratified`'s.
+ */
+export function bootstrapClustered<T, K extends string>(
+  items: readonly T[],
+  clusterOf: (item: T) => string,
+  statistic: (sample: T[]) => Record<K, number | null>,
+  names: readonly K[],
+  options: BootstrapOptions,
+): Record<K, Interval | null> {
+  const groups = strata(items, clusterOf);
+  if (groups.length < MIN_TASKS_FOR_TASK_INTERVAL)
+    return Object.fromEntries(names.map((n) => [n, null])) as Record<K, Interval | null>;
+  return intervals(groups, resampleClusters, statistic, names, options, TASK_INTERVAL_QUANTILES);
+}
+
+function intervals<T, K extends string>(
+  groups: readonly (readonly T[])[],
+  resample: (groups: readonly (readonly T[])[], rng: () => number) => T[],
+  statistic: (sample: T[]) => Record<K, number | null>,
+  names: readonly K[],
+  options: BootstrapOptions,
+  quantiles: readonly [number, number],
+): Record<K, Interval | null> {
   const b = options.b ?? BOOTSTRAP_B;
-  const groups = strata(items, stratumOf);
   const rng = mulberry32(options.seed);
   const draws = new Map<K, number[]>(names.map((n) => [n, []]));
   for (let i = 0; i < b; i++) {
-    const values = statistic(resampleStratified(groups, rng));
+    const values = statistic(resample(groups, rng));
     for (const n of names) {
       const v = values[n];
       if (v !== null && Number.isFinite(v)) draws.get(n)!.push(v);
@@ -119,8 +184,8 @@ export function bootstrapStratified<T, K extends string>(
   const out = {} as Record<K, Interval | null>;
   for (const n of names) {
     const d = draws.get(n)!;
-    const lo = percentile(d, INTERVAL_QUANTILES[0]);
-    const hi = percentile(d, INTERVAL_QUANTILES[1]);
+    const lo = percentile(d, quantiles[0]);
+    const hi = percentile(d, quantiles[1]);
     out[n] = lo === null || hi === null ? null : { lo, hi, replicates: d.length };
   }
   return out;

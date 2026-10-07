@@ -1,17 +1,28 @@
 // ─── Parity Index fixtures: synthetic rows with hand-derivable numbers ───
 //
-// `golden.jsonl` and `mixed-rune.jsonl` beside this file are written from these
-// builders by `write-fixtures.ts`; parity-report.test.ts checks they still
-// match, so the checked-in files and the numbers the tests derive by hand
-// cannot drift apart.
+// The `.jsonl` files beside this file are written from these builders by
+// `write-fixtures.ts`; parity-report.test.ts checks they still match, so the
+// checked-in files and the numbers the tests derive by hand cannot drift apart.
+//
+//   golden-v2.jsonl   the golden rows as the CURRENT schema writes them
+//   golden.jsonl      the same rows as `parity-run/1` wrote them. It is old
+//                     evidence, kept byte for byte: the report must go on
+//                     reading it and must go on deriving the same index from it
+//   mixed-rune.jsonl  current rows, two Rune builds in one mode
+
+import { createHash } from "node:crypto";
 
 import type {
   Family,
   ParityArm,
   ParityMode,
   ParityRunResult,
+  Terminal,
   UnscoredReason,
 } from "../../eval/parity/types";
+
+/** A digest any test can recompute: the sha256 of a short label. */
+export const digest = (label: string): string => createHash("sha256").update(label).digest("hex");
 
 export const RUNE_SHA = "a".repeat(64);
 export const RUNE_SHA_2 = "b".repeat(64);
@@ -33,6 +44,19 @@ export interface ArmSpec {
   version?: string;
   binarySha256?: string;
   model?: string;
+  /** How the run ended. Default: `completed` when scored, `refused` when not. */
+  terminal?: Terminal;
+  falseCompletion?: boolean;
+  /** What `parity-run/1` said of the run. Default: the same as `clean` and `scope`. */
+  legacyClean?: boolean;
+  legacyScope?: 0 | 0.5 | 1;
+  provider?: string;
+  reasoningEffort?: string;
+  /** The roster the tool reported. Default: the one model it was told to run. */
+  models?: string[];
+  /** Labels the fingerprints are digests of. Default: one per task, one per task's checks. */
+  startedFrom?: string | null;
+  gradedBy?: string;
 }
 
 export interface RowKey {
@@ -41,20 +65,48 @@ export interface RowKey {
   arm: ParityArm;
   family?: Family;
   mode?: ParityMode;
+  /** Build the row as `parity-run/1` wrote it: no `terminal`, no `legacy`. */
+  v1?: boolean;
+  /** 2 on the one retry of an unscored row. Absent: the first attempt. */
+  attempt?: number;
 }
 
 export function row(k: RowKey, s: ArmSpec = {}): ParityRunResult {
   const mode = k.mode ?? "product";
   const scored = s.scored ?? true;
   const passed = s.passed ?? 4;
+  const v1 = k.v1 ?? false;
+  const terminal: Terminal = s.terminal ?? (scored ? "completed" : "refused");
+  // `parity-run/1` rows said clean unless told otherwise, unscored ones too
+  // (golden.jsonl holds such rows). A current row is clean only when its run
+  // ended by itself.
+  const clean = s.clean ?? (v1 || terminal === "completed" || terminal === "incomplete");
+  const scope = s.scope ?? 1;
+  const model =
+    s.model ?? (mode === "harness" ? "model-h" : k.arm === "rune" ? "model-r" : "model-c");
   const r: ParityRunResult = {
-    schema: "parity-run/1",
+    schema: v1 ? "parity-run/1" : "parity-run/2",
     task: k.task,
     family: k.family ?? "F1",
     run: k.run,
+    ...(k.attempt ? { attempt: k.attempt } : {}),
     arm: k.arm,
     mode,
-    model: s.model ?? (mode === "harness" ? "model-h" : k.arm === "rune" ? "model-r" : "model-c"),
+    model,
+    ...(s.provider ? { provider: s.provider } : {}),
+    ...(s.reasoningEffort ? { reasoningEffort: s.reasoningEffort } : {}),
+    ...(v1
+      ? {}
+      : {
+          models: s.models ?? [model],
+          fingerprints: {
+            task: s.startedFrom === null ? null : digest(s.startedFrom ?? `task ${k.task}`),
+            grader: digest(s.gradedBy ?? `checks ${k.task}`),
+            config: digest(
+              `${k.arm} ${mode} ${model} ${s.provider ?? ""} ${s.reasoningEffort ?? ""}`,
+            ),
+          },
+        }),
     version: s.version ?? (k.arm === "rune" ? "1.3.1" : "2.1.0"),
     scored,
     outcome: {
@@ -64,9 +116,11 @@ export function row(k: RowKey, s: ArmSpec = {}): ParityRunResult {
       buildBroken: s.buildBroken ?? false,
       impossible: [],
     },
-    clean: s.clean ?? true,
-    falseCompletion: false,
-    scope: s.scope ?? 1,
+    ...(v1 ? {} : { terminal }),
+    clean,
+    falseCompletion: s.falseCompletion ?? false,
+    scope,
+    ...(v1 ? {} : { legacy: { clean: s.legacyClean ?? clean, scope: s.legacyScope ?? scope } }),
     wallMs: s.wallMs ?? 100,
     calls: s.calls === undefined ? 10 : s.calls,
     listUsd: s.listUsd === undefined ? null : s.listUsd,
@@ -86,6 +140,7 @@ export interface PairOptions {
   family?: Family;
   mode?: ParityMode;
   comparator?: ParityArm;
+  v1?: boolean;
 }
 
 /** Rune's row and the comparator's row for one (task, run, mode). */
@@ -96,7 +151,7 @@ export function pair(
   comp: ArmSpec,
   o: PairOptions = {},
 ): ParityRunResult[] {
-  const base = { task, run, family: o.family, mode: o.mode };
+  const base = { task, run, family: o.family, mode: o.mode, v1: o.v1 };
   return [
     row({ ...base, arm: "rune" }, rune),
     row({ ...base, arm: o.comparator ?? "claude-code" }, comp),
@@ -189,16 +244,16 @@ export function exclusionPairs(o: PairOptions = {}): ParityRunResult[] {
   ];
 }
 
-/** Everything golden.jsonl holds. */
-export function goldenFile(): ParityRunResult[] {
+/** Everything a golden file holds: golden-v2.jsonl, or golden.jsonl with `v1`. */
+export function goldenFile(v1 = false): ParityRunResult[] {
   return [
-    ...goldenPairs(),
-    ...exclusionPairs(),
-    ...goldenPairs({ mode: "harness" }, { listUsd: 1 }),
+    ...goldenPairs({ v1 }),
+    ...exclusionPairs({ v1 }),
+    ...goldenPairs({ mode: "harness", v1 }, { listUsd: 1 }),
     // A third arm: ignored when the comparator is Claude Code.
-    row({ task: "a", run: 1, arm: "opencode" }, { version: "0.9.0", model: "model-o" }),
+    row({ task: "a", run: 1, arm: "opencode", v1 }, { version: "0.9.0", model: "model-o" }),
     // Rune ran F2's task f; the comparator did not: unpaired, never scored.
-    row({ task: "f", run: 1, arm: "rune", family: "F2" }),
+    row({ task: "f", run: 1, arm: "rune", family: "F2", v1 }),
   ];
 }
 

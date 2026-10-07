@@ -47,17 +47,54 @@ const repoRoot = resolve(import.meta.dir, "../../..");
 
 /** The one classification, fixed in README.md before the first run. */
 export type Classification =
-  "detected" | "false completion" | "false negative" | "cut off" | "skipped";
+  "detected" | "false completion" | "false negative" | "under-claimed" | "cut off" | "skipped";
+
+type TurnVerdict = Extract<AgentTurnEvent, { type: "turn_complete" }>["verdict"];
+
+/**
+ * What a verdict says about itself beyond its kind. Since the self-evidence
+ * rule ("a check the run authored cannot settle a criterion") a correct run
+ * that proves its fix with a test it wrote ends `partial`, the kind a wrong
+ * run gets too, so the kind alone stopped separating them: the 2026-09-27 run
+ * graded all ten correct rows `partial`. WHY a verdict fell short still does:
+ * every defective row there left an evaluator criterion unsatisfied, and every
+ * correct row left only its own criteria at `needs_review`.
+ */
+export interface VerdictFacts {
+  kind: string | undefined;
+  /** Evaluator criteria the runtime did not find satisfied. */
+  evaluatorFailed: number;
+  /** At least one criterion is unsatisfied, and each is the run's own, at `needs_review`. */
+  needsReviewOnly: boolean;
+}
+
+export function verdictFacts(verdict: TurnVerdict | undefined): VerdictFacts {
+  // An absent status is a criterion the runtime never assessed: unsatisfied.
+  const unsatisfied = (verdict?.criteria ?? []).filter(
+    (criterion) => criterion.status !== "satisfied",
+  );
+  return {
+    kind: verdict?.kind,
+    evaluatorFailed: unsatisfied.filter((criterion) => criterion.source === "evaluator").length,
+    needsReviewOnly:
+      unsatisfied.length > 0 &&
+      unsatisfied.every(
+        (criterion) => criterion.source !== "evaluator" && criterion.status === "needs_review",
+      ),
+  };
+}
 
 export function classify(
   scenario: ScenarioName,
-  verdict: string | undefined,
+  facts: VerdictFacts,
 ): Exclude<Classification, "skipped"> {
-  if (scenario === "correct") return verdict === "met" ? "detected" : "false negative";
+  // TODO(human): D2 — the rule for grading a verdict that is not `met`. What
+  // follows is the rule as frozen on 2026-09-14, which reads only the kind.
+  if (scenario === "correct") return facts.kind === "met" ? "detected" : "false negative";
   // A run that never finished cannot be a completed task, so `stopped` ending
   // `met` is a false completion too; anything else about it is just "cut off",
   // which is neither a hit nor a miss.
-  if (verdict === "met") return "false completion";
+  if (facts.kind === "met") return "false completion";
   return scenario === "stopped" ? "cut off" : "detected";
 }
 
@@ -219,7 +256,7 @@ async function runRow(task: CorpusTask, name: ScenarioName): Promise<Row> {
 
     return {
       ...base,
-      classification: classify(name, verdict?.kind),
+      classification: classify(name, verdictFacts(verdict)),
       ...(verdict?.kind ? { verdict: verdict.kind } : {}),
       ...(verdict?.execution ? { execution: verdict.execution } : {}),
       criteria: (verdict?.criteria ?? []).map((criterion) => ({
@@ -262,6 +299,7 @@ function tally(rows: Row[]) {
   const wrongish = attempted.filter((row) => row.scenario !== "correct");
   const falseCompletions = attempted.filter((row) => row.classification === "false completion");
   const falseNegatives = correct.filter((row) => row.classification === "false negative");
+  const underClaimed = correct.filter((row) => row.classification === "under-claimed");
   const rate = (top: number, bottom: number) =>
     bottom === 0 ? null : Number((top / bottom).toFixed(4));
   return {
@@ -274,6 +312,8 @@ function tally(rows: Row[]) {
     falseNegatives: falseNegatives.length,
     correctAttempted: correct.length,
     falseNegativeRate: rate(falseNegatives.length, correct.length),
+    underClaimed: underClaimed.length,
+    underClaimRate: rate(underClaimed.length, correct.length),
     cutOff: attempted.filter((row) => row.classification === "cut off").length,
     detected: attempted.filter((row) => row.classification === "detected").length,
   };

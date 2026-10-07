@@ -1,0 +1,281 @@
+{
+  "schema": "rune-b1-result@1",
+  "card": "B1 — small paired checkpoint",
+  "ranAt": {
+    "started": "2026-10-05T02:51:48Z",
+    "finished": "2026-10-05T03:09:02Z",
+    "wallMinutes": 17.2
+  },
+  "authorisedBy": "the founder, 2026-10-05: run it from the session, on the Codex subscription only, approving each command",
+  "manifest": {
+    "path": "docs/evidence/b1-manifest-20261005.json",
+    "sha256": "acc5083726ac016d0779212e09a44d2e864758a85e2fa55cfb032db05aa82ec3"
+  },
+  "sourceHead": "c8410316b4d3a1315f4e42cfe8d625fcc800b576",
+  "sourceDirty": true,
+  "arms": {
+    "rune": "from source, gpt-6-sol via codex, shipped defaults",
+    "opencode": "1.18.30, openai/gpt-6-sol, --variant high"
+  },
+  "rawEvidence": {
+    "note": "machine-local, not in the repository",
+    "dir": "~/rune-evidence/b1-20261005",
+    "resultsSha256": "e5ddcd1da3640753bd7007f3fb6feead4e213b76426541beb06b5f20fadcc114",
+    "report": "~/rune-evidence/b1-20261005-report/parity-report.md"
+  },
+  "rows": [
+    {
+      "task": "review-invoice-rules",
+      "family": "F5",
+      "arm": "rune",
+      "run": 1,
+      "model": "gpt-6-sol",
+      "provider": "codex",
+      "models": ["codex/gpt-6-astra", "codex/gpt-6-sol"],
+      "version": "Rune v1.3.1-dev",
+      "outcome": {
+        "hiddenPassed": 3,
+        "hiddenTotal": 3,
+        "regressionsIntroduced": 0,
+        "buildBroken": false,
+        "impossible": []
+      },
+      "terminal": "completed",
+      "clean": true,
+      "falseCompletion": false,
+      "scope": 1,
+      "wallMs": 70668,
+      "calls": 7,
+      "listUsd": 0.1145,
+      "quotaPct": 25
+    },
+    {
+      "task": "review-invoice-rules",
+      "family": "F5",
+      "arm": "opencode",
+      "run": 1,
+      "model": "gpt-6-sol",
+      "provider": "openai",
+      "models": ["gpt-6-sol"],
+      "version": "1.18.30",
+      "outcome": {
+        "hiddenPassed": 3,
+        "hiddenTotal": 3,
+        "regressionsIntroduced": 0,
+        "buildBroken": false,
+        "impossible": []
+      },
+      "terminal": "completed",
+      "clean": true,
+      "falseCompletion": false,
+      "scope": 1,
+      "wallMs": 98547,
+      "calls": 10,
+      "listUsd": 0.1243
+    },
+    {
+      "task": "off-by-one-window",
+      "family": "F1",
+      "arm": "opencode",
+      "run": 1,
+      "model": "gpt-6-sol",
+      "provider": "openai",
+      "models": ["gpt-6-sol"],
+      "version": "1.18.30",
+      "outcome": {
+        "hiddenPassed": 3,
+        "hiddenTotal": 3,
+        "regressionsIntroduced": 0,
+        "buildBroken": false,
+        "impossible": []
+      },
+      "terminal": "completed",
+      "clean": true,
+      "falseCompletion": false,
+      "scope": 1,
+      "wallMs": 50932,
+      "calls": 9,
+      "listUsd": 0.0586
+    },
+    {
+      "task": "off-by-one-window",
+      "family": "F1",
+      "arm": "rune",
+      "run": 1,
+      "model": "gpt-6-sol",
+      "provider": "codex",
+      "models": ["codex/gpt-6-sol"],
+      "version": "Rune v1.3.1-dev",
+      "outcome": {
+        "hiddenPassed": 3,
+        "hiddenTotal": 3,
+        "regressionsIntroduced": 0,
+        "buildBroken": false,
+        "impossible": []
+      },
+      "terminal": "completed",
+      "clean": true,
+      "falseCompletion": false,
+      "scope": 1,
+      "wallMs": 42587,
+      "calls": 7,
+      "listUsd": 0.0802,
+      "quotaPct": 26
+    },
+    {
+      "task": "f7-653698d-toml-config",
+      "family": "F7",
+      "arm": "rune",
+      "run": 1,
+      "model": "gpt-6-sol",
+      "provider": "codex",
+      "models": ["codex/gpt-6-sol"],
+      "version": "Rune v1.3.1-dev",
+      "outcome": {
+        "hiddenPassed": 6,
+        "hiddenTotal": 6,
+        "regressionsIntroduced": 1,
+        "buildBroken": false,
+        "impossible": []
+      },
+      "terminal": "completed",
+      "clean": false,
+      "falseCompletion": true,
+      "scope": 0.5,
+      "wallMs": 440000,
+      "calls": 32,
+      "listUsd": 0.5935,
+      "quotaPct": 30,
+      "scopeNotesCount": 129,
+      "scopeNotesKind": "git-ignored build state: .turbo/ (root and per package) and packages/*/dist/"
+    },
+    {
+      "task": "f7-653698d-toml-config",
+      "family": "F7",
+      "arm": "opencode",
+      "run": 1,
+      "model": "gpt-6-sol",
+      "provider": "openai",
+      "models": ["gpt-6-sol"],
+      "version": "1.18.30",
+      "outcome": {
+        "hiddenPassed": 6,
+        "hiddenTotal": 6,
+        "regressionsIntroduced": 0,
+        "buildBroken": false,
+        "impossible": []
+      },
+      "terminal": "completed",
+      "clean": true,
+      "falseCompletion": false,
+      "scope": 1,
+      "wallMs": 318750,
+      "calls": 32,
+      "listUsd": 0.4586
+    }
+  ],
+  "runeOverOpencode": {
+    "perTask": [
+      {
+        "task": "review-invoice-rules",
+        "wall": 0.72,
+        "listUsd": 0.92,
+        "calls": 0.7
+      },
+      {
+        "task": "off-by-one-window",
+        "wall": 0.84,
+        "listUsd": 1.37,
+        "calls": 0.78
+      },
+      {
+        "task": "f7-653698d-toml-config",
+        "wall": 1.38,
+        "listUsd": 1.29,
+        "calls": 1.0
+      }
+    ],
+    "median": {
+      "wall": 0.84,
+      "listUsd": 1.29,
+      "calls": 0.78
+    }
+  },
+  "report": {
+    "status": "FAIL",
+    "headline": "PI 36.7 (F7)",
+    "flag": "--allow-mixed-config",
+    "why": "one Rune run made one supervisor call on gpt-6-astra, so the three rows carry two model rosters; the report refuses that unless told, and cannot PASS with it",
+    "families": {
+      "F1": "PROVISIONAL, PI 100.0 on 1 pair",
+      "F5": "PROVISIONAL, PI 100.0 on 1 pair",
+      "F7": "FAIL, PI 36.7 on 1 pair: O 50, R 0, S 50"
+    }
+  },
+  "acceptance": {
+    "realEnvelopesParse": true,
+    "modelRosterRecorded": true,
+    "gradeOverrideNeeded": false,
+    "sample": "diagnostic and provisional: three pairs, one repetition"
+  },
+  "seriousTaskRune": {
+    "hidden": "6 of 6 target tests pass; 1 of 1 pass-to-pass tests fails",
+    "regression": "config.toml is read as TOML > a list that never closes does not license deleting what follows it — the writer dropped the dangling element line of an unterminated list and kept the next section; the test wants every following line kept",
+    "pilotGrade": "the 2026-09-27 pilot graded this task 'hidden: 6 pass 1 fail' for BOTH tools in both of its runs; which test failed there is not on record",
+    "ownVerdict": "partial — 0 of 4 accepted; the process still exited 0 with ok: true, which the rig reads as a claim of success",
+    "timeline": {
+      "modelWorkSeconds": 316,
+      "endOfTurnVerificationSeconds": 123,
+      "verification": "bun run typecheck (ok, 3 s); bun run test cut at its 120 s limit — inconclusive, nothing measured"
+    },
+    "gateRePrompts": 0,
+    "harnessMessages": [
+      "harness notes at start",
+      "one replanning nudge: repeated edits to the same file"
+    ]
+  },
+  "residualCosts": [
+    "the end-of-turn check of the whole unit suite cannot finish in 120 s in this repository: 123 s of the serious run's 440 s measured nothing — the whole of its wall-time gap to OpenCode (316 s of model work against 319 s)",
+    "the verifier's root `bun run typecheck` is `turbo typecheck`, which builds every package: 129 new git-ignored paths (.turbo/, packages/*/dist/) left in the workspace, scored as scope 0.5",
+    "list cost per call on the serious task: $0.0185 against $0.0143, with the same 32 calls",
+    "no gate re-prompted the model in any of the three runs"
+  ],
+  "againstThePilot": {
+    "caveat": "not a controlled comparison: another day, another OpenCode build, one repetition",
+    "pilotMedianRuneOverOpencode": {
+      "wall": 1.5,
+      "listUsd": 1.9,
+      "calls": 1.7
+    },
+    "pilotConfigToml": [
+      {
+        "run": 1,
+        "runeWallS": 787,
+        "runeUsd": 0.92,
+        "runeCalls": 41,
+        "runeExit": 1
+      },
+      {
+        "run": 2,
+        "runeWallS": 1320,
+        "runeUsd": 2.61,
+        "runeCalls": 78,
+        "runeExit": 1
+      }
+    ],
+    "nowConfigToml": {
+      "runeWallS": 440,
+      "runeUsd": 0.59,
+      "runeCalls": 32,
+      "runeExit": 0
+    }
+  },
+  "quota": {
+    "account": "one Codex subscription (plan: plus), both arms",
+    "windowPct": {
+      "afterFirstRuneRun": 25,
+      "afterLastRuneRun": 30
+    },
+    "note": "five points of the fuller window across five of the six runs; the last OpenCode run is after the last reading"
+  }
+}

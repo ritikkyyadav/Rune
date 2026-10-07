@@ -18,6 +18,7 @@ import {
   INTERFACE_HEADING,
   loadSpecs,
   repoRootOf,
+  seriousGraderSha256,
   seriousTask,
   seriousTasks,
   specProblems,
@@ -237,6 +238,48 @@ describe("the committed serious corpus", () => {
       expect(task.size).toBe("serious");
       expect(task.prompt).toBe(specs.find((s) => s.id === task.id)!.prompt);
     }
+  });
+
+  test("each task names what grades it: the fix commit's tests and every check's pinned role", () => {
+    const tasks = seriousTasks();
+    for (const task of tasks) {
+      const spec = specs.find((s) => s.id === task.id)!;
+      expect(task.grader).toBe(seriousGraderSha256(spec));
+      expect(task.grader).toMatch(/^[0-9a-f]{64}$/);
+    }
+    expect(new Set(tasks.map((task) => task.grader)).size).toBe(tasks.length);
+    const spec = specs[0]!;
+    const base = seriousGraderSha256(spec);
+    // The order a list was written in is not what is graded.
+    expect(seriousGraderSha256({ ...spec, f2p: [...spec.f2p].reverse() })).toBe(base);
+    // What is checked, and how each check is held, is.
+    const changes: Array<[string, Partial<SeriousTaskSpec>]> = [
+      ["another fix commit", { sha: "0".repeat(40) }],
+      ["a check dropped from fail-to-pass", { f2p: spec.f2p.slice(1) }],
+      ["a check moved to pass-to-pass", { p2p: [...spec.p2p, spec.f2p[0]!] }],
+      ["a check pinned impossible", { impossible: [...spec.impossible, "x.test.ts > new"] }],
+      ["a check called flaky", { flaky: [...(spec.flaky ?? []), "x.test.ts > flaky"] }],
+      ["another hidden file", { hiddenFiles: [...spec.hiddenFiles, "tests/unit/extra.test.ts"] }],
+      ["another test file run", { testFiles: [...spec.testFiles, "tests/unit/extra.test.ts"] }],
+      [
+        "another package typechecked",
+        { typecheckPackages: [...spec.typecheckPackages, "packages/x"] },
+      ],
+      [
+        "a package no longer held to its typecheck",
+        { typecheckBaseClean: { "packages/x": false } },
+      ],
+      ["the reference fix fails its typecheck", { typecheckFixedClean: { "packages/x": false } }],
+    ];
+    const seen = new Set([base]);
+    for (const [what, change] of changes) {
+      const changed = seriousGraderSha256({ ...spec, ...change });
+      expect({ what, same: changed === base }).toEqual({ what, same: false });
+      seen.add(changed);
+    }
+    expect(seen.size).toBe(changes.length + 1);
+    // The prompt and the fix itself are what the arm is given and must find: not the grader.
+    expect(seriousGraderSha256({ ...spec, prompt: "other words", fixFiles: [] })).toBe(base);
   });
 
   test("stratified: every package the miner found fixes in, and every shape", () => {

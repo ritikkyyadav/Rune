@@ -1,0 +1,136 @@
+{
+  "kind": "parity-manifest",
+  "schema": "parity-manifest/1",
+  "arms": [
+    "rune",
+    "opencode"
+  ],
+  "mode": "product",
+  "runs": 1,
+  "seed": 20261005,
+  "tasks": [
+    {
+      "id": "f7-653698d-toml-config",
+      "family": "F7",
+      "size": "serious",
+      "source": "serious",
+      "grader": "1d020e391c38c08cb78c307df028031d6910357e7e063bc1035d0e15a81308f4",
+      "prompt": "316dff6049e530e3c1947c29e736a415ae68fa54fd03ce552a13c6af2adfe6ca"
+    },
+    {
+      "id": "f7-44d4c1a-header-version-session",
+      "family": "F7",
+      "size": "serious",
+      "source": "serious",
+      "grader": "a76b7d79fb57d3fb27b542513e69aa0d405d36b2a1104cd44e07201d36ddc686",
+      "prompt": "1b9f15de9325cba1edb6e398b314eecd8bacda6bce4dcb6898b92e71c23e81de"
+    },
+    {
+      "id": "f7-5553813-tilde-user-home",
+      "family": "F7",
+      "size": "serious",
+      "source": "serious",
+      "grader": "03264aec50f4f7d6c503d685e6e928653b11dbbeaa2765f1ef6537dc5064ca6d",
+      "prompt": "8d4edc5a54800d8c689c3d0454c5894299b654b1bd7f079606d14b389737d656"
+    },
+    {
+      "id": "f7-93eca44-model-catalog-cache",
+      "family": "F7",
+      "size": "serious",
+      "source": "serious",
+      "grader": "842a32f5ed8875c90794b31a89c6fecd8dc8f4d26312f11802ec77e1f11e2923",
+      "prompt": "2199c575a86383ac26fc5978b49765a708e4ffd9b8a41f106c97be6327ad2cf5"
+    },
+    {
+      "id": "f7-a218abc-checkpoint-report-matches-prune",
+      "family": "F7",
+      "size": "serious",
+      "source": "serious",
+      "grader": "62333da087458bbca257163eb36a7384babba984709bf60d8e0df9cd9ac5a9a3",
+      "prompt": "54deb983373093843461db499832c0f9eddd683e0dba056e3b80a09f6484a016"
+    },
+    {
+      "id": "f7-6af7bb5-startup-selection",
+      "family": "F7",
+      "size": "serious",
+      "source": "serious",
+      "grader": "ad44614bf3c2487cb2aa0a6733bb6cefdd190dc1f3453dced77694b7d51aa337",
+      "prompt": "50a99fd7ac805c32010e5331dea1656a6c498dab1b768752df488420c2d9a417"
+    }
+  ],
+  "families": {
+    "F7": 6
+  },
+  "specs": {
+    "rune": {
+      "model": "gpt-6-sol",
+      "provider": "codex"
+    },
+    "opencode": {
+      "model": "gpt-6-sol"
+    }
+  },
+  "wallLimitsMs": {
+    "small": 1200000,
+    "serious": 2700000
+  },
+  "limits": {
+    "maxPairs": 6,
+    "maxAttempts": 14,
+    "wallAllowanceMs": 10800000
+  },
+  "accounts": {
+    "rune": {
+      "usedPct": null,
+      "stopAtPct": 70
+    },
+    "opencode": {
+      "usedPct": null,
+      "stopAtPct": 70
+    }
+  },
+  "bounded": true,
+  "order": [
+    {
+      "task": "f7-93eca44-model-catalog-cache",
+      "run": 1,
+      "first": "rune",
+      "second": "opencode"
+    },
+    {
+      "task": "f7-44d4c1a-header-version-session",
+      "run": 1,
+      "first": "opencode",
+      "second": "rune"
+    },
+    {
+      "task": "f7-6af7bb5-startup-selection",
+      "run": 1,
+      "first": "rune",
+      "second": "opencode"
+    },
+    {
+      "task": "f7-5553813-tilde-user-home",
+      "run": 1,
+      "first": "opencode",
+      "second": "rune"
+    },
+    {
+      "task": "f7-653698d-toml-config",
+      "run": 1,
+      "first": "rune",
+      "second": "opencode"
+    },
+    {
+      "task": "f7-a218abc-checkpoint-report-matches-prune",
+      "run": 1,
+      "first": "opencode",
+      "second": "rune"
+    }
+  ],
+  "needs": {
+    "pairs": 6,
+    "armRuns": 12,
+    "worstCaseWallMs": 32400000
+  }
+}

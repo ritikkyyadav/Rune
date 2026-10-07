@@ -1,0 +1,66 @@
+{
+  "kind": "parity-manifest",
+  "schema": "parity-manifest/1",
+  "arms": [
+    "rune",
+    "opencode"
+  ],
+  "mode": "product",
+  "runs": 1,
+  "seed": null,
+  "tasks": [
+    {
+      "id": "f7-653698d-toml-config",
+      "family": "F7",
+      "size": "serious",
+      "source": "serious",
+      "grader": "1d020e391c38c08cb78c307df028031d6910357e7e063bc1035d0e15a81308f4",
+      "prompt": "316dff6049e530e3c1947c29e736a415ae68fa54fd03ce552a13c6af2adfe6ca"
+    }
+  ],
+  "families": {
+    "F7": 1
+  },
+  "specs": {
+    "rune": {
+      "model": "gpt-6-sol",
+      "provider": "codex"
+    },
+    "opencode": {
+      "model": "gpt-6-sol"
+    }
+  },
+  "wallLimitsMs": {
+    "small": 1200000,
+    "serious": 2700000
+  },
+  "limits": {
+    "maxPairs": 1,
+    "maxAttempts": 3,
+    "wallAllowanceMs": 6000000
+  },
+  "accounts": {
+    "rune": {
+      "usedPct": null,
+      "stopAtPct": 70
+    },
+    "opencode": {
+      "usedPct": null,
+      "stopAtPct": 70
+    }
+  },
+  "bounded": true,
+  "order": [
+    {
+      "task": "f7-653698d-toml-config",
+      "run": 1,
+      "first": "rune",
+      "second": "opencode"
+    }
+  ],
+  "needs": {
+    "pairs": 1,
+    "armRuns": 2,
+    "worstCaseWallMs": 5400000
+  }
+}

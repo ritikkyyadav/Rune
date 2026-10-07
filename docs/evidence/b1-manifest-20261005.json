@@ -1,0 +1,96 @@
+{
+  "kind": "parity-manifest",
+  "schema": "parity-manifest/1",
+  "arms": [
+    "rune",
+    "opencode"
+  ],
+  "mode": "product",
+  "runs": 1,
+  "seed": null,
+  "tasks": [
+    {
+      "id": "review-invoice-rules",
+      "family": "F5",
+      "size": "small",
+      "source": "supplement",
+      "grader": "127297528e03dcd5dc1c93322294e8ff1aa8e0fd63bfd40539303dc983580e57",
+      "prompt": "58b579d8b673f4a6859c38c99f1f7abdc50872e52e49c3d11b0996bd46b30a9e"
+    },
+    {
+      "id": "off-by-one-window",
+      "family": "F1",
+      "size": "small",
+      "source": "corpus",
+      "grader": "abd9a2843461aee7fab737615b140b1318009deafec2559c536085e300fc3972",
+      "prompt": "371e6e7c69a64be970693ad26a41db029e131dc4e9c11a767b056e2127f243a1"
+    },
+    {
+      "id": "f7-653698d-toml-config",
+      "family": "F7",
+      "size": "serious",
+      "source": "serious",
+      "grader": "1d020e391c38c08cb78c307df028031d6910357e7e063bc1035d0e15a81308f4",
+      "prompt": "316dff6049e530e3c1947c29e736a415ae68fa54fd03ce552a13c6af2adfe6ca"
+    }
+  ],
+  "families": {
+    "F1": 1,
+    "F5": 1,
+    "F7": 1
+  },
+  "specs": {
+    "rune": {
+      "model": "gpt-6-sol",
+      "provider": "codex"
+    },
+    "opencode": {
+      "model": "gpt-6-sol"
+    }
+  },
+  "wallLimitsMs": {
+    "small": 1200000,
+    "serious": 2700000
+  },
+  "limits": {
+    "maxPairs": 3,
+    "maxAttempts": 8,
+    "wallAllowanceMs": 12600000
+  },
+  "accounts": {
+    "rune": {
+      "usedPct": null,
+      "stopAtPct": 70
+    },
+    "opencode": {
+      "usedPct": null,
+      "stopAtPct": 70
+    }
+  },
+  "bounded": true,
+  "order": [
+    {
+      "task": "review-invoice-rules",
+      "run": 1,
+      "first": "rune",
+      "second": "opencode"
+    },
+    {
+      "task": "off-by-one-window",
+      "run": 1,
+      "first": "opencode",
+      "second": "rune"
+    },
+    {
+      "task": "f7-653698d-toml-config",
+      "run": 1,
+      "first": "rune",
+      "second": "opencode"
+    }
+  ],
+  "needs": {
+    "pairs": 3,
+    "armRuns": 6,
+    "worstCaseWallMs": 10200000
+  }
+}

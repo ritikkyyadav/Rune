@@ -1,0 +1,104 @@
+{
+  "schema": "rune-live-check@1",
+  "what": "One live pair on the serious task B1 lost, after the verifier's cleanup rule: does scope come back to 1?",
+  "ranAt": {
+    "started": "2026-10-05T15:29:40Z",
+    "finished": "2026-10-05T15:50:45Z"
+  },
+  "authorisedBy": "the founder, 2026-10-05, answering a question that named it: one pair, Rune then OpenCode, gpt-6-sol on the Codex subscription, hard stops 1 pair / 3 arm runs / 100 minutes",
+  "manifest": {
+    "path": "docs/evidence/b2-s2-serious-rerun-manifest-20261005.json",
+    "sha256": "27b967800ffa0e54bdf34b19ce3ad01cfb128de0120701f7fe286fa4b738bc5c"
+  },
+  "rawEvidence": {
+    "note": "machine-local, not in the repository",
+    "dir": "~/rune-evidence/b2-s2-serious-rerun-20261005",
+    "resultsSha256": "5632bc175ac301bf36c4b77f79972ea93d80a8ee3d637a3f7b62d48b62d29889",
+    "report": "~/rune-evidence/b2-s2-serious-rerun-20261005-report/parity-report.md"
+  },
+  "build": {
+    "rune": "93adbb536fc612d02884ad4f9422a5e501d626f3de630f283a95b3418ab80c4b",
+    "roster": ["codex/gpt-6-astra", "codex/gpt-6-luna", "codex/gpt-6-sol"],
+    "version": "Rune v1.3.1-dev",
+    "opencode": "1.18.30"
+  },
+  "task": "f7-653698d-toml-config",
+  "rune": {
+    "hidden": "6/6",
+    "regressions": 1,
+    "scope": 1,
+    "clean": false,
+    "falseCompletion": true,
+    "wallS": 799.1,
+    "calls": 38,
+    "listUsd": 0.7321,
+    "modelsCalled": ["codex/gpt-6-sol"]
+  },
+  "opencode": {
+    "hidden": "6/6",
+    "regressions": 0,
+    "scope": 1,
+    "clean": true,
+    "falseCompletion": false,
+    "wallS": 463.5,
+    "calls": 19,
+    "listUsd": 0.3375,
+    "modelsCalled": ["gpt-6-sol"]
+  },
+  "report": {
+    "status": "FAIL",
+    "family": "F7",
+    "pairs": 1,
+    "PI": 46.7,
+    "axes": {
+      "O": 50,
+      "E": null,
+      "R": 0,
+      "S": 100
+    },
+    "b1ForComparison": {
+      "PI": 36.7,
+      "S": 50
+    },
+    "flagsNeeded": "none — the first report built without --allow-mixed-config: Rune's rows state a roster and a source build"
+  },
+  "theQuestion": {
+    "scope": "1 (B1: 0.5). The run's own record has three lines 'removed 16 git-ignored paths the checks generated' — two step checks and the end-of-turn pass — and the tree it left holds its two edited files and the seven ignored files that were there before.",
+    "didTheCleanupHurtTheRun": "no sign of it: every test, typecheck and format command the model ran itself exited 0; none failed for want of build output"
+  },
+  "whatElseHappened": {
+    "sameRegressionAsB1": {
+      "test": "a list that never closes does not license deleting what follows it",
+      "wanted": "the orphaned continuation line '  \"docker\",' and the next section both still in the file",
+      "runeLeft": "the next section, and not the continuation line",
+      "count": "Rune 2 of 2 runs wrong on this, OpenCode 0 of 2 — the same model",
+      "hypothesis": "the task says 'must not delete the lines that follow it'. In both runs Rune's read-back restated that as not swallowing a following SECTION, and the run then built and tested that narrower sentence. Two runs is not a measurement."
+    },
+    "ownVerdict": "unmet — its four criteria unassessed, the end-of-turn check cut at 120 s — and the process still exited 0, which the rig reads as a success claim: that is the 'false completion'",
+    "harnessFriction": [
+      "the reviewer (Auto mode's reasoned classifier) timed out at about 2 s twice; both commands were then denied by containment and two turns were refused",
+      "`bun add` failed twice in the tool sandbox: 'unable to write files to tempdir: PermissionDenied'",
+      "a chained `rm` was blocked by the sandbox once",
+      "three `multi_edit` calls failed on text that matched twice — the model's own",
+      "the step checks ran `cargo check` (7.0 s, then 0.25 s) on a change the end-of-turn selection judged not to concern Rust"
+    ],
+    "time": {
+      "runeWallS": 799.1,
+      "harnessVerificationS": "about 140: end of turn 124 (typecheck 3.9, the unit suite cut at 120), step checks about 12 and 4",
+      "toolsS": 3.7,
+      "modelCalls": {
+        "rune": 38,
+        "opencode": 19,
+        "b1": {
+          "rune": 32,
+          "opencode": 32
+        }
+      },
+      "note": "both tools were slower per call than in the afternoon: OpenCode 24 s a call against 10, Rune 17 against 10"
+    }
+  },
+  "quota": {
+    "runeMeterAfterItsRun": 34
+  },
+  "next": "the five further serious pairs were approved to follow a clean pair. This one was not clean, so they were not started."
+}

@@ -28,7 +28,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 
 import { CostTracker } from "../../../../packages/llm-gateway/src/cost-tracker";
 import type { ProviderName } from "../../../../packages/llm-gateway/src/types";
-import type { ParityMode, UnscoredReason } from "../../parity/types";
+import type { ParityMode, Terminal, UnscoredReason } from "../../parity/types";
 
 export type { UnscoredReason } from "../../parity/types";
 
@@ -188,6 +188,14 @@ export interface OutcomeSignals {
   /** The tool ended at its own turn or budget ceiling. */
   toolLimit?: ToolLimit;
   /**
+   * The tool stopped ITSELF short of finishing and said so, in its own terminal
+   * report, by a name other than a turn or budget ceiling (Rune's `stopReason`:
+   * open steps, a stall, a halt, a detected loop). The name, verbatim. A tool
+   * with no such report never sets it. It does not change whether a run is
+   * scored — only what its ending is called (`terminalOf`).
+   */
+  selfStopped?: string;
+  /**
    * The tool said it finished: it ended by itself, exited 0, and its own
    * report says success (Claude Code `subtype: "success"`, Rune `ok: true`,
    * Codex `turn.completed` with no failure, OpenCode exit 0 with a ledger).
@@ -256,6 +264,29 @@ export function classifyOutcome(signals: OutcomeSignals): Classification {
   const worked = signals.reachedModel === true || signals.workspaceTouched === true;
   if (!worked) return { scored: false, unscoredReason: "crash_before_first_call" };
   return { scored: true, failure: signals.stopped ? "stopped" : "unfinished" };
+}
+
+/**
+ * How the run ENDED, in the row's vocabulary — the same facts, and the same
+ * precedence, as `classifyOutcome`: a claimed success first, a terminal
+ * provider refusal ahead of the clock.
+ *
+ * `incomplete` and `crashed` are the two the old rule could not tell apart.
+ * Both end without a success claim and without the rig's hand. The difference
+ * is whether the tool SAID it was stopping: its own ceiling, or its own named
+ * stop, is an honest "not finished"; a process that just ended — no report, or
+ * a report holding only an error — is a crash.
+ */
+export function terminalOf(signals: OutcomeSignals): Terminal {
+  if (signals.claimedSuccess && !signals.stopped) return "completed";
+  if (signals.provider) return "refused";
+  if (signals.stopped === "timeout") return "stopped";
+  // The rig's cost watcher is the budget ceiling of a tool that has none: the
+  // same ending as a tool stopping at its own, as the classifier above holds.
+  if (signals.toolLimit || signals.stopped === "cost limit") return "incomplete";
+  if (signals.stopped) return "stopped";
+  if (signals.selfStopped) return "incomplete";
+  return "crashed";
 }
 
 /** `unscored:<reason>`, spelled once. */
@@ -334,6 +365,13 @@ export interface ComparatorArm {
   name: ArmName;
   /** `--version` only. Never a turn. */
   version(limits?: ArmLimits): string | null;
+  /**
+   * Every model this arm's configuration names for a session on `spec` — what
+   * it MAY call, in the names its `models` uses. An arm that states one has its
+   * rows held to it; an arm that states none (absent, or null) has them held to
+   * using the same models on every run.
+   */
+  roster?(spec: { model: string; provider?: string }): string[] | null;
   plan(task: ArmTask, dir: string, limits: ArmLimits): ArmPlan;
   parse(capture: ArmCapture): ParsedArm;
   runArm(task: ArmTask, dir: string, limits: ArmLimits): Promise<ArmResult>;

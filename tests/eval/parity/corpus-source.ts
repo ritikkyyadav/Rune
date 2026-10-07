@@ -43,7 +43,16 @@
 // the absence of a check, and the mined serious tasks are where they are real.
 
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 
 import { armEnv, taskEnvNames } from "../comparison/arms/types";
@@ -118,6 +127,97 @@ export function expectedNewFilesOf(
   const named = [...new Set(prompt.match(/\b[\w.-]+\.md\b/g) ?? [])];
   const created = named.filter((path) => !existing.includes(path));
   return created.length ? created : undefined;
+}
+
+const escapeRe = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** The fixture's files a stretch of text names, as whole names. */
+function filesNamedIn(text: string, existing: readonly string[]): string[] {
+  return existing.filter((path) =>
+    new RegExp(`(?<![\\w./-])${escapeRe(path)}(?![\\w/-])`).test(text),
+  );
+}
+
+const HANDS_OFF_VERB = "(?:change|edit|modify|touch|rewrite|alter)";
+
+/**
+ * The files the task's own words put out of bounds, among those its fixture
+ * holds. Four wordings, each read where the corpus writes it:
+ *
+ *   a constraint   "window.test.ts must not be edited"
+ *   the prompt     "Do not change money.ts." · "Do not edit or weaken window.test.ts."
+ *   the prompt     "keep todos.ts exactly as it is in the working tree"
+ *   the prompt     "money.ts, text.ts and report.ts are done; leave them exactly as they are"
+ *
+ * The last names its files BEFORE the instruction, so "them" is every fixture
+ * file the same sentence has named by then. The others name the file as the
+ * instruction's own object, so "keep todos.ts exactly as it is … and finish the
+ * feature in cli.ts" protects todos.ts and not cli.ts. Only a name the fixture
+ * holds counts: "do not change the exported signature" protects nothing, and
+ * neither does "no source file may be modified" — that is `forbidsCode`.
+ */
+export function protectedPathsOf(
+  prompt: string,
+  constraints: readonly string[] | undefined,
+  existing: readonly string[],
+): string[] | undefined {
+  const found = new Set<string>();
+  const object = (token: string | undefined): void => {
+    const name = (token ?? "").replace(/^[`'"(]+|[`'"),.;:!?]+$/g, "");
+    if (existing.includes(name)) found.add(name);
+  };
+  for (const constraint of constraints ?? []) {
+    const hit = /\bmust\s+not\s+be\s+(?:changed|edited|modified|touched|rewritten|altered)\b/i.exec(
+      constraint,
+    );
+    if (hit)
+      for (const path of filesNamedIn(constraint.slice(0, hit.index), existing)) found.add(path);
+  }
+  for (const sentence of prompt.split(/(?<=[.!?])\s+/)) {
+    for (const hit of sentence.matchAll(
+      new RegExp(
+        `\\b(?:do\\s+not|don['’]t|never)\\s+${HANDS_OFF_VERB}(?:\\s+or\\s+\\w+)?\\s+(\\S+)`,
+        "gi",
+      ),
+    ))
+      object(hit[1]);
+    for (const hit of sentence.matchAll(/\bkeep\s+(\S+)\s+exactly\s+as\s+it\s+is\b/gi))
+      object(hit[1]);
+    for (const hit of sentence.matchAll(
+      /\bleave\s+(\S+)\s+exactly\s+as\s+(?:it\s+is|they\s+are)\b/gi,
+    )) {
+      if (!/^(?:it|them)$/i.test(hit[1]!)) object(hit[1]);
+      else for (const path of filesNamedIn(sentence.slice(0, hit.index), existing)) found.add(path);
+    }
+  }
+  return found.size ? [...found].sort() : undefined;
+}
+
+/**
+ * What grades a corpus task, as one digest: `acceptance.json` and every file
+ * under `checks/`, each by its path and its bytes, in path order. A criterion
+ * reworded, a check edited, a check added: each is a different exam.
+ */
+export function corpusGraderSha256(taskDir: string): string {
+  const hash = createHash("sha256");
+  const add = (name: string, file: string): void => {
+    hash.update(`${name}\0`);
+    hash.update(readFileSync(file));
+    hash.update("\0");
+  };
+  add("acceptance.json", join(taskDir, "acceptance.json"));
+  const walk = (dir: string, rel: string): string[] =>
+    readdirSync(dir, { withFileTypes: true })
+      .flatMap((entry) =>
+        entry.isDirectory()
+          ? walk(join(dir, entry.name), `${rel}${entry.name}/`)
+          : [`${rel}${entry.name}`],
+      )
+      .sort();
+  const checks = join(taskDir, "checks");
+  if (existsSync(checks))
+    for (const path of walk(checks, "")) add(`checks/${path}`, join(checks, path));
+  return hash.digest("hex");
 }
 
 /** A criterion's result: 0 passed, 1 failed, 2 impossible in this environment. */
@@ -274,10 +374,9 @@ function parityTaskOf(root: string, comparison: ComparisonTask): CorpusParityTas
       command: criterion.command,
     };
   });
-  const expectedNewFiles = expectedNewFilesOf(meta.prompt, [
-    ...meta.files,
-    ...(meta.untracked ?? []),
-  ]);
+  const existing = [...new Set([...meta.files, ...(meta.untracked ?? [])])];
+  const expectedNewFiles = expectedNewFilesOf(meta.prompt, existing);
+  const protectedPaths = protectedPathsOf(meta.prompt, meta.constraints, existing);
   const task: CorpusParityTask = {
     id: comparison.id,
     family,
@@ -285,6 +384,8 @@ function parityTaskOf(root: string, comparison: ComparisonTask): CorpusParityTas
     size: "small",
     ...(forbidsCode(meta.constraints) ? { noCode: true } : {}),
     ...(expectedNewFiles ? { expectedNewFiles } : {}),
+    ...(protectedPaths ? { protectedPaths } : {}),
+    grader: corpusGraderSha256(taskDir),
     ...(comparison.browser ? { browser: true } : {}),
     criteria,
     async prepare(workspace: string): Promise<void> {

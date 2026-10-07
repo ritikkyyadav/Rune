@@ -1,0 +1,234 @@
+{
+  "kind": "parity-manifest",
+  "schema": "parity-manifest/1",
+  "arms": [
+    "rune",
+    "opencode"
+  ],
+  "mode": "product",
+  "runs": 2,
+  "seed": 20261005,
+  "tasks": [
+    {
+      "id": "csv-state-machine",
+      "family": "F1",
+      "size": "small",
+      "source": "corpus",
+      "grader": "e1f38bcb652a3018da7a59850d1e7b4545fe90664723bde96229864dc50fcfdf",
+      "prompt": "fba42dda75193579069b2a3c5e09aecf041864410768b9e92f4300cfc745512b"
+    },
+    {
+      "id": "off-by-one-window",
+      "family": "F1",
+      "size": "small",
+      "source": "corpus",
+      "grader": "abd9a2843461aee7fab737615b140b1318009deafec2559c536085e300fc3972",
+      "prompt": "371e6e7c69a64be970693ad26a41db029e131dc4e9c11a767b056e2127f243a1"
+    },
+    {
+      "id": "queue-race",
+      "family": "F1",
+      "size": "small",
+      "source": "corpus",
+      "grader": "70ee342a13c62ca40c22325b69b407a95da6c7967e4c6645c36bdd171231aba6",
+      "prompt": "728d252bde8c0d8a505bb54e89e31f203f98d33364be42446e46c476eeec8053"
+    },
+    {
+      "id": "health-endpoint-and-changelog",
+      "family": "F2",
+      "size": "small",
+      "source": "corpus",
+      "grader": "455008f7cf237082f8116222d2ee5acd54060da2f6bf2426b0814e58218090a5",
+      "prompt": "f7a5432ca1ca840155fad272d1f55bcc7364f032b16abd9836eb79a330329985"
+    },
+    {
+      "id": "note-field-and-exporter",
+      "family": "F2",
+      "size": "small",
+      "source": "corpus",
+      "grader": "ffc456a91f5c8e9420f79a04f9425c09f83ea0c503d04d8476bb859eccf0a74c",
+      "prompt": "8cdd4ac340d572f64bbaa4bd1e3557dc925e23dfc1e6a921d30f9565c7d82ef2"
+    },
+    {
+      "id": "json-output-flag",
+      "family": "F2",
+      "size": "small",
+      "source": "supplement",
+      "grader": "c52961514e81680043c766f6cb827bdb8fd30dd6d7181177b15f042189dc8638",
+      "prompt": "ca1a43934828177fc9e66fcfd2521f93c0558ca57f12309ca9f7bf55a2dba47d"
+    },
+    {
+      "id": "dependent-migration",
+      "family": "F3",
+      "size": "small",
+      "source": "corpus",
+      "grader": "6c6af5886a8ca7c7b85cf57bcaea415ccf5ba33abec252b7ac61401d66fa6cb8",
+      "prompt": "87ef48b60c4abf90944579a62fb2c47083fb57d51fb75ffed8e2f615c31a1f60"
+    },
+    {
+      "id": "three-module-dependent",
+      "family": "F3",
+      "size": "small",
+      "source": "corpus",
+      "grader": "aede4ad523b975afcc5ed7d565ed2ad36df65e6e9790c9d7558c0d8f274ac960",
+      "prompt": "b8c213e95d9c1f58d2503e354ea1e06bb38ca9b1e651b54b86b5a9d749b2fb8e"
+    },
+    {
+      "id": "rename-quantity-field",
+      "family": "F3",
+      "size": "small",
+      "source": "supplement",
+      "grader": "37dbcee07a9892911c2fd82ea8c97090f5f20a5a52e3e55bf6c539d5f7eefa4b",
+      "prompt": "04bda1b31a1c65c7a1018869a6a5c19ae00531bd78c69a7a81eac1e1adbeb87c"
+    }
+  ],
+  "families": {
+    "F1": 3,
+    "F2": 3,
+    "F3": 3
+  },
+  "specs": {
+    "rune": {
+      "model": "gpt-6-sol",
+      "provider": "codex"
+    },
+    "opencode": {
+      "model": "gpt-6-sol"
+    }
+  },
+  "wallLimitsMs": {
+    "small": 1200000,
+    "serious": 2700000
+  },
+  "limits": {
+    "maxPairs": 18,
+    "maxAttempts": 44,
+    "wallAllowanceMs": 9000000
+  },
+  "accounts": {
+    "rune": {
+      "usedPct": null,
+      "stopAtPct": 70
+    },
+    "opencode": {
+      "usedPct": null,
+      "stopAtPct": 70
+    }
+  },
+  "bounded": true,
+  "order": [
+    {
+      "task": "off-by-one-window",
+      "run": 1,
+      "first": "rune",
+      "second": "opencode"
+    },
+    {
+      "task": "json-output-flag",
+      "run": 1,
+      "first": "opencode",
+      "second": "rune"
+    },
+    {
+      "task": "queue-race",
+      "run": 1,
+      "first": "rune",
+      "second": "opencode"
+    },
+    {
+      "task": "note-field-and-exporter",
+      "run": 1,
+      "first": "opencode",
+      "second": "rune"
+    },
+    {
+      "task": "dependent-migration",
+      "run": 1,
+      "first": "rune",
+      "second": "opencode"
+    },
+    {
+      "task": "rename-quantity-field",
+      "run": 1,
+      "first": "opencode",
+      "second": "rune"
+    },
+    {
+      "task": "health-endpoint-and-changelog",
+      "run": 1,
+      "first": "rune",
+      "second": "opencode"
+    },
+    {
+      "task": "csv-state-machine",
+      "run": 1,
+      "first": "opencode",
+      "second": "rune"
+    },
+    {
+      "task": "three-module-dependent",
+      "run": 1,
+      "first": "rune",
+      "second": "opencode"
+    },
+    {
+      "task": "queue-race",
+      "run": 2,
+      "first": "opencode",
+      "second": "rune"
+    },
+    {
+      "task": "json-output-flag",
+      "run": 2,
+      "first": "rune",
+      "second": "opencode"
+    },
+    {
+      "task": "dependent-migration",
+      "run": 2,
+      "first": "opencode",
+      "second": "rune"
+    },
+    {
+      "task": "note-field-and-exporter",
+      "run": 2,
+      "first": "rune",
+      "second": "opencode"
+    },
+    {
+      "task": "off-by-one-window",
+      "run": 2,
+      "first": "opencode",
+      "second": "rune"
+    },
+    {
+      "task": "three-module-dependent",
+      "run": 2,
+      "first": "rune",
+      "second": "opencode"
+    },
+    {
+      "task": "csv-state-machine",
+      "run": 2,
+      "first": "opencode",
+      "second": "rune"
+    },
+    {
+      "task": "health-endpoint-and-changelog",
+      "run": 2,
+      "first": "rune",
+      "second": "opencode"
+    },
+    {
+      "task": "rename-quantity-field",
+      "run": 2,
+      "first": "opencode",
+      "second": "rune"
+    }
+  ],
+  "needs": {
+    "pairs": 18,
+    "armRuns": 36,
+    "worstCaseWallMs": 43200000
+  }
+}

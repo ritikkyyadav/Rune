@@ -8,6 +8,9 @@ tests/eval/results/
 # Captured aggregate benchmark receipts retain their original bytes and hashes.
 docs/evidence/comparison-*.json
 docs/evidence/corpus-offline-*.json
+# A series' manifest is what the founder authorises and the runner reads back; the
+# ledger records its sha256, so it keeps the bytes the runner wrote.
+docs/evidence/*-manifest-*.json
 # The README's terminal frames are captures: their spacing IS the picture, and the HTML
 # formatter only knows default display rules, not the frame's `white-space: pre`.
 docs/assets/readme/*.html

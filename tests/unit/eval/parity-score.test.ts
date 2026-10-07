@@ -13,6 +13,9 @@ import { describe, expect, test } from "bun:test";
 import { pairRows } from "../../eval/parity/aggregate";
 import {
   GATE,
+  PROPOSED_COMPLETE_RATE_FLOOR,
+  absoluteCaveats,
+  absoluteStats,
   classifyPairs,
   computeAxes,
   efficiencyLog,
@@ -22,6 +25,7 @@ import {
   parityIndex,
   scoreFamily,
   scoreMode,
+  type AbsoluteStats,
   type AxisValues,
   type FamilyScore,
   type ScoredPair,
@@ -294,6 +298,37 @@ describe("the gate, one threshold at a time", () => {
     expect(g.reasons[0]).toMatch(/^1 unpaired row/);
     expect(gateFamily(input(all100, { unpaired: 0 })).status).toBe("PASS");
   });
+
+  // Evidence reported under an override that let incomparable rows in.
+  test("a cap keeps a passing family at PROVISIONAL, and rescues nothing", () => {
+    const capped = gateFamily(
+      input(all100, { caps: ["rows without fingerprints", "mixed rosters"] }),
+    );
+    expect(capped).toEqual({
+      status: "PROVISIONAL",
+      reasons: ["rows without fingerprints", "mixed rosters"],
+    });
+    expect(gateFamily(input(all100, { caps: [] })).status).toBe("PASS");
+    const failing = gateFamily(input({ ...all100, O: 90 }, { caps: ["mixed rosters"] }));
+    expect(failing.status).toBe("FAIL");
+    expect(failing.reasons).toEqual(["O 90.0 < 95", "mixed rosters"]);
+  });
+
+  test("scoreMode hands a mode's caps to every family it measured", () => {
+    const perfect = ["a", "b", "c"].flatMap((task) =>
+      [1, 2].flatMap((run) => pair(task, run, {}, {})),
+    );
+    const open = scoreMode("product", pairsOf(perfect), { seed: 1, b: B });
+    expect(open.families[0]).toMatchObject({ status: "PASS", reasons: [] });
+    const capped = scoreMode("product", pairsOf(perfect), { seed: 1, b: B, caps: ["why not"] });
+    expect(capped.families[0]).toMatchObject({ status: "PROVISIONAL", reasons: ["why not"] });
+    expect(capped.families[0]!.PI).toBe(open.families[0]!.PI);
+    // A family nothing was measured in has nothing to cap.
+    expect(capped.families[1]).toMatchObject({
+      status: "UNMEASURED",
+      reasons: ["no scored pairs"],
+    });
+  });
 });
 
 describe("partnerless rows are counted per family, on both sides", () => {
@@ -318,6 +353,276 @@ describe("partnerless rows are counted per family, on both sides", () => {
     }).families.find((f) => f.family === "F1")!;
     expect(f1.status).not.toBe("PASS");
     expect(f1.reasons.some((r) => r.startsWith("1 unpaired row"))).toBe(true);
+  });
+});
+
+describe("absolute outcomes: every attempt, counted", () => {
+  const rune = (run: number, spec: Parameters<typeof row>[1] = {}) =>
+    row({ task: "t", run, arm: "rune" }, spec);
+
+  test("each attempt lands in exactly one outcome class, and the classes add up", () => {
+    const stats = absoluteStats([
+      rune(1), // complete
+      rune(2, { passed: 2 }), // partial
+      rune(3, { passed: 0 }), // zero
+      rune(4, { regressions: 1 }), // every check passes, one regression: q = .5
+      rune(5, { buildBroken: true }), // a broken build is q = 0, whatever passed
+      rune(6, { passed: 0, total: 0 }), // nothing could check it
+      rune(7, { scored: false, unscoredReason: "provider_quota" }),
+      rune(8, { scored: false, unscoredReason: "provider_quota" }),
+      rune(9, { scored: false, unscoredReason: "grader_infrastructure" }),
+    ]);
+    expect(stats).toMatchObject({
+      attempts: 9,
+      scored: 6,
+      unscored: { provider_quota: 2, grader_infrastructure: 1 },
+      gradable: 5,
+      unverified: 1,
+      complete: 1,
+      partial: 2,
+      zero: 2,
+      regressions: 1,
+      buildBroken: 1,
+    });
+    expect(stats.complete + stats.partial + stats.zero).toBe(stats.gradable);
+    expect(stats.gradable + stats.unverified).toBe(stats.scored);
+    expect(stats.completeRate).toBeCloseTo(1 / 5, 12);
+  });
+
+  test("a run nothing could check is never complete, whatever it claimed", () => {
+    const stats = absoluteStats([
+      rune(1, { passed: 0, total: 0 }),
+      rune(2, { passed: 0, total: 0 }),
+    ]);
+    expect(stats).toMatchObject({ scored: 2, gradable: 0, unverified: 2, complete: 0 });
+    expect(stats.completeRate).toBeNull();
+    expect(absoluteStats([]).completeRate).toBeNull();
+  });
+
+  test("a clean completion is complete, ended clean, and nothing out of scope", () => {
+    const stats = absoluteStats([
+      rune(1),
+      rune(2, { scope: 0.5 }), // leftovers are not a breach
+      rune(3, { scope: 0 }), // complete, out of scope
+      rune(4, { clean: false }), // complete, but the run did not end clean
+      rune(5, { passed: 3 }), // clean and in scope, and not complete
+      rune(6, { passed: 3, clean: false, falseCompletion: true }),
+    ]);
+    expect(stats).toMatchObject({
+      complete: 4,
+      cleanComplete: 2,
+      scopeViolations: 1,
+      leftovers: 1,
+      falseCompletions: 1,
+    });
+  });
+
+  test("unscored attempts keep their time, and cost is summed only where it is known", () => {
+    const stats = absoluteStats([
+      rune(1, { wallMs: 1000, listUsd: 0.5 }),
+      rune(2, { wallMs: 2000, listUsd: 0.25 }),
+      rune(3, { wallMs: 4000, scored: false, unscoredReason: "provider_outage" }),
+    ]);
+    expect(stats).toMatchObject({
+      wallMs: 7000,
+      unscoredWallMs: 4000,
+      listUsd: 0.75,
+      costUnknown: 1,
+    });
+  });
+
+  test("how runs ended is counted as recorded; a parity-run/1 row never said", () => {
+    const stats = absoluteStats([
+      rune(1),
+      rune(2, { passed: 1, terminal: "incomplete" }),
+      rune(3, { passed: 1, terminal: "crashed" }),
+      rune(4, { passed: 1, terminal: "stopped" }),
+      rune(5, { scored: false, terminal: "not_started", unscoredReason: "grader_infrastructure" }),
+      row({ task: "t", run: 6, arm: "rune", v1: true }),
+    ]);
+    expect(stats.terminal).toEqual({
+      completed: 1,
+      incomplete: 1,
+      crashed: 1,
+      stopped: 1,
+      not_started: 1,
+      unrecorded: 1,
+    });
+  });
+
+  test("the scorer counts each arm's own rows, the partnerless and the excluded included", () => {
+    const rows = [
+      ...goldenPairs(),
+      ...exclusionPairs(),
+      row({ task: "z", run: 1, arm: "rune" }, { passed: 0 }),
+    ];
+    const p = pairRows(rows, "product", "claude-code");
+    const f = scoreFamily("F1", "product", p.pairs, { seed: 1, b: B, rows: p.rows });
+    expect(f.absolute.rune.attempts).toBe(12);
+    expect(f.absolute.comparator.attempts).toBe(11);
+    // Given only the pairs, the partnerless row is not there to count.
+    const fromPairs = scoreFamily("F1", "product", p.pairs, { seed: 1, b: B });
+    expect(fromPairs.absolute.rune.attempts).toBe(11);
+    expect(fromPairs.PI).toBe(f.PI);
+    // A row of another family or mode is not this family's attempt.
+    const other = scoreFamily("F2", "product", p.pairs, { seed: 1, b: B, rows: p.rows });
+    expect(other.absolute.rune.attempts).toBe(0);
+    const mode = scoreMode("product", p.pairs, { seed: 1, b: B, rows: p.rows });
+    expect(mode.absolute.rune.attempts).toBe(12);
+    expect(mode.absolute.comparator.attempts).toBe(11);
+    // Handed both modes' pairs, a mode counts its own attempts only.
+    const harness = pairsOf(goldenPairs({ mode: "harness" }, { listUsd: 1 }), "harness");
+    const mixed = scoreMode("product", [...p.pairs, ...harness], { seed: 1, b: B });
+    expect(mixed.absolute.rune.attempts).toBe(11);
+    expect(mixed.families[0]!.absolute.rune.attempts).toBe(11);
+    // …and the same when it is handed both modes' ROWS.
+    const everyRow = {
+      rune: [...p.rows.rune, ...harness.map((x) => x.rune)],
+      comparator: [...p.rows.comparator, ...harness.map((x) => x.comparator)],
+    };
+    const counted = scoreFamily("F1", "product", p.pairs, { seed: 1, b: B, rows: everyRow });
+    expect(counted.absolute.rune.attempts).toBe(12);
+    expect(counted.absolute.comparator.attempts).toBe(11);
+  });
+});
+
+describe("what the ratio hides: caveats, which never gate", () => {
+  const stats = (over: Partial<AbsoluteStats>): AbsoluteStats => ({
+    ...absoluteStats([]),
+    ...over,
+  });
+  const arm = (complete: number, gradable: number, over: Partial<AbsoluteStats> = {}) =>
+    stats({
+      attempts: gradable,
+      scored: gradable,
+      gradable,
+      complete,
+      cleanComplete: complete,
+      completeRate: gradable ? complete / gradable : null,
+      ...over,
+    });
+  const axes: AxisValues = { O: 100, E: 100, R: 100, S: 100 };
+
+  test("the floor is the review's proposal, and is met at exactly 80%", () => {
+    expect(PROPOSED_COMPLETE_RATE_FLOOR).toBe(0.8);
+    expect(absoluteCaveats(axes, arm(8, 10), arm(8, 10), "claude-code")).toEqual([]);
+    expect(absoluteCaveats(axes, arm(10, 10), arm(1, 10), "claude-code")).toEqual([]);
+    expect(absoluteCaveats(axes, arm(0, 0), arm(0, 0), "claude-code")).toEqual([]);
+  });
+
+  test("a good ratio over poor outcomes is named for what it is", () => {
+    expect(absoluteCaveats(axes, arm(7, 10), arm(7, 10), "claude-code")).toEqual([
+      "relative O is 100.0, but Rune completed 7 of 10 gradable attempt(s) (70%) and claude-code 7 of 10 gradable attempt(s) (70%), both under the proposed 80% floor: the ratio is parity at a low level",
+    ]);
+    // The comparator did well: Rune's own number is the caveat.
+    expect(absoluteCaveats({ ...axes, O: 95 }, arm(7, 10), arm(9, 10), "opencode")).toEqual([
+      "relative O is 95.0, but Rune completed 7 of 10 gradable attempt(s) (70%), under the proposed 80% floor",
+    ]);
+    // A ratio that already fails its own floor needs no warning about looking good.
+    expect(absoluteCaveats({ ...axes, O: 94.9 }, arm(7, 10), arm(9, 10), "opencode")).toEqual([
+      "Rune completed 7 of 10 gradable attempt(s) (70%), under the proposed 80% floor",
+    ]);
+    expect(absoluteCaveats(null, arm(1, 3), arm(0, 0), "opencode")).toEqual([
+      "Rune completed 1 of 3 gradable attempt(s) (33%), under the proposed 80% floor",
+    ]);
+  });
+
+  test("integrity counts are caveats of their own", () => {
+    expect(
+      absoluteCaveats(
+        axes,
+        arm(10, 10, {
+          cleanComplete: 8,
+          scopeViolations: 2,
+          falseCompletions: 1,
+          terminal: { completed: 9, crashed: 1 },
+        }),
+        arm(10, 10),
+        "claude-code",
+      ),
+    ).toEqual([
+      "2 Rune attempt(s) changed something out of scope",
+      "2 of Rune's 10 complete attempt(s) ended unclean or out of scope",
+      "1 Rune attempt(s) claimed success on unfinished work",
+      "1 Rune attempt(s) crashed",
+    ]);
+  });
+
+  test("a caveat changes no status: the gate reads the same inputs with or without one", () => {
+    const half = ["a", "b", "c"].flatMap((task) =>
+      [1, 2].flatMap((run) => pair(task, run, { passed: 2 }, { passed: 2 })),
+    );
+    const f = scoreFamily("F1", "product", pairsOf(half), { seed: 1, b: B });
+    expect(f.caveats.length).toBe(1);
+    const gated = gateFamily({
+      axes: f.axes!,
+      PI: f.PI!,
+      piLower: f.interval!.PI!.lo,
+      n: f.n,
+      tasks: f.tasks.length,
+      efficiencyPairs: f.efficiency.pairs,
+    });
+    expect({ status: f.status, reasons: f.reasons }).toEqual(gated);
+  });
+});
+
+describe("the old rules, beside the new", () => {
+  test("R and S read the row's own flags, or what parity-run/1 said of the same run", () => {
+    const rows = [
+      // Rune crashed: not clean now, clean under v1. Out of scope now, in scope under v1.
+      ...pair(
+        "a",
+        1,
+        { clean: false, terminal: "crashed", legacyClean: true, scope: 0, legacyScope: 1 },
+        {},
+      ),
+      ...pair("a", 2, {}, {}),
+    ];
+    const inc = included(rows);
+    const now = computeAxes(inc, "product")!;
+    const old = computeAxes(inc, "product", "v1")!;
+    expect(now.axes).toMatchObject({ O: 100, R: 50, S: 50 });
+    expect(old.axes).toMatchObject({ O: 100, R: 100, S: 100 });
+    expect(computeAxes(inc, "product", "current")).toEqual(now);
+    // O and E never depend on the rule set.
+    expect(old.axes.O).toBe(now.axes.O);
+    expect(old.efficiencyPairs).toBe(now.efficiencyPairs);
+  });
+
+  test("a parity-run/1 pair has one set of flags, and both rule sets read it", () => {
+    const rows = pair("a", 1, { clean: false, scope: 0.5 }, {}, { v1: true });
+    const inc = included(rows);
+    expect(inc[0]!.r.legacyClean).toBeUndefined();
+    expect(computeAxes(inc, "product", "v1")).toEqual(computeAxes(inc, "product")!);
+    const f = scoreFamily("F1", "product", pairsOf(rows), { seed: 1, b: B });
+    expect(f.legacy).toEqual({ PI: f.PI, R: f.axes!.R, S: f.axes!.S, differs: false });
+  });
+
+  test("the family carries the old index, and says when it differs", () => {
+    const rows = ["a", "b", "c"].flatMap((task) =>
+      [1, 2].flatMap((run) =>
+        pair(
+          task,
+          run,
+          run === 1 ? { clean: false, terminal: "crashed", legacyClean: true } : {},
+          {},
+        ),
+      ),
+    );
+    const f = scoreFamily("F1", "product", pairsOf(rows), { seed: 1, b: B });
+    expect(f.axes!.R).toBe(50);
+    expect(f.legacy).toMatchObject({ R: 100, S: 100, differs: true });
+    expect(f.legacy.PI).toBe(100);
+    // The status reads the current index, not the old one.
+    expect(f.status).toBe("FAIL");
+    expect(f.reasons).toContain("R 50.0 < 70");
+    // An unmeasured family has no old index either.
+    expect(scoreFamily("F2", "product", pairsOf(rows), { seed: 1, b: B }).legacy).toEqual({
+      PI: null,
+      R: null,
+      S: null,
+      differs: false,
+    });
   });
 });
 

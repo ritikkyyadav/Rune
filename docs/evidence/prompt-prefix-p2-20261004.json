@@ -1,0 +1,30 @@
+{
+  "schema": "rune-prompt-prefix@1",
+  "card": "P2 — deeper prompt/tool/cache economy only when attributable",
+  "at": "2026-10-04",
+  "head": "c8410316b4d3a1315f4e42cfe8d625fcc800b576",
+  "dirty": true,
+  "bun": "1.3.14",
+  "modelCalls": 0,
+  "method": {
+    "script": "bun --preload ./tests/scratch-home.ts scripts/prompt-prefix-probe.ts",
+    "what": "a real Engine on a throwaway workspace and home, default doctrine and skills, one scripted request; the system prompt as sent, split at its `# Environment` block",
+    "notMeasured": [
+      "cache hit rate — needs repeated real requests inside the provider's retention window",
+      "the order a provider hashes tools, instructions and input in",
+      "what the stable session key is worth in tokens"
+    ]
+  },
+  "systemPrompt": {
+    "bytes": 33174,
+    "bytesBeforeEnvironment": 23395,
+    "environmentBytes": 476,
+    "bytesAfterEnvironment": 9303,
+    "firstSectionAfter": "## Available Skills"
+  },
+  "reading": {
+    "withinOneProcess": "the environment block is computed once, so the whole prompt is the same request after request",
+    "acrossAProcess": "the block is computed again (date, git status snapshot, recent commits); 9,303 bytes of stable system text, and everything a provider orders after the system prompt, sit past the first byte that can differ",
+    "notChanged": "the order. Moving the block last would extend the reusable prefix by at most 9,303 bytes on the first request after a resume, and only inside the provider's retention window — unmeasured, against a recorded regression the last time a prefix block was moved (engine.ts, the narrative profile)."
+  }
+}

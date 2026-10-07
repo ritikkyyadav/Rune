@@ -52,6 +52,7 @@ import {
   type OutcomeSignals,
   UNSCORED_STOP_SHARE,
   classifyOutcome,
+  terminalOf,
   tooManyUnscored,
 } from "../../eval/comparison/arms/types";
 import {
@@ -60,6 +61,7 @@ import {
   prepareHarness,
 } from "../../eval/comparison/harness";
 import { runPilot } from "../../eval/comparison/runner";
+import type { Terminal } from "../../eval/parity/types";
 import { rmTemp } from "../../helpers/tmp";
 
 const scratch: string[] = [];
@@ -163,6 +165,8 @@ const opencode = {
 interface Situation {
   name: string;
   expected: Classification;
+  /** How the run ended, in the row's words: the same for every arm that can be here. */
+  terminal: Terminal;
   /** The tool reported success. False unless stated. */
   claimed?: boolean;
   /** What the rig adds from outside the tool (the workspace, the build). */
@@ -184,12 +188,14 @@ const SITUATIONS: Situation[] = [
   {
     name: "finished, and said so",
     expected: { scored: true },
+    terminal: "completed",
     claimed: true,
     captures: FINISHED,
   },
   {
     name: "the clock ran out after the model was reached",
     expected: { scored: true, failure: "timeout" },
+    terminal: "stopped",
     captures: {
       // Killed before its one envelope: nothing on stdout at all.
       "claude-code": cap(KILLED),
@@ -201,6 +207,7 @@ const SITUATIONS: Situation[] = [
   {
     name: "the clock ran out before any model call",
     expected: { scored: true, failure: "timeout" },
+    terminal: "stopped",
     captures: {
       "claude-code": cap(KILLED),
       codex: cap(KILLED),
@@ -213,6 +220,7 @@ const SITUATIONS: Situation[] = [
     // Text a process wrote while it was still running is not a terminal
     // report: it may well have been retrying. The clock ended it.
     expected: { scored: true, failure: "timeout" },
+    terminal: "stopped",
     captures: {
       "claude-code": cap({ stderr: "API Error: 429 rate limit reached · retrying", ...KILLED }),
       codex: cap({ stderr: "429 Too Many Requests: rate limit reached, retrying", ...KILLED }),
@@ -223,6 +231,7 @@ const SITUATIONS: Situation[] = [
   {
     name: "a provider error the tool was recovering from, then the clock",
     expected: { scored: true, failure: "timeout" },
+    terminal: "stopped",
     captures: {
       "claude-code":
         "Claude Code retries inside its one envelope; killed, it prints nothing to say it was retrying",
@@ -244,6 +253,7 @@ const SITUATIONS: Situation[] = [
     name: "a terminal refusal the tool reported, and then the clock",
     // Precedence 3: a tool waiting on a refused request was not going to finish.
     expected: { scored: false, unscoredReason: "provider_quota" },
+    terminal: "refused",
     captures: {
       "claude-code": "Claude Code reports a refusal only in the envelope it prints as it exits",
       codex: cap({
@@ -258,6 +268,7 @@ const SITUATIONS: Situation[] = [
   {
     name: "a terminal quota refusal",
     expected: { scored: false, unscoredReason: "provider_quota" },
+    terminal: "refused",
     captures: {
       "claude-code": cap({
         stdout: claude.apiError("Claude AI usage limit reached|1760000000"),
@@ -283,6 +294,7 @@ const SITUATIONS: Situation[] = [
   {
     name: "a terminal authentication refusal",
     expected: { scored: false, unscoredReason: "provider_auth" },
+    terminal: "refused",
     captures: {
       "claude-code": cap({
         stdout: claude.apiError("Invalid API key · Please run /login"),
@@ -305,6 +317,7 @@ const SITUATIONS: Situation[] = [
   {
     name: "the provider answered 5xx until the tool gave up",
     expected: { scored: false, unscoredReason: "provider_outage" },
+    terminal: "refused",
     captures: {
       "claude-code": cap({ stdout: claude.apiError("API Error: 529 Overloaded"), exitCode: 1 }),
       codex: cap({
@@ -325,6 +338,7 @@ const SITUATIONS: Situation[] = [
   {
     name: "the connection dropped and no completion was possible",
     expected: { scored: false, unscoredReason: "provider_outage" },
+    terminal: "refused",
     captures: {
       "claude-code": cap({ stdout: claude.apiError("API Error: Connection error."), exitCode: 1 }),
       codex: cap({
@@ -344,6 +358,7 @@ const SITUATIONS: Situation[] = [
   {
     name: "a crash before any model call",
     expected: { scored: false, unscoredReason: "crash_before_first_call" },
+    terminal: "crashed",
     captures: {
       "claude-code": cap({ stderr: "TypeError: Cannot read properties of undefined", exitCode: 1 }),
       codex: cap({ stderr: "thread 'main' panicked at src/main.rs:1:1", exitCode: 101 }),
@@ -354,6 +369,7 @@ const SITUATIONS: Situation[] = [
   {
     name: "a crash after the model was reached",
     expected: { scored: true, failure: "unfinished" },
+    terminal: "crashed",
     captures: {
       "claude-code": cap({
         stdout: claude.envelope({ subtype: "error_during_execution", is_error: true, result: "" }),
@@ -371,6 +387,7 @@ const SITUATIONS: Situation[] = [
   {
     name: "the tool stopped at its own turn ceiling",
     expected: { scored: true, failure: "turn_limit" },
+    terminal: "incomplete",
     captures: {
       "claude-code": cap({
         stdout: claude.envelope({ subtype: "error_max_turns", is_error: true, result: "" }),
@@ -394,6 +411,7 @@ const SITUATIONS: Situation[] = [
   {
     name: "the tool stopped at its own dollar ceiling",
     expected: { scored: true, failure: "budget_limit" },
+    terminal: "incomplete",
     captures: {
       "claude-code": cap({
         stdout: claude.envelope({ subtype: "error_max_budget_usd", is_error: true, result: "" }),
@@ -419,6 +437,7 @@ const SITUATIONS: Situation[] = [
   {
     name: "a finished answer that talks about rate limits",
     expected: { scored: true },
+    terminal: "completed",
     claimed: true,
     captures: {
       "claude-code": cap({
@@ -453,6 +472,7 @@ const SITUATIONS: Situation[] = [
   {
     name: "a provider hiccup the tool recovered from, then finished",
     expected: { scored: true },
+    terminal: "completed",
     claimed: true,
     captures: {
       "claude-code": cap({
@@ -483,6 +503,7 @@ const SITUATIONS: Situation[] = [
     // The rig's own evidence of work: a tool that left no ledger but changed
     // the tree had reached the model, and its crash is its own.
     expected: { scored: true, failure: "unfinished" },
+    terminal: "crashed",
     rig: { workspaceTouched: true },
     captures: {
       "claude-code": SILENT_EXIT,
@@ -494,6 +515,7 @@ const SITUATIONS: Situation[] = [
   {
     name: "exited without a word, and nothing changed",
     expected: { scored: false, unscoredReason: "crash_before_first_call" },
+    terminal: "crashed",
     rig: { workspaceTouched: false },
     captures: {
       "claude-code": SILENT_EXIT,
@@ -505,6 +527,7 @@ const SITUATIONS: Situation[] = [
   {
     name: "the measured build changed under the run",
     expected: { scored: false, unscoredReason: "source_changed" },
+    terminal: "completed",
     claimed: true,
     rig: { sourceChanged: true },
     captures: FINISHED,
@@ -537,6 +560,11 @@ describe("one classifier: the same situation comes out the same for every arm", 
           arm,
           claimed: situation.claimed ?? false,
         });
+        // …and the ending is called the same thing, whichever tool it was.
+        expect({ arm, terminal: terminalOf({ ...parsed.signals, ...situation.rig }) }).toEqual({
+          arm,
+          terminal: situation.terminal,
+        });
       }
       // At least two tools can be in every situation, or it compares nothing.
       expect(verdicts.size).toBeGreaterThanOrEqual(2);
@@ -554,6 +582,97 @@ describe("one classifier: the same situation comes out the same for every arm", 
       (s) => typeof s.captures.rune !== "string" && typeof s.captures["claude-code"] !== "string",
     );
     expect(both.length).toBe(SITUATIONS.length - 2);
+  });
+});
+
+describe('an honest "not finished" is not a crash', () => {
+  const ended = (stopReason: string) =>
+    ARMS.rune.parse(
+      cap({
+        stdout: lines(
+          rune.usage,
+          rune.turn(stopReason),
+          rune.envelope(false, { stopReason, error: "the task is not finished." }),
+        ),
+        exitCode: 1,
+      }),
+    );
+
+  test("Rune's own named stop: it ended itself and said how", () => {
+    for (const reason of [
+      "open_steps",
+      "stalled",
+      "halted",
+      "loop_detected",
+      "barren",
+      "max_tokens",
+      "aborted",
+    ]) {
+      const parsed = ended(reason);
+      expect({ reason, selfStopped: parsed.signals.selfStopped }).toEqual({
+        reason,
+        selfStopped: reason,
+      });
+      expect(terminalOf(parsed.signals)).toBe("incomplete");
+      // Still the tool failing the task: the classifier is not asked anything new.
+      expect(classifyOutcome(parsed.signals)).toEqual({ scored: true, failure: "unfinished" });
+      expect(parsed.claimedSuccess).toBe(false);
+    }
+  });
+
+  test("its ceilings and the provider's loss keep the names they already had", () => {
+    for (const reason of ["max_turns", "budget"]) {
+      expect(ended(reason).signals.selfStopped).toBeUndefined();
+      expect(terminalOf(ended(reason).signals)).toBe("incomplete");
+    }
+    expect(ended("provider_lost").signals.selfStopped).toBeUndefined();
+    expect(terminalOf(ended("provider_lost").signals)).toBe("refused");
+    // A finished run names no stop.
+    const finished = ARMS.rune.parse(FINISHED.rune);
+    expect(finished.signals.selfStopped).toBeUndefined();
+    expect(terminalOf(finished.signals)).toBe("completed");
+    // The loop ended its turn and the run still failed: `end_turn` is not a stop.
+    const failedAfter = ended("end_turn");
+    expect(failedAfter.signals.selfStopped).toBeUndefined();
+    expect(terminalOf(failedAfter.signals)).toBe("crashed");
+  });
+
+  test("a thrown turn, a dead process and a rig kill did not SAY they were stopping", () => {
+    // An envelope holding only an error: the turn threw.
+    const thrown = ARMS.rune.parse(
+      cap({
+        stdout: lines(
+          rune.usage,
+          rune.envelope(false, { error: "TypeError: x is not a function" }),
+        ),
+        exitCode: 1,
+      }),
+    );
+    expect(thrown.signals.selfStopped).toBeUndefined();
+    expect(terminalOf(thrown.signals)).toBe("crashed");
+    // The stop is in the stream and the process died before its envelope.
+    const died = ARMS.rune.parse(
+      cap({ stdout: lines(rune.usage, rune.turn("stalled")), exitCode: 1 }),
+    );
+    expect(died.signals.selfStopped).toBeUndefined();
+    expect(terminalOf(died.signals)).toBe("crashed");
+    // The envelope names a stop, and the rig had already killed the tree.
+    const killed = ARMS.rune.parse(
+      cap({
+        stdout: lines(rune.usage, rune.envelope(false, { stopReason: "stalled", error: "x" })),
+        ...KILLED,
+      }),
+    );
+    expect(killed.signals.selfStopped).toBeUndefined();
+    expect(terminalOf(killed.signals)).toBe("stopped");
+    // The same three are what Claude Code's execution error is: a crash.
+    const claudeError = ARMS["claude-code"].parse(
+      cap({
+        stdout: claude.envelope({ subtype: "error_during_execution", is_error: true, result: "" }),
+        exitCode: 1,
+      }),
+    );
+    expect(terminalOf(claudeError.signals)).toBe("crashed");
   });
 });
 

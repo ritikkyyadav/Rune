@@ -38,6 +38,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
+import { PROVIDER_PRESETS } from "../../../../packages/shared/src/providers";
+import { resolveTier } from "../../../../packages/shared/src/tiers";
 import {
   fullestWindowPct,
   materialiseHarness,
@@ -77,6 +79,27 @@ export const RUNE_SOURCE_COMMAND: readonly string[] = [
 /** The route `runPilot` has always defaulted to. */
 export const RUNE_DEFAULT_PROVIDER = "codex";
 
+/**
+ * Every model Rune's shipped configuration names for a session on
+ * `provider`/`model`: the session's own, and the one each tier resolves to.
+ *
+ * Asked of the product's own resolver, under the parity profile's conditions —
+ * no `[tiers]` override, since each run gets a fresh config. The reviewer runs
+ * on the heavy tier and sub-agents on the light and standard ones, so a run
+ * that needed a review names a model a run that did not never calls. That is
+ * one configuration, not two. A model reached through a fallback chain is not
+ * in this list, and is still a difference.
+ */
+export function runeRoster(provider: string, model: string): string[] {
+  const known = new Set(PROVIDER_PRESETS.map((preset) => preset.id));
+  const tiers = (["heavy", "standard", "light"] as const).map((tier) =>
+    resolveTier(tier, undefined, provider, model, new Set([provider]), known),
+  );
+  return [
+    ...new Set([`${provider}/${model}`, ...tiers.map((ref) => `${ref.provider}/${ref.model}`)]),
+  ].sort();
+}
+
 /** Why a plan with no model is refused. */
 export const RUNE_NEEDS_MODEL =
   "The Rune arm needs a --model: it never runs a default it did not record.";
@@ -97,6 +120,7 @@ interface RuneEnvelope {
   text?: string;
   error?: string;
   stopReason?: string;
+  verdict?: { kind?: string };
   usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number };
 }
 
@@ -180,13 +204,44 @@ export function parseRuneOutput(
   if (!provider && stop === "provider_lost") provider = "outage";
 
   const reachedModel = ledger.entries > 0 || usageEvents > 0;
+  const incompleteVerdict =
+    envelope?.verdict?.kind === "unmet" || envelope?.verdict?.kind === "partial"
+      ? `completion_${envelope.verdict.kind}`
+      : undefined;
+  // A legacy headless envelope can claim ok:true despite an unmet verdict.
+  // A separate terminal error still takes precedence over the verdict.
+  const verdictError = incompleteVerdict
+    ? `The task is ${envelope!.verdict!.kind}; the completion criteria were not all satisfied.`
+    : undefined;
+  const honestCompletionStop =
+    envelope?.stopReason === "end_turn" &&
+    incompleteVerdict !== undefined &&
+    (envelope.error === undefined || envelope.error === verdictError);
+  // An honest "not finished": the envelope is there, says not-ok, and names how
+  // the loop ended. A thrown turn has an envelope and no stop reason; a dead
+  // process has no envelope. Neither is a report of stopping.
+  const selfStopped =
+    !capture.stopped &&
+    envelope !== undefined &&
+    (envelope?.ok === false || honestCompletionStop) &&
+    typeof envelope.stopReason === "string" &&
+    envelope.stopReason !== "provider_lost" &&
+    !RUNE_LIMIT_STOPS[envelope.stopReason]
+      ? envelope.stopReason === "end_turn"
+        ? honestCompletionStop
+          ? incompleteVerdict
+          : undefined
+        : envelope.stopReason
+      : undefined;
   const signals: OutcomeSignals = {
     ...(capture.stopped ? { stopped: capture.stopped } : {}),
     exitCode: capture.exitCode,
-    claimedSuccess: !capture.stopped && capture.exitCode === 0 && envelope?.ok === true,
+    claimedSuccess:
+      !capture.stopped && capture.exitCode === 0 && envelope?.ok === true && !incompleteVerdict,
     reachedModel,
     ...(provider ? { provider } : {}),
     ...(stop && RUNE_LIMIT_STOPS[stop] ? { toolLimit: RUNE_LIMIT_STOPS[stop] } : {}),
+    ...(selfStopped ? { selfStopped } : {}),
     ...(extra.sourceChanged ? { sourceChanged: true } : {}),
   };
   const usage: ArmUsage | null = envelope?.usage
@@ -205,7 +260,7 @@ export function parseRuneOutput(
         ? "no envelope on stdout"
         : "no envelope; exited non-zero"
       : envelope.ok
-        ? undefined
+        ? incompleteVerdict
         : (stop ?? "error");
   return judged(signals, {
     resultText: typeof envelope?.text === "string" ? envelope.text : null,
@@ -257,6 +312,7 @@ export function buildFingerprint(command: readonly string[]): string {
 export const runeArm: ComparatorArm = {
   name: "rune",
   version: (limits) => probeVersion(limits ? commandOf(limits) : [...RUNE_SOURCE_COMMAND]),
+  roster: (spec) => runeRoster(spec.provider ?? RUNE_DEFAULT_PROVIDER, spec.model),
   plan(task, dir, limits): ArmPlan {
     const planned = harnessPlan(task, dir, limits);
     return {

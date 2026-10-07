@@ -1,0 +1,209 @@
+{
+  "schema": "rune-parity-efficiency-20261007@1",
+  "head": "c8410316b4d3a1315f4e42cfe8d625fcc800b576",
+  "dirty": true,
+  "implementation": [
+    "headless unmet/partial verdicts fail process and JSON status",
+    "consolidated repeated system instructions",
+    "per-attempt cost and latency reporting"
+  ],
+  "promptBefore": {
+    "doctrineFull": {
+      "bytes": 31428,
+      "tokens": 7807
+    },
+    "doctrineMinimal": {
+      "bytes": 23683,
+      "tokens": 5883
+    },
+    "doctrineSource": {
+      "bytes": 31428,
+      "tokens": 7807
+    },
+    "bookkeepingTools": [
+      {
+        "name": "read_back",
+        "description": {
+          "bytes": 620,
+          "tokens": 154
+        },
+        "schema": {
+          "bytes": 1839,
+          "tokens": 458
+        }
+      },
+      {
+        "name": "record_evidence",
+        "description": {
+          "bytes": 837,
+          "tokens": 211
+        },
+        "schema": {
+          "bytes": 1488,
+          "tokens": 372
+        }
+      },
+      {
+        "name": "todo_write",
+        "description": {
+          "bytes": 978,
+          "tokens": 244
+        },
+        "schema": {
+          "bytes": 2516,
+          "tokens": 629
+        }
+      },
+      {
+        "name": "note_hypothesis",
+        "description": {
+          "bytes": 529,
+          "tokens": 134
+        },
+        "schema": {
+          "bytes": 1542,
+          "tokens": 385
+        }
+      },
+      {
+        "name": "record_decision",
+        "description": {
+          "bytes": 356,
+          "tokens": 89
+        },
+        "schema": {
+          "bytes": 1082,
+          "tokens": 271
+        }
+      }
+    ],
+    "bookkeepingDescriptionBytes": 3320
+  },
+  "promptAfter": {
+    "doctrineFull": {
+      "bytes": 21711,
+      "tokens": 5402
+    },
+    "doctrineMinimal": {
+      "bytes": 13966,
+      "tokens": 3478
+    },
+    "doctrineSource": {
+      "bytes": 21711,
+      "tokens": 5402
+    },
+    "bookkeepingTools": [
+      {
+        "name": "read_back",
+        "description": {
+          "bytes": 620,
+          "tokens": 154
+        },
+        "schema": {
+          "bytes": 1839,
+          "tokens": 458
+        }
+      },
+      {
+        "name": "record_evidence",
+        "description": {
+          "bytes": 837,
+          "tokens": 211
+        },
+        "schema": {
+          "bytes": 1488,
+          "tokens": 372
+        }
+      },
+      {
+        "name": "todo_write",
+        "description": {
+          "bytes": 978,
+          "tokens": 244
+        },
+        "schema": {
+          "bytes": 2516,
+          "tokens": 629
+        }
+      },
+      {
+        "name": "note_hypothesis",
+        "description": {
+          "bytes": 529,
+          "tokens": 134
+        },
+        "schema": {
+          "bytes": 1542,
+          "tokens": 385
+        }
+      },
+      {
+        "name": "record_decision",
+        "description": {
+          "bytes": 356,
+          "tokens": 89
+        },
+        "schema": {
+          "bytes": 1082,
+          "tokens": 271
+        }
+      }
+    ],
+    "bookkeepingDescriptionBytes": 3320
+  },
+  "easyTaskBefore": {
+    "requests": 4,
+    "roles": ["primary", "primary", "primary", "primary"],
+    "tools": ["read_file", "write_file", "bash"],
+    "bookkeepingCalls": 0,
+    "harnessTurns": [],
+    "notices": [],
+    "verification": ["passed"],
+    "stopReason": "end_turn",
+    "testExit": 0,
+    "systemBytes": 23983,
+    "toolSchemaBytes": 19502,
+    "toolCount": 17,
+    "completionsBeyondTheWork": 0
+  },
+  "easyTaskAfter": {
+    "requests": 4,
+    "roles": ["primary", "primary", "primary", "primary"],
+    "tools": ["read_file", "write_file", "bash"],
+    "bookkeepingCalls": 0,
+    "harnessTurns": [],
+    "notices": [],
+    "verification": ["passed"],
+    "stopReason": "end_turn",
+    "testExit": 0,
+    "systemBytes": 15030,
+    "toolSchemaBytes": 19502,
+    "toolCount": 17,
+    "completionsBeyondTheWork": 0
+  },
+  "systemBytesReductionPct": 37.33,
+  "claudeReview": {
+    "model": "sonnet",
+    "effort": "medium",
+    "turns": 1,
+    "estimatedListUsd": 0.031624,
+    "decision": "Receipt reuse deferred: whole-workspace/environment identity absent and focused checks cannot substitute for full suite."
+  },
+  "notEstablished": [
+    "live token-cost reduction",
+    "direct Claude Code parity",
+    "all-family OpenCode parity"
+  ],
+  "stagedArtifacts": {
+    "rune-compiled": "328d0a2eb211fb8ca583462f35b6abb9ef4c3cb5ce88ff4fd945c7b9cf46a800",
+    "rune-tools": "5fe016a796b60caaf11bca9b633388aa19d1f4f7f495e5cd5406dc07755220b3"
+  },
+  "amendedAfter": {
+    "on": "2026-10-07",
+    "what": "the first implementation item was narrowed before release",
+    "was": "headless unmet/partial verdicts fail process and JSON status",
+    "is": "a partial or unmet verdict fails the process and the JSON status only when the run stated criteria and changed files, or was held to a criterion from outside the run",
+    "why": "as first written a plain greeting, a fresh install's first prompt and the pull-request review all exited 1: each ends unmet with no criteria stated, by construction. Two integration tests had been changed to expect that; they were put back.",
+    "record": "docs/program/rune-parity-progress-ledger.md"
+  }
+}
