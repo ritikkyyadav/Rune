@@ -11,6 +11,11 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+## [1.3.3] - 2026-10-07
+
+**The rule for whose failure it is holds in CI and on Windows, and the tests have now run on all
+three systems.** A patch on 1.3.2. Full notes: [`docs/releases/v1.3.3.md`](docs/releases/v1.3.3.md).
+
 ### Fixed
 
 - **A failing test in a file the run edited is the run's, in GitHub Actions and on Windows too.**
@@ -826,7 +831,9 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.3.3...HEAD
+[1.3.3]: https://github.com/ritikkyyadav/Rune/compare/v1.3.2...v1.3.3
+[1.3.2]: https://github.com/ritikkyyadav/Rune/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/ritikkyyadav/Rune/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/ritikkyyadav/Rune/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/ritikkyyadav/Rune/compare/v0.1.1...v1.2.0
