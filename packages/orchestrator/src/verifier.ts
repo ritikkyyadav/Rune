@@ -31,12 +31,14 @@
 import { execFile, execFileSync } from "child_process";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "fs";
 import { lstat, rm, rmdir, unlink } from "fs/promises";
 import { homedir, tmpdir } from "os";
@@ -135,6 +137,12 @@ export interface CheckRunRecord {
   skipped?: string;
   /** The command was killed at its deadline. It measured nothing. */
   timedOut?: boolean;
+  /**
+   * With `timedOut`: the command was not started this time, because it had
+   * already failed to finish within this limit, here, recently. Nothing was
+   * measured — and nobody waited for nothing a second time.
+   */
+  notStarted?: boolean;
   /** The run was cancelled while this command was executing. It measured nothing. */
   cancelled?: boolean;
 }
@@ -404,6 +412,13 @@ export interface CommandVerifierConfig {
    * builds is always left.
    */
   keepGenerated?: boolean;
+  /**
+   * Where the checks that did not finish are remembered between sessions
+   * (`<rune home>/verify-slow.json`). Absent: remembered for this session only.
+   */
+  slowChecksPath?: string;
+  /** The clock, for tests. Defaults to `Date.now`. */
+  now?: () => number;
   /**
    * When this session began, in epoch ms. A file the working tree shows as
    * changed but whose inode has not changed since then was dirty before the
@@ -1610,9 +1625,200 @@ function fileScopedCheck(
   return null;
 }
 
+// ─── A check that cannot finish ───
+//
+// Measured 2026-10-07: on two of three live runs the project's whole test suite
+// was started at the end of the turn, killed at the 120 s limit, and reported
+// as "nothing was measured". Two minutes of every such turn bought nothing —
+// and on a project whose suite takes longer than the limit, that is every
+// turn. Two things follow, and neither weakens what a check means:
+//
+//   1. A command that did not finish is REMEMBERED, for this workspace, for a
+//      day. Once it has failed to finish TWICE IN A ROW it is not started
+//      again under the same limit: the result is the same "did not finish,
+//      nothing measured", without the wait. Twice, because once can be the
+//      machine — asleep, or busy with something else — and a suite skipped
+//      for a day on one bad run is a check quietly taken away. Raising
+//      `[verify] timeoutSecs` above the limit it failed under, or a day
+//      passing, runs it again; finishing once forgets it.
+//   2. When the command that did not finish is the test suite, the test files
+//      the change itself touched are run on their own. That is a real
+//      measurement where there was none: green is written down as green for
+//      those files, and red is a red check like any other. The suite as a
+//      whole is still reported as not finished — a part passing is not the
+//      whole passing.
+
+/** How long a recorded "did not finish" is believed. */
+const SLOW_TRUST_MS = 24 * 60 * 60 * 1000;
+/** How many times in a row before it is believed at all. */
+const SLOW_TIMES = 2;
+/** The touched tests get their own, shorter clock. */
+const TOUCHED_TESTS_TIMEOUT_MS = 60_000;
+const SLOW_ENTRIES_CAP = 200;
+
+interface SlowEntry {
+  /** When it last failed to finish, epoch ms. */
+  at: number;
+  /** The limit it failed to finish under. */
+  limitMs: number;
+  /** How many times in a row it has failed to finish. Absent on old rows: 1. */
+  times?: number;
+}
+
+function readSlow(path: string | undefined): Map<string, SlowEntry> {
+  const out = new Map<string, SlowEntry>();
+  if (!path) return out;
+  try {
+    const raw = JSON.parse(readFileSync(path, "utf8")) as {
+      version?: number;
+      entries?: Record<string, SlowEntry>;
+    };
+    if (raw.version !== 1 || !raw.entries) return out;
+    for (const [key, entry] of Object.entries(raw.entries)) {
+      if (typeof entry?.at === "number" && typeof entry?.limitMs === "number") out.set(key, entry);
+    }
+  } catch {
+    // Missing, unreadable or not ours: nothing is remembered, which is safe.
+  }
+  return out;
+}
+
+function writeSlow(path: string | undefined, entries: Map<string, SlowEntry>): void {
+  if (!path) return;
+  try {
+    const newest = [...entries.entries()]
+      .sort((a, b) => b[1].at - a[1].at)
+      .slice(0, SLOW_ENTRIES_CAP);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify({ version: 1, entries: Object.fromEntries(newest) }));
+  } catch {
+    // A memory that cannot be kept costs a wait next time, never a wrong answer.
+  }
+}
+
+const TEST_FILE = /(?:^|\/)(?:[^/]+\.(?:test|spec)\.[cm]?[jt]sx?|__tests__\/[^/]+\.[cm]?[jt]sx?)$/;
+/** Runners whose file arguments are not known here to mean "run exactly these". */
+const OTHER_RUNNER = /\b(?:vitest|jest|mocha|ava|playwright|cypress|karma|tap)\b/;
+
+/** Whether this check's suite is run by `bun test`, by its own words. */
+function runsBunTest(workspaceRoot: string, check: DetectedCheck): boolean {
+  const direct = /(?:^|&&|;)\s*bun test\b/;
+  if (OTHER_RUNNER.test(check.command)) return false;
+  if (direct.test(check.command)) return true;
+  const script = check.command.match(/^(?:bun|npm|pnpm|yarn)(?: run)? ([\w:.-]+)$/)?.[1];
+  if (!script) return false;
+  try {
+    const manifest = JSON.parse(
+      readFileSync(join(workspaceRoot, check.project, "package.json"), "utf8"),
+    ) as { scripts?: Record<string, string> };
+    const body = manifest.scripts?.[script] ?? "";
+    return direct.test(body) && !OTHER_RUNNER.test(body);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The test files this change touched, as one command — for a suite that did
+ * not finish. `null` when the suite is not one whose runner is known to take
+ * file paths (only `bun test` is, today), or the change touched no test file.
+ */
+function touchedTestsCheck(
+  workspaceRoot: string,
+  check: DetectedCheck,
+  touched: readonly string[],
+): DetectedCheck | null {
+  if (check.kind !== "test" || check.ecosystem !== "js") return null;
+  if (!runsBunTest(workspaceRoot, check)) return null;
+  const prefix = check.project === "" ? "" : `${check.project}/`;
+  const files = [
+    ...new Set(
+      touched
+        .map((t) => t.replace(/^\.\//, "").replace(/\\/g, "/"))
+        .filter((f) => f.startsWith(prefix))
+        .map((f) => f.slice(prefix.length))
+        .filter((f) => TEST_FILE.test(f) && existsSync(join(workspaceRoot, check.project, f))),
+    ),
+  ].slice(0, 20);
+  if (files.length === 0) return null;
+  const quote = (f: string) => `'${f.replace(/'/g, "'\\''")}'`;
+  // `./`: a bare argument is a FILTER to Bun, and would match other files too.
+  const command = `bun test ${files.map((f) => quote(`./${f}`)).join(" ")}`;
+  return {
+    ecosystem: "js",
+    kind: "test",
+    project: check.project,
+    command: check.project === "" ? command : `cd ${quote(check.project)} && ${command}`,
+  };
+}
+
+/** A limit as a person set it: whole seconds, or milliseconds below one. */
+const span = (ms: number): string => (ms >= 1000 ? `${Math.round(ms / 1000)}s` : `${ms}ms`);
+
+const ago = (ms: number): string => {
+  const minutes = Math.max(0, Math.round(ms / 60_000));
+  if (minutes < 1) return "moments ago";
+  if (minutes < 90) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.round(minutes / 60);
+  return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+};
+
 // ─── CommandVerifier ───
 
 export class CommandVerifier implements Verifier {
+  /** Checks that did not finish here, by workspace and command. */
+  private slow: Map<string, SlowEntry> | null = null;
+
+  private clock(): number {
+    return this.config.now?.() ?? Date.now();
+  }
+
+  private slowEntries(): Map<string, SlowEntry> {
+    this.slow ??= readSlow(this.config.slowChecksPath);
+    return this.slow;
+  }
+
+  private slowKey(command: string): string {
+    return `${this.config.workspaceRoot}\0${command}`;
+  }
+
+  /** The record that says not to start this command, if one still holds. */
+  private knownNotToFinish(command: string, timeoutMs: number): SlowEntry | null {
+    const entry = this.slowEntries().get(this.slowKey(command));
+    if (!entry) return null;
+    // Under a longer limit than the one it failed, it has not been tried.
+    if (entry.limitMs < timeoutMs) return null;
+    if (this.clock() - entry.at >= SLOW_TRUST_MS) return null;
+    if ((entry.times ?? 1) < SLOW_TIMES) return null;
+    return entry;
+  }
+
+  private rememberDidNotFinish(command: string, timeoutMs: number): void {
+    // Read again first: another session may have written since this one read.
+    const entries = readSlow(this.config.slowChecksPath);
+    for (const [key, entry] of this.slowEntries()) if (!entries.has(key)) entries.set(key, entry);
+    const key = this.slowKey(command);
+    const before = entries.get(key);
+    entries.set(key, {
+      at: this.clock(),
+      // The longest limit it is known not to finish under.
+      limitMs: Math.max(timeoutMs, before?.limitMs ?? 0),
+      times: (before?.times ?? 0) + 1,
+    });
+    this.slow = entries;
+    writeSlow(this.config.slowChecksPath, entries);
+  }
+
+  private forgetDidNotFinish(command: string): void {
+    const key = this.slowKey(command);
+    if (!this.slowEntries().has(key)) return;
+    const entries = readSlow(this.config.slowChecksPath);
+    for (const [k, entry] of this.slowEntries()) if (!entries.has(k)) entries.set(k, entry);
+    entries.delete(key);
+    this.slow = entries;
+    writeSlow(this.config.slowChecksPath, entries);
+  }
+
   private overridden(): string[] | null {
     return this.config.commands && this.config.commands.length > 0 ? this.config.commands : null;
   }
@@ -1927,7 +2133,13 @@ export class CommandVerifier implements Verifier {
     }
     const timeoutMs = this.config.timeoutMs ?? 120_000;
     const failure: { failed?: { check: DetectedCheck; output: string } } = {};
-    const result = await this.run(checks, timeoutMs, signal, failure);
+    const result = await this.run(
+      checks,
+      timeoutMs,
+      signal,
+      failure,
+      relativizeTouched(this.config.workspaceRoot, touched ?? []),
+    );
     if (result.status !== "failed" || !failure.failed) return { ...result, selection };
     // A real failure. Before it is handed back as the run's to repair: were
     // these tests already failing where the run started?
@@ -2005,6 +2217,8 @@ export class CommandVerifier implements Verifier {
     signal?: AbortSignal,
     /** Filled with the check that went red and everything it printed. */
     failure?: { failed?: { check: DetectedCheck; output: string } },
+    /** What the change wrote, workspace-relative: which tests to fall back to. */
+    touched: readonly string[] = [],
   ): Promise<VerifyResult> {
     if (checks.length === 0) {
       // Word this as the finding it is: after a session that WROTE files,
@@ -2029,7 +2243,7 @@ export class CommandVerifier implements Verifier {
     let result: VerifyResult;
     let removed: string[];
     try {
-      result = await this.runChecks(checks, timeoutMs, signal, failure);
+      result = await this.runChecks(checks, timeoutMs, signal, failure, touched);
     } finally {
       removed = await removeGenerated(root, before);
     }
@@ -2041,6 +2255,7 @@ export class CommandVerifier implements Verifier {
     timeoutMs: number,
     signal?: AbortSignal,
     failure?: { failed?: { check: DetectedCheck; output: string } },
+    touched: readonly string[] = [],
   ): Promise<VerifyResult> {
     const reports: string[] = [];
     const runs: CheckRunRecord[] = [];
@@ -2073,12 +2288,91 @@ export class CommandVerifier implements Verifier {
       reports.push("[cancelled — the remaining checks did not run]");
       return settle({ status: "inconclusive", reason: "cancelled" }, runs, report());
     };
+    /**
+     * `check` did not finish. If it is the suite, measure what can be measured
+     * in its place — the test files this change touched — and say which is
+     * which. The pass as a whole is still unfinished unless those went red.
+     */
+    const unfinished = async (check: DetectedCheck): Promise<VerifyResult> => {
+      const inconclusive = (): VerifyResult =>
+        settle({ status: "inconclusive", reason: "timeout" }, runs, report());
+      const scoped = touchedTestsCheck(this.config.workspaceRoot, check, touched);
+      if (!scoped) return inconclusive();
+      if (signal?.aborted) return cancelled();
+      const limit = Math.min(timeoutMs, TOUCHED_TESTS_TIMEOUT_MS);
+      const ran = await runCommand(
+        scoped.command,
+        this.config.workspaceRoot,
+        limit,
+        signal,
+        generatedStateEnv(
+          join(this.config.workspaceRoot, scoped.project),
+          scoped.ecosystem,
+          process.env,
+          () => this.cacheDir(),
+        ),
+      );
+      const base = {
+        command: scoped.command,
+        ecosystem: scoped.ecosystem,
+        kind: scoped.kind,
+        durationMs: ran.durationMs,
+      };
+      const lead = "The test files this change touched, run in its place:\n";
+      if (signal?.aborted) {
+        note({ ...base, exitCode: null, passed: false, cancelled: true });
+        reports.push(`${lead}$ ${scoped.command}\n[cancelled]`);
+        return cancelled();
+      }
+      if (ran.timedOut) {
+        note({ ...base, exitCode: null, passed: false, timedOut: true });
+        reports.push(
+          `${lead}$ ${scoped.command}\n[timed out after ${limit}ms — nothing was measured]`,
+        );
+        return inconclusive();
+      }
+      if (ran.exitCode !== 0) {
+        if (missingToolchain(scoped.command, ran.exitCode, ran.output)) return inconclusive();
+        note({ ...base, exitCode: ran.exitCode, passed: false });
+        reports.push(
+          `${lead}$ ${scoped.command}  (exit ${ran.exitCode})\n${truncate(ran.output, 2000)}`,
+        );
+        if (failure) failure.failed = { check: scoped, output: ran.output };
+        return settle({ status: "failed" }, runs, report());
+      }
+      note({ ...base, exitCode: ran.exitCode, passed: true });
+      reports.push(
+        `${lead}$ ${scoped.command}  (ok)\n` +
+          "[those files pass; the suite as a whole was not measured]",
+      );
+      return inconclusive();
+    };
 
     for (const check of checks) {
       // Cancelled between two checks. The ones before this point may all be
       // green; the set as a whole was not finished, so it is not a pass.
       if (signal?.aborted) return cancelled();
       const cmd = check.command;
+      // It did not finish under this limit, here, within the day: the answer
+      // would be the same, so the wait is not taken again.
+      const known = this.knownNotToFinish(cmd, timeoutMs);
+      if (known) {
+        note({
+          command: cmd,
+          ecosystem: check.ecosystem,
+          kind: check.kind,
+          durationMs: 0,
+          exitCode: null,
+          passed: false,
+          timedOut: true,
+          notStarted: true,
+        });
+        reports.push(
+          `$ ${cmd}\n[not started — it did not finish in ${span(known.limitMs)} when it last ran here, ` +
+            `${ago(this.clock() - known.at)}; nothing was measured. \`[verify] timeoutSecs\` sets the limit.]`,
+        );
+        return unfinished(check);
+      }
       const { exitCode, output, timedOut, durationMs } = await runCommand(
         cmd,
         this.config.workspaceRoot,
@@ -2106,8 +2400,11 @@ export class CommandVerifier implements Verifier {
       if (timedOut) {
         note({ ...base, exitCode: null, passed: false, timedOut: true });
         reports.push(`$ ${cmd}\n[timed out after ${timeoutMs}ms — nothing was measured]`);
-        return settle({ status: "inconclusive", reason: "timeout" }, runs, report());
+        this.rememberDidNotFinish(cmd, timeoutMs);
+        return unfinished(check);
       }
+      // It finished, whatever it said: it is not a check that cannot.
+      this.forgetDidNotFinish(cmd);
       if (exitCode !== 0) {
         const absent = missingToolchain(cmd, exitCode, output);
         if (absent) {

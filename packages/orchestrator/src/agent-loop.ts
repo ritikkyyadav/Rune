@@ -3870,7 +3870,21 @@ export class AgentLoop {
                 return;
               }
               if (outcome.reason === "timeout") {
-                const undone = (result.runs ?? []).find((r) => r.timedOut)?.command;
+                const ran = result.runs ?? [];
+                const undoneRun = ran.find((r) => r.timedOut);
+                const undone = undoneRun?.command;
+                // What was measured in its place, if anything was: the test
+                // files this change touched (see `touchedTestsCheck`).
+                const inPlace = undoneRun
+                  ? ran
+                      .slice(ran.indexOf(undoneRun) + 1)
+                      .find((r) => r.passed && !r.skipped && !r.timedOut && !r.cancelled)
+                  : undefined;
+                // The test files this change touched were run, here, after the
+                // last write, and pass. "You never executed anything to prove
+                // it works" would be false, and the turn it buys would be spent
+                // running the same files again.
+                if (inPlace) executedSinceWrite = true;
                 this.report(
                   "loop.verification_inconclusive",
                   "warn",
@@ -3881,8 +3895,14 @@ export class AgentLoop {
                 yield {
                   type: "notice",
                   message:
-                    "A project check hit its time limit before finishing. Nothing was " +
-                    "measured — the work is unverified by that check, not failed by it.",
+                    (undoneRun?.notStarted
+                      ? "A project check was not started: it did not finish within its time limit " +
+                        "when it last ran here. "
+                      : "A project check hit its time limit before finishing. ") +
+                    "Nothing was measured — the work is unverified by that check, not failed by it." +
+                    (inPlace
+                      ? " The test files this change touched were run in its place, and pass."
+                      : ""),
                 };
               }
             }

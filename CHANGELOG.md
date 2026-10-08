@@ -11,6 +11,21 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+### Changed
+
+- **A check that cannot finish stops being waited for, and the tests a change touched are run in
+  its place.** A check command killed at its time limit measured nothing, and on a project whose
+  suite takes longer than the limit that was two minutes at the end of every turn. A command that
+  fails to finish twice in a row is now remembered for the workspace for a day and not started
+  again under the same limit; the report says `not started` and when it last ran. Raising
+  `[verify] timeoutSecs`, a day passing, or the command finishing once runs it again. When it is a
+  `bun test` suite that did not finish, the test files the change itself wrote are run on their
+  own: green is recorded for those files, red is a failed check like any other, and the
+  verification as a whole is still reported as unfinished. Rune also no longer tells the agent it
+  "never executed anything" when it has just run those files itself. Measured through three real
+  runs on a project whose suite cannot finish in a four-second limit: 6.8 s, 4.7 s, then 0.6 s.
+  See [`docs/verification.md`](docs/verification.md).
+
 ## [1.3.4] - 2026-10-08
 
 **A failure that was already there is left alone in a real project, which 1.3.2 promised and

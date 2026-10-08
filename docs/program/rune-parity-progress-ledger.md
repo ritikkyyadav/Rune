@@ -2149,3 +2149,64 @@ background review leaving no row. None of the fixes was measured in a live run.
 
 **Next step.** Stage A continues: A1–A3, then A5. This entry is committed locally and
 goes out with the next push.
+
+## A1 and A2: a check that cannot finish, 2026-10-08 · **built and gated on this Mac; committed locally**
+
+**The demonstrated problem.** On two of the three live runs the end-of-turn check
+started the project's whole suite, killed it at 120 s, and reported that nothing was
+measured: 244 s of 1,382 s. On a project whose suite takes longer than the limit that
+is every turn; Rune's own repository is one (its unit suite takes about 200 s here).
+
+**What changed** (`verifier.ts`, `agent-loop.ts`, `engine.ts`).
+
+- **A command that fails to finish twice in a row is not started a third time**, for
+  that workspace, under that limit, for a day. The answer is the same "did not finish,
+  nothing measured", without the wait; the report says `not started` and when it last
+  ran. Twice, because once can be the machine. A longer `[verify] timeoutSecs`, a day
+  passing, or finishing once runs it again. Kept in the Rune home
+  (`verify-slow.json`), never in the workspace.
+- **When it is a `bun test` suite, the test files the change wrote are run in its
+  place**, with a minute to finish. Green is a recorded passing check for those files.
+  Red is a failed check like any other and is handed back. The verification as a whole
+  stays `inconclusive`.
+- **The finish gate counts that run.** With those files run and green, the agent is no
+  longer told it "never executed anything" and sent to run them again.
+- The notice says which happened: hit its limit, or not started; and whether the
+  touched tests ran in its place.
+
+**What it does not do, on purpose.** It never calls an unfinished suite passed. It does
+not shorten any limit. It does not guess file arguments for vitest, jest or any runner
+but `bun test`, and it does not replace a check that is not the test suite.
+
+**Verification, exact.**
+
+- `verifier-slow-check.test.ts`, new: 9 pass. `verification-inconclusive.test.ts`:
+  32 pass. Nine related verifier and loop files together: 330 pass, 0 fail, run again
+  after the two-in-a-row rule was added.
+- Mutations: 12 on the memory and the fallback, 3 on the notice, 2 on the gate, then 6
+  after the two-in-a-row rule (3 new, 3 repeated). All caught; one on the notice
+  survived a first pass and an assertion was added.
+- **End to end, zero spend:** three real `rune -P` runs with the mock model on a
+  project whose suite cannot finish in a four-second limit, one Rune home between
+  them. 6.8 s and 4.7 s (waited, touched test run and green), then 0.6 s (not
+  started, touched test run and green). The workspace held the run's edit and nothing
+  else.
+- Orchestrator type-check exit 0; format check clean on the changed files.
+- Not run: the full suites, Linux and Windows. Not measured live.
+
+**What it will and will not move.** A first run in a fresh workspace still waits the
+limit once, and a benchmark task is always that; so the three kept tasks would not get
+faster from this. What they would get is a measurement where there was none. A person
+working on one project stops paying two minutes a turn after the second.
+
+**A5 is not what it looked like.** The generated files Rune left behind on two runs
+were made by commands the agent itself ran, not by the check. Rune removes what its
+own checks generate and, by the founder's decision of 2026-10-05, nothing else.
+Removing what the agent builds would delete output a person asked for. Left as it is;
+the scope loss on those runs stands.
+
+**A3 is still open.** The verdict that says "unmet: no criteria stated" on passing work
+is what the acceptance spec makes it say; the cases seen need a rule that does not
+weaken it.
+
+**Next step.** A3, then Stage B (the cached prefix that changes on calls 2–8).

@@ -147,6 +147,32 @@ ignored path in the same seconds: a watcher the run started, or a second agent
 working in the same tree. If either matters, or if the next check is much
 slower without the build it would have reused, set `keepGenerated = true`.
 
+## A check that cannot finish
+
+Every check command has `timeoutSecs` to finish in, 120 by default. One that is killed at
+that limit measured nothing: the verification is `inconclusive`, never failed and never
+passed, and no repair is asked for. Two things follow from it.
+
+**It is not waited for a third time.** A command that did not finish is remembered — for
+this workspace, for a day, under the limit it failed. Once it has failed to finish twice in
+a row it is not started again: the result is the same "did not finish, nothing measured",
+without the wait, and the report says `not started` and when it last ran. Twice, because
+once can be the machine — asleep, or busy — and a check should not be taken away for a day
+on one bad run. Raising `timeoutSecs` above the limit it failed under runs it again; so does
+a day passing; and a command that finishes once is forgotten. The record is kept in the Rune
+home (`verify-slow.json`), never in the workspace; deleting that file forgets everything. On
+a project whose suite takes longer than the limit this was two minutes at the end of every
+turn.
+
+**The tests the change touched are run in its place.** When the command that did not finish
+is the test suite, and the suite is run by `bun test`, the test files the change itself
+wrote are run on their own, with a minute to finish. Green is recorded as a passing check
+for those files; red is a failed check like any other, and is handed back to be repaired.
+The verification as a whole stays `inconclusive`: a part passing is not the whole passing.
+Nothing is run in its place when the change touched no test file, for a check that is not
+the test suite, or for a suite under another runner — vitest, jest and the rest take file
+arguments differently, and a guess there would be a red of Rune's own making.
+
 ## Configuration
 
 ```toml

@@ -2318,6 +2318,10 @@ export class Engine {
         timeoutMs: this.config.verifyTimeoutMs,
         ecosystems: this.config.verifyEcosystems,
         keepGenerated: this.config.verifyKeepGenerated,
+        // A check that did not finish here is not waited for again for a day.
+        // Kept in the Rune home, never in the workspace: it is this machine's
+        // knowledge about a project, not part of the project.
+        slowChecksPath: join(getRuneHome(), "verify-slow.json"),
         // One log, two sources: checks the model ran through `bash` and checks
         // the harness ran on its behalf both settle criteria now.
         onCheck: (run) =>

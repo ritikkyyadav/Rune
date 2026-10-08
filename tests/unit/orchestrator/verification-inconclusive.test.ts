@@ -320,6 +320,92 @@ describe.each(AUTHORITIES)("I1 — a check killed at its deadline (%s)", (_label
     );
   });
 
+  test("a check that was not started says so, and says what was measured in its place", async () => {
+    // The suite did not finish here earlier, so it is not waited for again;
+    // the test file the change touched was run and passes. Neither fact makes
+    // the verification a pass.
+    const scoped = "bun test './unit/a.test.ts'";
+    const notStarted: VerifyResult = {
+      status: "inconclusive",
+      reason: "timeout",
+      passed: false,
+      ran: false,
+      report:
+        "$ bun run test\n[not started — it did not finish in 120000ms when it last ran here, " +
+        `12 minutes ago; nothing was measured.]\n\n$ ${scoped}  (ok)`,
+      runs: [
+        {
+          command: "bun run test",
+          exitCode: null,
+          durationMs: 0,
+          passed: false,
+          timedOut: true,
+          notStarted: true,
+        },
+        { command: scoped, exitCode: 0, durationMs: 900, passed: true },
+      ],
+    };
+    const out = await runLoop({ script: WRITE_RUN_FINISH, authority, verifyResults: [notStarted] });
+    expect(out.repairs).toEqual([]);
+    expect(out.completed[0]!.status).toBe("inconclusive");
+    const notice = out.notices.find((n) => n.includes("unverified"))!;
+    expect(notice).toContain("was not started");
+    expect(notice).not.toContain("hit its time limit");
+    expect(notice).toContain("The test files this change touched were run in its place, and pass.");
+
+    // The state: still inconclusive, and the one command that measured
+    // something is on the record as what it was.
+    const state = out.taskState.snapshot();
+    expect(state.verification.status).toBe("inconclusive");
+    expect(out.taskState.renderBlock()).toContain("Verification: inconclusive");
+    expect(
+      (state.checks ?? []).filter((c) => c.source === "harness").map((c) => [c.command, c.passed]),
+    ).toEqual([[scoped, true]]);
+
+    // A real timeout with nothing in its place keeps the words it had.
+    const plain = await runLoop({ script: WRITE_RUN_FINISH, authority, verifyResults: [TIMEOUT] });
+    const said = plain.notices.find((n) => n.includes("unverified"))!;
+    expect(said).toContain("hit its time limit before finishing");
+    expect(said).not.toContain("in its place");
+    expect(said).not.toContain("was not started");
+
+    // A check that passed BEFORE the one that did not finish was not run in
+    // its place: a typecheck says nothing a test suite would have said.
+    const before = await runLoop({
+      script: WRITE_RUN_FINISH,
+      authority,
+      verifyResults: [PASS_THEN_TIMEOUT],
+    });
+    expect(before.notices.find((n) => n.includes("unverified"))).not.toContain("in its place");
+  });
+
+  test("tests run in its place count as something having been run since the last write", async () => {
+    // A run that wrote a file and ran nothing itself. With a check that did
+    // not finish and nothing in its place, the finish is refused once: nothing
+    // was executed. With the touched test file run by the harness, and green,
+    // something was — and the model is not sent to run it a second time.
+    const WRITE_FINISH: Step[] = [
+      { kind: "tool", tool: "write_file", args: { path: "unit/a.test.ts", content: "x" } },
+      { kind: "text", text: "done" },
+      { kind: "text", text: "done again" },
+    ];
+    const gate = (n: string) => n.startsWith("Execution-evidence gate");
+
+    const nothing = await runLoop({ script: WRITE_FINISH, authority, verifyResults: [TIMEOUT] });
+    expect(nothing.notices.filter(gate)).toHaveLength(1);
+
+    const scoped = "bun test './unit/a.test.ts'";
+    const inPlace: VerifyResult = {
+      ...TIMEOUT,
+      runs: [...TIMEOUT.runs!, { command: scoped, exitCode: 0, durationMs: 700, passed: true }],
+    };
+    const measured = await runLoop({ script: WRITE_FINISH, authority, verifyResults: [inPlace] });
+    expect(measured.notices.filter(gate)).toEqual([]);
+    expect(measured.stopReason).toBe("end_turn");
+    // Still not a pass.
+    expect(measured.completed[0]!.status).toBe("inconclusive");
+  });
+
   test("a pre-`status` verifier's timeout is read the same way", async () => {
     const out = await runLoop({
       script: WRITE_RUN_FINISH,
