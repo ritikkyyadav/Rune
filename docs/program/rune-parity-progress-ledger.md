@@ -2068,3 +2068,50 @@ first 1.6k characters of 360k, which was the first failure in file order.
 **Next step.** A zero-spend reproduction through a real `rune -P` process with the mock
 model replaying the first task's tool calls, to read `attributionUnknown`. Then Stage A
 in order: A4 (fix what it names), A1–A3, A5. No live run without the founder's word.
+
+## A4: a failure that predates the run, 2026-10-08 · **cause named and fixed; committed locally**
+
+**The cause.** The real-process reproduction (a real `rune -P`, the mock model
+replaying the first task's tool calls, no provider reachable) read the reason the
+previous card started recording: "something failed that the report does not name as a
+test". Bun closes a run of more than about twenty tests by listing the failures a
+second time, under "N tests failed:". `parseBunTestRun` counted those lines as two more
+failing tests, in whichever file ran last. Four failures against a total of two is a
+report the comparison refuses, so it never ran the starting tree and the agent was
+asked for a repair.
+
+**Its reach, measured with Bun 1.3.14.** The closing list appears at 22 tests and not
+at 21; with one test file as with forty; in an ordinary terminal and inside GitHub
+Actions; and **not** in an agent's shell, where Bun prints a shorter report. So in
+1.3.2 and 1.3.3 the rule "a failure that was already there is left alone" did not work
+for any real Bun suite outside an agent's shell. Every test of it passed here because
+this machine's tests run inside one, on fixtures of two files.
+
+**The fix.** `packages/orchestrator/src/check-failures.ts`: lines between a closing
+list's header and the next file's header are not read as tests.
+
+**Verification, exact.**
+
+- `verification-baseline.test.ts` 63 pass, 0 fail. Two new tests: Bun's own closing
+  list, verbatim; and thirty real test files through the real verifier with the report
+  a terminal gets. Three mutations, all caught, the first by both tests.
+- **End to end, zero spend:** the same real-process reproduction on the first task's
+  tree. Before the fix: "Verification failed — asking the agent to fix it. Whether
+  these failures were there before this run could not be told: something failed that
+  the report does not name as a test", then a second forced attempt. After: `preexisting:
+true`, "2 tests were already failing before it began … Nothing new failed. They were
+  left as found", no repair turn, and `package.json` untouched.
+- Orchestrator type-check exit 0; format check clean on the changed files.
+- Not run: the full suites, Linux and Windows, and Bun 1.4.2 (what CI installs).
+  Nothing is pushed.
+
+**What this is worth on the first task.** The repair it bought was 161 s and a second
+42 s check, of 449 s, and the call that re-paid 43k tokens. Not measured live.
+
+**Limitations.** Only Bun's report is read at all; a failing suite under another
+runner has always been "unknown". A test that prints a closing-list header of its own
+hides later failures in that same file only, and the result is then "unknown", never a
+wrong answer.
+
+**Next step.** A1–A3 (the 120 s wait that measures nothing, and the verdict that calls
+finished work unfinished), then A5.

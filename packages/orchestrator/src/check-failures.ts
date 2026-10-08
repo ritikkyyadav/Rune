@@ -51,6 +51,11 @@ const HEADER = /^bun test v\d/m;
 // `::group::unit/a.test.ts:` — and that prefix is not part of the file's name.
 const FILE = /^(?:::group::)?(\S(?:.*\S)?\.[cm]?[jt]sx?):$/;
 const FAIL = /^\(fail\) (.+?)(?: \[\d+(?:\.\d+)?ms\])?$/;
+// After a run of about twenty files or more, Bun lists the failures a second
+// time under "N tests failed:", just above the totals, with no file of their
+// own (and the skipped ones under "N tests skipped:"). Those lines are the
+// tests already read above, not more of them.
+const RECAP = /^\d+ tests? (?:failed|skipped|todo):$/;
 const OTHER_VERDICT = /^\((?:pass|skip|todo)\) /;
 const TIMEOUT_NOTE = /^\s*\^ (this test timed out after .+)$/;
 const WORDS = /^\s*(error:.*|Expected:.*|Received:.*)$/;
@@ -91,11 +96,24 @@ export function parseBunTestRun(
   const failing: FailingTest[] = [];
   let file = "";
   let words: string[] = [];
+  // Inside the closing recap. Counting its lines made every long red run
+  // read as four failures where the totals said two, which is "something
+  // failed that has no name" — so no failure in a real project's suite was
+  // ever recognised as one that had been there before (measured 2026-10-08).
+  let recap = false;
   const lines = output.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!.replace(/\r$/, "");
+    if (RECAP.test(line)) {
+      recap = true;
+      words = [];
+      continue;
+    }
     const header = line.match(FILE);
     if (header) {
+      // A file's own section: whatever printed a recap-shaped line before it
+      // was a test's output, not the runner closing.
+      recap = false;
       // One spelling for one file: `/`, as git and every changed-files list
       // here write it. On Windows the runner prints `unit\a.test.ts`, and a
       // name that matches nothing is a test in a file "nobody changed".
@@ -105,6 +123,7 @@ export function parseBunTestRun(
     }
     const failed = line.match(FAIL);
     if (failed) {
+      if (recap) continue;
       const after = lines[i + 1]?.match(TIMEOUT_NOTE);
       failing.push({
         file,

@@ -13,6 +13,16 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ### Fixed
 
+- **A failure that was already there is recognised in a real project's suite.** Since 1.3.2 Rune
+  leaves a failing test alone when it was already failing where the run started. For a Bun suite
+  of more than about twenty tests, read in an ordinary terminal or inside GitHub Actions, that
+  never happened. Bun closes such a run by listing its failures a second time ("2 tests failed:"),
+  Rune counted that list as more failures, and a report with more failures than its totals is one
+  Rune will not compare. The run was told its checks had failed and asked to repair tests it had
+  not touched; on 2026-10-07 one did, by rewriting the project's own `test` script. The closing
+  list is no longer counted. Runs from inside an agent's shell were not affected: Bun prints no
+  closing list there, which is why this passed every test until it was run through a real process.
+
 - **`rune upgrade` over a source install no longer leaves Rune telling you to rebuild.** A source
   install keeps a record of the commit it was built from, and the launcher warns when that checkout
   has moved on. `rune upgrade` replaced the binary and left the record, so every start said the

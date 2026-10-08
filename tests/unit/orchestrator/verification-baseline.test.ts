@@ -216,6 +216,73 @@ describe("parseBunTestRun", () => {
     expect(here.failing).toEqual(there.failing);
   });
 
+  test("the recap that closes a long run is not a second set of failures", () => {
+    // Bun 1.3.14, verbatim, from a run of more than twenty files: the failures
+    // are listed again under "N tests failed:", after the last file and with
+    // no file of their own. Read as tests, they made four failures where the
+    // totals said two — and a report whose failures outnumber its totals is
+    // one this refuses to compare.
+    const report = [
+      "bun test v1.3.14 (0d9b296a)",
+      "",
+      "unit/a.test.ts:",
+      "(pass) holds [0.05ms]",
+      "error: expect(received).toBe(expected)",
+      "",
+      "Expected: 2",
+      "Received: 1",
+      "",
+      "(fail) group > was never true [0.10ms]",
+      "",
+      "unit/b.test.ts:",
+      "error: expect(received).toBe(expected)",
+      "",
+      'Expected: "b"',
+      'Received: "a"',
+      "",
+      "(fail) also wrong [0.04ms]",
+      "",
+      "unit/z.test.ts:",
+      "(pass) fine [0.02ms]",
+      "(skip) later",
+      "",
+      "1 tests skipped:",
+      "(skip) later",
+      "",
+      "",
+      "2 tests failed:",
+      "(fail) group > was never true [0.10ms]",
+      "(fail) also wrong [0.04ms]",
+      "",
+      " 2 pass",
+      " 1 skip",
+      " 2 fail",
+      " 4 expect() calls",
+      "Ran 5 tests across 3 files. [31.00ms]",
+    ].join("\n");
+    const run = parseBunTestRun(report)!;
+    expect(run.failing.map((t) => `${t.file} :: ${t.name}`)).toEqual([
+      "unit/a.test.ts :: group > was never true",
+      "unit/b.test.ts :: also wrong",
+    ]);
+    expect(run.fail).toBe(2);
+    expect(attributable(run)).toBe(true);
+    // Each keeps its own words; the recap added none and took none.
+    expect(run.failing[0]!.signature).toContain("Expected: 2");
+    expect(run.failing[1]!.signature).toContain('Expected: "b"');
+
+    // A test that PRINTS a recap-shaped line does not hide the failures of the
+    // files after it: a file's header ends a recap.
+    const printed = report.replace(
+      "unit/b.test.ts:",
+      "3 tests failed:\n(fail) something a test printed\n\nunit/b.test.ts:",
+    );
+    expect(parseBunTestRun(printed)!.failing.map((t) => t.name)).toEqual([
+      "group > was never true",
+      "also wrong",
+    ]);
+  });
+
   test("a file that would not load is a failure with no name: not attributable", () => {
     const run = parseBunTestRun(UNLOADABLE)!;
     expect(run.errors).toBe(1);
@@ -530,6 +597,43 @@ describe("CommandVerifier — whose failures are these", () => {
       }
     }
   });
+
+  test.skipIf(!CLONES)(
+    "a suite long enough for Bun's closing recap: the old failure is still called old",
+    async () => {
+      // The shape a real project has, and the one no test here had: thirty
+      // files, read through the reporter a person's terminal gets. On
+      // 2026-10-07 a live run was asked to repair a test that was red before it
+      // began, because the recap had been counted as two more failures.
+      // `AGENT=0`: Bun prints a shorter report, with no recap, when it thinks
+      // an agent is reading.
+      const saved = { GITHUB_ACTIONS: process.env.GITHUB_ACTIONS, AGENT: process.env.AGENT };
+      delete process.env.GITHUB_ACTIONS;
+      process.env.AGENT = "0";
+      try {
+        const pad: Record<string, string> = {};
+        for (let i = 0; i < 28; i++) {
+          pad[`unit/pad-${String(i).padStart(2, "0")}.test.ts`] = T(
+            `pad ${i}`,
+            "expect(value).toBe(1);",
+          );
+        }
+        const root = project(pad);
+        const v = new CommandVerifier({ workspaceRoot: root });
+        v.beginChanges();
+        writeFileSync(join(root, "src/other.ts"), "export const other = 2;\n");
+        const r = await v.verify(undefined, [join(root, "src/other.ts")]);
+        expect(r.status).toBe("failed");
+        expect(known(r.attribution)).toEqual({ known: true, existing: [OLD], introduced: [] });
+      } finally {
+        for (const [name, value] of Object.entries(saved)) {
+          if (value === undefined) delete process.env[name];
+          else process.env[name] = value;
+        }
+      }
+    },
+    60_000,
+  );
 
   test("changed dependencies: no comparison is made", async () => {
     const root = project();
