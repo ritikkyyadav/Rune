@@ -87,7 +87,11 @@ function makeLoop(gateway: any, opts: Record<string, unknown> = {}) {
   return new AgentLoop(
     {
       model: "m",
-      provider: "codex",
+      // A host where a change of effort is free: measured not to cache at all.
+      // (These tests ran on "codex" until 2026-10-08, when it was measured that
+      // there a change of effort costs the whole prompt cache — see the last
+      // describe in this file.)
+      provider: "ollama-turbo",
       maxTokens: 100,
       maxTurns: 12,
       systemPrompt: "s",
@@ -167,5 +171,50 @@ describe("effort routing in the loop", () => {
     ]);
     await collect(makeLoop(gw, { effortRouting: undefined }).run("survey it", "s1", "/tmp"));
     expect(gw.efforts.every((e: string) => e === "max")).toBe(true);
+  });
+});
+
+// ─── Where a change of effort costs the cache ───
+//
+// Measured 2026-10-08 on Codex: two runs of one task, identical but for the
+// routing. With one effort throughout, the second request read 10,368 cached
+// tokens; with turn 1 at the ceiling and turn 2 a notch down, it read 0.
+describe("on a host where changing effort costs the cache, routing does not change it", () => {
+  test("every turn runs at the ceiling: turn 1, the ordinary ones, and after a failed check", async () => {
+    const gw = makeGateway([
+      { tools: [{ name: "read_file", args: { path: "a.ts" } }] },
+      { tools: [{ name: "write_file", args: { path: "a.ts", content: "x" } }] },
+      { text: "done" },
+      { tools: [{ name: "write_file", args: { path: "a.ts", content: "y" } }] },
+      { text: "fixed" },
+    ]);
+    let calls = 0;
+    const verifier = {
+      verify: async () => {
+        calls++;
+        return calls === 1
+          ? { status: "failed", passed: false, ran: true, report: "1 fail", runs: [] }
+          : { status: "passed", passed: true, ran: true, report: "ok", runs: [] };
+      },
+    };
+    await collect(
+      makeLoop(gw, { provider: "codex", verifier }).run(
+        "survey the module structure",
+        "s1",
+        "/tmp",
+      ),
+    );
+    expect(gw.efforts.length).toBeGreaterThanOrEqual(4);
+    expect(new Set(gw.efforts)).toEqual(new Set(["max"]));
+  });
+
+  test("the same run on a host where it is free still routes", async () => {
+    const gw = makeGateway([
+      { tools: [{ name: "read_file", args: { path: "a.ts" } }] },
+      { tools: [{ name: "read_file", args: { path: "b.ts" } }] },
+      { text: "done" },
+    ]);
+    await collect(makeLoop(gw).run("survey the module structure", "s1", "/tmp"));
+    expect(gw.efforts).toEqual(["max", "high", "high"]);
   });
 });

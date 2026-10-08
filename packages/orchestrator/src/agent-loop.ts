@@ -21,6 +21,7 @@ import type {
 import {
   measureComposition,
   cachesStablePrefix,
+  effortChangeCostsCache,
   foldsEphemeralTail,
   LlmGateway,
   BudgetExceededError,
@@ -3075,6 +3076,14 @@ export class AgentLoop {
           effort: ((): ReasoningEffort => {
             const ceiling = this.config.thinkingEffort ?? "high";
             if ((this.config.effortRouting ?? "off") !== "conservative") return ceiling;
+            // ── Where a change of effort costs the cache, there is no change ──
+            // Routing moves the effort at turn 2, back up at the first sign of
+            // difficulty, and down again when the checks pass. On Codex each
+            // of those moves is a request that reads nothing from the cache
+            // (`effortChangeCostsCache`, measured): 10k to 18k tokens paid for
+            // again in full, to save a notch of reasoning on the turns
+            // between. So there the ceiling is the effort of every turn.
+            if (effortChangeCostsCache(String(this.config.provider))) return ceiling;
             // Ceiling stays for: the planning turn, anything fix-shaped
             // (diagnosis must never be routed down), and everything after the
             // first difficulty latch.

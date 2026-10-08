@@ -14,6 +14,7 @@ import {
   cacheBreakpointPolicyFor,
   cachesStablePrefix,
   declaredCachePolicies,
+  effortChangeCostsCache,
   isAnthropicUpstream,
   promptCacheKey,
   type CacheBreakpointPolicy,
@@ -87,6 +88,15 @@ describe("whether changing the prefix costs a cache", () => {
     expect(cachesStablePrefix("ollama")).toBe(false);
     expect(cachesStablePrefix("custom")).toBe(false);
     expect(cachesStablePrefix("some-new-host")).toBe(false);
+  });
+});
+
+describe("whether changing reasoning effort costs a cache", () => {
+  test("Codex, measured; nobody else, until someone measures", () => {
+    expect(effortChangeCostsCache("codex")).toBe(true);
+    for (const id of ["anthropic", "openai", "google", "openrouter", "ollama", "custom", "new"]) {
+      expect([id, effortChangeCostsCache(id)]).toEqual([id, false]);
+    }
   });
 });
 

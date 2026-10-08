@@ -129,6 +129,26 @@ export function cachesStablePrefix(providerId: string): boolean {
   return cacheBreakpointPolicyFor(providerId) !== "none";
 }
 
+/**
+ * Whether a change of reasoning effort between two requests costs the prompt
+ * cache on this host — the whole of it, not the part after some block.
+ *
+ * MEASURED 2026-10-08 on the Codex backend, gpt-6-sol, two four-request runs
+ * of one task that differed in nothing else. With every request at one
+ * effort, the second read 10,368 cached tokens of a 10.7k prompt. With the
+ * first at `high` and the rest at `medium`, the second read 0 and paid for
+ * 10,734 fresh; the third, at the same effort as the second, read 10,624.
+ * The system prompt and the tool surface were byte-identical throughout.
+ *
+ * Only Codex has been measured, so only Codex answers yes. A host listed here
+ * is given one effort for the whole request (see the agent loop's effort
+ * routing): a notch of reasoning saved on a turn is not worth the prompt paid
+ * for again in full.
+ */
+export function effortChangeCostsCache(providerId: string): boolean {
+  return providerId === "codex";
+}
+
 /** The declared cache-breakpoint policy for a provider id. */
 export function cacheBreakpointPolicyFor(providerId: string): CacheBreakpointPolicy {
   return POLICY[providerId] ?? "none";

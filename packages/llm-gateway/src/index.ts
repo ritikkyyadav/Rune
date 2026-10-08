@@ -64,6 +64,7 @@ export {
   cacheBreakpointPolicyFor,
   cachesStablePrefix,
   declaredCachePolicies,
+  effortChangeCostsCache,
   foldsEphemeralTail,
   isAnthropicUpstream,
   promptCacheKey,
