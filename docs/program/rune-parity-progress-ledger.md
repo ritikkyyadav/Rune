@@ -2115,3 +2115,37 @@ wrong answer.
 
 **Next step.** A1–A3 (the 120 s wait that measures nothing, and the verdict that calls
 finished work unfinished), then A5.
+
+## v1.3.4, 2026-10-08 · **shipped on the founder's word ("Push and release 1.3.4")**
+
+**Why a release.** A4 above is a fault in the 1.3.2 and 1.3.3 binaries: the rule that
+leaves an already-failing test alone did not work for a real Bun suite. The founder was
+asked what to do with the six local commits and chose to push and release.
+
+**What is in it.** `ab9ea0c` (the closing list), `68d05d6` (the reason an unknown
+comparison gave up), `e630e9f` (a run that ends before its reviewer answers), `ec1bb5e`
+(upgrade over a source install), and the evidence and ledger commits between them.
+Release commit `75e6a53`, the usual thirteen files; notes in `docs/releases/v1.3.4.md`.
+
+**Gated before the tag, on the release commit itself.**
+
+- A fresh clone: type-check 15 of 15 packages; repo-wide format check clean; unit
+  7,394 pass, 19 skip, 0 fail; the two verification files again with the report a
+  terminal gets (`AGENT=0`), 90 pass; the reviewer-cost file 10 pass.
+- The lane: run `37742101128`, all 22 jobs, macOS, Linux and Windows.
+- Only then `main` and the working branch were fast-forwarded and the tag pushed.
+
+**Published.** Release run `37743503209`, all 13 jobs. Eleven assets, marked Latest.
+`main`'s own run `37743499249`: all 22 jobs. The downloaded macOS arm64 pair matches
+`SHA256SUMS`, prints `Rune v1.3.4`, and contains the three changes.
+
+**Installed here through `rune upgrade`.** The installed binaries match the release's
+checksums, and no stale build record was left behind — the upgrade fix from `ec1bb5e`,
+seen working on its first real use.
+
+**Stated in the notes as not changed:** the verdict that calls finished work "unmet" or
+"partial"; the 120 s end-of-turn check that measures nothing on a longer suite; a failed
+background review leaving no row. None of the fixes was measured in a live run.
+
+**Next step.** Stage A continues: A1–A3, then A5. This entry is committed locally and
+goes out with the next push.
