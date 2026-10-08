@@ -2385,3 +2385,41 @@ Three small probes and six agent runs.
 **Next step.** `main`, once the lane run on these commits is green. Then, zero spend:
 the interface audit. For the founder: the reviewer's model, the 120 s limit, and a
 live sitting large enough to measure a total (several runs a task).
+
+## D1, the interface audit: the idle screens, 2026-10-08 · **first page; nothing changed**
+
+`main` is at `ea19e90`, gated on the lane (run `37790154492`) and green on its own run
+(`37792013894`), pushed on the founder's word. Not released.
+
+**How the frames were taken.** `python3 scripts/tui-capture/capture.py OUTDIR`, the
+repo's own rig: the real entry point through a real pty, no model call possible. It
+wrote 17 frames and then stopped on one of its own assertions.
+
+**Defects, measured on the frames, most visible first.**
+
+1. **The legend under the session view names Esc twice, with two meanings:**
+   `ctrl+f back · esc composer · esc back`. `panelHint` in `agents-panel.ts` writes the
+   first two and `agentsLegend` in `tui.ts` adds the third.
+2. **Three right edges on one screen.** The header rule is the width less 3 (77, 97 and
+   117 columns at 80, 100 and 120); the composer's two rules are the width less 4; the
+   rule under `SESSION` is the width less 5.
+3. **Two rows begin with `›`:** the composer and the gear line under it. The second is
+   a status, not a prompt.
+4. **The two opening lines disagree in form:** `try  "…" · "…"` and
+   `tip: … -- /memory` — a colon on one and not the other, `--` where the rest of the
+   screen uses `·` and `—`.
+5. **A description that does not fit:** in the command list at 80 columns `/login`
+   ends `…, or web sea…`.
+
+**The rig is older than the interface.** It asserts the overlay says `esc close`,
+which it no longer does, so its last two captures (the terminal restored after
+SIGTERM, and the window too small to draw in) were not taken. Its `100x30-panel` and
+`99x30-collapsed` frames are of a side panel that the single-column default removed.
+
+**Not yet looked at, and the larger half:** a run in progress — tool rows, a check
+running and timing out, a held step, an error, a quota stop, the closing verdict, the
+sub-agent cards. The rig types nothing into the composer by design. Capturing those
+needs the same pty driven against the mock model, as the real-process tests are.
+
+**Next step.** The founder picks from this page; items 1 and 2 are defects whatever
+the taste, and are small. Then the run-in-progress frames.
