@@ -2334,3 +2334,54 @@ second lane run, `37785365607`, passed all 22 jobs.
 only advanced in twenty-second dark wakes. CI is the gate that ran it.
 
 **Next step.** The two tasks left, on the fixed build (running). Then `main`.
+
+## The fixed build on the two tasks left, 2026-10-08 · **each change does what it says; the bill is not lower**
+
+The four agent runs left of the six the founder approved. Summary in
+`docs/evidence/b2-s6-serious-fixed-result-20261008.json`. Rune from a clean clone at
+`81a321e`. Both tools passed every hidden check on both tasks, no regression.
+
+| Task                                           | Tool     | 2026-10-07               | 2026-10-08               |
+| ---------------------------------------------- | -------- | ------------------------ | ------------------------ |
+| model-catalog-cache                            | Rune     | 449 s · 23 calls · $0.45 | 240 s · 15 calls · $0.25 |
+|                                                | OpenCode | 304 s · 27 calls · $0.39 | 200 s · 23 calls · $0.34 |
+| header-version-session (before the effort fix) | Rune     | 511 s · 39 calls · $1.03 | 566 s · 37 calls · $1.08 |
+|                                                | OpenCode | 425 s · 42 calls · $0.95 | 380 s · 40 calls · $0.78 |
+| startup-selection                              | Rune     | 422 s · 27 calls · $0.66 | 573 s · 39 calls · $0.89 |
+|                                                | OpenCode | 424 s · 40 calls · $0.69 | 328 s · 28 calls · $0.63 |
+
+**What is shown, each by its own mark.**
+
+- **The cache.** Rune's second request was served from the cache on both tasks (11,776
+  and 11,648 cached tokens; 0 the day before on all three), and no later request lost
+  it.
+- **A failure that predates the run (A4).** Same task, same two red tests as the day
+  before. The check said `preexisting`, the notice named both, no repair was asked
+  for, and `package.json` was left alone. 15 calls and $0.25, where it had been 23 and
+  $0.45; cheaper than OpenCode's run.
+- **A check that cannot finish (A1).** A first run in a fresh workspace still waits
+  the limit once, as designed: 120 s on two of the three tasks. The touched test files
+  were then run and pass.
+
+**What is not shown.** That Rune is faster or cheaper overall. Three tasks, one run
+each: Rune $2.21 and 1,379 s, OpenCode $1.76 and 908 s; the day before, $2.14 and
+1,382 s against $2.03 and 1,153 s. OpenCode was faster on all three than the day
+before, and Rune's own working time went from 890 s to 1,042 s. Call counts do not
+repeat: Rune 27 then 39 on one task, OpenCode 40 then 28 on the same one. The swing
+between two days is larger than anything these changes could do to a total.
+
+**Where Rune's time and money still go, from these runs.**
+
+- **The 120 s wait in a fresh workspace:** 250 s of 1,379 s. Nothing here removes it
+  on a first run.
+- **The reviewer on the heavy model:** $0.38 of $2.21. The founder's decision.
+- **Reasoning at the ceiling on every turn**, since the effort fix: more output tokens
+  a call. Whether the work is better for it is not measured.
+- **The verdict:** all three finished runs were again called unfinished.
+
+**The Codex window.** Rune's meter read 61% at the end (55% before the first pair).
+Three small probes and six agent runs.
+
+**Next step.** `main`, once the lane run on these commits is green. Then, zero spend:
+the interface audit. For the founder: the reviewer's model, the 120 s limit, and a
+live sitting large enough to measure a total (several runs a task).

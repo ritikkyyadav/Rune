@@ -1,0 +1,97 @@
+{
+  "schema": "rune-live-check@1",
+  "what": "The two hard tasks left from the approved re-run, on the build with the reasoning-effort fix, Rune against OpenCode, both gpt-6-sol on Codex.",
+  "ranAt": { "started": "2026-10-08T13:46:00Z", "finished": "2026-10-08T14:10:00Z" },
+  "authorisedBy": "the founder, 2026-10-08: re-run the three hard tasks, six agent runs, stop at 70%. Two runs were used on the first task (b2-s5); these are the other four.",
+  "manifest": {
+    "path": "docs/evidence/b2-s6-serious-fixed-manifest-20261008.json",
+    "sha256": "16b76d0c3725c7f8fac1eddee3123e2d5a671ec0ec9f661fc37b822b1418f7cd"
+  },
+  "rawEvidence": {
+    "note": "machine-local, not in the repository",
+    "dir": "~/rune-evidence/b2-s6-serious-fixed-20261008",
+    "resultsSha256": "644d6c3e3281fd982518e4694d04b8eb3f3560b5d4cdade9fb2d6662e2f408b7"
+  },
+  "build": { "rune": "a clean clone at 81a321e, run from source", "opencode": "1.18.30" },
+  "pairs": [
+    {
+      "task": "f7-6af7bb5-startup-selection",
+      "rune": {
+        "hidden": "15/15",
+        "regressions": 0,
+        "scope": 0.5,
+        "ending": "incomplete",
+        "verdict": "partial: three criteria it stated, one satisfied, two needing review",
+        "wallS": 573.4,
+        "workingS": 448,
+        "afterTheLastModelCallS": 125,
+        "calls": 39,
+        "listUsd": 0.885,
+        "ofWhichReviewerUsd": 0.136,
+        "secondRequest": { "fresh": 1044, "cached": 11776 }
+      },
+      "opencode": {
+        "hidden": "15/15",
+        "regressions": 0,
+        "scope": 1,
+        "ending": "completed",
+        "wallS": 328.1,
+        "calls": 28,
+        "listUsd": 0.633
+      },
+      "sameTaskOn20261007": {
+        "rune": {
+          "wallS": 422.2,
+          "calls": 27,
+          "listUsd": 0.655,
+          "secondRequest": { "fresh": 12213, "cached": 0 }
+        },
+        "opencode": { "wallS": 424.2, "calls": 40, "listUsd": 0.694 }
+      }
+    },
+    {
+      "task": "f7-93eca44-model-catalog-cache",
+      "rune": {
+        "hidden": "17/17",
+        "regressions": 0,
+        "scope": 1,
+        "ending": "incomplete",
+        "verdict": "unmet: no criteria stated",
+        "wallS": 239.7,
+        "workingS": 154,
+        "afterTheLastModelCallS": 85,
+        "calls": 15,
+        "listUsd": 0.246,
+        "ofWhichReviewerUsd": 0,
+        "secondRequest": { "fresh": 8499, "cached": 11648 }
+      },
+      "opencode": {
+        "hidden": "17/17",
+        "regressions": 0,
+        "scope": 1,
+        "ending": "completed",
+        "wallS": 200.0,
+        "calls": 23,
+        "listUsd": 0.343
+      },
+      "sameTaskOn20261007": {
+        "rune": { "wallS": 449.2, "calls": 23, "listUsd": 0.448, "scope": 0.5 },
+        "opencode": { "wallS": 303.5, "calls": 27, "listUsd": 0.392 }
+      }
+    }
+  ],
+  "whatItShowed": {
+    "the_cache": "On both tasks Rune's second request was served from the cache (11,776 and 11,648 cached tokens) and no later request lost it. The day before, the second request read 0 on all three tasks.",
+    "a_failure_that_predates_the_run": "On model-catalog-cache the suite was red on the same two tests as the day before. This time the check said `preexisting`, the notice named both tests as already failing, no repair was asked for, and the project's package.json was not touched. The run made 15 calls for $0.25 where it had made 23 for $0.45, and it cost less than OpenCode's ($0.34).",
+    "what_the_check_still_costs": "On model-catalog-cache the end of the run took 85 s: the check, then the same check on the tree the run started from, which is what it takes to know the failures were not the run's. On startup-selection the suite was waited for once, 120 s, and measured nothing, as on any first run in a fresh workspace; the touched test file was then run and passes.",
+    "the_bill": "Three tasks, one run each: Rune $2.21 and 1,379 s, OpenCode $1.76 and 908 s (the first task on the build before the effort fix). The day before: $2.14 and 1,382 s against $2.03 and 1,153 s. OpenCode was faster on all three than the day before; Rune's own working time went from 890 s to 1,042 s. Neither tool's call counts repeat from one day to the next: Rune 27 then 39 on one task, OpenCode 40 then 28 on the same one.",
+    "the_reviewer": "$0.38 of Rune's $2.21 across the three tasks: screens and reviews on gpt-6-astra.",
+    "the_verdict": "Rune called all three finished runs unfinished again: 'partial' twice, 'unmet: no criteria stated' once."
+  },
+  "limitations": [
+    "One run a task. The swing between two days is larger than any effect these changes could have on time or total cost; only what each change does mechanically is shown.",
+    "No score: two builds across the three pairs, and three pairs is half of what a score needs.",
+    "With the effort fix, ordinary turns on Codex reason at the ceiling. Whether that makes the work better, or only dearer, is not measured.",
+    "The Codex CLI's own use of the same subscription cannot be seen from here. Rune's meter read 61% at the end."
+  ]
+}
