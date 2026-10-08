@@ -222,6 +222,11 @@ export interface AgentLoopConfig {
    */
   failedAcceptance?: () => ReadonlyArray<{ id: string; outputTail: string; text?: string }>;
   /**
+   * Whether anyone is there to answer a question in this run. False in a
+   * headless run. Absent reads as "yes": the loop then says nothing about it.
+   */
+  userPresent?: () => boolean;
+  /**
    * Just-in-time doctrine, wired by the engine in "jit" delivery mode: returns
    * a section's verbatim text exactly ONCE per session at its first moment of
    * relevance (first sub-agent report, first visual write), null after — the
@@ -2488,11 +2493,31 @@ export class AgentLoop {
     if (preflight) {
       this.injectHarnessNote(
         `Pre-flight — ${preflight}. Say so in your read-back's \`leave\` list, in those words, ` +
-          "plan the visual step as a fetch of the served page, and state the limit in your final " +
-          "report. Do not plan around screenshots this run cannot take.",
+          "and state in your final report that the layout was not seen. Do not serve the page, " +
+          "fetch it or parse it with a script to stand in for looking at it, and do not plan " +
+          "around screenshots this run cannot take: nothing here can see a layout, and a review " +
+          "that cannot see is not asked for.",
       );
       this.report("loop.browser_preflight", "warn", "visualReview", preflight);
       yield { type: "notice", message: `Pre-flight: ${preflight}.` };
+    }
+    // ── Pre-flight: nobody to ask (founder, 2026-10-08) ──
+    // The design skill puts two or three art directions to the person and
+    // waits. In a headless run nobody is there: the question costs a call to
+    // learn that, and the research done to word its options is spent on a
+    // choice the model then makes alone anyway.
+    let nobodyToAsk = false;
+    try {
+      nobodyToAsk = this.config.userPresent?.() === false;
+    } catch {
+      nobodyToAsk = false;
+    }
+    if (nobodyToAsk && doctrineForRequest(userMessage).includes("frontend")) {
+      this.injectHarnessNote(
+        "Pre-flight — nobody is here to answer questions in this run. Do not call ask_user for " +
+          "the art direction: choose one yourself, say which and why it fits in one line, and " +
+          "build it.",
+      );
     }
     // ── Effort routing ──
     // Latched to the ceiling for the rest of the run on the first sign of
@@ -4389,7 +4414,9 @@ export class AgentLoop {
         // missing checks, and unresolved review stays visible in task state.
         if (
           visualReview.required &&
-          visualReview.snapshot().status !== "reviewed" &&
+          // `pending`: something is still owed that a tool here can produce.
+          // `unseen` — no browser — owes nothing, and is not refused.
+          visualReview.snapshot().status === "pending" &&
           productSightNudges < 1 &&
           !signal?.aborted
         ) {
@@ -4437,7 +4464,14 @@ export class AgentLoop {
         }
         if (visualReview.required) {
           const review = visualReview.snapshot();
-          if (review.status !== "reviewed") {
+          if (review.status === "unseen") {
+            // Said once, as what it is. Nothing was refused for it.
+            this.config.taskState?.setVisualReview(review);
+            yield {
+              type: "notice",
+              message: `UI not viewed: ${review.unseenWhy ?? "no browser in this run"}.`,
+            };
+          } else if (review.status !== "reviewed") {
             this.config.taskState?.setVisualReview(review);
             yield {
               type: "notice",

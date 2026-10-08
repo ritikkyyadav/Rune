@@ -6356,6 +6356,9 @@ export class Engine {
         // `outputTail` is the evidence's own `detail` — what the command
         // printed, as the check log recorded it. There is no field for the
         // command, and the loop has no way to ask for one.
+        // Whether a question can be answered at all: a headless run has no
+        // handler, and the loop tells a frontend run so before it asks.
+        userPresent: () => Boolean(this.questionHandler),
         failedAcceptance: () => {
           const criteria = this.ledger?.criteria ?? [];
           if (criteria.length === 0) return [];
@@ -7158,7 +7161,10 @@ export class Engine {
               checksPassed: retro.checks.passed,
               openSteps: retro.steps.open,
               completedWork: retro.steps.done > 0 || retro.filesWritten > 0,
-              visualVerified: taskState.snapshot().visualReview?.status !== "pending",
+              visualVerified: (() => {
+                const status = taskState.snapshot().visualReview?.status;
+                return status !== "pending" && status !== "unseen";
+              })(),
               struggled: this.struggles?.struggled() ?? false,
             });
             if (nb && nb.injectedIds.length > 0 && won) {

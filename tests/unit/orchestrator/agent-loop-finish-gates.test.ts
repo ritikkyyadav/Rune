@@ -220,6 +220,98 @@ describe("product-sight gate", () => {
   });
 });
 
+// ─── With no browser, a review that cannot see is not asked for ───
+//
+// Measured 2026-10-08, three build-from-nothing runs: told to "plan the visual
+// step as a fetch of the served page" and refused the finish until it had, the
+// model served, curled and script-parsed its own page for 25 of 43 tool calls.
+// The founder's decision: with no browser, say the layout was not seen, and
+// demand no stand-in. With a browser, nothing changes (the describe above).
+describe("product-sight, in a run with no browser", () => {
+  const noBrowser = () => ({ ...makeRegistry(), list: () => [] }) as any;
+  const loopWith = (gw: any, ts: TaskStateStore, opts: Record<string, unknown> = {}) =>
+    new AgentLoop(
+      {
+        model: "m",
+        provider: "anthropic",
+        maxTokens: 100,
+        maxTurns: 12,
+        systemPrompt: "s",
+        taskState: ts,
+        ...opts,
+      } as any,
+      gw,
+      noBrowser(),
+    );
+  const WRITE_AND_FINISH = [
+    { tools: [{ name: "write_file", args: { path: "web/index.html" } }] },
+    { tools: [{ name: "bash", args: { command: "bun test" } }] },
+    { text: "shipped" },
+    { text: "shipped again" },
+  ];
+
+  test("the finish is not refused, and the run is told once, plainly, that nothing was seen", async () => {
+    const ts = new TaskStateStore();
+    const gw = makeGateway(WRITE_AND_FINISH);
+    const loop = loopWith(gw, ts);
+    const events = await collect(loop.run("build the landing page", "s1", "/tmp"));
+    const said = transcriptText(loop);
+    // No refusal, and so no extra completion: write, run, finish.
+    expect(said).not.toContain("never looked at it");
+    expect(gw.requests.length).toBe(3);
+    const notices = events.flatMap((e: any) => (e.type === "notice" ? [String(e.message)] : []));
+    expect(notices.filter((n) => n.startsWith("UI not viewed:"))).toHaveLength(1);
+    expect(notices.join(" ")).toContain("enable one with --browser");
+    expect(notices.some((n) => n.startsWith("UI was written but never viewed"))).toBe(false);
+    expect(notices.some((n) => n.startsWith("UI review incomplete"))).toBe(false);
+    // The state says what happened: not reviewed, and nothing owed.
+    expect(ts.snapshot().visualReview?.status).toBe("unseen");
+    expect(ts.snapshot().visualReview?.missing).toEqual([]);
+    expect(ts.renderBlock(5_000)).toContain("UI review: unseen");
+    expect(ts.renderBlock(5_000)).not.toContain("interaction observed");
+    expect(events.at(-1)?.type).toBe("turn_complete");
+  });
+
+  test("the pre-flight says not to serve, fetch or parse the page in place of looking", async () => {
+    const ts = new TaskStateStore();
+    const loop = loopWith(makeGateway(WRITE_AND_FINISH), ts);
+    await collect(loop.run("build the landing page", "s1", "/tmp"));
+    const said = transcriptText(loop);
+    expect(said).toContain("the layout cannot be looked at from here");
+    expect(said).toContain("Do not serve the page, fetch it or parse it with a script");
+    expect(said).not.toContain("plan the visual step as a fetch");
+  });
+
+  test("nobody to ask: a headless design run is told so before it asks", async () => {
+    const ask = "nobody is here to answer questions in this run";
+    const headless = loopWith(makeGateway(WRITE_AND_FINISH), new TaskStateStore(), {
+      userPresent: () => false,
+    });
+    await collect(headless.run("build the landing page", "s1", "/tmp"));
+    expect(transcriptText(headless)).toContain(ask);
+    expect(transcriptText(headless)).toContain("Do not call ask_user for the art direction");
+
+    // Someone is there, or the question was never asked of the loop: nothing is said.
+    for (const opts of [{ userPresent: () => true }, {}]) {
+      const loop = loopWith(makeGateway(WRITE_AND_FINISH), new TaskStateStore(), opts);
+      await collect(loop.run("build the landing page", "s1", "/tmp"));
+      expect(transcriptText(loop)).not.toContain(ask);
+    }
+    // Not a design request: nothing to choose, so nothing is said.
+    const backend = loopWith(
+      makeGateway([
+        { tools: [{ name: "write_file", args: { path: "src/core.ts" } }] },
+        { tools: [{ name: "bash", args: { command: "bun test" } }] },
+        { text: "done" },
+      ]),
+      new TaskStateStore(),
+      { userPresent: () => false },
+    );
+    await collect(backend.run("refactor the core module", "s1", "/tmp"));
+    expect(transcriptText(backend)).not.toContain(ask);
+  });
+});
+
 describe("fix-shaped means short", () => {
   test("a long brief that mentions fixing defects is a build, not a fix — no gate", async () => {
     const ts = new TaskStateStore();

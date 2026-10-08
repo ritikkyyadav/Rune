@@ -2060,7 +2060,10 @@ export class TaskStateStore {
       }
       if (s.visualReview)
         lines.push(
-          `UI review: ${s.visualReview.status}${s.visualReview.missing.length ? ` — ${s.visualReview.missing.join("; ")}` : " (screenshots, responsive viewports, interaction observed)"}`,
+          s.visualReview.status === "unseen"
+            ? // Not a review, and not owed: nothing in the run could look.
+              `UI review: unseen — ${s.visualReview.unseenWhy ?? "no browser in this run"}`
+            : `UI review: ${s.visualReview.status}${s.visualReview.missing.length ? ` — ${s.visualReview.missing.join("; ")}` : " (screenshots, responsive viewports, interaction observed)"}`,
         );
       if (s.verification.status !== "none") {
         // "failed" shows its first error line at high detail; "unavailable"

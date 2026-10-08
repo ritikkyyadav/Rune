@@ -93,11 +93,26 @@ test("multi-file and delegated edits expose actual changed paths", () => {
   ).toEqual(["web/page.tsx"]);
 });
 
-test("without a browser, fetching the served page is the receipt, and the missing list says how to get pixels", () => {
+test("without a browser nothing is asked of the run, and nothing is claimed for it", () => {
+  // It used to ask for a fetch of the served page and then call the review
+  // incomplete whatever came back. Measured 2026-10-08: on three
+  // build-from-nothing runs the model served, curled and script-parsed its own
+  // page for 25 of 43 tool calls and was refused the finish once, for a review
+  // that cannot see a layout. The founder's decision: say the layout was not
+  // seen, and demand no stand-in.
   const review = new VisualVerification("/workspace", undefined, { browser: false });
   review.changed();
-  expect(review.snapshot().status).toBe("pending");
-  expect(review.snapshot().missing.join(" ")).toMatch(/no browser is mounted/);
+  const first = review.snapshot();
+  expect(first.status).toBe("unseen");
+  expect(first.missing).toEqual([]);
+  expect(first.unseenWhy).toMatch(
+    /no browser is mounted in this run, so the layout was not looked at/,
+  );
+  expect(first.unseenWhy).toContain("--browser");
+  expect(first.method).toBeUndefined();
+
+  // A fetch the run chose to make is recorded as what it is, and changes
+  // nothing about the answer: fetched HTML is not a look at the page.
   review.observe(
     "bash",
     { command: "bun run dev" },
@@ -113,8 +128,9 @@ test("without a browser, fetching the served page is the receipt, and the missin
     ),
   ).toBe(true);
   const done = review.snapshot();
-  expect(done.status).toBe("pending");
-  expect(done.missing.join(" ")).toContain("visual review is incomplete");
+  expect(done.status).toBe("unseen");
+  expect(done.status).not.toBe("reviewed");
+  expect(done.missing).toEqual([]);
   expect(done.method).toBe("fetch");
   // Fetching a page the workspace did not serve proves nothing; neither does a non-HTML reply.
   const other = new VisualVerification("/workspace", undefined, { browser: false });
@@ -136,7 +152,8 @@ test("without a browser, fetching the served page is the receipt, and the missin
       false,
     ),
   ).toBe(false);
-  expect(other.snapshot().status).toBe("pending");
+  expect(other.snapshot().status).toBe("unseen");
+  expect(other.snapshot().method).toBeUndefined();
 });
 
 test("with a browser mounted, a fetch never stands in for the screenshot receipts", () => {
@@ -211,7 +228,9 @@ test("the pre-flight note fires only for a frontend run with no browser", () => 
   expect(browserPreflightNote(true, true)).toBeNull();
   expect(browserPreflightNote(false, false)).toBeNull();
   expect(browserPreflightNote(false, true)).toBeNull();
-  expect(NO_BROWSER_PREFLIGHT).toContain("visual review will be a fetch, not a capture");
+  expect(NO_BROWSER_PREFLIGHT).toContain("the layout cannot be looked at from here");
+  // It no longer promises a review this run cannot make.
+  expect(NO_BROWSER_PREFLIGHT).not.toContain("fetch");
 });
 
 test("the browser runtime probe reports what it found, and never throws", () => {
@@ -284,7 +303,7 @@ test("the pre-flight says WHICH of the two it is, and stays silent when the brow
   expect(browserPreflightNote(true, true, undefined)).toBeNull();
 });
 
-test("a launch failure demotes the bar to the fetch this environment can do", () => {
+test("a browser that cannot launch is no browser: nothing is asked, and the reason is said", () => {
   const visual = new VisualVerification("/tmp/ws", undefined, { browser: true });
   visual.changed();
   visual.observe(
@@ -295,10 +314,11 @@ test("a launch failure demotes the bar to the fetch this environment can do", ()
   );
   const snapshot = visual.snapshot();
 
-  expect(snapshot.method).toBe("fetch");
-  expect(snapshot.missing.some((line) => /fetch the served page/.test(line))).toBe(true);
-  expect(snapshot.missing.some((line) => /inspect a narrow viewport/.test(line))).toBe(false);
-  expect(snapshot.missing.some((line) => /cannot launch/.test(line))).toBe(true);
+  expect(snapshot.status).toBe("unseen");
+  // Not the four receipts no tool in the run can produce, and not a fetch.
+  expect(snapshot.missing).toEqual([]);
+  expect(snapshot.unseenWhy).toContain("no Chromium to launch");
+  expect(snapshot.unseenWhy).toContain("playwright install chromium");
   expect(snapshot.browserBroken).toContain("no Chromium to launch");
 });
 

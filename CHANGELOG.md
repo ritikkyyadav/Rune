@@ -26,6 +26,17 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
   runs on a project whose suite cannot finish in a four-second limit: 6.8 s, 4.7 s, then 0.6 s.
   See [`docs/verification.md`](docs/verification.md).
 
+- **With no browser, Rune no longer asks for a review that cannot see the page.** A run that built
+  something to look at, with no browser available, was told to review it by fetching the served
+  page, and its finish was refused until it had. Measured on three build-from-nothing prompts:
+  the model started a server, fetched its own files with curl and parsed its own HTML with
+  scripts, for 25 of one run's 43 tool calls; the same pages took OpenCode 7 to 11 model calls
+  where Rune took 47 to 56, at four times the cost. Now Rune says once that the layout was not
+  seen and how to change that (`--browser`), asks for nothing in its place, and does not refuse
+  the finish. With a browser, nothing changes: screenshots at both widths are still required.
+  In a headless run a design task is also told that nobody is there to answer, so it chooses an
+  art direction and states it without asking.
+
 - **The background safety screen is answered by the session's model.** In Auto mode ordinary
   actions run at once and a screen reads each afterwards and answers in one word. It ran on the
   reviewer's model, the heavy tier by default: measured at about eight cents a word, and 17% of

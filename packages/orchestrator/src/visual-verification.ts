@@ -33,8 +33,15 @@ export interface VisualReviewState {
   }>;
   interactionRevision?: number;
   interactionObserved?: boolean;
-  status: "pending" | "reviewed";
+  /**
+   * `unseen` — nothing in this run can show the screen, so nothing is asked of
+   * the run and nothing is claimed for it: the layout was not looked at.
+   * Neither `pending` (something is still owed) nor `reviewed`.
+   */
+  status: "pending" | "reviewed" | "unseen";
   missing: string[];
+  /** For `unseen`: why the screen could not be looked at, and how to change that. */
+  unseenWhy?: string;
   /** Evidence available for this revision. A fetch is partial evidence, never completed visual review. */
   method?: "browser" | "fetch";
   /**
@@ -241,25 +248,35 @@ export class VisualVerification {
         missing.push("exercise an interaction and inspect its resulting state");
       this.state.method = "browser";
     } else {
+      // ── Nothing here can look at it, so nothing is asked ──
+      //
+      // This branch used to ask for a fetch of the served page and then call
+      // the review incomplete whatever came back. Measured 2026-10-08 on three
+      // build-from-nothing runs: the model started a server, fetched its own
+      // files with curl and parsed its own HTML with scripts — 25 of one run's
+      // 43 tool calls — and the finish was refused once along the way, for a
+      // review that cannot see a layout. The same pages took OpenCode 7 to 11
+      // model calls where Rune took 47 to 56.
+      //
+      // The founder's decision that day: with no browser, say once that the
+      // layout was not seen, and demand no stand-in. `unseen` is that
+      // statement. It is not `reviewed`, and it asks for nothing.
       const why = this.state.browserBroken
         ? `${this.state.browserBroken} in this run`
         : "no browser is mounted in this run";
-      if (!captures.some((c) => c.fetched))
-        missing.push(
-          `fetch the served page (curl its local URL) and read what it actually returns — ${why}; ` +
-            (this.state.browserBroken
-              ? "install one (`playwright install chromium`) for screenshot review"
-              : "enable one with --browser for screenshot review"),
-        );
-      missing.push(
-        this.state.browserBroken
-          ? "visual review is incomplete: this run's browser cannot launch, so layout and interactions were never seen; fetching HTML only checks the served response"
-          : "visual review is incomplete: enable --browser to inspect layout and interactions; fetching HTML only checks the served response",
-      );
-      this.state.method = "fetch";
+      this.state.method = captures.some((c) => c.fetched) ? "fetch" : undefined;
+      this.state.missing = [];
+      this.state.status = "unseen";
+      this.state.unseenWhy =
+        `${why}, so the layout was not looked at; ` +
+        (this.state.browserBroken
+          ? "install one (`playwright install chromium`) for screenshot review"
+          : "enable one with --browser for screenshot review");
+      return structuredClone(this.state);
     }
     this.state.missing = missing;
     this.state.status = missing.length ? "pending" : "reviewed";
+    delete this.state.unseenWhy;
     return structuredClone(this.state);
   }
   get required(): boolean {
@@ -309,7 +326,7 @@ export function visualChangedPaths(
 
 /** The one sentence. Same words on screen, in the brief, and in the prompt. */
 export const NO_BROWSER_PREFLIGHT =
-  "no browser in this run: visual review will be a fetch, not a capture";
+  "no browser in this run: the layout cannot be looked at from here";
 
 /**
  * What a run whose browser it cannot use should be told before it spends
