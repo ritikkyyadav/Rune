@@ -269,30 +269,47 @@ line now reads about 1 KB less. The rows that do not depend on per-user content 
 prompt bytes, fresh tokens — are directly comparable, and the growth in the
 untouched blocks makes those a **lower bound** on the saving, not an upper one.
 
-### The doctrine phase, and the cache it would cost
+### What throws the cache away on Codex: a change of reasoning effort
+
+Measured on 2026-10-08, `gpt-6-sol` on the Codex backend, with runs of one small task
+that differed in one thing at a time. Each row is a request: fresh input tokens, then
+tokens read from the cache.
+
+| request | one effort throughout | turn 1 high, then medium (the old default) | after the fix, shipped defaults |
+| ------- | --------------------- | ------------------------------------------ | ------------------------------- |
+| 1       | 10,535 · 0            | 10,534 · 0                                 | 10,539 · 0                      |
+| 2       | 364 · 10,368          | **10,734 · 0**                             | 351 · 10,368                    |
+| 3       | 276 · 10,624          | 278 · 10,624                               | 264 · 10,624                    |
+| 4       | 311 · 10,752          | 313 · 10,752                               | 300 · 10,752                    |
+
+The system prompt and the tool surface were byte-identical in every run. **A request
+sent at a different reasoning effort from the one before it reads nothing from the
+cache.** Effort routing changed the effort at turn 2, again at the first sign of
+difficulty, and again when the checks passed, so every request paid for its whole prompt
+at least once more than it needed to: 12k to 18k tokens on the three live tasks of
+2026-10-07, and 43k on the one request measured after a failed check.
+
+So on Codex the effort of every turn is the ceiling (`effortChangeCostsCache` in
+`cache-policy.ts`), and `[llm] effortRouting` has no effect there. Only Codex has been
+measured, so only Codex is named; on every other host routing is unchanged.
+
+### The doctrine phase
 
 Turn 1 of a request carries the opening doctrine (read-back, ambiguity, plan-first) and
 turn 2 onward a shorter working one — about 700 tokens less on every later completion.
-On a host that caches nothing, that is a pure saving, and it is what Rune does there.
+On a host that caches nothing that is a pure saving, and it is what Rune does there.
 
-On a host that caches a stable prefix it is a loss, and since 2026-10-08 Rune does not do
-it there: the opening doctrine is kept for the whole request. The one change of system
-prompt meant the second completion matched nothing the first had written. Measured on
-three live Codex runs on 2026-10-07, three out of three: the second request read 0 cached
-tokens and re-paid the whole prompt, 12k to 18k fresh tokens, to save 700 on each later
-request — which those requests would have read from the cache at about a tenth of the
-price. The saving catches up with the loss after some 150 completions; the runs made 23
-to 39. OpenCode's second request on the same tasks was 97% cached.
+On a host that caches a stable prefix (`cachesStablePrefix`: `anthropic`, `codex`, and
+every host whose policy below is not `none`), the opening doctrine is kept for the whole
+request, as it was before the phases existed. A changed system prompt cannot match a
+prefix written with the old one. **This was first thought to be the cause of the miss
+above, and it was not:** a live run with one system prompt on every call still read 0
+cached tokens at its second request, and the table is what found the real cause. What
+keeping one system prompt is worth on its own has not been isolated.
 
-Which hosts count is `cachesStablePrefix` in `cache-policy.ts`: `anthropic`, `codex`, and
-every host whose policy in the table below is not `none`. **Not measured live after the
-change:** the second request's cached-token count is the number to read on the next run.
-
-Two things this does not cover. A harness message in the middle of a run — a repair
-request, a refused finish — is a new user turn, and on Codex the first request after one
-re-paid 43k tokens in the one case measured; the lever there is asking for fewer of them.
-And whether a change of reasoning effort between two requests costs anything has not been
-isolated.
+A harness message in the middle of a run — a repair request, a refused finish — is a new
+user turn, and the first request after one re-paid 43k tokens in the one case measured.
+The lever there is asking for fewer of them.
 
 ### Caching, per provider
 

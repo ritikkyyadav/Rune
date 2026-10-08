@@ -2267,3 +2267,70 @@ then cite cannot be shown without a live run. Not built until one is allowed.
 **Next step.** B3 and B4 need a live allowance (small tasks re-measured). Stage C
 starts with the design A/B, which also needs one. Zero-spend work left: the rig's stop
 line, and the interface audit (Stage D1).
+
+## B1 measured live, and corrected, 2026-10-08 · **the cause was reasoning effort; fixed and confirmed on the provider**
+
+**Authorised by the founder** for this run: re-run the three hard tasks on the new
+build against OpenCode, six agent runs, stop at 70%. Summary in
+`docs/evidence/b2-s5-serious-rerun-result-20261008.json`.
+
+**The plan was wrong in one number, and the series stopped after one pair.** A wall
+allowance of 100 minutes was given; a serious pair may take 90; the rig will not start a
+pair that might not fit. Two agent runs of six were used. The other two tasks were run
+afterwards on the fixed build (next entry).
+
+**What the one pair showed** (header-version-session; both passed 4/4, no regression).
+
+- **A1 as designed.** Fresh workspace, so the suite was waited for once, 120 s, and
+  measured nothing; then the three test files the change touched were run in its place
+  and pass.
+- **B1 did not do what the last entry predicted.** One system prompt on every call
+  (25,617 characters), and the second request still read 0 cached tokens and paid for
+  15,159. OpenCode's second request: 456 fresh, 12,032 cached.
+- The reviewer: three screens on `gpt-6-astra`, about 8k tokens in and 5 to 26 out,
+  $0.08 each, 22% of the run's cost.
+- Rune 566 s and $1.08; OpenCode 380 s and $0.78. The day before, same task: 511 s and
+  $1.03 against 425 s and $0.95. One run each.
+
+**The cause, by a controlled probe.** One small task, four requests, `gpt-6-sol` on
+Codex, runs that differed in one thing. Fresh tokens, then cached:
+
+| Request | One effort throughout | Turn 1 high, then medium | After the fix, shipped defaults |
+| ------- | --------------------- | ------------------------ | ------------------------------- |
+| 1       | 10,535 · 0            | 10,534 · 0               | 10,539 · 0                      |
+| 2       | 364 · 10,368          | 10,734 · 0               | 351 · 10,368                    |
+| 3       | 276 · 10,624          | 278 · 10,624             | 264 · 10,624                    |
+| 4       | 311 · 10,752          | 313 · 10,752             | 300 · 10,752                    |
+
+A request sent at a different reasoning effort from the one before it reads nothing
+from the Codex cache. Effort routing — shipped on, and never validated live — changed
+the effort at turn 2, again at the first sign of difficulty, and again when the checks
+passed.
+
+**The fix** (`81a321e`). `effortChangeCostsCache(provider)`: Codex, the one host
+measured. There every turn runs at the ceiling and `[llm] effortRouting` has no effect.
+Elsewhere routing is unchanged. Confirmed on the provider: third column above.
+
+- Verification: `agent-loop-effort-routing.test.ts` and `cache-policy.test.ts`, 22 pass;
+  sixty-one loop, doctrine, effort and cost files together 483 pass, 0 fail; three
+  mutations, all caught; type-check exit 0.
+- **What this also changes, unmeasured:** on Codex ordinary turns now reason at the
+  ceiling where they reasoned a notch below it. OpenCode's arm in this rig has always
+  run at high. More reasoning tokens a turn, and possibly better work; neither is
+  measured yet.
+
+**What is kept from the earlier change.** One system prompt per request on caching
+hosts: a changed system prompt cannot match a prefix written with the old one. What it
+is worth on its own has not been isolated, and the docs now say so.
+
+**CI.** The first lane run on these commits failed on two jobs. Windows: a new test
+sat behind a thirty-second sleep that Windows does not stop when a check is killed at
+its limit — fixed in the test (`6062e89`), and **recorded as a finding: on Windows a
+check's time limit does not end the check.** macOS: one older test that takes 0.6 s
+took sixty on a runner that was slow across several files; it did not repeat. The
+second lane run, `37785365607`, passed all 22 jobs.
+
+**Not done.** The full local suite: this Mac slept on battery from 14:18 and the run
+only advanced in twenty-second dark wakes. CI is the gate that ran it.
+
+**Next step.** The two tasks left, on the fixed build (running). Then `main`.

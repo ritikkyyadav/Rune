@@ -1,0 +1,83 @@
+{
+  "schema": "rune-live-check@1",
+  "what": "A live check of two changes made on 2026-10-08 (a check that cannot finish; one system prompt per request), and the three small probes that found what the second one had missed.",
+  "ranAt": { "started": "2026-10-08T13:21:20Z", "finished": "2026-10-08T13:45:00Z" },
+  "authorisedBy": "the founder, 2026-10-08, answering a question that named it: re-run the three hard tasks, Rune (new build) against OpenCode, both gpt-6-sol, 6 agent runs, stop at 70%",
+  "manifest": {
+    "path": "docs/evidence/b2-s5-serious-rerun-manifest-20261008.json",
+    "sha256": "b4a1610a4376557767fcef1621fc63ce4477c81b194bb41b12d4764847095324"
+  },
+  "rawEvidence": {
+    "note": "machine-local, not in the repository",
+    "dir": "~/rune-evidence/b2-s5-serious-rerun-20261008",
+    "resultsSha256": "528260c2470f293122fcb604f2169657cd90b00d4bea745cf6b4b156044f4f4a"
+  },
+  "build": {
+    "rune": "a clean clone at ddfe410, run from source",
+    "opencode": "1.18.30"
+  },
+  "stoppedAfter": "one pair of three. The wall allowance given was 100 minutes and a serious pair may take 90, so the rig would not start a second. An error in the plan, not in the run; the two tasks left were run afterwards on the fixed build under their own manifest.",
+  "pair": {
+    "task": "f7-44d4c1a-header-version-session",
+    "rune": {
+      "hidden": "4/4",
+      "regressions": 0,
+      "scope": 1,
+      "ending": "incomplete",
+      "verdict": "partial: four criteria it stated, two needing review, two unassessed",
+      "wallS": 565.6,
+      "workingS": 440,
+      "afterTheLastModelCallS": 125,
+      "calls": 37,
+      "listUsd": 1.076,
+      "ofWhichReviewerUsd": 0.241
+    },
+    "opencode": {
+      "hidden": "4/4",
+      "regressions": 0,
+      "scope": 1,
+      "ending": "completed",
+      "wallS": 379.6,
+      "calls": 40,
+      "listUsd": 0.784
+    },
+    "sameTaskOn20261007": {
+      "rune": { "wallS": 511.3, "calls": 39, "listUsd": 1.033, "scope": 0.5 },
+      "opencode": { "wallS": 424.9, "calls": 42, "listUsd": 0.947, "scope": 1 }
+    }
+  },
+  "whatItShowed": {
+    "a_check_that_cannot_finish": "As designed for a first run in a fresh workspace: the suite was waited for once, 120 s, and measured nothing; the three test files the change touched were then run in its place and pass. The notice said both.",
+    "one_system_prompt": "The system prompt was 25,617 characters on every call. The second request still read 0 cached tokens and paid for 15,159 fresh. OpenCode's second request: 456 fresh, 12,032 cached. The change did not do what it was predicted to do.",
+    "the_reviewer": "Three background screens on gpt-6-astra, 7.5k to 8.5k input tokens each, 5 to 26 output tokens each, $0.076 to $0.085 each: 22% of the run's list cost.",
+    "time": "Rune's working time was 440 s against OpenCode's whole run of 380 s; the day before it was 390 s against 425 s. One run each: this is noise the size of the effect being looked for."
+  },
+  "probes": {
+    "what": "One small task (read three files in three steps, then answer), gpt-6-sol on Codex, four requests each. Fresh input tokens, then cached, per request.",
+    "oneEffortThroughout_at_ddfe410": [
+      [10535, 0],
+      [364, 10368],
+      [276, 10624],
+      [311, 10752]
+    ],
+    "shippedDefaults_at_ddfe410": [
+      [10534, 0],
+      [10734, 0],
+      [278, 10624],
+      [313, 10752]
+    ],
+    "shippedDefaults_at_81a321e_afterTheFix": [
+      [10539, 0],
+      [351, 10368],
+      [264, 10624],
+      [300, 10752]
+    ],
+    "finding": "A request sent at a different reasoning effort from the one before it reads nothing from the Codex prompt cache. Effort routing changed the effort at the second request of every run."
+  },
+  "limitations": [
+    "One pair, one run. No score.",
+    "The probes are one task and four requests; they show the mechanism, not its size on real work.",
+    "Wall time on this machine: one small test file was run during the pair.",
+    "The Codex CLI's own use of the same subscription cannot be seen from here."
+  ]
+}

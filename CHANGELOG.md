@@ -26,14 +26,21 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
   runs on a project whose suite cannot finish in a four-second limit: 6.8 s, 4.7 s, then 0.6 s.
   See [`docs/verification.md`](docs/verification.md).
 
+- **On Codex, the second request of a run is cached again.** A request sent at a different
+  reasoning effort from the one before it reads nothing from Codex's prompt cache. Rune's effort
+  routing ran the first turn at the ceiling and the rest a notch down, then moved again whenever
+  a check failed or passed, so every run paid for its whole prompt at least once more than it
+  needed to: 12k to 18k tokens on three live tasks, where OpenCode's second request was 97%
+  cached. On Codex every turn now runs at the ceiling. Measured before and after on the same
+  task: the second request read 0 cached tokens, and now reads 10,368 of a 10.7k prompt. Other
+  hosts are unchanged; none has been measured.
+
 - **One system prompt for the whole request, where the prompt is cached.** Rune sent a longer
-  system prompt on the first completion of a request and a shorter one from the second on. On a
-  provider that caches a stable prompt, that one change made the second completion re-pay
-  everything: on three live runs out of three it read no cached tokens and paid for 12k to 18k
-  fresh ones, to save about 700 on each later completion. The first rendering is now kept for the
-  whole request on Anthropic, Codex, OpenAI, Google and every other host declared to cache.
-  Hosts that cache nothing still get the shorter one. The effect on a provider's own count of
-  cached tokens has not been measured since the change. See
+  system prompt on the first completion of a request and a shorter one from the second on. On
+  Anthropic, Codex, OpenAI, Google and every other host declared to cache, the first rendering is
+  now kept throughout; hosts that cache nothing still get the shorter one. This was first taken
+  for the cause of the miss above and was not: a live run with one system prompt still read no
+  cached tokens at its second request. What it is worth on its own has not been isolated. See
   [`docs/run-economics.md`](docs/run-economics.md).
 
 ## [1.3.4] - 2026-10-08
