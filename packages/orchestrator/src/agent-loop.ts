@@ -3793,12 +3793,20 @@ export class AgentLoop {
               attribution?.known === true &&
               attribution.introduced.length === 0 &&
               attribution.existing.length > 0;
+            // Asked, and no answer: the reason goes on the record. It changes
+            // nothing about what happens next — an unknown is repaired as a
+            // failure always was — it only stops the reason being thrown away.
+            const attributionUnknown =
+              attribution && attribution.known === false && typeof attribution.why === "string"
+                ? attribution.why
+                : undefined;
             yield {
               type: "verification_completed",
               attempt: verifyAttempts,
               status: outcome.status,
               ...(outcome.reason ? { reason: outcome.reason } : {}),
               ...(preexistingOnly ? { preexisting: true } : {}),
+              ...(attributionUnknown ? { attributionUnknown } : {}),
               // For a client that predates `status`, derived from it and never
               // copied from the verifier: `passed` only for a pass, `ran` only
               // for a verdict.
@@ -4023,7 +4031,11 @@ export class AgentLoop {
                 );
                 yield {
                   type: "notice",
-                  message: "Verification failed — asking the agent to fix it.",
+                  message:
+                    "Verification failed — asking the agent to fix it." +
+                    (attributionUnknown
+                      ? ` Whether these failures were there before this run could not be told: ${attributionUnknown}.`
+                      : ""),
                 };
                 continue;
               }

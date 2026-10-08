@@ -973,6 +973,60 @@ describe.each([
     }
   });
 
+  test("could not tell: the reason is written down, and the model's message is not changed", async () => {
+    // Measured 2026-10-07: a live run was asked to repair a test that had been
+    // red before it began, and nothing recorded why the comparison that would
+    // have said so gave no answer. The reason was computed and dropped.
+    const told = await runLoop({
+      script: WRITE_RUN_FINISH,
+      authority,
+      results: [red(UNKNOWN), GREEN],
+    });
+    expect(told.completed[0]!.attributionUnknown).toBe(UNKNOWN.why);
+    expect(told.notices.find((n) => n.startsWith("Verification failed"))).toContain(UNKNOWN.why);
+    // Not said to the model: the repair it is asked for is word for word the
+    // one a run with no attribution at all is asked for.
+    const untold = await runLoop({
+      script: WRITE_RUN_FINISH,
+      authority,
+      results: [red(undefined), GREEN],
+    });
+    expect(told.repairs).toEqual(untold.repairs);
+    expect(told.repairs[0]).not.toContain(UNKNOWN.why);
+    expect(untold.completed[0]!.attributionUnknown).toBeUndefined();
+    expect(untold.notices.find((n) => n.startsWith("Verification failed"))).toBe(
+      "Verification failed — asking the agent to fix it.",
+    );
+
+    // An answer, either way, is not an unknown.
+    for (const known of [ONLY_OLD, MIXED, ALL_NEW]) {
+      const out = await runLoop({
+        script: WRITE_RUN_FINISH,
+        authority,
+        results: [red(known), GREEN],
+      });
+      expect(out.completed[0]!.attributionUnknown).toBeUndefined();
+    }
+  });
+
+  test("could not tell: the saved state keeps the reason until a later check replaces it", async () => {
+    const out = await runLoop({ script: WRITE_RUN_FINISH, authority, results: [red(UNKNOWN)] });
+    // Every check in this run comes back the same red, so the state it ends
+    // on is the failed one.
+    const failed = out.taskState.snapshot().verification;
+    expect(failed.status).toBe("failed");
+    expect(failed.attributionUnknown).toBe(UNKNOWN.why);
+    // And never in the block the model reads.
+    expect(out.taskState.renderBlock() ?? "").not.toContain(UNKNOWN.why);
+
+    const green = await runLoop({
+      script: WRITE_RUN_FINISH,
+      authority,
+      results: [red(UNKNOWN), GREEN],
+    });
+    expect(green.taskState.snapshot().verification.attributionUnknown).toBeUndefined();
+  });
+
   test("a verifier that says `existing` about a result it also calls unknown is not believed", async () => {
     // `known: false` carries no lists. A malformed mix of the two must not be
     // read as "all pre-existing".

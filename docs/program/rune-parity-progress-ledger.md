@@ -1998,3 +1998,73 @@ replay the verifier on the first task to learn why the pre-existing failure was 
 called existing. For the rig: read the window before each arm, from every source on the
 machine, not only Rune's last row. The three pairs still owed need the founder's word
 and a window nothing else is spending.
+
+## Parity-plus plan, Stage 0, 2026-10-08 · **one cause not yet named; the reason is now recorded**
+
+**The plan.** The founder named four weaknesses (cost, latency, design and architecture
+output, interface polish) and approved a staged plan on 2026-10-08: Stage 0 land what is
+built, A the end-of-turn check, B cost, C design quality, D the interface, E proof and a
+release. The measured target is OpenCode = 100 on the same model; "95 against Claude
+Code" cannot be measured while benchmarks stay on the Codex subscription.
+
+**What the three kept runs say about time and cost** (read from each run's own log; no
+new spend).
+
+| Task                   | Rune working |             Rune's checks and repair | Rune total | OpenCode |
+| ---------------------- | -----------: | -----------------------------------: | ---------: | -------: |
+| model-catalog-cache    |        203 s | 44 s check, 161 s repair, 42 s check |      449 s |    304 s |
+| header-version-session |        390 s |                     120 s, timed out |      511 s |    425 s |
+| startup-selection      |        297 s |                     124 s, timed out |      422 s |    424 s |
+
+- Rune's own loop was faster on all three. The end-of-turn check and one repair of a
+  failure the run did not cause were 36% of its wall time.
+- Rune's first prompt is the size of OpenCode's (about 12k tokens). What still costs
+  more: the cached prefix changes on most of calls 2–8, so call 2 re-pays the whole
+  prompt (cached share 87–95% against 95–97%); the safety reviewer was 12% and 29% of
+  two runs' cost; the repair above re-paid 43k tokens in one call.
+- **Effort routing is on in the shipped defaults.** The first run's incident log reads
+  "ordinary turns run at medium under a high ceiling". A candidate for why design work
+  comes out weaker than the same model elsewhere; to be tested in Stage C, not assumed.
+
+**The replay: why was a failure that predated the run handed to the agent?** Rune's
+verifier from this checkout, on a copy of the first task's tree put back as it stood at
+the run's first check. No model, no network.
+
+- Standalone, it answers correctly: two failing tests, both existing, none introduced.
+  It would have asked for no repair. The comparison takes 81 s there; the live check
+  took 44 s, so **in the live run the starting tree was never run**: the comparison
+  gave up before that.
+- Ruled out as the reason, each by its own run: the benchmark's profile variables (same
+  two failures with them set); the commands the agent ran before the check (answer
+  still known after them, from a plain shell); the snapshot not being asked for (the
+  engine passes the verifier that takes it).
+- **Not established:** which of the comparison's early exits the live run took. The
+  reason was computed and dropped: no event, no log line and no state field carried it.
+  Still open: something Rune's contained shell or file tools write into a git-ignored
+  path (read as "the environment changed"), or a snapshot that failed under load.
+
+**Changed, so the next run names it.** A failed check whose origin could not be told
+now carries the reason: in the notice a person reads, on `verification_completed` as
+`attributionUnknown`, and in the saved task state. The repair message the model gets is
+word for word what it was.
+
+- Files: `packages/protocol/src/events.ts`, `packages/orchestrator/src/agent-loop.ts`,
+  `packages/orchestrator/src/task-state.ts`, two test files, `CHANGELOG.md`.
+- Verification: orchestrator and protocol type-check exit 0; format check clean;
+  `verification-baseline.test.ts` 61 pass, `task-state.test.ts` 46 pass, five related
+  files together 234 pass. Six mutations, all caught; one survived a first pass (the
+  reason kept on a result that is not a failure) and a test was added for it.
+- Not run: the full suites, Linux and Windows. Committed locally, not pushed.
+
+**The other session's uncommitted work is not the verdict fix.** It copies explicit
+"must / do not / never / keep" sentences from the request into the read-back reply and
+carries them as constraints, which is aimed at the regression on the config task. Its
+251 tests pass; `explicit-requirements.ts` fails the format check. Left untouched: it
+was approved for landing on a wrong description of it, so it waits for the founder.
+
+**Also seen.** The repair message shows the model the head of the report only: here the
+first 1.6k characters of 360k, which was the first failure in file order.
+
+**Next step.** A zero-spend reproduction through a real `rune -P` process with the mock
+model replaying the first task's tool calls, to read `attributionUnknown`. Then Stage A
+in order: A4 (fix what it names), A1–A3, A5. No live run without the founder's word.

@@ -209,6 +209,14 @@ export type AgentTurnEvent =
        * still red — this says whose red it is, not that it is green.
        */
       preexisting?: boolean;
+      /**
+       * On a `failed` result: why it could NOT be told whether the failing
+       * tests were already failing where the run started. Absent when it could
+       * be told (either way), and when nothing tried to tell. Until this field
+       * existed the reason was computed and dropped, so a run that repaired a
+       * failure it did not cause left no trace of why it had been asked to.
+       */
+      attributionUnknown?: string;
       ran: boolean;
       passed: boolean;
       report: string;

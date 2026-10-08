@@ -149,6 +149,11 @@ export interface TaskState {
     status: "none" | "passed" | "failed" | "unavailable" | "inconclusive" | "preexisting";
     /** Why no verdict was reached; set for `unavailable` and `inconclusive`. */
     reason?: VerificationInconclusiveReason;
+    /**
+     * On `failed`: why it could not be told whether the failures predate the
+     * run. Kept for the audit; it is not part of the block the model reads.
+     */
+    attributionUnknown?: string;
     attempts: number;
     lastReport?: string;
   };
@@ -1746,6 +1751,11 @@ export class TaskStateStore {
             ? "preexisting"
             : outcome.status,
       ...(reason ? { reason } : {}),
+      ...(outcome.status === "failed" &&
+      attribution?.known === false &&
+      typeof attribution.why === "string"
+        ? { attributionUnknown: attribution.why.slice(0, 300) }
+        : {}),
       attempts: this.state.verification.attempts + (nothingRunnable ? 0 : 1),
       lastReport: report?.slice(0, REPORT_CAP),
     };

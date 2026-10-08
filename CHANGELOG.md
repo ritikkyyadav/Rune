@@ -30,6 +30,14 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
   count had been taken and never shown. Still not recorded: a background review that failed —
   reviewer unreachable, timed out, or an answer that could not be read — leaves no row.
 
+- **When a check fails and Rune cannot tell whether the failures were already there, it says why.**
+  Before asking for a repair, Rune compares the failing tests with the tree the run started from,
+  and leaves a failure that was already there alone. When that comparison could give no answer the
+  reason was computed and thrown away, so a run that repaired a test it had not broken left no
+  trace of why it was asked to. The reason is now in the notice ("Whether these failures were
+  there before this run could not be told: …"), on the `verification_completed` event as
+  `attributionUnknown`, and in the saved task state. What the model is told is unchanged.
+
 ## [1.3.3] - 2026-10-07
 
 **The rule for whose failure it is holds in CI and on Windows, and the tests have now run on all

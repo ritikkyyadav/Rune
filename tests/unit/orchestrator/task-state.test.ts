@@ -459,6 +459,23 @@ describe("renderBlock", () => {
     const block = s.renderBlock(5_000)!;
     expect(block).toContain("Verification: unavailable — Nothing runnable detected");
   });
+
+  test("why a failure's origin could not be told is kept on a failure, and only there", () => {
+    const why = "the environment changed during the run (packages/shared/dist/index.js)";
+    const unknown = { attribution: { known: false as const, why } };
+    const s = finished("fix the parser");
+    s.noteVerification({ status: "failed" }, "1 fail", undefined, unknown);
+    expect(s.snapshot().verification.attributionUnknown).toBe(why);
+    // For the audit, not for the model.
+    expect(s.renderBlock(5_000)!).not.toContain(why);
+
+    // A reason for not knowing whose failure it is says nothing about a
+    // result that is not a failure.
+    s.noteVerification({ status: "passed" }, "ok", undefined, unknown);
+    expect(s.snapshot().verification.attributionUnknown).toBeUndefined();
+    s.noteVerification({ status: "inconclusive", reason: "timeout" }, "", undefined, unknown);
+    expect(s.snapshot().verification.attributionUnknown).toBeUndefined();
+  });
 });
 
 describe("renderHandoff", () => {
