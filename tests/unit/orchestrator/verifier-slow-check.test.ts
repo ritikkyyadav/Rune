@@ -16,15 +16,16 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { CommandVerifier } from "../../../packages/orchestrator/src/verifier";
+import { rmTemp } from "../../helpers/tmp";
 
 const made: string[] = [];
 afterEach(() => {
-  for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of made.splice(0)) rmTemp(dir);
 });
 const scratch = (prefix: string): string => {
   const dir = mkdtempSync(join(tmpdir(), prefix));
@@ -44,7 +45,7 @@ describe("a command that did not finish twice running is not waited for a third 
     const logged: string[] = [];
     const v = new CommandVerifier({
       workspaceRoot: root,
-      commands: ["sleep 5"],
+      commands: ["sleep 2"],
       timeoutMs: 300,
       onCheck: (run) => logged.push(run.command),
     });
@@ -52,11 +53,11 @@ describe("a command that did not finish twice running is not waited for a third 
     const first = await v.verify();
     expect(first.status).toBe("inconclusive");
     expect(first.reason).toBe("timeout");
-    expect(shape(first)).toEqual([["sleep 5", true, false]]);
+    expect(shape(first)).toEqual([["sleep 2", true, false]]);
     expect(first.runs![0]!.durationMs).toBeGreaterThanOrEqual(250);
 
     // Once is not enough to take a check away: it is started again.
-    expect(shape(await v.verify())).toEqual([["sleep 5", true, false]]);
+    expect(shape(await v.verify())).toEqual([["sleep 2", true, false]]);
 
     const startedAt = Date.now();
     const second = await v.verify();
@@ -66,7 +67,7 @@ describe("a command that did not finish twice running is not waited for a third 
     expect(second.reason).toBe("timeout");
     expect(second.passed).toBe(false);
     expect(second.ran).toBe(false);
-    expect(shape(second)).toEqual([["sleep 5", true, true]]);
+    expect(shape(second)).toEqual([["sleep 2", true, true]]);
     expect(second.runs![0]!.durationMs).toBe(0);
     expect(second.report).toContain("not started");
     expect(second.report).toContain("did not finish in 300ms");
@@ -83,36 +84,36 @@ describe("a command that did not finish twice running is not waited for a third 
     const session = (workspaceRoot: string, timeoutMs = 300) =>
       new CommandVerifier({
         workspaceRoot,
-        commands: ["sleep 5"],
+        commands: ["sleep 2"],
         timeoutMs,
         slowChecksPath: memory,
         now: () => now,
       });
 
-    expect(shape(await session(root).verify())).toEqual([["sleep 5", true, false]]);
+    expect(shape(await session(root).verify())).toEqual([["sleep 2", true, false]]);
     // A second session: still started — one failure to finish proves little.
-    expect(shape(await session(root).verify())).toEqual([["sleep 5", true, false]]);
+    expect(shape(await session(root).verify())).toEqual([["sleep 2", true, false]]);
 
     // A third, an hour on: not started.
     now += HOUR;
     const later = await session(root).verify();
-    expect(shape(later)).toEqual([["sleep 5", true, true]]);
+    expect(shape(later)).toEqual([["sleep 2", true, true]]);
     expect(later.report).toContain("60 minutes ago");
 
     // Another project's command of the same name was never timed here.
-    expect(shape(await session(other).verify())).toEqual([["sleep 5", true, false]]);
+    expect(shape(await session(other).verify())).toEqual([["sleep 2", true, false]]);
 
     // Under a longer limit than the one it failed, it has not been tried.
-    expect(shape(await session(root, 600).verify())).toEqual([["sleep 5", true, false]]);
+    expect(shape(await session(root, 600).verify())).toEqual([["sleep 2", true, false]]);
     // …and that failure, under the longer limit, now covers both.
-    expect(shape(await session(root, 600).verify())).toEqual([["sleep 5", true, true]]);
-    expect(shape(await session(root, 300).verify())).toEqual([["sleep 5", true, true]]);
+    expect(shape(await session(root, 600).verify())).toEqual([["sleep 2", true, true]]);
+    expect(shape(await session(root, 300).verify())).toEqual([["sleep 2", true, true]]);
 
     // A day after it last failed to finish, it is tried again — once, and a
     // command with this history is believed at its first failure.
     now += 24 * HOUR;
-    expect(shape(await session(root, 300).verify())).toEqual([["sleep 5", true, false]]);
-    expect(shape(await session(root, 300).verify())).toEqual([["sleep 5", true, true]]);
+    expect(shape(await session(root, 300).verify())).toEqual([["sleep 2", true, false]]);
+    expect(shape(await session(root, 300).verify())).toEqual([["sleep 2", true, true]]);
   });
 
   test("finishing once forgets it", async () => {
@@ -150,16 +151,16 @@ describe("a command that did not finish twice running is not waited for a third 
     writeFileSync(memory, "{ not json");
     const v = new CommandVerifier({
       workspaceRoot: root,
-      commands: ["sleep 5"],
+      commands: ["sleep 2"],
       timeoutMs: 200,
       slowChecksPath: memory,
     });
-    expect(shape(await v.verify())).toEqual([["sleep 5", true, false]]);
+    expect(shape(await v.verify())).toEqual([["sleep 2", true, false]]);
 
     // A path that is a directory: nothing can be written there.
     const w = new CommandVerifier({
       workspaceRoot: root,
-      commands: ["sleep 5"],
+      commands: ["sleep 2"],
       timeoutMs: 200,
       slowChecksPath: home,
     });
@@ -211,6 +212,13 @@ function project(testScript: string, files: Record<string, string> = {}): string
 const SUITE = "bun run test";
 const SLOW_BUN = "sleep 30 && bun test unit";
 const LIMIT = 8_000;
+/**
+ * For the one test that really waits for the limit. On Windows a check killed
+ * at its limit is not stopped — the verifier returns when the command's own
+ * children exit (seen on the CI runner, 2026-10-08) — so this sleep is one the
+ * test can afford to sit through in full.
+ */
+const SLOW_BUN_ONCE = "sleep 9 && bun test unit";
 
 /** The suite, already known not to finish here: nothing in these tests waits for it. */
 function known(root: string, limitMs = LIMIT): string {
@@ -227,11 +235,11 @@ function known(root: string, limitMs = LIMIT): string {
 
 describe("the suite did not finish: the test files the change touched are run in its place", () => {
   test("a real timeout: the touched file is measured, green is recorded, and the pass is still unfinished", async () => {
-    const root = project(SLOW_BUN);
+    const root = project(SLOW_BUN_ONCE);
     const logged: Array<[string, boolean]> = [];
     const v = new CommandVerifier({
       workspaceRoot: root,
-      timeoutMs: 3_000,
+      timeoutMs: 4_000,
       onCheck: (run) => logged.push([run.command, run.passed]),
     });
     const r = await v.verify(undefined, [join(root, "unit/a.test.ts"), join(root, "src/value.ts")]);
@@ -248,11 +256,11 @@ describe("the suite did not finish: the test files the change touched are run in
     expect(r.runs![1]!.passed).toBe(true);
     // The one command that measured something is the one on the record.
     expect(logged).toEqual([[scoped, true]]);
-    expect(r.report).toContain("timed out after 3000ms");
+    expect(r.report).toContain("timed out after 4000ms");
     expect(r.report).toContain("The test files this change touched, run in its place:");
     expect(r.report).toContain(`$ ${scoped}  (ok)`);
     expect(r.report).toContain("the suite as a whole was not measured");
-  }, 30_000);
+  }, 60_000);
 
   test("red in a touched test file is a failed check, not an unfinished one", async () => {
     const root = project(SLOW_BUN, { "unit/b.test.ts": T("b is wrong", "expect(1).toBe(2);") });
