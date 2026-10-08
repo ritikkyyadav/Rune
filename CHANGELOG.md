@@ -11,6 +11,11 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+## [1.3.4] - 2026-10-08
+
+**A failure that was already there is left alone in a real project, which 1.3.2 promised and
+did not do.** A patch on 1.3.3. Full notes: [`docs/releases/v1.3.4.md`](docs/releases/v1.3.4.md).
+
 ### Fixed
 
 - **A failure that was already there is recognised in a real project's suite.** Since 1.3.2 Rune
@@ -868,7 +873,8 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.3.3...HEAD
+[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.3.4...HEAD
+[1.3.4]: https://github.com/ritikkyyadav/Rune/compare/v1.3.3...v1.3.4
 [1.3.3]: https://github.com/ritikkyyadav/Rune/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/ritikkyyadav/Rune/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/ritikkyyadav/Rune/compare/v1.3.0...v1.3.1
