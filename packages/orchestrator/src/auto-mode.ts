@@ -690,6 +690,8 @@ export class AutoModeSafetyController {
   private readonly stats = EMPTY_STATS();
   /** Where supervisor verdicts go. Installed by the engine; absent in unit tests. */
   private decisionObserver?: (review: AutoModeReview, action: AutoModeAction) => void;
+  /** Who answers the supervisor's first screen, when it is not the reviewer. */
+  private resolveScreenReviewer?: () => ReviewerIdentity | null;
 
   constructor(
     private readonly config: ResolvedAutoModeConfig,
@@ -889,6 +891,27 @@ export class AutoModeSafetyController {
   }
 
   /**
+   * Who answers the background supervisor's FIRST screen.
+   *
+   * That screen reads an action that has already run and answers in one word.
+   * On the reviewer's own model — the heavy tier by default — it was measured
+   * at about eight cents a word (2026-10-08: three screens on one run, 22% of
+   * that run's cost, each 7.5k to 8.5k tokens in and 5 to 26 out). The founder's
+   * decision that day: the screen is answered by the model the session is
+   * already using.
+   *
+   * Nothing else moves. A screen that flags is still confirmed by the reviewer
+   * before any halt (`reviewSupervisedBatch`), and every review that GATES an
+   * action — the in-path fast and reasoned stages — is the reviewer's. The
+   * resolver returns null where the reviewer must answer everything (a model
+   * the person or their organisation pinned), and a null or a throw here falls
+   * back to the reviewer, never to no review.
+   */
+  setScreenReviewer(resolver: () => ReviewerIdentity | null): void {
+    this.resolveScreenReviewer = resolver;
+  }
+
+  /**
    * Install the sink for out-of-band decisions. One observer, set once by the
    * engine; a second call replaces it rather than fanning out, because two
    * writers would double every row in the table the report reads.
@@ -930,6 +953,14 @@ export class AutoModeSafetyController {
     if (opts.useFallback && this.config.reviewerFallback && this.resolveFallbackReviewer) {
       try {
         reviewer = this.resolveFallbackReviewer();
+      } catch {
+        reviewer = null;
+      }
+    }
+    // The supervisor's first screen, and only that: see `setScreenReviewer`.
+    if (!reviewer && stage === "fast" && opts.supervisorBatch && this.resolveScreenReviewer) {
+      try {
+        reviewer = this.resolveScreenReviewer();
       } catch {
         reviewer = null;
       }

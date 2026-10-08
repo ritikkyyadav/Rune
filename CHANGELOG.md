@@ -26,6 +26,13 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
   runs on a project whose suite cannot finish in a four-second limit: 6.8 s, 4.7 s, then 0.6 s.
   See [`docs/verification.md`](docs/verification.md).
 
+- **The background safety screen is answered by the session's model.** In Auto mode ordinary
+  actions run at once and a screen reads each afterwards and answers in one word. It ran on the
+  reviewer's model, the heavy tier by default: measured at about eight cents a word, and 17% of
+  Rune's cost across three live tasks. The screen now uses the model the session is already on.
+  A flag is still confirmed by the reviewer before any halt, every review that gates an action is
+  still the reviewer's, and a reviewer you or your organisation named still answers everything.
+
 - **On Codex, the second request of a run is cached again.** A request sent at a different
   reasoning effort from the one before it reads nothing from Codex's prompt cache. Rune's effort
   routing ran the first turn at the ceiling and the rest a notch down, then moved again whenever

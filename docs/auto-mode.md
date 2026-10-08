@@ -189,6 +189,14 @@ stronger operational separation, pin a dedicated provider/model and dedicated cr
 that selecting a second cloud provider expands the data boundary: redacted user messages and tool
 arguments will be sent to it.
 
+One call is not the reviewer's by default: **the background supervisor's first screen is answered
+by the session's own model.** That screen reads an action that has already run and answers in one
+word; on the heavy tier it was measured at about eight cents a word, 22% of one run's cost
+(2026-10-08). Nothing that decides anything moved with it: a screen that flags is still confirmed
+by the reviewer before any halt, and every review that gates an action is the reviewer's. Where a
+reviewer was chosen by name — `classifierProvider` or `classifierModel`, a signed organisation
+policy, or a named `[routing] helper` — that reviewer answers the screen too.
+
 ## User configuration
 
 Put this in `~/.rune/config.toml` for one developer, or `<workspace>/.rune/config.toml` for one

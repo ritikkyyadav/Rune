@@ -2277,6 +2277,20 @@ export class Engine {
       },
     );
 
+    // The supervisor's first screen is answered by the session's own model
+    // (`setScreenReviewer` says why, and what does not move). Not where the
+    // reviewer was chosen by name — by the person, by their organisation, or
+    // through a named `[routing] helper`: a named reviewer reviews everything.
+    this.autoModeSafety.setScreenReviewer(() => {
+      if (autoConfig.classifierProvider || autoConfig.classifierModel) return null;
+      if (helperAppliesToSafety(this.resolveHelper())) return null;
+      const provider = this.config.provider as ProviderName;
+      const model = this.config.model;
+      if (!model || !this.gateway.getProvider(provider)) return null;
+      if (this.orgPolicy && policyAllowsModel(this.orgPolicy.policy, provider, model)) return null;
+      return { gateway: this.gateway, provider, model };
+    });
+
     // One sink for the decisions that gate nothing. Installed here rather than
     // passed to the constructor because the constructor is positional and
     // already five arguments deep; a sixth would be a puzzle at every call site.

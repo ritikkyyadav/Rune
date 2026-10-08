@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import {
   AutoModeSafetyController,
   SUPERVISOR_UNANSWERED_AT_EXIT,
@@ -439,4 +439,110 @@ test("an action the screen flagged is not called unanswered while its confirmati
   await run.drainSupervisor();
   expect(rows.filter((r) => r.source === "supervisor_reasoned")).toEqual([]);
   expect(run.takePendingSupervisorHalt()).toBeNull();
+});
+
+// ─── Who answers the supervisor's first screen ───
+//
+// 2026-10-08: the screen answers in one word, and on the reviewer's heavy model
+// that word cost about eight cents — 22% of one measured run. The founder's
+// decision: the session's own model answers the screen. The confirmation of a
+// flag, and every review that gates an action, stay with the reviewer.
+describe("the supervisor's first screen is answered by the session's model", () => {
+  const SESSION = { gateway: {} as LlmGateway, provider: "codex", model: "session-model" };
+  const lintAction = (id: number) => ({
+    callId: `lint-${id}`,
+    toolName: "bash",
+    args: { command: `python3 lint.py file-${id}.ts` },
+    workspaceRoot: "/tmp/rune-review-tests",
+    schema: {
+      name: "bash",
+      version: "1",
+      description: "shell",
+      inputSchema: { type: "object" },
+      category: "execute" as const,
+      permissionLevel: "sandbox" as const,
+    },
+  });
+  function watched(
+    classify: (call: ClassifierCall) => Promise<string>,
+    screen?: () => typeof SESSION | null,
+  ) {
+    const calls: Array<{ stage: string; role?: string; model: string }> = [];
+    const controller = new AutoModeSafetyController(
+      resolveAutoModeConfig({ supervisor: "all" }),
+      {
+        classify: async (call) => {
+          calls.push({ stage: call.stage, role: call.role, model: call.reviewer.model });
+          return classify(call);
+        },
+      },
+      () => ({ gateway: {} as LlmGateway, provider: "anthropic", model: "reviewer-model" }),
+    );
+    if (screen) controller.setScreenReviewer(screen);
+    return { run: controller.startRun(["Lint the tree."]), calls };
+  }
+
+  test("the screen goes to the session's model; the confirmation of a flag goes to the reviewer", async () => {
+    const { run, calls } = watched(
+      async (call) =>
+        call.stage === "fast"
+          ? "BLOCK"
+          : JSON.stringify({ verdict: "allow", risk: "low", confidence: "high", reason: "lint" }),
+      () => SESSION,
+    );
+    expect((await run.review(lintAction(0))).verdict).toBe("allow");
+    await run.drainSupervisor();
+    expect(calls).toEqual([
+      { stage: "fast", role: "supervisor", model: "session-model" },
+      { stage: "reasoned", role: "supervisor", model: "reviewer-model" },
+    ]);
+  });
+
+  test("with nobody named for the screen, the reviewer answers it, as before", async () => {
+    const plain = watched(async () => "ALLOW");
+    await plain.run.review(lintAction(0));
+    await plain.run.drainSupervisor();
+    expect(plain.calls).toEqual([{ stage: "fast", role: "supervisor", model: "reviewer-model" }]);
+
+    // A pinned reviewer: the resolver says null. A resolver that throws: the
+    // same. Neither is ever "no review".
+    for (const screen of [
+      () => null,
+      () => {
+        throw new Error("no session model");
+      },
+    ]) {
+      const pinned = watched(async () => "ALLOW", screen);
+      await pinned.run.review(lintAction(1));
+      await pinned.run.drainSupervisor();
+      expect(pinned.calls).toEqual([
+        { stage: "fast", role: "supervisor", model: "reviewer-model" },
+      ]);
+    }
+  });
+
+  test("a review that gates an action is the reviewer's, whoever answers the screen", async () => {
+    const { run, calls } = watched(
+      async (call) =>
+        call.stage === "fast"
+          ? "BLOCK"
+          : JSON.stringify({
+              verdict: "deny",
+              risk: "high",
+              confidence: "high",
+              reason: "It sends the workspace somewhere the user never named.",
+            }),
+      () => SESSION,
+    );
+    // Rewriting a shared branch: not supervised-tier work, and nobody asked.
+    const review = await run.review({
+      ...lintAction(9),
+      args: { command: "git push --force origin main", network: true },
+    });
+    await run.drainSupervisor();
+    const gating = calls.filter((c) => c.role !== "supervisor");
+    expect(gating.length).toBeGreaterThan(0);
+    expect(new Set(gating.map((c) => c.model))).toEqual(new Set(["reviewer-model"]));
+    expect(review.verdict).not.toBe("allow");
+  });
 });
