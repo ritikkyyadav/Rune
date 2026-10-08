@@ -68,7 +68,10 @@ interface Sent {
 }
 
 /** Run three read turns on `provider`, returning every request the loop sent. */
-async function runOn(provider: string): Promise<Sent[]> {
+async function runOn(
+  provider: string,
+  doctrine: { opening: string; working: string } = { opening: "doctrine", working: "doctrine" },
+): Promise<Sent[]> {
   const sent: Sent[] = [];
   let i = 0;
   const gateway = {
@@ -105,8 +108,8 @@ async function runOn(provider: string): Promise<Sent[]> {
       provider,
       maxTokens: 100,
       maxTurns: 8,
-      systemPrompt: "doctrine",
-      workingSystemPrompt: "doctrine",
+      systemPrompt: doctrine.opening,
+      workingSystemPrompt: doctrine.working,
       taskState,
     } as any,
     gateway,
@@ -229,4 +232,39 @@ describe("§3.3 — the folded tail and the prefix the cache matches on", () => 
       }
     }
   });
+});
+
+// ─── The doctrine phase, and the cache it would cost ───
+//
+// Turn 1 carries the opening doctrine and turn 2 onward a shorter working
+// one. That is a pure saving where nothing is cached. Where a stable prefix
+// IS cached, the one change means the second request matches nothing the first
+// wrote: measured 2026-10-07 on Codex, three live runs out of three, the second
+// request read 0 cached tokens and re-paid 12k to 18k.
+describe("the doctrine phase does not change the prefix where the prefix is cached", () => {
+  const DOCTRINE = {
+    opening: "opening doctrine: read back, then plan",
+    working: "working doctrine",
+  };
+
+  test.each(["codex", "anthropic", "openai", "google", "openrouter"])(
+    "%s caches a stable prefix: one system prompt for the whole request",
+    async (provider) => {
+      const sent = await runOn(provider, DOCTRINE);
+      expect(sent.length).toBeGreaterThanOrEqual(4);
+      expect(sent.map((r) => r.system)).toEqual(sent.map(() => DOCTRINE.opening));
+    },
+  );
+
+  test.each(["ollama", "ollama-turbo", "custom"])(
+    "%s caches nothing: the shorter rendering from the second request on",
+    async (provider) => {
+      const sent = await runOn(provider, DOCTRINE);
+      expect(sent.length).toBeGreaterThanOrEqual(4);
+      expect(sent.map((r) => r.system)).toEqual([
+        DOCTRINE.opening,
+        ...sent.slice(1).map(() => DOCTRINE.working),
+      ]);
+    },
+  );
 });

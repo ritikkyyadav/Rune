@@ -111,6 +111,24 @@ export function foldsEphemeralTail(providerId: string): boolean {
   return providerId === "codex";
 }
 
+/**
+ * Whether this host caches a prompt prefix that stays byte-identical — by any
+ * mechanism — so that changing the prefix costs the cache.
+ *
+ * The two first-party adapters are not rows in the table above, which is the
+ * OpenAI-compatible hosts': Anthropic caches at the breakpoints its adapter
+ * writes, and the Codex backend caches the Responses prefix (measured
+ * 2026-09-10, and again on 2026-10-07 when the first request after a changed
+ * system prompt read 0 cached tokens on three runs out of three). Everything
+ * else answers by its declared policy, and an unlisted host answers no: it is
+ * better to save bytes on a host that might cache than to pay for stability on
+ * one that does not.
+ */
+export function cachesStablePrefix(providerId: string): boolean {
+  if (providerId === "anthropic" || providerId === "codex") return true;
+  return cacheBreakpointPolicyFor(providerId) !== "none";
+}
+
 /** The declared cache-breakpoint policy for a provider id. */
 export function cacheBreakpointPolicyFor(providerId: string): CacheBreakpointPolicy {
   return POLICY[providerId] ?? "none";

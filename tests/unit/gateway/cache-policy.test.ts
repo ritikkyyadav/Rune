@@ -12,6 +12,7 @@
 import { describe, test, expect } from "bun:test";
 import {
   cacheBreakpointPolicyFor,
+  cachesStablePrefix,
   declaredCachePolicies,
   isAnthropicUpstream,
   promptCacheKey,
@@ -65,6 +66,27 @@ describe("the policy table", () => {
     for (const id of Object.keys(declaredCachePolicies())) {
       expect(known, `${id} has a policy but no preset`).toContain(id);
     }
+  });
+});
+
+describe("whether changing the prefix costs a cache", () => {
+  test("the two first-party adapters cache, though neither is a row in the table", () => {
+    // Anthropic by the breakpoints its adapter writes; Codex measured twice.
+    expect(cachesStablePrefix("anthropic")).toBe(true);
+    expect(cachesStablePrefix("codex")).toBe(true);
+    expect(cacheBreakpointPolicyFor("anthropic")).toBe("none");
+    expect(cacheBreakpointPolicyFor("codex")).toBe("none");
+  });
+
+  test("every other host answers by its declared policy", () => {
+    for (const [id, policy] of Object.entries(declaredCachePolicies())) {
+      expect([id, cachesStablePrefix(id)]).toEqual([id, policy !== "none"]);
+    }
+    // Measured not to cache, and a host nobody has measured.
+    expect(cachesStablePrefix("ollama-turbo")).toBe(false);
+    expect(cachesStablePrefix("ollama")).toBe(false);
+    expect(cachesStablePrefix("custom")).toBe(false);
+    expect(cachesStablePrefix("some-new-host")).toBe(false);
   });
 });
 

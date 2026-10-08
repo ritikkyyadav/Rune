@@ -20,6 +20,7 @@ import type {
 } from "@rune/llm-gateway";
 import {
   measureComposition,
+  cachesStablePrefix,
   foldsEphemeralTail,
   LlmGateway,
   BudgetExceededError,
@@ -2891,8 +2892,22 @@ export class AgentLoop {
       // sections describe a decision already made — ~6 KB per request to say
       // it. The engine hands both renderings; the loop picks by turn, so the
       // prefix changes exactly ONCE per request, not per completion.
+      //
+      // ── …but once is the whole cache, where there is one ──
+      // On a host that caches a stable prefix, that one change means the
+      // second completion matches nothing the first one wrote. Measured
+      // 2026-10-07 on three live runs out of three: the second request read 0
+      // cached tokens and re-paid the whole prompt — 12k to 18k fresh tokens
+      // — to drop about 700 from each later request, which those requests
+      // would have read from the cache at a tenth of the price. That trade
+      // only pays after some 150 completions; the runs made 23 to 39. So
+      // there the opening rendering is kept for the whole request, exactly as
+      // every request was sent before the phases existed. Where nothing is
+      // cached the shorter rendering is still a pure saving, and still used.
       const phaseSystemPrompt =
-        turn > 1 && this.config.workingSystemPrompt
+        turn > 1 &&
+        this.config.workingSystemPrompt &&
+        !cachesStablePrefix(String(this.config.provider))
           ? this.config.workingSystemPrompt
           : this.config.systemPrompt;
 

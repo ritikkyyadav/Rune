@@ -26,6 +26,16 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
   runs on a project whose suite cannot finish in a four-second limit: 6.8 s, 4.7 s, then 0.6 s.
   See [`docs/verification.md`](docs/verification.md).
 
+- **One system prompt for the whole request, where the prompt is cached.** Rune sent a longer
+  system prompt on the first completion of a request and a shorter one from the second on. On a
+  provider that caches a stable prompt, that one change made the second completion re-pay
+  everything: on three live runs out of three it read no cached tokens and paid for 12k to 18k
+  fresh ones, to save about 700 on each later completion. The first rendering is now kept for the
+  whole request on Anthropic, Codex, OpenAI, Google and every other host declared to cache.
+  Hosts that cache nothing still get the shorter one. The effect on a provider's own count of
+  cached tokens has not been measured since the change. See
+  [`docs/run-economics.md`](docs/run-economics.md).
+
 ## [1.3.4] - 2026-10-08
 
 **A failure that was already there is left alone in a real project, which 1.3.2 promised and

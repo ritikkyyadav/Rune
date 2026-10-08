@@ -2210,3 +2210,60 @@ is what the acceptance spec makes it say; the cases seen need a rule that does n
 weaken it.
 
 **Next step.** A3, then Stage B (the cached prefix that changes on calls 2–8).
+
+## B1: the cache that was thrown away at the second completion, 2026-10-08 · **built and gated on this Mac; not measured live**
+
+**What the kept runs show, corrected.** The earlier entry said the cached prefix "changes
+on most of calls 2–8". That read the wrong number: `prefixHash` covers the whole request
+and changes on every call by construction. Read from the provider's own cached-token
+counts instead, call by call:
+
+- **Call 2 reads 0 cached tokens on all three runs** and pays 12.2k, 14.5k and 17.7k
+  fresh. The system prompt is 25.6k characters on call 1 and 22.8k from call 2 on.
+  OpenCode's call 2 on the same task: 368 fresh, 11,008 cached.
+- Calls 5–8 pay 8–14k fresh each because the agent had just read that much; those are
+  the work, not a loss.
+- One call after a repair request re-paid 43k (4,480 cached). A4 removed that request.
+
+**The cause** is a deliberate one: the doctrine phase. Turn 1 carries the opening
+doctrine and turn 2 onward a working one about 700 tokens shorter, "so the prefix
+changes exactly once per request". Where nothing is cached that is a saving. Where a
+prefix is cached, the one change costs the whole prompt once to save 700 cached tokens
+a call; it pays back after about 150 calls, and the runs made 23 to 39. On the third
+run the loss was 14% of all the fresh input it paid for.
+
+**The change.** `cachesStablePrefix(provider)` in `cache-policy.ts`: Anthropic, Codex,
+and every host whose declared policy is not `none`. On those the loop keeps the opening
+system prompt for the whole request, which is what every request was before the phases
+existed. On the rest nothing changes.
+
+**Verification, exact.**
+
+- `agent-loop-fold-prefix.test.ts`: on five caching hosts every request of a run
+  carries one system prompt; on three hosts that cache nothing the second request on
+  carries the shorter one. `cache-policy.test.ts`: the predicate against the table.
+  With `doctrine-modes-routing.test.ts`, 27 pass. Sixty-two prompt, doctrine,
+  agent-loop and cost files together: 479 pass, 0 fail.
+- Four mutations, all caught.
+- Gateway and orchestrator type-check exit 0; format check clean.
+- **Not measured:** what the provider then caches. The prediction is that call 2 reads
+  about what call 1 sent. It will be read off the next approved live run. Whether the
+  change of reasoning effort between call 1 and call 2 (effort routing) also costs
+  anything is not isolated.
+- Not run: the full suites, Linux and Windows.
+
+**B2, the safety reviewer, is the founder's.** It was 12% and 29% of two runs' cost
+because it runs on the heavy tier, about five times the session model's price, by
+default: about 8.6k fresh tokens a call. Moving it to a cheaper model is a weaker
+review to save money, which the standing rules do not let this work decide.
+
+**A3, recorded and deferred.** The verdict "partial" on the two runs came from criteria
+the model itself stated and never cited a check for, though passing checks were on its
+own record. The rule that fits the acceptance spec is one request before the finish
+— "cite what settles each, or say what could not be shown" — with the runtime still
+pricing every citation. It adds a completion to every such run, and whether models
+then cite cannot be shown without a live run. Not built until one is allowed.
+
+**Next step.** B3 and B4 need a live allowance (small tasks re-measured). Stage C
+starts with the design A/B, which also needs one. Zero-spend work left: the rig's stop
+line, and the interface audit (Stage D1).

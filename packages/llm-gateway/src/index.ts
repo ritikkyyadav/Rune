@@ -62,6 +62,7 @@ export type { AzureOpenAIOpts } from "./providers/azure-openai";
 export { OpenAIProvider } from "./providers/openai";
 export {
   cacheBreakpointPolicyFor,
+  cachesStablePrefix,
   declaredCachePolicies,
   foldsEphemeralTail,
   isAnthropicUpstream,

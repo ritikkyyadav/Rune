@@ -269,6 +269,31 @@ line now reads about 1 KB less. The rows that do not depend on per-user content 
 prompt bytes, fresh tokens — are directly comparable, and the growth in the
 untouched blocks makes those a **lower bound** on the saving, not an upper one.
 
+### The doctrine phase, and the cache it would cost
+
+Turn 1 of a request carries the opening doctrine (read-back, ambiguity, plan-first) and
+turn 2 onward a shorter working one — about 700 tokens less on every later completion.
+On a host that caches nothing, that is a pure saving, and it is what Rune does there.
+
+On a host that caches a stable prefix it is a loss, and since 2026-10-08 Rune does not do
+it there: the opening doctrine is kept for the whole request. The one change of system
+prompt meant the second completion matched nothing the first had written. Measured on
+three live Codex runs on 2026-10-07, three out of three: the second request read 0 cached
+tokens and re-paid the whole prompt, 12k to 18k fresh tokens, to save 700 on each later
+request — which those requests would have read from the cache at about a tenth of the
+price. The saving catches up with the loss after some 150 completions; the runs made 23
+to 39. OpenCode's second request on the same tasks was 97% cached.
+
+Which hosts count is `cachesStablePrefix` in `cache-policy.ts`: `anthropic`, `codex`, and
+every host whose policy in the table below is not `none`. **Not measured live after the
+change:** the second request's cached-token count is the number to read on the next run.
+
+Two things this does not cover. A harness message in the middle of a run — a repair
+request, a refused finish — is a new user turn, and on Codex the first request after one
+re-paid 43k tokens in the one case measured; the lever there is asking for fewer of them.
+And whether a change of reasoning effort between two requests costs anything has not been
+isolated.
+
 ### Caching, per provider
 
 The stable prefix is `tools → system → history`, and the per-turn variable part
