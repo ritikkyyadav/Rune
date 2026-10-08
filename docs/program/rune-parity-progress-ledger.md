@@ -2423,3 +2423,61 @@ needs the same pty driven against the mock model, as the real-process tests are.
 
 **Next step.** The founder picks from this page; items 1 and 2 are defects whatever
 the taste, and are small. Then the run-in-progress frames.
+
+## C1, the design comparison, 2026-10-08 · **Rune's pages are not worse; they cost four times as much to make**
+
+**Authorised by the founder** ("the codex has room, you can proceed", then: up to 85%
+of the weekly window). The founder's report was that Claude Code, the Codex CLI and
+OpenCode all gave better designs than Rune on the same model. Claude Code is not run:
+benchmarks stay on the Codex subscription.
+
+**What was run.** Three build-from-nothing prompts (a landing page, an analytics
+dashboard, a task tracker to be organised for a second developer), each to Rune at
+`622b212`, OpenCode 1.18.30 and the Codex CLI 0.160.1, all `gpt-6-sol`, each in an empty
+git repository, fifteen minutes allowed. Nine runs, one each. Raw results and a page
+for a blind pick in `~/rune-evidence/design-ab-20261008/` (`index.html`; the letters are
+shuffled per prompt and the key is `key.json` beside it).
+
+| Prompt       | Rune                     | OpenCode                 | Codex CLI     |
+| ------------ | ------------------------ | ------------------------ | ------------- |
+| Landing page | 533 s · 56 calls · $1.40 | 283 s · 7 calls · $0.27  | 190 s · $0.61 |
+| Dashboard    | 463 s · 47 calls · $1.02 | 230 s · 9 calls · $0.29  | 227 s · $0.68 |
+| Task tracker | 412 s · 54 calls · $0.95 | 183 s · 11 calls · $0.24 | 123 s · $0.63 |
+| Total        | 1,408 s · $3.37          | 696 s · $0.81            | 540 s · $1.93 |
+
+All three Rune runs ended "partial" with exit code 1. The other six ended clean.
+
+**What the screenshots show.** All nine render; none is broken. To this reader the
+three tools' pages are of one class, and the differences between them are smaller than
+the differences in what they cost. **The founder's pick, blind, is the measurement; it
+has not been made yet.** This run was on a build where every turn on Codex reasons at
+the ceiling (since `81a321e`); before today ordinary turns ran a notch lower, which may
+be part of what the founder saw.
+
+**Where Rune's calls went, from the landing run's own log** (43 tool calls, 8.6
+minutes).
+
+- **One minute before any work:** a design skill and its twenty-genre catalogue, two
+  web searches and three fetches of other companies' sites, an art-direction question
+  with nobody there to answer it, a read-back, a plan.
+- **Three minutes of work:** three files written. Three calls.
+- **Five minutes and 25 calls reviewing a page it could not see.** No browser is
+  mounted, so the run is told to "plan the visual step as a fetch of the served page"
+  and is held to it: it started a local server, fetched its own files with curl, and
+  parsed its own HTML with Python scripts five times. The finish was refused once ("UI
+  was written but never viewed") and closed with "UI review incomplete".
+- **The safety screens:** 8 to 12 a run, on the session's model since `622b212`, $0.18
+  to $0.26 a run. On the landing run three flags went to the heavy model to be
+  confirmed, $0.39 more. Most of what was screened was the serving and fetching above.
+
+**The reviewer change, seen live.** Screens ran on `gpt-6-sol`; confirmations on
+`gpt-6-astra`.
+
+**Proposed, not built: with no browser, do not demand a review that cannot see.** Say
+once that the layout was not seen; do not tell the run to serve, fetch and parse in
+its place; do not refuse the finish for it. And in a headless run, choose an art
+direction and state it, without asking. It relaxes the product-sight gate where no
+browser exists, so it is the founder's to approve.
+
+**Limitations.** One run a prompt. Three prompts, all small and all static. Nothing
+here measures a multi-page application or a project with a build.
