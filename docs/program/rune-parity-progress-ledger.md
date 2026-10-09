@@ -2481,3 +2481,52 @@ browser exists, so it is the founder's to approve.
 
 **Limitations.** One run a prompt. Three prompts, all small and all static. Nothing
 here measures a multi-page application or a project with a build.
+
+## C2 measured: the no-browser change on the same three prompts, 2026-10-09 · **a third less time and money; still dearer than both, still exit 1**
+
+**The change** (`19b127d`, on the founder's choice "Stop the stand-in review"): with no
+usable browser the visual review is `unseen` — nothing is asked, nothing is claimed,
+the finish is not refused, one notice says the layout was not looked at. A headless
+design run is told nobody is there to answer. With a browser nothing changes. Before
+it, the founder's other choice of the evening: the background screen on the session's
+model (`622b212`).
+
+**Measured.** Rune alone, the same three prompts, a clean clone at `19b127d`,
+`gpt-6-sol`; the other two tools' runs of the evening before stand as the comparison.
+Raw results in `~/rune-evidence/design-ab2-20261008/`.
+
+| Prompt       | Rune before                 | Rune after                  | OpenCode                 | Codex CLI     |
+| ------------ | --------------------------- | --------------------------- | ------------------------ | ------------- |
+| Landing page | 533 s · 56 calls · $1.40    | 369 s · 27 calls · $0.65    | 283 s · 7 calls · $0.27  | 190 s · $0.61 |
+| Dashboard    | 463 s · 47 calls · $1.02    | 407 s · 39 calls · $1.13    | 230 s · 9 calls · $0.29  | 227 s · $0.68 |
+| Task tracker | 412 s · 54 calls · $0.95    | 242 s · 36 calls · $0.55    | 183 s · 11 calls · $0.24 | 123 s · $0.63 |
+| Total        | 1,408 s · 157 calls · $3.37 | 1,018 s · 102 calls · $2.33 | 696 s · $0.81            | 540 s · $1.93 |
+
+- In all three the serving and fetching is gone, no finish was refused, no
+  art-direction question was asked, and each ended on one "UI not viewed" notice.
+- Time down 28%, calls down 35%, cost down 31%. Against the Codex CLI Rune is now
+  1.2 times the cost (it was 1.7); against OpenCode 2.9 times (it was 4.2).
+- **All three still ended "partial", exit code 1.** The criteria the model states for
+  itself — keyboard access, a responsive layout — cannot be shown without a browser,
+  and stay unassessed.
+- The dashboard did not get cheaper. Three in-path reviews on the heavy model, $0.32
+  together, were spent on scripts the model wrote to check its own work.
+
+**The first attempt at this measurement was void.** Started at 18:23Z as the Codex
+window reset, and the Mac went to sleep: three runs of 15 to 26 minutes with their
+responses cut off mid-stream and no file written. Seen in the power log, discarded,
+run again with the machine awake.
+
+**Where the rest of the gap is, from the three logs.** A design skill, a read-back,
+four plan updates and one or two evidence records in every run; one web search and
+one or two fetches for references nobody supplied; three to seven shell calls of
+self-written checks; five to seven safety screens. OpenCode writes the files and
+stops.
+
+**The Codex window.** Five-hour 21%, weekly 72%, read off the last run.
+
+**Limitations.** One run a prompt, before and after. The comparison runs are a day
+older than the "after" runs. The pages were not looked at again side by side.
+
+**Next step, the founder's:** whether a small build should carry less of that
+ceremony, and what a run that could not show its own criteria should exit with.
