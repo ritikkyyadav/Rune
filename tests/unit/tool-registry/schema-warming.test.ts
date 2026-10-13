@@ -42,7 +42,7 @@ function stub(
 function registry(): ToolRegistry {
   const reg = new ToolRegistry();
   reg.register(stub("read_file"));
-  reg.register(stub("web_fetch"));
+  reg.register(stub("research"));
   reg.register(stub("worker"));
   reg.register(stub("symbol_search"));
   reg.register(createLoadToolsTool(reg));
@@ -55,23 +55,52 @@ const advertised = (reg: ToolRegistry): string[] =>
     .map((t) => t.name)
     .filter((n) => n !== LOAD_TOOLS_TOOL);
 
+describe("a search and the tool that opens what it found are advertised together", () => {
+  // Promotion is sticky because a prefix that changes mid-run is a prefix that
+  // never caches — and the commonest promotion of all was this one. Recorded
+  // 2026-10-09 on three page builds (`~/rune-evidence/design-ab2-20261008`):
+  // each searched the web, called load_tools for `web_fetch`, and sent its next
+  // request with 0 cached tokens (15,655, 20,039 and 16,770 paid for again).
+  test("neither needs loading, so a fetch after a search changes nothing advertised", async () => {
+    const reg = new ToolRegistry();
+    for (const name of ["read_file", "web_search", "web_fetch", "worker"]) reg.register(stub(name));
+    reg.register(createLoadToolsTool(reg));
+
+    const before = JSON.stringify(reg.toLlmTools());
+    expect(advertised(reg)).toEqual(["read_file", "web_search", "web_fetch"]);
+    expect(reg.deferredCatalog().map((e) => e.name)).toEqual(["worker"]);
+
+    for (const toolName of ["web_search", "web_fetch"]) {
+      await reg.execute({
+        toolName,
+        callId: toolName,
+        sessionId: "s",
+        workspaceRoot: "/tmp",
+        args: {},
+      });
+    }
+    // Byte for byte: the head of the next request is the head of the last one.
+    expect(JSON.stringify(reg.toLlmTools())).toBe(before);
+  });
+});
+
 describe("advertisement warming", () => {
   test("the core set is advertised and the rest is a catalog line", () => {
     const reg = registry();
     expect(advertised(reg)).toEqual(["read_file"]);
     expect(reg.deferredCatalog().map((e) => e.name)).toEqual([
+      "research",
       "symbol_search",
-      "web_fetch",
       "worker",
     ]);
   });
 
   test("naming a tool in the conversation promotes it", () => {
     const reg = registry();
-    expect(reg.warmFromText("fetch the changelog with web_fetch please")).toEqual(["web_fetch"]);
-    expect(advertised(reg)).toContain("web_fetch");
+    expect(reg.warmFromText("look into it with the research tool please")).toEqual(["research"]);
+    expect(advertised(reg)).toContain("research");
     // And it is not re-reported on the next turn — promotion happens once.
-    expect(reg.warmFromText("web_fetch again")).toEqual([]);
+    expect(reg.warmFromText("research again")).toEqual([]);
   });
 
   test("promotion is sticky: later text never demotes a warmed tool", () => {
@@ -104,15 +133,15 @@ describe("advertisement warming", () => {
   test("warming is inert when deferral is off", () => {
     const reg = registry();
     reg.setDeferralEnabled(false);
-    expect(reg.warmFromText("web_fetch")).toEqual([]);
-    expect(advertised(reg).sort()).toEqual(["read_file", "symbol_search", "web_fetch", "worker"]);
+    expect(reg.warmFromText("research")).toEqual([]);
+    expect(advertised(reg).sort()).toEqual(["read_file", "research", "symbol_search", "worker"]);
   });
 
   test("warming everything empties the catalog and retires the mechanism", () => {
     const reg = registry();
-    reg.warmFromText("worker web_fetch symbol_search");
+    reg.warmFromText("worker research symbol_search");
     expect(reg.deferredCatalog()).toEqual([]);
-    expect(advertised(reg).sort()).toEqual(["read_file", "symbol_search", "web_fetch", "worker"]);
+    expect(advertised(reg).sort()).toEqual(["read_file", "research", "symbol_search", "worker"]);
     // With nothing left deferred, the mechanism itself stops being advertised —
     // a run that loads everything ends up paying exactly what it paid before.
     expect(reg.toLlmTools().some((t) => t.name === LOAD_TOOLS_TOOL)).toBe(false);

@@ -32,10 +32,15 @@ authority comes from rigour." Not "a website".
 One `web_search` round on the subject's design conventions, plus a `web_fetch`
 of one or two real examples in that space. What you remember is a hypothesis;
 current practice moves. Say in one line what the references had in common.
+This step exists to make step 3's options current, so it goes when step 3
+goes: skip both together (see "When to skip the ask"). References the user
+supplied are not this step — those are requirements, and you always open them.
 
 **3. Offer the user two or three directions — then WAIT.**
-Open `art-directions.md` (beside this file), take the candidate row for the
-subject, and put them to the user with `ask_user`. Each option must be concrete
+Open `art-directions.md` — `skill(name: "design:frontend-design", file:
+"art-directions.md")`; it is bundled with this skill, outside the workspace,
+and `read_file` cannot reach it — take the candidate row for the subject, and
+put them to the user with `ask_user`. Each option must be concrete
 enough to picture:
 
 > "Swiss / International — white ground, strict visible grid, Helvetica-class
@@ -59,7 +64,9 @@ literal colour outside the token block.
 - The project already has a design system, brand, or token file → match it.
 - The user already pinned a direction, a reference image, or a brand.
 - You are editing an existing screen's behaviour, not establishing its look.
-- `ask_user` is unavailable (4th gear with no user present) → then state the
+- Nobody can answer — the run says no one is present, or `ask_user` is
+  unavailable (4th gear with no user) → skip steps 2 AND 3: the lookup and the
+  catalogue only word options for a person to choose between. State the
   direction and WHY it fits the genre in one line, and build that.
 
 **Scale the ceremony, not the care.** A single poem still gets a direction —
@@ -110,10 +117,13 @@ ipsum" · `<marquee>` energy of any kind.
 
 After writing the page:
 
-1. Open it (`open <path>` on macOS, `xdg-open` on Linux) or serve it and curl it.
-2. Re-read the rendered structure top-to-bottom as a REVIEWER: does one thing
-   dominate? Is there exactly one accent? Do the numbers align? Is any banned
-   slop present? Does it read as one art direction?
+1. Look at it: in the browser tool when this run has one, at a wide and a
+   narrow width. With no browser, do NOT serve it, curl it or parse it with a
+   script to stand in for looking — re-read the source once, top to bottom, and
+   say in your report that the layout was not seen.
+2. Read it as a REVIEWER: does one thing dominate? Is there exactly one accent?
+   Do the numbers align? Is any banned slop present? Does it read as one art
+   direction?
 3. Fix the worst thing you find. Once. Then stop polishing and report.
 
 A page you never looked at is unreviewed work — say so honestly if you could

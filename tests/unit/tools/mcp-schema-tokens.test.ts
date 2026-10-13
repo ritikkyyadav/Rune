@@ -162,6 +162,10 @@ describe("deferred tool loading — schema tokens per request", () => {
       "record_evidence",
       "ask_user",
       "web_search",
+      // Core WITH web_search since 2026-10-13: a search returns addresses, and
+      // loading the tool that opens one re-paid the whole prompt on a host that
+      // caches by prefix (0 cached tokens on the next request, three runs of three).
+      "web_fetch",
     ])
       expect(deferredByDefault(name), `${name} is core and must stay eager`).toBe(false);
     // Everything outside it starts as a catalog line (P13.1). `worker` is the
@@ -173,7 +177,6 @@ describe("deferred tool loading — schema tokens per request", () => {
       "workflow",
       "loop_control",
       "compact_context",
-      "web_fetch",
       "lsp",
       "symbol_search",
       "search_code",

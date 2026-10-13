@@ -703,7 +703,8 @@ export function artDirectionNote(moment: "plan" | "first-write"): string {
     'and its one signature move ("Swiss: white, strict visible grid, Helvetica-class in three ' +
     'sizes, red as the only accent, zero decoration"), never bare adjectives like "minimal or ' +
     'modern". If a `skill` tool is registered, load frontend-design for the full catalogue and ' +
-    "the genre→candidates table (art-directions.md); if it is not, do not go looking for it — " +
+    "the genre→candidates table (its bundled art-directions.md, opened with the skill tool's " +
+    "`file` argument, never read_file); if it is not, do not go looking for it — " +
     "pick candidates from these six (ground · type · signature move): " +
     ART_DIRECTION_CATALOGUE +
     (moment === "plan"
@@ -711,6 +712,34 @@ export function artDirectionNote(moment: "plan" | "first-write"): string {
       : " Then commit to one and rewrite this file to it.\n\n")
   );
 }
+
+/**
+ * What a run with nobody to ask is told about how a screen should look.
+ *
+ * The art-direction method is a conversation: name the genre, look up how the
+ * genre reads today, load the catalogue, put two or three directions to the
+ * person, wait. Every step before the question exists to word its options.
+ * With nobody there the question was withdrawn on 2026-10-08; the steps that
+ * fed it were not. The three page builds recorded the next day
+ * (`~/rune-evidence/design-ab2-20261008`) each still spent a web search, one
+ * or two fetches of other companies' sites and a read of the catalogue on a
+ * choice the model then made alone — and each, on writing its first screen,
+ * was told by the tripwire to stop and ask after all.
+ */
+export const UNATTENDED_DESIGN_NOTE =
+  "nobody is here to answer questions in this run. Do not call ask_user for the art direction, " +
+  "and do not research one: the genre search, the example sites and the catalogue of directions " +
+  "exist to word options for a person to choose between, and no one will choose. Pick one " +
+  "direction yourself from what the request and the project already say, name it and why it " +
+  "fits in one line, and build it. A reference the request itself supplies is still a " +
+  "requirement: open it.";
+
+/** The greenfield tripwire's words when the questions it asks for have no one to go to. */
+export const UNATTENDED_GREENFIELD_NOTE =
+  "[Harness note] You are starting a NEW project from scratch, and nobody is here to ask. " +
+  "Platform (web app / native / CLI), stack and depth of functionality are your assumptions " +
+  "wherever the request does not pin them: state each in one line of your final report, and " +
+  "build the working core rather than a visual mock.\n\n";
 
 // A goal that reads as a FIX: the fix-verified gate applies only to these, and
 // only when a read-back brief exists — a false positive costs one refused
@@ -2491,12 +2520,17 @@ export class AgentLoop {
       browser.reason,
     );
     if (preflight) {
+      // The report is where this is said. The note used to open "Say so in
+      // your read-back's `leave` list", which reads as an instruction to make
+      // a read-back: all three page builds recorded on 2026-10-09 made one as
+      // their second completion, for a one-file page, and were then held to
+      // four criteria of their own that nothing in the run could settle.
       this.injectHarnessNote(
-        `Pre-flight — ${preflight}. Say so in your read-back's \`leave\` list, in those words, ` +
-          "and state in your final report that the layout was not seen. Do not serve the page, " +
-          "fetch it or parse it with a script to stand in for looking at it, and do not plan " +
-          "around screenshots this run cannot take: nothing here can see a layout, and a review " +
-          "that cannot see is not asked for.",
+        `Pre-flight — ${preflight}. State in your final report, in those words, that the ` +
+          "layout was not seen (and in the `leave` list of a read-back, if this task has one). " +
+          "Do not serve the page, fetch it or parse it with a script to stand in for looking at " +
+          "it, and do not plan around screenshots this run cannot take: nothing here can see a " +
+          "layout, and a review that cannot see is not asked for.",
       );
       this.report("loop.browser_preflight", "warn", "visualReview", preflight);
       yield { type: "notice", message: `Pre-flight: ${preflight}.` };
@@ -2512,12 +2546,13 @@ export class AgentLoop {
     } catch {
       nobodyToAsk = false;
     }
+    // Said once a run: here when the request is plainly a screen, otherwise on
+    // the first screen written (the tripwire below), where the same run used
+    // to be told to stop and ask the person who is not there.
+    let unattendedDesignSaid = false;
     if (nobodyToAsk && doctrineForRequest(userMessage).includes("frontend")) {
-      this.injectHarnessNote(
-        "Pre-flight — nobody is here to answer questions in this run. Do not call ask_user for " +
-          "the art direction: choose one yourself, say which and why it fits in one line, and " +
-          "build it.",
-      );
+      this.injectHarnessNote(`Pre-flight — ${UNATTENDED_DESIGN_NOTE}`);
+      unattendedDesignSaid = true;
     }
     // ── Effort routing ──
     // Latched to the ceiling for the rest of the run on the first sign of
@@ -5794,6 +5829,9 @@ export class AgentLoop {
               // question to one per run.
               if (
                 artDirectionNudges < 1 &&
+                // A question for a person. With nobody to ask it is not put,
+                // and the run has been told so (see UNATTENDED_DESIGN_NOTE).
+                !nobodyToAsk &&
                 !wroteVisualThisRun &&
                 ts.clarificationCount() === 0 &&
                 !isFixShaped(ts.currentRequest() ?? "") &&
@@ -6140,11 +6178,17 @@ export class AgentLoop {
               "planNudge",
               "multi-step writes with no recorded plan — nudged once for todo_write",
             );
+            // The same bar as "# Plan and track": independent deliverables or
+            // dependent milestones. It used to say "3+ steps", and the three
+            // files of one small page are three steps by any count — which is
+            // how a note meant for multi-part work asks a one-page build for a
+            // ledger it then pays a completion to open and another to close.
             resultContent =
-              "[Harness note] You are editing files with no recorded plan. If this task has " +
-              "3+ steps, pause now: record the remaining steps with todo_write (exactly one " +
-              "in_progress), then continue. If this is genuinely a single-step task, ignore " +
-              "this note and continue.\n\n" +
+              "[Harness note] You are editing files with no recorded plan. If 3+ independent " +
+              "deliverables or dependent milestones are still ahead, pause now: record them " +
+              "with todo_write (exactly one in_progress), then continue. If what is left is " +
+              "the rest of one small deliverable — the other files of a page, a component and " +
+              "its test — ignore this note and continue.\n\n" +
               resultContent;
           }
 
@@ -6182,13 +6226,25 @@ export class AgentLoop {
             this.registry.get("ask_user")
           ) {
             artDirectionNudges++;
-            this.report(
-              "loop.art_direction_nudge",
-              "warn",
-              "artDirection",
-              "first screen written with no art-direction question — nudged once",
-            );
-            resultContent = artDirectionNote("first-write") + resultContent;
+            if (!nobodyToAsk) {
+              this.report(
+                "loop.art_direction_nudge",
+                "warn",
+                "artDirection",
+                "first screen written with no art-direction question — nudged once",
+              );
+              resultContent = artDirectionNote("first-write") + resultContent;
+            } else if (!unattendedDesignSaid) {
+              // Nobody to ask, and the request did not read as a screen at the
+              // start, so this is the first the run hears of it. One sentence,
+              // and no instruction to stop, search or rewrite: the note this
+              // replaces told a headless run to do all three and then ask.
+              unattendedDesignSaid = true;
+              resultContent =
+                "[Harness note] This is the first screen of something a person will look at, and " +
+                `${UNATTENDED_DESIGN_NOTE}\n\n` +
+                resultContent;
+            }
           }
 
           // ── Greenfield-clarify tripwire (deterministic, once per run) ──
@@ -6207,15 +6263,20 @@ export class AgentLoop {
               "greenfieldNudge",
               "new top-level project started with zero clarifying questions — nudged once for ask_user",
             );
+            // "Stop and ask now" is addressed to a run that can. One that cannot
+            // spends a completion on a question, a second learning nobody
+            // answered it, and then guesses anyway — so it is told to say what
+            // it assumed instead.
             resultContent =
-              "[Harness note] You are starting a NEW project from scratch and asked the user " +
-              "nothing. If platform (web app / native / CLI), stack, or depth of functionality " +
-              "(working core features vs a visual mock) are YOUR assumptions rather than the " +
-              "user's stated spec, stop and ask now — one ask_user round, 2-4 questions with " +
-              "short options — before building further. A wrong guess here wastes the entire " +
-              "build. If the user already pinned these choices, or this is genuinely a small " +
-              "single-file artifact, ignore this note and continue.\n\n" +
-              resultContent;
+              (nobodyToAsk
+                ? UNATTENDED_GREENFIELD_NOTE
+                : "[Harness note] You are starting a NEW project from scratch and asked the user " +
+                  "nothing. If platform (web app / native / CLI), stack, or depth of functionality " +
+                  "(working core features vs a visual mock) are YOUR assumptions rather than the " +
+                  "user's stated spec, stop and ask now — one ask_user round, 2-4 questions with " +
+                  "short options — before building further. A wrong guess here wastes the entire " +
+                  "build. If the user already pinned these choices, or this is genuinely a small " +
+                  "single-file artifact, ignore this note and continue.\n\n") + resultContent;
           }
 
           // ── Just-in-time doctrine (once per session, at first relevance) ──

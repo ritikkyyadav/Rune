@@ -32,7 +32,7 @@ export interface SkillMeta {
 export interface SkillResource {
   /** Path relative to the skill directory, e.g. "references/guide.md". */
   relPath: string;
-  /** Absolute path — pass to read_file to open it. */
+  /** Absolute path. The `skill` tool reads it for the model: read_file cannot, outside the workspace. */
   absPath: string;
 }
 

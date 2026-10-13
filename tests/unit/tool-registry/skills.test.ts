@@ -368,6 +368,143 @@ describe("createSkillTool", () => {
     const tool = await toolWith();
     expect(tool.validate({ name: 123 }).valid).toBe(false);
     expect(tool.validate({ name: "ok" }).valid).toBe(true);
+    expect(tool.validate({ name: "ok", file: 7 }).valid).toBe(false);
+  });
+});
+
+// ─── a skill's bundled files ───
+//
+// They sit beside the skill, outside the workspace for every project but
+// Rune's own, and read_file opens nothing outside the workspace. Loading a
+// skill used to say "Open any of these with read_file" over a list of absolute
+// paths: recorded 2026-10-09 on three page builds
+// (`~/rune-evidence/design-ab2-20261008`), each spent a call asking for the
+// design skill's catalogue that way and got "Path escape" back.
+
+describe("a skill's bundled files are opened through the skill tool", () => {
+  const SECRET = "not a skill's file";
+
+  async function bundled(): Promise<ReturnType<typeof createSkillTool>> {
+    const dir = await writeSkill(
+      workspace,
+      "design",
+      "frontend-design",
+      { name: "frontend-design", description: "Design pages" },
+      "Open `art-directions.md` beside this file.",
+    );
+    await writeFile(join(dir, "art-directions.md"), "Swiss — white ground, strict grid.");
+    await mkdir(join(dir, "references"), { recursive: true });
+    await writeFile(join(dir, "references", "scale.md"), "4 / 8 / 12 / 16");
+    await writeFile(join(dir, "blob.bin"), "a\u0000b");
+    await writeFile(join(workspace, "design", "CONNECTORS.md"), "~~browser: a browser tool");
+    // A neighbour, and a file above the skills tree: neither is this skill's.
+    const other = await writeSkill(
+      workspace,
+      "design",
+      "other",
+      { name: "other", description: "Another skill" },
+      "Other body.",
+    );
+    await writeFile(join(other, "private.md"), SECRET);
+    await writeFile(join(workspace, "outside.md"), SECRET);
+    const loader = new SkillLoader({ roots: [workspace] });
+    await loader.loadAll();
+    return createSkillTool(loader);
+  }
+
+  test("loading says how to open one, and names no path read_file would be handed", async () => {
+    const tool = await bundled();
+    const out = await tool.execute(callInput({ name: "design:frontend-design" }));
+    expect(out.success).toBe(true);
+    expect(out.result).toContain('skill(name: "design:frontend-design", file: "<path>")');
+    expect(out.result).toContain("- art-directions.md");
+    expect(out.result).toContain("- references/scale.md");
+    expect(out.result).not.toContain("with read_file when");
+    // Each file is listed by the name the tool takes, not by an absolute path.
+    expect(out.result).not.toContain(join(workspace, "design", "skills", "frontend-design", "art"));
+    expect(out.result).toContain('file: "CONNECTORS.md"');
+  });
+
+  test("a listed file comes back whole, under its name", async () => {
+    const tool = await bundled();
+    const top = await tool.execute(
+      callInput({ name: "design:frontend-design", file: "art-directions.md" }),
+    );
+    expect(top.success).toBe(true);
+    expect(top.result).toContain("design:frontend-design — art-directions.md");
+    expect(top.result).toContain("Swiss — white ground, strict grid.");
+
+    const nested = await tool.execute(
+      callInput({ name: "frontend-design", file: "./references/scale.md" }),
+    );
+    expect(nested.result).toContain("4 / 8 / 12 / 16");
+  });
+
+  test("the plugin's connector notes are reachable by the link skills use for them", async () => {
+    const tool = await bundled();
+    for (const file of ["CONNECTORS.md", "../../CONNECTORS.md"]) {
+      const out = await tool.execute(callInput({ name: "design:frontend-design", file }));
+      expect(out.success).toBe(true);
+      expect(out.result).toContain("~~browser: a browser tool");
+    }
+  });
+
+  test("nothing a skill did not ship can be named", async () => {
+    const tool = await bundled();
+    const outsiders = [
+      "../other/private.md",
+      "../other/SKILL.md",
+      "../../../outside.md",
+      "../../../../etc/passwd",
+      join(workspace, "outside.md"),
+      "/etc/passwd",
+      "references/../../other/private.md",
+      "references",
+      "SKILL.md",
+      "",
+    ];
+    for (const file of outsiders) {
+      const out = await tool.execute(callInput({ name: "design:frontend-design", file }));
+      if (file === "") {
+        // No file asked for: the instructions, as before.
+        expect(out.result).toContain("Skill: design:frontend-design");
+        continue;
+      }
+      expect({ file, success: out.success }).toEqual({ file, success: false });
+      expect(out.error).toContain("is not a file bundled with design:frontend-design");
+      expect(out.error).toContain("art-directions.md");
+      expect(`${out.result}${out.error}`).not.toContain(SECRET);
+    }
+  });
+
+  test("a file that is not text is refused, and a file with no skill named is explained", async () => {
+    const tool = await bundled();
+    const binary = await tool.execute(
+      callInput({ name: "design:frontend-design", file: "blob.bin" }),
+    );
+    expect(binary.success).toBe(false);
+    expect(binary.error).toContain("not a text file");
+
+    const orphan = await tool.execute(callInput({ file: "art-directions.md" }));
+    expect(orphan.success).toBe(false);
+    expect(orphan.error).toContain("pass that skill's `name` too");
+  });
+
+  test("the shipped design skill opens its own catalogue this way", async () => {
+    const shipped = join(import.meta.dir, "../../../skills");
+    if (!existsSync(shipped)) return;
+    const loader = new SkillLoader({ roots: [shipped] });
+    await loader.loadAll();
+    const tool = createSkillTool(loader);
+    const body = await tool.execute(callInput({ name: "design:frontend-design" }));
+    // The instruction in the skill and the tool's own listing agree on how.
+    expect(body.result).toContain('file:\n"art-directions.md"');
+    expect(body.result).toContain("- art-directions.md");
+    const catalogue = await tool.execute(
+      callInput({ name: "design:frontend-design", file: "art-directions.md" }),
+    );
+    expect(catalogue.success).toBe(true);
+    expect((catalogue.result ?? "").length).toBeGreaterThan(5_000);
   });
 });
 

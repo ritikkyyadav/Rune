@@ -65,8 +65,11 @@ beforeAll(() => {
  * decide whether to believe the answer. Cached after the first request.
  *
  * Lowered 7,810 -> 5,500 on 2026-10-06 after repeated prompt instructions
- * were consolidated. Current full doctrine is 5,402 tokens; the ceiling leaves
- * 98 tokens of headroom while retaining the behavioral assertions below.
+ * were consolidated. The full doctrine was 5,402 tokens then, and is 5,450
+ * since 2026-10-13: a small self-contained deliverable is named as one work
+ * unit, a plan update is told to ride with the action after it, and two lines
+ * that repeated their neighbours went to pay for part of that. The ceiling is
+ * not raised; 50 tokens of headroom are left.
  */
 const FULL_DOCTRINE_CEILING = 5_500;
 

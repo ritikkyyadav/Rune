@@ -51,9 +51,18 @@ export const DEFERRED_BUILTINS = new Set<string>([
   // CORE, and deliberately never listed here: read_file, read_many, list_dir,
   // write_file, edit_file, multi_edit, apply_patch, bash, bash_output,
   // kill_shell, grep, glob, todo_write, read_back, record_evidence, ask_user,
-  // task, web_search, skill. That is read / write / edit / bash / search, the
-  // plan tools, the clarify tool, the read-only scout, and the one network
-  // reach the doctrine tells the model to make before it guesses.
+  // task, web_search, web_fetch, skill. That is read / write / edit / bash /
+  // search, the plan tools, the clarify tool, the read-only scout, and the
+  // network reach the doctrine tells the model to make before it guesses.
+  //
+  // `web_fetch` was on the list below until 2026-10-13, and `web_search` was
+  // not — so a search came back as a page of addresses and the tool that opens
+  // one had to be loaded first. Loading a tool changes the advertised set, the
+  // set is the head of the prompt, and a host that caches by prefix then reads
+  // none of it. Recorded 2026-10-09 on three page builds
+  // (`~/rune-evidence/design-ab2-20261008`): each searched, loaded `web_fetch`,
+  // and sent its next request with 0 cached tokens — 15,655, 20,039 and 16,770
+  // paid for again — to save a schema of about 180. The pair is core together.
   //
   // Each entry below is either a slash-command mode with a tool form, a
   // narrative bookkeeping call, or a code-intelligence tool measured at 0.3%
@@ -64,7 +73,6 @@ export const DEFERRED_BUILTINS = new Set<string>([
   "workflow",
   "loop_control",
   "compact_context",
-  "web_fetch",
   "lsp",
   "symbol_search",
   "search_code",

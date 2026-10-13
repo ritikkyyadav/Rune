@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
 import type { SkillLoader } from "./loader";
 import type { LoadedSkill } from "./types";
@@ -14,7 +16,8 @@ const SKILL_TOOL_DESCRIPTION =
   "things like code review, debugging, architecture, data analysis, PDF handling, and more — " +
   "see the 'Available Skills' catalog in your system prompt. When a request matches a skill, " +
   "call this FIRST to load its instructions, then follow them.\n" +
-  '• Load:   skill(name: "engineering:code-review")  — returns the full SKILL.md and a list of bundled reference files you can open with read_file.\n' +
+  '• Load:   skill(name: "engineering:code-review")  — returns the full SKILL.md and the names of its bundled reference files.\n' +
+  '• Open:   skill(name: "engineering:code-review", file: "references/checklist.md")  — returns one of those files.\n' +
   '• Search: skill(search: "review my PR")            — returns matching skills.\n' +
   "• List:   skill()                                   — returns the full catalog.\n" +
   "Optionally pass `args` (e.g. a PR URL or file path) to fill the skill's argument placeholders.";
@@ -41,6 +44,11 @@ export function createSkillTool(loader: SkillLoader): ToolHandler {
           description:
             "Optional arguments for the skill (e.g. a PR URL, file path, or topic) substituted into its instructions.",
         },
+        file: {
+          type: "string",
+          description:
+            'With `name`: one of that skill\'s bundled reference files, by the path it was listed under (e.g. "references/checklist.md"). Returns the file instead of the instructions.',
+        },
       },
     },
     permissionLevel: "auto",
@@ -50,7 +58,7 @@ export function createSkillTool(loader: SkillLoader): ToolHandler {
   return {
     schema,
     validate: (args: Record<string, unknown>) => {
-      for (const key of ["name", "search", "args"] as const) {
+      for (const key of ["name", "search", "args", "file"] as const) {
         if (key in args && args[key] !== undefined && typeof args[key] !== "string") {
           return { valid: false, error: `"${key}" must be a string` };
         }
@@ -71,9 +79,12 @@ export function createSkillTool(loader: SkillLoader): ToolHandler {
       const name = typeof input.args.name === "string" ? input.args.name.trim() : "";
       const search = typeof input.args.search === "string" ? input.args.search.trim() : "";
       const args = typeof input.args.args === "string" ? input.args.args : "";
+      const file = typeof input.args.file === "string" ? input.args.file.trim() : "";
 
       try {
         if (search) return done(renderSearch(loader, search));
+        if (name && file) return done(await renderBundledFile(await loader.load(name, args), file));
+        if (file) throw new Error('`file` names a file bundled with a skill: pass that skill\'s `name` too.');
         if (name) return done(renderLoaded(await loader.load(name, args)));
         return done(renderCatalog(loader));
       } catch (err) {
@@ -90,8 +101,8 @@ function renderLoaded(skill: LoadedSkill): string {
   out.push(`# Skill: ${meta.id}`);
   if (meta.description) out.push(`> ${meta.description}`);
   out.push("");
-  out.push("Follow these instructions to complete the task. Relative links below resolve");
-  out.push(`against the skill's directory: ${meta.dir}`);
+  out.push("Follow these instructions to complete the task. Relative links below name files");
+  out.push(`bundled with this skill, in ${meta.dir}`);
   out.push("");
   out.push("---");
   out.push("");
@@ -102,14 +113,64 @@ function renderLoaded(skill: LoadedSkill): string {
     out.push("---");
     out.push("");
     out.push("## Bundled reference files");
-    out.push("Open any of these with read_file when the instructions point to them:");
-    for (const r of resources) out.push(`- ${r.relPath}  →  ${r.absPath}`);
+    // They sit beside the skill, which is outside the workspace for every
+    // project but Rune's own, and read_file opens nothing outside the
+    // workspace. This used to say "Open any of these with read_file" and print
+    // the absolute path: recorded 2026-10-09 on three page builds, each one
+    // spent a call asking for the design skill's catalogue that way and was
+    // refused with "Path escape".
+    out.push(
+      `Open one with skill(name: "${meta.id}", file: "<path>") when the instructions point to it ` +
+        "(read_file cannot: they are outside the workspace):",
+    );
+    for (const r of resources) out.push(`- ${r.relPath}`);
   }
   if (connectorsPath) {
     out.push("");
-    out.push(`Connector setup (placeholders / required tools): ${connectorsPath}`);
+    out.push(
+      `Connector setup (placeholders / required tools): skill(name: "${meta.id}", file: "${CONNECTORS_FILE}")`,
+    );
   }
   return out.join("\n");
+}
+
+/** The plugin-level file a skill links to as `../../CONNECTORS.md`. */
+const CONNECTORS_FILE = "CONNECTORS.md";
+/** A reference is prose for the model to read; past this it is cut, and says so. */
+const MAX_BUNDLED_FILE_CHARS = 120_000;
+
+/**
+ * One of a loaded skill's own files.
+ *
+ * Only a path the loader itself collected can be named — the request is looked
+ * up in that list, never joined to a directory — so this reads nothing a skill
+ * did not ship: not a sibling skill, not a parent directory, not an absolute
+ * path.
+ */
+async function renderBundledFile(skill: LoadedSkill, wanted: string): Promise<string> {
+  const want = wanted.replace(/\\/g, "/").replace(/^\.\//, "");
+  const found =
+    skill.resources.find((r) => r.relPath === want) ??
+    (skill.connectorsPath && /^(?:\.\.\/)*CONNECTORS\.md$/.test(want)
+      ? { relPath: CONNECTORS_FILE, absPath: skill.connectorsPath }
+      : undefined);
+  if (!found) {
+    const names = skill.resources.map((r) => r.relPath);
+    if (skill.connectorsPath) names.push(CONNECTORS_FILE);
+    throw new Error(
+      `"${wanted}" is not a file bundled with ${skill.meta.id}. ` +
+        (names.length > 0 ? `Its files: ${names.join(", ")}.` : "It bundles no files."),
+    );
+  }
+  const text = await readFile(found.absPath, "utf8");
+  if (text.includes("\u0000")) {
+    throw new Error(`${found.relPath} is not a text file; it cannot be shown here.`);
+  }
+  const shown =
+    text.length > MAX_BUNDLED_FILE_CHARS
+      ? `${text.slice(0, MAX_BUNDLED_FILE_CHARS)}\n\n[cut at ${MAX_BUNDLED_FILE_CHARS} of ${text.length} characters]`
+      : text;
+  return `# ${skill.meta.id} — ${found.relPath}\n\n${shown}`;
 }
 
 function renderSearch(loader: SkillLoader, query: string): string {
