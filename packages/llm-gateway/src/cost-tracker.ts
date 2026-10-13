@@ -273,6 +273,8 @@ export class CostTracker {
       /** When the answering attempt went out, if the call was retried. */
       attemptStartedAt?: Date;
       latencyMs?: number;
+      /** The reasoning effort the request asked for (see CostEntry.effort). */
+      effort?: string;
     },
     timestamp = new Date(),
   ): CostEntry {
@@ -314,6 +316,7 @@ export class CostTracker {
       ...(attribution?.startedAt ? { startedAt: attribution.startedAt } : {}),
       ...(attribution?.attemptStartedAt ? { attemptStartedAt: attribution.attemptStartedAt } : {}),
       ...(attribution?.latencyMs !== undefined ? { latencyMs: attribution.latencyMs } : {}),
+      ...(attribution?.effort ? { effort: attribution.effort } : {}),
       timestamp,
     };
     return this.recordEntry(entry);

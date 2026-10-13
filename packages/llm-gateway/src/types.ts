@@ -1182,6 +1182,21 @@ export interface CostEntry {
    */
   latencyMs?: number;
   /**
+   * The reasoning effort the request asked for — `"none"` when thinking was
+   * switched off, absent when the caller set nothing or the row was replayed
+   * from a log older than this field.
+   *
+   * What was ASKED, not what the provider did with it: an adapter may clamp a
+   * value its model does not take. It is here because effort is the one
+   * request setting that moves a call's price and its latency together and
+   * that the ledger could not see: a run at `medium` and a run at `high` wrote
+   * identical rows, and the only way to tell a routed turn from a ceiling one
+   * was to subtract token counts. It is also what makes a change of effort
+   * between two calls — the thing that costs the prompt cache on Codex — a
+   * fact in the record rather than an inference from a cache miss.
+   */
+  effort?: string;
+  /**
    * The plan's quota windows as the response reported them (see
    * ProviderCapacity). `capacity.primary.usedPercent` is the share of the
    * subscription window spent so far. Absent when the provider reported none.

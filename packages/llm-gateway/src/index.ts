@@ -33,7 +33,7 @@ export {
   providerSupportsNativeSearch,
   providerAllowsGroundingWithTools,
 } from "./types";
-export { LlmGateway, isModelGoneError } from "./gateway";
+export { LlmGateway, isModelGoneError, requestedEffort } from "./gateway";
 export { AnthropicProvider } from "./providers/anthropic";
 export {
   BedrockProvider,

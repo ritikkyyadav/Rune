@@ -137,6 +137,17 @@ export function formatClock(at: number, now: number): string {
   return sameDay ? hhmm : `${MONTHS[d.getMonth()]} ${d.getDate()} ${hhmm}`;
 }
 
+/**
+ * The effort a request asked for, as the ledger writes it: the named level,
+ * `"none"` for a request that switched thinking off, nothing for one that said
+ * nothing either way.
+ */
+export function requestedEffort(thinking: InferenceRequest["thinking"]): string | undefined {
+  if (!thinking) return undefined;
+  if (thinking.enabled === false) return "none";
+  return thinking.effort;
+}
+
 export class LlmGateway {
   private providers: Map<ProviderName, LlmProvider> = new Map();
   private config: GatewayConfig;
@@ -1062,7 +1073,7 @@ export class LlmGateway {
     provider: ProviderName,
     usage: TokenUsage,
     /** The request that produced it, so the ledger can say what it was FOR. */
-    request: Pick<InferenceRequest, "role" | "composition">,
+    request: Pick<InferenceRequest, "role" | "composition" | "thinking">,
     /** When the CALL first went out — the same stamp every incident this call
      *  raised carries, so the two stores join (P3B I6b). */
     callStartedAt: Date,
@@ -1083,6 +1094,9 @@ export class LlmGateway {
         {
           role: request.role,
           ...(request.composition ? { composition: request.composition } : {}),
+          ...(requestedEffort(request.thinking)
+            ? { effort: requestedEffort(request.thinking) }
+            : {}),
           startedAt: callStartedAt,
           ...(attemptStartedAt.getTime() !== callStartedAt.getTime() ? { attemptStartedAt } : {}),
           latencyMs: Math.max(0, landedAt.getTime() - attemptStartedAt.getTime()),
