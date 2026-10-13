@@ -349,6 +349,12 @@ const ORDINARY_PATTERNS: RegExp[] = [
   // `--experimental-permission --allow-fs-write=/` widens a sandbox rather
   // than narrowing it. One flag, one file, nothing after it.
   /^node\s+--check\s+\S+\.(?:m?[jt]sx?|cjs)\s*$/,
+  // `node --test [file…]` runs the named files — or, with none, the project's
+  // own test files — under Node's test runner. That is `node <file>` and
+  // `npm test`, both of which are above. Held to the same rule as `--check`:
+  // this one flag, script files, nothing else. `node --test --require ./x.js`
+  // is not this line.
+  /^node\s+--test(?:\s+\S+\.(?:m?[jt]sx?|cjs))*\s*$/,
   /^cargo\s+(?:build|b|test|t|check|c|clippy|fmt|run|r|bench|doc|clean|update|fetch|add|remove|rm|tree|metadata|install\s+--path|generate-lockfile|nextest)\b/,
   /^(?:rustc|rustfmt|rustup\s+(?:show|default|update|target|component|toolchain))\b/,
   /^go\s+(?:build|test|vet|run|mod|fmt|generate|get|install|list|env|version|tool|clean|work)\b/,
@@ -362,6 +368,9 @@ const ORDINARY_PATTERNS: RegExp[] = [
   /^(?:adb|emulator|avdmanager|sdkmanager|xcrun\s+simctl|ios-deploy|idb)\b/,
   /^(?:curl|wget|http|https|xh)\b.*(?:localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)/,
   /^(?:sleep|wait|timeout|time|env|printenv|export|set|unset|alias|source|\.)\b/,
+  // `command -v prettier` asks whether a program exists, which is `which
+  // prettier`. Only that form: `command <program>` RUNS the program.
+  /^command\s+-[vV]\s+[\w./+-]+\s*$/,
   /^(?:sqlite3|psql|mysql|redis-cli|mongosh)\b/,
   /^(?:\.\/|\.\.\/|scripts\/|bin\/)\S+/,
   // A package runner in front of a tool this list already names: `npx
@@ -404,6 +413,193 @@ const ORDINARY_PATTERNS: RegExp[] = [
   /^(?:uvicorn|gunicorn|hypercorn|daphne|waitress-serve|flask|http-server|live-server|serve)\b/,
 ];
 
+// ── The same command, written another way ──
+//
+// The list above is read against a segment's first word, and three ordinary
+// ways of writing a check put something else there:
+//
+//   node <<'NODE' … NODE                a script on standard input: `node -e`
+//   python3 - <<'PY' … PY               the same: `python3 -c`
+//   for f in a.js b.js; do node --check "$f" || exit; done
+//                                       `node --check a.js`, `node --check b.js`
+//
+// Recorded 2026-10-09 on three small page builds
+// (`~/rune-evidence/design-ab2-20261008`): of the seventeen background screens
+// those runs paid for, eight were a command made only of these and of lines
+// the list already had, and each screen re-read the run's whole action
+// history — eight to fifteen thousand tokens — to clear a syntax check. Each
+// shape is rewritten here into the commands it stands for and then read by the
+// same list. Nothing is admitted that the list does not already admit in its
+// other spelling, and the mechanical breakers still read the command exactly
+// as it was typed.
+
+/** Stands where a literal here-document was. NUL cannot occur in a command. */
+const HEREDOC_MARK = "\u0000heredoc\u0000";
+
+/**
+ * An interpreter given its script on standard input and nothing else. The
+ * body is program text, exactly as the argument of `-e` / `-c` is.
+ */
+const INTERPRETER_HEREDOC_RE = new RegExp(
+  String.raw`^(?:(?:node|bun|deno)(?:\s+--input-type=(?:module|commonjs))?|python3?(?:\s+-)?)\s*${HEREDOC_MARK}$`,
+);
+
+/** Leaving a loop or the script: control, with no effect of its own. */
+const CONTROL_WORD_RE = /^(?:exit|break|continue)(?:\s+\d{1,3})?$/;
+
+/**
+ * The command with the body of every LITERAL here-document taken out and a
+ * mark left where its operator stood, or the command unchanged when it holds a
+ * here-document this cannot account for.
+ *
+ * Literal means the delimiter is quoted (`<<'EOF'`, `<<"EOF"`): the shell
+ * passes such a body through untouched. An unquoted delimiter is expanded —
+ * `$(…)` inside it RUNS — so that body is shell text and is left where the
+ * segment reader will see it.
+ *
+ * It has to read the command the way the shell does, because the failure that
+ * matters is hiding lines the shell would execute. `<<` inside a quoted string
+ * or after a `#` is not an operator, and the lines under it are commands:
+ *
+ *     echo "<<'A'"          # one echo, then two more commands
+ *     rm -rf build
+ *     A
+ *
+ * So quotes, escapes and comments are tracked, and anything unexpected — a
+ * quote left open at the end of the operator's line, a body with no closing
+ * line — returns the command as it came.
+ */
+function withoutLiteralHeredocs(command: string): string {
+  if (!command.includes("<<") || command.includes("\u0000")) return command;
+  let out = "";
+  let quote: '"' | "'" | null = null;
+  let wordStart = true;
+  const pending: Array<{ tag: string; stripTabs: boolean }> = [];
+  let i = 0;
+  while (i < command.length) {
+    const ch = command[i]!;
+    if (quote) {
+      out += ch;
+      if (ch === "\\" && quote === '"' && i + 1 < command.length) out += command[++i]!;
+      else if (ch === quote) quote = null;
+      i++;
+      continue;
+    }
+    if (ch === "\\" && i + 1 < command.length) {
+      out += ch + command[i + 1]!;
+      i += 2;
+      wordStart = false;
+      continue;
+    }
+    if (ch === "#" && wordStart) {
+      const end = command.indexOf("\n", i);
+      const stop = end < 0 ? command.length : end;
+      out += command.slice(i, stop);
+      i = stop;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      out += ch;
+      i++;
+      wordStart = false;
+      continue;
+    }
+    if (ch === "<" && command[i + 1] === "<") {
+      // Anything but a quoted plain word after the operator — an unquoted
+      // delimiter, a here-string (`<<<`), a shift inside `$(( ))` — is a
+      // shape this does not account for, and the whole command is left alone.
+      const operator = /^<<(-?)[ \t]*(['"])([A-Za-z_][A-Za-z0-9_]*)\2/.exec(command.slice(i));
+      if (!operator) return command;
+      pending.push({ tag: operator[3]!, stripTabs: operator[1] === "-" });
+      out += HEREDOC_MARK;
+      i += operator[0].length;
+      wordStart = false;
+      continue;
+    }
+    if (ch === "\n" && pending.length > 0) {
+      let cursor = i + 1;
+      for (const doc of pending) {
+        let closed = false;
+        while (cursor <= command.length) {
+          const end = command.indexOf("\n", cursor);
+          const stop = end < 0 ? command.length : end;
+          const line = command.slice(cursor, stop);
+          cursor = stop + 1;
+          if ((doc.stripTabs ? line.replace(/^\t+/, "") : line) === doc.tag) {
+            closed = true;
+            break;
+          }
+          if (end < 0) break;
+        }
+        if (!closed) return command;
+      }
+      pending.length = 0;
+      out += "\n";
+      i = Math.min(cursor, command.length);
+      wordStart = true;
+      continue;
+    }
+    out += ch;
+    wordStart = /\s|[;&|(]/.test(ch);
+    i++;
+  }
+  // An operator with no body under it, or a quote that never closed: not a
+  // shape this accounts for.
+  if (quote || pending.length > 0) return command;
+  return out;
+}
+
+/** A loop's words, when every one of them is plain text the shell passes through. */
+const LITERAL_WORDS_RE = /^[\w./@:+,=%-]+(?:[ \t]+[\w./@:+,=%-]+)*$/;
+
+/**
+ * Segments with every `for NAME in WORDS; do …; done` over literal words
+ * replaced by its body, once per word, or null when a loop does not close.
+ *
+ * Only that loop. A list the shell would expand (`*.js`, `$(ls)`, `"$@"`), a
+ * loop inside a loop, and `while`/`until`/`if` are left as they are, and their
+ * keywords fail the list below like any other unrecognized command.
+ */
+function unrollLiteralLoops(segments: string[]): string[] | null {
+  const out: string[] = [];
+  let loop: { name: string; words: string[] } | null = null;
+  for (const segment of segments) {
+    if (!loop) {
+      const head = /^for[ \t]+([A-Za-z_]\w*)[ \t]+in[ \t]+(.+)$/.exec(segment);
+      if (head && LITERAL_WORDS_RE.test(head[2]!.trim())) {
+        loop = { name: head[1]!, words: head[2]!.trim().split(/[ \t]+/) };
+        continue;
+      }
+      out.push(segment);
+      continue;
+    }
+    if (segment === "done") {
+      loop = null;
+      continue;
+    }
+    if (segment === "do") continue;
+    const body =
+      segment.startsWith("do ") || segment.startsWith("do\t") ? segment.slice(3) : segment;
+    const name = loop.name;
+    const whole = new RegExp(String.raw`"\$(?:${name}|\{${name}\})"`, "g");
+    const bare = new RegExp(String.raw`\$(?:\{${name}\}|${name}(?!\w))`, "g");
+    if (!bare.test(body)) {
+      out.push(body.trim());
+      continue;
+    }
+    for (const word of loop.words) {
+      out.push(
+        body
+          .replace(whole, () => word)
+          .replace(bare, () => word)
+          .trim(),
+      );
+    }
+  }
+  return loop ? null : out;
+}
+
 /**
  * True when every segment is either read-only or recognized ordinary
  * development work. Patterns are anchored to a segment's first word so an
@@ -413,18 +609,27 @@ export function isOrdinaryDevCommand(
   command: string,
   safeCommands: readonly string[] = [],
 ): boolean {
-  const segments = splitShellSegments(command);
-  if (segments.length === 0) return false;
-  return segments.every((segment) => {
+  const segments = unrollLiteralLoops(splitShellSegments(withoutLiteralHeredocs(command)));
+  if (!segments || segments.length === 0) return false;
+  return segments.every((raw) => {
+    // What is under a here-document is hidden from every pattern below, so a
+    // segment that carries one is ordinary in exactly one shape and no other:
+    // `docker exec -i box sh <<'EOF'` is not `docker exec`.
+    if (raw.includes(HEREDOC_MARK)) {
+      return INTERPRETER_HEREDOC_RE.test(stripLeadingAssignments(raw.trim()));
+    }
+    // `! grep -q x file` is `grep -q x file` with its answer turned round.
+    const segment = raw.trim().replace(/^![ \t]+/, "");
     if (isReadOnlySegment(segment, safeCommands)) return true;
     if (SUBSTITUTION_RE.test(segment) && /\$\((?:curl|wget)\b/.test(segment)) return false;
-    const stripped = stripLeadingAssignments(segment.trim());
+    const stripped = stripLeadingAssignments(segment);
     // A command that names a secret store is never ordinary, whatever else it
     // looks like. `az keyvault secret show` reads as an enumeration and is a
     // credential read; the pattern list below cannot tell them apart, so the
     // noun does.
     if (SECRET_SUBJECT_RE.test(stripped)) return false;
     if (CLOUD_IDENTITY_SUBJECT_RE.test(stripped)) return false;
+    if (CONTROL_WORD_RE.test(stripped)) return true;
     return ORDINARY_PATTERNS.some((re) => re.test(stripped));
   });
 }

@@ -130,10 +130,64 @@ const CONTROL_BYPASS_RE =
 const PUBLISH_COMMAND_RE =
   /(?:(?:npm|yarn|pnpm|bun)\s+publish|cargo\s+publish|twine\s+upload|gh\s+(?:release\s+create|gist\s+create)|docker\s+push)\b/i;
 
-const SERVICE_CLI_RE =
-  /\b(?:gh|glab|aws|gcloud|az|heroku|fly|flyctl|vercel|netlify|supabase|railway|render|doctl|stripe|kubectl|helm|terraform|pulumi|firebase|wrangler)\b/i;
+const SERVICE_CLI_NAMES =
+  "gh|glab|aws|gcloud|az|heroku|fly|flyctl|vercel|netlify|supabase|railway|render|doctl|stripe|kubectl|helm|terraform|pulumi|firebase|wrangler";
+
+/**
+ * One of the service CLIs being RUN, as opposed to its name appearing.
+ *
+ * This was `\b(?:gh|…|render|stripe|firebase|…)\b` — the name as a word,
+ * anywhere in the command — and several of those names are ordinary words in
+ * the code a command carries. Recorded 2026-10-09 on a dashboard build
+ * (`~/rune-evidence/design-ab2-20261008/dashboard`): the run checked its own
+ * page with `node <<'NODE' … NODE`, the script printed "render, 5 products" on
+ * one line and said `delete this.attributes[name]` on another, and that was
+ * rated a destructive operation on a remote service. It went to the heavy
+ * reviewer in path, twice, for $0.14 and $0.16 of a $1.13 run, and came back
+ * "low risk, allow" both times. With no reviewer to ask, the same two words
+ * would have had the script withheld as a deletion "outside this machine".
+ *
+ * Five shapes reach a service, and each is matched where it stands:
+ *   · a command word with an argument after it — `gh repo delete x`,
+ *     `"gh" repo …`, `$(command -v gh) repo …`, `/opt/bin/gh repo …`,
+ *     `npx vercel@latest remove …`, `gh${IFS}repo…` — and the same inside a
+ *     string some other program will run (`execSync("gh repo delete " + name)`);
+ *   · an argv element — `spawn("gh", ["repo", "delete"])`, `["gh", "repo", …]`,
+ *     `execFile('gh', args)`;
+ *   · a variable's or an alias's whole value — `CLI=gh; $CLI repo delete x`;
+ *   · the last word of an `xargs` line, which is the command xargs runs;
+ *   · the service's own API host — `curl -X DELETE https://api.stripe.com/…`.
+ * What no longer matches is the name used as a word: before a comma, a colon
+ * or a bracket (`render,` `render(` `render:`), as a property (`el.render`,
+ * `firebase.auth()`), inside a longer name (`pre-render`, `supabase-js`,
+ * `@vercel/analytics`), or as a file's (`tests/render.test.ts`).
+ *
+ * The verb is still looked for anywhere in the command, as before: a tool named
+ * on one line and told to delete on the next is the same deletion.
+ */
+const SERVICE_CLI = `(?:${SERVICE_CLI_NAMES})`;
+const SERVICE_CLI_INVOCATION_RE = new RegExp(
+  [
+    String.raw`(?<![\w.@-])${SERVICE_CLI}(?:\.(?:exe|cmd|bat|ps1))?(?:@[\w.-]+)?\)?["']?(?:[ \t]+|\$\{?IFS\}?)[\w"'$~./*\\-]`,
+    String.raw`(?<![\w.@-])${SERVICE_CLI}(?:\.(?:exe|cmd|bat|ps1))?["']\s*,\s*[\["'\w$]`,
+    String.raw`(?<==["']?)${SERVICE_CLI}["']?(?=$|[\s;&|)])`,
+    String.raw`\bxargs\b[^\n|;&]*?[ \t]${SERVICE_CLI}(?=$|[\s;&|)])`,
+    String.raw`(?<=:\/\/(?:[\w-]+\.)*)${SERVICE_CLI}(?=\.[a-z])`,
+  ].join("|"),
+  "i",
+);
 const DESTRUCTIVE_VERB_RE =
   /\b(?:delete|destroy|remove|drop|purge|terminate|revoke|disable|deactivate|prune|truncate|wipe)\b/i;
+
+/**
+ * A destructive verb in a command that runs a service CLI — deleting a remote
+ * branch, a gist, a deployment, a bucket. One definition, read by the risk
+ * pre-scan (which sends it to the reviewer) and by the route below (which
+ * withholds it when there is no reviewer), so the two cannot disagree.
+ */
+export function isRemoteMutationCommand(command: string): boolean {
+  return SERVICE_CLI_INVOCATION_RE.test(command) && DESTRUCTIVE_VERB_RE.test(command);
+}
 
 /**
  * Irrecoverable at the host level whatever it points at: formatting a disk,
@@ -872,7 +926,7 @@ export function routeContainment(ctx: ContainmentContext): ContainmentOutcome {
         "does exactly what it did before and the discarded work stays retrievable.",
     );
   }
-  if (command && SERVICE_CLI_RE.test(command) && DESTRUCTIVE_VERB_RE.test(command)) {
+  if (command && isRemoteMutationCommand(command)) {
     return defer(
       "remote-mutation",
       "This deletes or disables a resource that lives outside this machine, where an undo does not " +

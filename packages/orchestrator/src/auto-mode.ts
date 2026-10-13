@@ -16,6 +16,7 @@ import { batchSignature } from "./call-signature";
 
 import {
   expandHome,
+  isRemoteMutationCommand,
   isSelfProtectionPath,
   mechanicalBreaker,
   routeContainment,
@@ -2670,15 +2671,12 @@ const PUBLISH_COMMAND_RE =
  * A destructive verb anywhere in a command that drives one of these tools is
  * worth exactly one confirmation. `docker` is deliberately absent: `docker rm`
  * on a local container is routine, and `docker push` is covered above.
+ *
+ * "Drives" is the word that matters, and `isRemoteMutationCommand` in
+ * auto-containment.ts is where it is defined: the tool has to be run, not
+ * merely named. The same predicate decides the route when no reviewer answers.
  */
-const SERVICE_CLI_RE =
-  /\b(?:gh|glab|aws|gcloud|az|heroku|fly|flyctl|vercel|netlify|supabase|railway|render|doctl|stripe|kubectl|helm|terraform|pulumi|firebase|wrangler)\b/i;
-const DESTRUCTIVE_VERB_RE =
-  /\b(?:delete|destroy|remove|drop|purge|terminate|revoke|disable|deactivate|prune|truncate|wipe)\b/i;
-
-function isRemoteMutation(command: string): boolean {
-  return SERVICE_CLI_RE.test(command) && DESTRUCTIVE_VERB_RE.test(command);
-}
+const isRemoteMutation = isRemoteMutationCommand;
 
 /**
  * The mechanical risk a shell command carries by its text alone: critical for
@@ -2759,8 +2757,46 @@ const PIPE_TO_INTERPRETER_RE =
  * `requestBody` and `postData` are the same key as `body`, `content`, `data`
  * — and each of them silently dropped to medium.
  */
-const OUTBOUND_PAYLOAD_RE =
-  /(?<![A-Za-z])(?:bod(?:y|ies)|data|payloads?|contents?|uploads?|post)(?![A-Za-z])/i;
+const PAYLOAD_WORD = String.raw`(?:bod(?:y|ies)|data|payloads?|contents?|uploads?|post)`;
+const OUTBOUND_PAYLOAD_RE = new RegExp(String.raw`(?<![A-Za-z])${PAYLOAD_WORD}(?![A-Za-z])`, "i");
+
+/**
+ * A web address, wherever it sits in the serialized arguments. It stops at
+ * whitespace, a quote or a backslash, which is where JSON ends a string.
+ */
+const ADDRESS_RE = /\bhttps?:\/\/[^\s"'<>\\]+/gi;
+/** A path segment that is one of the payload words and nothing else. */
+const ADDRESS_WORD_SEGMENT_RE = new RegExp(String.raw`/${PAYLOAD_WORD}(?=/|$)`, "gi");
+
+/**
+ * The arguments with one thing blanked: a path segment of a web address that
+ * is, whole, one of the payload words — `/blog/post/…`, `/data/…`,
+ * `/content/…`, `/uploads/…`.
+ *
+ * The word boundary above stopped this test firing INSIDE a word, and a word
+ * that is a whole path segment still fired: it names where a page lives, not
+ * something being sent. Recorded 2026-10-09
+ * (`~/rune-evidence/design-ab2-20261008/dashboard`): a fetch of
+ * `https://rows.com/blog/post/ecommerce-dashboard` — `{url, maxBytes}`, a tool
+ * with no body field — went to the heavy reviewer in path on `post`.
+ *
+ * Only the path, and only a whole segment. The query string is left alone
+ * (`?data=…` does carry something out), so is every key and every value that
+ * is not an address, and so is a segment the word is only part of — which is
+ * what keeps the instance-metadata path `/latest/meta-data/` matching.
+ */
+function withoutAddressWordSegments(serialized: string): string {
+  return serialized.replace(ADDRESS_RE, (found) => {
+    // Punctuation that closes the sentence an address was written in is not
+    // part of the address: "see https://example.com/blog/post, then …".
+    const trailing = /[),.;:!?\]]+$/.exec(found)?.[0] ?? "";
+    const address = trailing ? found.slice(0, -trailing.length) : found;
+    const cut = address.search(/[?#]/);
+    const path = cut < 0 ? address : address.slice(0, cut);
+    const rest = cut < 0 ? "" : address.slice(cut);
+    return path.replace(ADDRESS_WORD_SEGMENT_RE, "/_") + rest + trailing;
+  });
+}
 
 /**
  * True when the serialized arguments name an outbound payload.
@@ -2771,7 +2807,9 @@ const OUTBOUND_PAYLOAD_RE =
  * keeps a documentation search out of the reasoned reviewer.
  */
 function carriesOutboundPayload(args: Record<string, unknown>): boolean {
-  return OUTBOUND_PAYLOAD_RE.test(JSON.stringify(args).replace(/([a-z0-9])([A-Z])/g, "$1 $2"));
+  return OUTBOUND_PAYLOAD_RE.test(
+    withoutAddressWordSegments(JSON.stringify(args)).replace(/([a-z0-9])([A-Z])/g, "$1 $2"),
+  );
 }
 
 export function assessActionRisk(
