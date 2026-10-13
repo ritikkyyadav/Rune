@@ -21,9 +21,9 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import type { LlmGateway } from "../../packages/llm-gateway/src/gateway";
 import type { ContentBlock, InferenceRequest } from "../../packages/llm-gateway/src/types";
@@ -103,6 +103,8 @@ export interface ScriptedRun {
   harnessTurns: string[];
   notices: string[];
   verification: string[];
+  /** What each end-of-turn verification said it ran, verbatim. */
+  verificationReports: string[];
   stopReason: string | undefined;
   verdictKind: string | undefined;
   criteria: number;
@@ -113,6 +115,8 @@ export interface ScriptedRun {
   everythingShown: string;
   /** Whether this machine can contain a shell command at all. */
   contained: boolean;
+  /** A workspace file as the run left it, or "" when it is not there. */
+  read(path: string): string;
   dispose(): void;
 }
 
@@ -129,13 +133,20 @@ export async function runScripted(
   toolsBinaryPath: string,
   request: string,
   script: ContentBlock[][],
+  /** Files the workspace starts with, committed. None: an empty repository. */
+  files: Record<string, string> = {},
 ): Promise<ScriptedRun> {
   const dir = mkdtempSync(join(tmpdir(), "page-ws-"));
   const home = mkdtempSync(join(tmpdir(), "page-home-"));
   const previousHome = process.env.RUNE_HOME;
   process.env.RUNE_HOME = home;
   git(dir, ["init", "--initial-branch=main"]);
-  git(dir, ["commit", "--allow-empty", "-m", "empty"]);
+  for (const [name, content] of Object.entries(files)) {
+    mkdirSync(dirname(join(dir, name)), { recursive: true });
+    writeFileSync(join(dir, name), content);
+  }
+  if (Object.keys(files).length > 0) git(dir, ["add", "."]);
+  git(dir, ["commit", "--allow-empty", "-m", "base"]);
 
   // The product's own defaults wherever they bear on the question: Auto mode,
   // checks on, the plan ledger on, the gates on. Only the things that need a
@@ -211,6 +222,9 @@ export async function runScripted(
       verification: events.flatMap((e) =>
         e.type === "verification_completed" ? [e.status ?? (e.passed ? "passed" : "failed")] : [],
       ),
+      verificationReports: events.flatMap((e) =>
+        e.type === "verification_completed" ? [String(e.report ?? "")] : [],
+      ),
       stopReason: complete?.stopReason,
       verdictKind: complete?.verdict?.kind,
       criteria: complete?.verdict?.criteria.length ?? 0,
@@ -218,6 +232,7 @@ export async function runScripted(
       firstRequest: JSON.stringify(primary[0]?.messages ?? []),
       everythingShown: JSON.stringify(primary.map((r) => r.messages)),
       contained: isOsIsolationAvailable(),
+      read: (path) => (existsSync(join(dir, path)) ? readFileSync(join(dir, path), "utf8") : ""),
       dispose,
     };
   } catch (err) {

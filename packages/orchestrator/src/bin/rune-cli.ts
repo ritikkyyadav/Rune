@@ -1336,6 +1336,7 @@ async function main() {
     verifyCommand: config.verify?.commands,
     verifyPerStep: config.verify?.perStep,
     verifyKeepGenerated: config.verify?.keepGenerated,
+    verifyReuse: config.verify?.reuse,
     verifyEcosystems: config.verify?.ecosystems,
     verifyTimeoutMs:
       typeof config.verify?.timeoutSecs === "number" && config.verify.timeoutSecs > 0

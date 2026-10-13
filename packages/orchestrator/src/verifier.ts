@@ -145,6 +145,13 @@ export interface CheckRunRecord {
   notStarted?: boolean;
   /** The run was cancelled while this command was executing. It measured nothing. */
   cancelled?: boolean;
+  /**
+   * The command was not run this time because the runtime had already watched
+   * it pass on the tree exactly as it stands — when, and as what line. It is a
+   * completed, passing measurement, and `durationMs` is 0 because none of this
+   * pass's time went on it.
+   */
+  reused?: { at: number; ranAs: string; durationMs?: number };
 }
 
 /**
@@ -425,6 +432,16 @@ export interface CommandVerifierConfig {
    * session started and is not this run's doing. Defaults to construction.
    */
   sessionStartMs?: number;
+  /**
+   * A pass of this check the runtime already observed on the tree as it stands
+   * now, if there is one (`[verify] reuse`, on by default; see
+   * check-receipts.ts). Asked once per command, before it would be started.
+   * A check that is answered this way is not run, not timed and not logged a
+   * second time — the run that produced the receipt is already on the log.
+   */
+  priorPass?: (check: {
+    command: string;
+  }) => { at: number; ranAs: string; durationMs?: number } | undefined;
   /**
    * Called once per command the verifier actually ran, with the exit code IT
    * read. Wired by the Engine to the same CheckLog the `bash` tool feeds.
@@ -2270,7 +2287,7 @@ export class CommandVerifier implements Verifier {
      */
     const note = (record: CheckRunRecord): void => {
       runs.push(record);
-      if (!runCompleted(record)) return;
+      if (!runCompleted(record) || record.reused) return;
       try {
         this.config.onCheck?.({
           command: record.command,
@@ -2353,6 +2370,35 @@ export class CommandVerifier implements Verifier {
       // green; the set as a whole was not finished, so it is not a pass.
       if (signal?.aborted) return cancelled();
       const cmd = check.command;
+      // Already watched to pass on this exact tree, by this run: the answer
+      // would be the same, so it is not asked again. Before the slow-check
+      // rule on purpose — a suite that cannot finish under the verifier's
+      // limit is exactly the one whose earlier pass is worth the most.
+      let seen: ReturnType<NonNullable<CommandVerifierConfig["priorPass"]>>;
+      try {
+        seen = this.config.priorPass?.({ command: cmd });
+      } catch {
+        // A receipt that cannot be read is no receipt.
+        seen = undefined;
+      }
+      if (seen) {
+        note({
+          command: cmd,
+          ecosystem: check.ecosystem,
+          kind: check.kind,
+          durationMs: 0,
+          exitCode: 0,
+          passed: true,
+          reused: seen,
+        });
+        const as = seen.ranAs.trim() === cmd.trim() ? "" : `, as \`${truncate(seen.ranAs, 160)}\``;
+        const took = seen.durationMs != null ? ` in ${span(seen.durationMs)}` : "";
+        reports.push(
+          `$ ${cmd}  (ok — this run already ran it${as} ${ago(this.clock() - seen.at)}${took}, ` +
+            "and nothing has changed since; not run again)",
+        );
+        continue;
+      }
       // It did not finish under this limit, here, within the day: the answer
       // would be the same, so the wait is not taken again.
       const known = this.knownNotToFinish(cmd, timeoutMs);

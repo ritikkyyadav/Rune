@@ -84,6 +84,7 @@ import {
   runsWholeSuite,
   samePathToken,
 } from "./verification-command";
+import { PassLedger, equivalentCommands, workTreeFingerprint } from "./check-receipts";
 import {
   setConfigValue,
   SessionManager,
@@ -1087,6 +1088,12 @@ export interface EngineConfig {
    */
   verifyKeepGenerated?: boolean;
   /**
+   * Accept a pass the runtime already observed on the unchanged tree instead
+   * of running the check again (check-receipts.ts). Default true;
+   * `[verify] reuse = false` turns it off.
+   */
+  verifyReuse?: boolean;
+  /**
    * Per-ecosystem enable/disable and command overrides (`[verify.ecosystems]`).
    * Narrower than `verifyCommand`, which replaces detection wholesale.
    */
@@ -1498,6 +1505,14 @@ export class Engine {
     // memo dates it by when the last measurement was taken.
     revisionNow: () => this.runRevision(this.brief?.touch, { fresh: true }),
   });
+  /**
+   * Checks the runtime watched pass this session, with the tree each passed
+   * on. Read by the verifier so a suite the run already ran, on a tree nothing
+   * has touched since, is not waited for a second time.
+   */
+  private readonly passLedger = new PassLedger(() =>
+    workTreeFingerprint(this.config.workspaceRoot),
+  );
   private contextEngine: ContextEngine;
   /** Providers whose model catalog has already supplied real context windows. */
   private contextCatalogWarmed = new Set<ProviderName>();
@@ -2336,17 +2351,34 @@ export class Engine {
         // Kept in the Rune home, never in the workspace: it is this machine's
         // knowledge about a project, not part of the project.
         slowChecksPath: join(getRuneHome(), "verify-slow.json"),
+        // A pass already on record for the tree as it stands. A command the
+        // person wrote in `[verify] commands` is matched as written; a detected
+        // one also by the package script it is the body of.
+        ...(this.config.verifyReuse === false
+          ? {}
+          : {
+              priorPass: ({ command }: { command: string }) =>
+                this.passLedger.fresh(
+                  this.config.verifyCommand?.length
+                    ? [command]
+                    : equivalentCommands(this.config.workspaceRoot, command),
+                ),
+            }),
         // One log, two sources: checks the model ran through `bash` and checks
         // the harness ran on its behalf both settle criteria now.
-        onCheck: (run) =>
-          this.checkLog.record({
+        onCheck: (run) => {
+          if (run.passed) {
+            this.passLedger.noteCheck(run.command, { at: Date.now(), durationMs: run.durationMs });
+          }
+          return this.checkLog.record({
             command: run.command,
             passed: run.passed,
             at: Date.now(),
             summary: run.summary,
             exitCode: run.exitCode,
             durationMs: run.durationMs,
-          }),
+          });
+        },
       });
     }
 
@@ -6265,6 +6297,9 @@ export class Engine {
           const command = String(args.command ?? "");
           if (!command) return;
           const verdict = bashCheckVerdict(output);
+          const measuredNothing =
+            verdict.passed &&
+            (ranZeroTests(command, output.result) || assertedNothing(output.result));
           this.checkLog.record({
             command,
             passed: verdict.passed,
@@ -6274,12 +6309,16 @@ export class Engine {
             ...(verdict.exitCode != null ? { exitCode: verdict.exitCode } : {}),
             // Asked of THIS run, from the output the runtime read, at the one
             // moment the output is in hand (V7 finding 9).
-            ...(verdict.passed &&
-            (ranZeroTests(command, output.result) || assertedNothing(output.result))
-              ? { measuredNothing: true }
-              : {}),
+            ...(measuredNothing ? { measuredNothing: true } : {}),
             durationMs: output.durationMs,
           });
+          // …and, when it passed and measured something, the pass is kept with
+          // the tree it passed on, for the verifier to find at the end. The
+          // check log's own `kind` is not consulted: it refuses every pipe, and
+          // this reads the two that cannot hide a failure.
+          if (verdict.passed && !measuredNothing) {
+            this.passLedger.noteShell(command, { at: Date.now(), durationMs: output.durationMs });
+          }
         },
         verifier: this.verifier ?? undefined,
         nativeGrounding: this.config.search?.nativeGrounding ?? true,

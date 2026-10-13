@@ -490,6 +490,16 @@ export interface RuneConfig {
      */
     keepGenerated?: boolean;
     /**
+     * Do not run again a check this run already watched pass on the tree
+     * exactly as it stands. Default true. A run that runs the project's suite
+     * itself and changes nothing afterwards is otherwise made to wait for the
+     * same suite a second time when it finishes. Only a pass is reused, only
+     * for the same command (or the package script it is the body of), and only
+     * while no file has changed; set false to have every check run at the end
+     * regardless.
+     */
+    reuse?: boolean;
+    /**
      * Per-ecosystem control (`[verify.ecosystems]`). Detection covers js, go,
      * python, rust and jvm (Java + Kotlin, which share gradle and maven, and
      * which `java` and `kotlin` both name). Each entry is either a bare
