@@ -384,6 +384,12 @@ describe("why a finished run is short of met, as three facts and not one word", 
       );
       expect(verdictShortfall(partial([from(source, "needs_review")]))).toBe("outside_terms");
     }
+    // A SATISFIED outside term is not short at all: what is short is the run's own.
+    for (const source of ["user", "evaluator"] as const) {
+      expect(verdictShortfall(partial([own("unassessed"), from(source, "satisfied")]))).toBe(
+        "own_terms_unshown",
+      );
+    }
     // An OPTIONAL outside term is accepted whatever happened to it: only the run's own are short.
     expect(
       verdictShortfall(
