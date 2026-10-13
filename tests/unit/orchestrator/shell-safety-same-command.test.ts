@@ -52,6 +52,10 @@ describe("the recorded checks are the commands they stand for", () => {
     ],
     ["and for Python", lines("python3 - <<'PY'", "print(open('styles.css').read()[:10])", "PY")],
     [
+      "and for Bun, in the one form that reads a script there",
+      lines("bun run - <<'JS'", "console.log(1)", "JS"),
+    ],
+    [
       "a loop over named files is one check a file",
       'for file in data.js state.js view.js app.js; do node --check "$file" || exit; done',
     ],
@@ -161,6 +165,8 @@ describe("a here-document makes a command ordinary in one shape only", () => {
     ["node with a preload", lines("node --require ./evil.js <<'NODE'", "1", "NODE")],
     ["node with a script as well", lines("node app.js <<'NODE'", "1", "NODE")],
     ["node told to print an expression", lines("node -p <<'NODE'", "1", "NODE")],
+    ["bare bun, which does not read a script from standard input", lines("bun <<'JS'", "1", "JS")],
+    ["bun running a named script as well", lines("bun run build.ts - <<'JS'", "1", "JS")],
     ["a numbered descriptor", lines("node 3<<'NODE'", "1", "NODE")],
     ["two bodies on one command", lines("node <<'A' <<'B'", "1", "A", "2", "B")],
     ["a file written from the body", lines("cat <<'EOF' > ~/.zshrc", "export X=1", "EOF")],

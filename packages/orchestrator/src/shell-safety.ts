@@ -439,9 +439,13 @@ const HEREDOC_MARK = "\u0000heredoc\u0000";
 /**
  * An interpreter given its script on standard input and nothing else. The
  * body is program text, exactly as the argument of `-e` / `-c` is.
+ *
+ * Only the forms that do read a script there: `node` and `python` take one
+ * with no argument or with `-`; `bun` and `deno` only as `run -`. Bare `bun`
+ * and bare `deno` do something else with standard input, and are not named.
  */
 const INTERPRETER_HEREDOC_RE = new RegExp(
-  String.raw`^(?:(?:node|bun|deno)(?:\s+--input-type=(?:module|commonjs))?|python3?(?:\s+-)?)\s*${HEREDOC_MARK}$`,
+  String.raw`^(?:node(?:\s+--input-type=(?:module|commonjs))?(?:\s+-)?|python3?(?:\s+-)?|(?:bun|deno)\s+run\s+-)\s*${HEREDOC_MARK}$`,
 );
 
 /** Leaving a loop or the script: control, with no effect of its own. */
