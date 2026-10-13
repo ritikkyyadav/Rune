@@ -2751,8 +2751,8 @@ between any two of them is the run and not the build. The 62 s is the build.
 **The rig's own report** (`report-candidate/`, harness mode, PROVISIONAL, one pair a
 family): two of two complete for each tool; cost per clean completion $0.3475 for Rune
 and $0.3575 for OpenCode; median paired ratio, Rune ÷ OpenCode, 0.87× on list cost and
-0.75× on wall time. On 8 October the same rig on two serious tasks read 1.54× the time
-and 1.16× the cost.
+0.75× on wall time. The same two ratios from the rows of 8 October, two serious tasks:
+1.06× and 1.47×.
 
 **What did not move.**
 
