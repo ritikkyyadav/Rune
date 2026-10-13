@@ -244,6 +244,41 @@ describe("what a database does not hold is not zero", () => {
     expect(p.checkMs).toBe(0);
   });
 
+  test("a check whose start is not on record is not given one", () => {
+    const p = profileRun(
+      database([
+        [0, "user_msg", {}],
+        // A resumed run: the completion is there, the start was in the run before.
+        [9, "run_trace", { type: "verification_completed", status: "passed" }],
+      ]),
+    );
+    expect(p.checks).toEqual([]);
+    expect(p.checkMs).toBe(0);
+  });
+
+  test("two writes: the first is the first and the last is the last", () => {
+    const first = says("write_file");
+    const shell = says("bash");
+    const second = says("edit_file");
+    const id = (m: Record<string, unknown>): string =>
+      String((m.toolUses as Array<{ callId: string }>)[0]!.callId);
+    const p = profileRun(
+      database([
+        [0, "user_msg", {}],
+        [3, "assistant_msg", first],
+        [4, "tool_result", { callId: id(first) }],
+        [6, "assistant_msg", shell],
+        [8, "tool_result", { callId: id(shell) }],
+        [10, "assistant_msg", second],
+        [11, "tool_result", { callId: id(second) }],
+        [20, "verdict", {}],
+      ]),
+    );
+    expect(p.firstActionMs).toBe(4_000);
+    expect(p.firstWriteMs).toBe(4_000);
+    expect(p.lastWriteMs).toBe(11_000);
+  });
+
   test("a database with no events is an error, not an empty profile", () => {
     expect(() => profileRun(database([]))).toThrow("no events");
   });
