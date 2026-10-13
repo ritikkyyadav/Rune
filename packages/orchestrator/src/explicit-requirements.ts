@@ -28,7 +28,8 @@ export function explicitRequirements(request: string): string[] {
         /\bmust(?:\s+not)?\b|\bdo\s+not\b/i.test(instruction) ||
         /^(?:please\s+)?(?:never|keep)\b/i.test(instruction) ||
         /[,;:]\s*(?:never|keep)\b/i.test(instruction)
-      ) found.push(sentence);
+      )
+        found.push(sentence);
     }
   }
   return [...new Set(found)];

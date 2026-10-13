@@ -14,7 +14,11 @@ import {
   CLAIM_RUNGS,
   type Brief,
 } from "../../../packages/orchestrator/src/brief";
-import { amendContract, computeVerdict, createContract } from "../../../packages/orchestrator/src/contract";
+import {
+  amendContract,
+  computeVerdict,
+  createContract,
+} from "../../../packages/orchestrator/src/contract";
 import { explicitRequirements } from "../../../packages/orchestrator/src/explicit-requirements";
 
 function brief(): Brief {
@@ -292,7 +296,10 @@ describe("the read_back tool", () => {
     const tool = createReadBackTool(
       () => undefined,
       () => `Repair the reader. ${rule}`,
-      (b) => { calls++; captured = b; },
+      (b) => {
+        calls++;
+        captured = b;
+      },
     );
     const out = await tool.execute({
       callId: "c1",
