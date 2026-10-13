@@ -91,7 +91,7 @@ function makeRegistry() {
         inputSchema: { type: "object", properties: {} },
         category: ["write_file", "edit_file"].includes(name)
           ? "write"
-          : name === "bash"
+          : ["bash", "worker"].includes(name)
             ? "execute"
             : "read",
         permissionLevel: "auto",
@@ -359,6 +359,123 @@ describe("when the work goes wrong the effort is raised once, and stays", () => 
     expect(new Set(gw.efforts)).toEqual(new Set(["max"]));
     expect(incidents.some((i) => i.class === "loop.effort_latched")).toBe(false);
   });
+});
+
+// ─── Each finish gate, on its own ───
+//
+// Five gates can refuse a finish, and they are asked in this order:
+// delegation-evidence, execution-evidence, fix-verified, product-sight,
+// open-steps. Each tells the effort router that it fired. Under "conservative"
+// that pins the ceiling, as it always has; under "task" it moves nothing.
+//
+// A script in which two gates fire cannot say which of them the router heard:
+// the first one pins, and the second finds it pinned. (That is how the
+// open-steps gate's call could be deleted with every test still green.) So
+// each row is a run in which the gate it names is the FIRST to refuse, and
+// what is read is the router's own sentence, which carries the gate's name.
+describe("each finish gate on its own: conservative hears it, task routing does not", () => {
+  const plan = {
+    name: "todo_write",
+    args: {
+      items: [
+        { content: "add the field", status: "in_progress" },
+        { content: "update the exporter", status: "pending" },
+      ],
+    },
+  };
+  const rows: Array<{
+    gate: string;
+    incident: string;
+    request: string;
+    script: Step[];
+    opts?: Record<string, unknown>;
+    /** A fix is at the ceiling from its first request, in either mode. */
+    fix?: boolean;
+  }> = [
+    {
+      gate: "delegation-evidence",
+      incident: "loop.delegation_gate",
+      request: SMALL,
+      // A worker wrote a scope, and the run finishes without opening it.
+      script: [
+        { tools: [{ name: "worker", args: { prompt: "add the field", files: ["notes/"] } }] },
+        { text: "finished" },
+      ],
+    },
+    {
+      gate: "execution-evidence",
+      incident: "loop.evidence_gate",
+      request: SMALL,
+      // A file written, and nothing run.
+      script: READ_WRITE_DONE,
+    },
+    {
+      gate: "fix-verified",
+      incident: "loop.fix_verified_gate",
+      request: "fix the crash in the date parser",
+      fix: true,
+      // A fix, written and run, with no criterion shown to fail before it.
+      script: [
+        { tools: [{ name: "write_file", args: { path: "src/date.ts", content: "x" } }] },
+        { tools: [{ name: "bash", args: { command: "bun test" } }] },
+        { text: "finished" },
+      ],
+      opts: { ledgerStatus: () => ({ total: 2, verified: 0 }) },
+    },
+    {
+      gate: "product-sight",
+      incident: "loop.product_sight_gate",
+      request: "Build a landing page for Driftwood, a specialty coffee subscription.",
+      // A page written and run, and never looked at.
+      script: [
+        { tools: [{ name: "write_file", args: { path: "web/index.html", content: "x" } }] },
+        { tools: [{ name: "bash", args: { command: "bun test" } }] },
+        { text: "finished" },
+      ],
+    },
+    {
+      gate: "open-steps",
+      incident: "loop.open_steps_gate",
+      request: SMALL,
+      // A plan with a step open, and nothing written for an earlier gate to refuse.
+      script: [
+        { tools: [plan] },
+        { tools: [{ name: "read_file", args: { path: "notes.ts" } }] },
+        { text: "finished" },
+      ],
+    },
+  ];
+  const GATES = rows.map((r) => r.incident);
+  const firstGate = (incidents: Array<{ class: string }>) =>
+    incidents.find((i) => GATES.includes(i.class))?.class;
+
+  for (const row of rows) {
+    test(`${row.gate}: conservative pins the ceiling on it, and says which gate`, async () => {
+      const gw = makeGateway(row.script);
+      const { loop, incidents } = makeLoop(gw, {
+        effortRouting: "conservative",
+        provider: "ollama-turbo",
+        ...row.opts,
+      });
+      await collect(loop.run(row.request, "s1", "/tmp"));
+      // This gate refused first — or the row is about some other gate.
+      expect(firstGate(incidents)).toBe(row.incident);
+      const pinned = incidents.filter((i) => i.class === "loop.effort_latched");
+      expect(pinned[0]?.message).toContain(`${row.gate} gate refused the finish`);
+      expect(gw.efforts.at(-1)).toBe("max");
+      // Pinned from below, where there was a below: a fix never left the ceiling.
+      expect(gw.efforts.includes("high")).toBe(!row.fix);
+    });
+
+    test(`${row.gate}: task routing moves nothing for it`, async () => {
+      const gw = makeGateway(row.script);
+      const { loop, incidents } = makeLoop(gw, row.opts);
+      await collect(loop.run(row.request, "s1", "/tmp"));
+      expect(firstGate(incidents)).toBe(row.incident);
+      expect(incidents.some((i) => i.class === "loop.effort_latched")).toBe(false);
+      expect(new Set(gw.efforts)).toEqual(new Set([row.fix ? "max" : "high"]));
+    });
+  }
 });
 
 describe("the setting", () => {
