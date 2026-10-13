@@ -1,0 +1,28 @@
+# frame: 80x24-commands-scrolled
+# terminal: 24 rows x 80 cols (real pty, alt screen)
+# ------------------------------------------------------------
+#0.........1.........2.........3.........4.........5.........6.........7.........
+ 1|
+ 2|  R U N E   /private/tmp/rune-ui-panels-20261010/workspace               v1.3.4
+ 3|  ─────────────────────────────────────────────────────────────────────────────
+ 4|  try  "fix the failing test" · "explain how this repo is wired"
+ 5|  tip: Rune can learn your style over time -- /memory
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|  commands · 9-16 of 27                  tab complete · enter run · esc close
+13|    /rewind       Roll back the conversation
+14|    /cost         Session cost
+15|    /status       Session status
+16|    /loop         Repeat a prompt while this session stays open
+17|  › /loops        List and manage this session's loops
+18|    /team         Other Rune instances here: status, send, claim, intent
+19|    /mcp          MCP connectors: health and tools, or reconnect <server>
+20|    /skills       Browse or search available skills
+21|  ────────────────────────────────────────────────────────────────────────────
+22|  › /
+23|  ────────────────────────────────────────────────────────────────────────────
+24|  › 1st gear · every action asks first                            gpt-oss:20b

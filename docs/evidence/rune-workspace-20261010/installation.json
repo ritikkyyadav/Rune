@@ -1,0 +1,29 @@
+{
+  "rune-compiled": "13d4a4be899e40f7bc4fb8b6c07f6e21e45b693c44c099ce60dcad99987aaeb0",
+  "rune-tools": "dbc683aa6b32ae357adeb93ffcaaac058f12363c62dc820e802c7299857966f0",
+  "rollback_stamp": 1791639717,
+  "source_root": "/Users/ritikyadav890/Project/Alan",
+  "source_commit": "2dabdb2920726f253472543b41c187fd40f69642",
+  "version": "1.3.4-dev+2dabdb2",
+  "dirty_source": "1",
+  "resolved_command": "/Users/ritikyadav890/.rune/bin/rune",
+  "checks": {
+    "staged_serve_check": "passed",
+    "minimal_shell": "passed",
+    "login_shell": "passed",
+    "doctor_isolated_profile": "passed",
+    "native_tools_round_trip": "passed",
+    "installed_panels_80x24_and_120x40": "passed",
+    "clean_quit": "passed"
+  },
+  "installed_workspace_run": {
+    "provider": "loopback mock",
+    "remote_provider_calls": 0,
+    "completed_scripted_response": true,
+    "mock_requests": 6,
+    "version_edit_written": true,
+    "test_file_written": true,
+    "clean_exit": true
+  },
+  "validation_logs": "/tmp/rune-ui-install-20261010"
+}

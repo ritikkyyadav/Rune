@@ -38,7 +38,10 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { CLAUDE_PARITY_CONFIG_ENV } from "../../eval/comparison/arms/claude-code";
+import {
+  CLAUDE_DEFAULT_AUTH_ENV,
+  CLAUDE_PARITY_CONFIG_ENV,
+} from "../../eval/comparison/arms/claude-code";
 import {
   type ArmLimits,
   type ArmName,
@@ -89,6 +92,7 @@ import {
   type WorkspaceSnapshot,
   chargeOf,
   changedPaths,
+  claudeAuthIsolation,
   configFingerprint,
   isClean,
   isCleanV1,
@@ -1193,6 +1197,34 @@ describe("what a row was measured with", () => {
       configFingerprint("rune", "product", { model: "m-1", reasoningEffort: "low" }, "codex"),
     ];
     expect(new Set([base, ...others]).size).toBe(others.length + 1);
+  });
+
+  test("Claude product auth isolation changes the row config without exposing a profile path", () => {
+    const spec = { model: "sonnet", reasoningEffort: "medium" };
+    const safe = claudeAuthIsolation({
+      timeoutMs: 1,
+      mode: "product",
+      env: { [CLAUDE_DEFAULT_AUTH_ENV]: "1", CLAUDE_CONFIG_DIR: "/home/user/custom" },
+    });
+    const dedicated = claudeAuthIsolation({
+      timeoutMs: 1,
+      mode: "product",
+      env: { [CLAUDE_DEFAULT_AUTH_ENV]: "1", [CLAUDE_PARITY_CONFIG_ENV]: "/profile/a" },
+    });
+    const otherProfile = claudeAuthIsolation({
+      timeoutMs: 1,
+      mode: "product",
+      env: { [CLAUDE_PARITY_CONFIG_ENV]: "/profile/b" },
+    });
+    expect(safe).toBe("default-safe-mode");
+    expect(dedicated).toMatch(/^dedicated-profile:[0-9a-f]{64}$/);
+    expect(dedicated).not.toContain("/profile/a");
+    expect(otherProfile).not.toBe(dedicated);
+    const fingerprints = [safe, dedicated, otherProfile].map((route) =>
+      configFingerprint("claude-code", "product", spec, "anthropic", route),
+    );
+    expect(new Set(fingerprints).size).toBe(3);
+    expect(claudeAuthIsolation({ timeoutMs: 1, mode: "harness", env: {} })).toBeUndefined();
   });
 
   test("two fresh preparations of one task: two commits, one tree, one fingerprint", async () => {

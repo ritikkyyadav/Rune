@@ -361,7 +361,8 @@ export const INPUT_METHODS = {
     // The palette only opens on a `/` with no space in it yet, so the field
     // under it is one row -- which is why the cap above can ignore it and the
     // palette's own budget can go on subtracting the field's height.
-    if (matches.length === 0) return base;
+    const slashOpen = this.mode === "input" && this.input.startsWith("/") && !/\s/.test(this.input);
+    if (matches.length === 0 && !slashOpen) return base;
     // Float the palette above the input box; the caret stays in the box.
     const palette = renderSlashPalette(
       matches,
@@ -369,6 +370,7 @@ export const INPUT_METHODS = {
       this.contentCols(),
       Math.max(1, rowsCount() - base.lines.length - 2),
       this.slashCatalog().length,
+      this.input,
     );
     return {
       lines: [...palette, ...base.lines],

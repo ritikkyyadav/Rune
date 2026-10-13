@@ -404,14 +404,9 @@ const INLINE_HEAD = 4;
 const DETAIL_HEAD = 240;
 const DETAIL_TAIL = 60;
 
-/** How much of a NEW file rides inline under its row. */
-const WRITE_PREVIEW_ROWS = 12;
-
-/** How much of a file rides inside its read box, and how much of a fetched
- *  page rides inside its get box. Three lines is an opening, not a copy: the
- *  receipt already says how many lines there are, and the point of showing any
- *  is that the reader can tell WHICH file arrived without opening anything. */
-const READ_PREVIEW_ROWS = 3;
+/** Changes keep an evidence preview; routine output lives behind its fold.
+ * Six body rows leave room for the explanation in a 24-row terminal. */
+const CHANGE_PREVIEW_ROWS = 6;
 
 /**
  * The rung a call that merely produced quotable output sits at.
@@ -467,6 +462,17 @@ function boxDiff(rows: F.DiffRow[], path: string): string[] {
   return F.diffRows(rows, langOfPath(path), { indent: "", width: F.boxInner() });
 }
 
+function changePreview(rows: F.DiffRow[], path: string): string[] {
+  return boxDiff(
+    rows.map((row) =>
+      row.kind === "elide" && /more (diff )?lines?/.test(row.text)
+        ? { ...row, text: `${row.text} ${glyph("observed")} ctrl+o` }
+        : row,
+    ),
+    path,
+  );
+}
+
 /** New-file content as add rows, numbered from 1, elided past `limit`. */
 function writeRows(content: string, limit: number): F.DiffRow[] {
   const lines = content.split("\n");
@@ -474,7 +480,8 @@ function writeRows(content: string, limit: number): F.DiffRow[] {
     .slice(0, limit)
     .map((text, i) => ({ kind: "add" as const, line: i + 1, text }));
   if (lines.length > limit) {
-    rows.push({ kind: "elide", text: `${lines.length - limit} more lines` });
+    const hidden = lines.length - limit;
+    rows.push({ kind: "elide", text: `${hidden} more line${hidden === 1 ? "" : "s"}` });
   }
   return rows;
 }
@@ -587,25 +594,14 @@ export function renderToolActivity(v: ToolActivityView): string {
       const shown = typeof out?.lines_shown === "number" ? out.lines_shown : null;
       const offset = typeof out?.offset === "number" ? out.offset : 0;
       const partial = total != null && shown != null && shown < total;
-      // Boxed, because what a read produced is a file, and a file is code. The
-      // title carries the path verbatim, the body carries the opening of what
-      // came back, and the receipt carries the span -- which is the fact the
-      // old one-row form carried alone.
-      return F.box(
-        { verb: name, arg: listingPath(s(out?.path ?? v.args.path)) },
-        F.boxOutput(previewLines(s(out?.content), READ_PREVIEW_ROWS)),
-        {
-          parts: [
-            OBSERVED,
-            partial
-              ? `lines ${offset + 1}-${offset + shown}`
-              : total != null
-                ? `${total} lines`
-                : "",
-            elapsed(v.durationMs),
-          ],
-        },
-      ).join("\n");
+      return F.toolRow({
+        name,
+        arg: listingPath(s(out?.path ?? v.args.path)),
+        metric: F.receiptOf([
+          partial ? `lines ${offset + 1}-${offset + shown}` : total != null ? `${total} lines` : "",
+          elapsed(v.durationMs),
+        ]),
+      });
     }
 
     case "list_dir": {
@@ -670,8 +666,9 @@ export function renderToolActivity(v: ToolActivityView): string {
       // file. The rest sits behind the fold like any long evidence.
       return F.box(
         { verb: name, arg: listingPath(path), argTone: "path" },
-        body ? boxDiff(writeRows(body, WRITE_PREVIEW_ROWS), path) : [],
+        body ? changePreview(writeRows(body, CHANGE_PREVIEW_ROWS - 1), path) : [],
         { status: "none", parts: [OBSERVED, F.editMetric(added, 0, "new file")] },
+        { rows: CHANGE_PREVIEW_ROWS },
       ).join("\n");
     }
 
@@ -694,12 +691,13 @@ export function renderToolActivity(v: ToolActivityView): string {
           ],
         }).join("\n");
       }
-      const diff = F.parseDiff(raw);
+      const diff = F.parseDiff(raw, CHANGE_PREVIEW_ROWS - 1);
       const hunkNote = diff.hunks > 0 ? `${diff.hunks} hunk${diff.hunks === 1 ? "" : "s"}` : "";
       return F.box(
         { verb: name, arg: listingPath(path), argTone: "path" },
-        boxDiff(diff.rows, path),
+        changePreview(diff.rows, path),
         { status: "none", parts: [OBSERVED, F.editMetric(diff.added, diff.removed, hunkNote)] },
+        { rows: CHANGE_PREVIEW_ROWS },
       ).join("\n");
     }
 
@@ -720,7 +718,9 @@ export function renderToolActivity(v: ToolActivityView): string {
         const path = s(file.path ?? file.moved_to);
         const raw = s(file.diff);
         const action = s(file.action);
-        const diff = raw ? F.parseDiff(raw) : { rows: [], added: 0, removed: 0, hunks: 0 };
+        const diff = raw
+          ? F.parseDiff(raw, CHANGE_PREVIEW_ROWS - 1)
+          : { rows: [], added: 0, removed: 0, hunks: 0 };
         const hunkNote =
           action === "deleted"
             ? "deleted"
@@ -732,8 +732,9 @@ export function renderToolActivity(v: ToolActivityView): string {
         rows.push(
           ...F.box(
             { verb: name, arg: listingPath(path), argTone: "path" },
-            boxDiff(diff.rows, path),
+            changePreview(diff.rows, path),
             { status: "none", parts: [OBSERVED, F.editMetric(diff.added, diff.removed, hunkNote)] },
+            { rows: CHANGE_PREVIEW_ROWS },
           ),
         );
       }
@@ -756,6 +757,17 @@ export function renderToolActivity(v: ToolActivityView): string {
       // only row on the rail that answers "is it actually right?". A command
       // that merely ran takes the neutral mark like every other call.
       const checked = isVerificationCommand(command);
+      if (!failed && !checked) {
+        return F.toolRow({
+          name,
+          arg: command,
+          metric: F.receiptOf([
+            exit != null ? `exit ${exit}` : "",
+            tallyOf(summary),
+            elapsed(v.durationMs),
+          ]),
+        });
+      }
       // A FAILURE shows a short excerpt of its evidence -- the budget is spent
       // on signal lines (assertions, FAILED names, the tally), and its own last
       // line closes the box as the verdict. That is the whole print-out the
@@ -803,15 +815,12 @@ export function renderToolActivity(v: ToolActivityView): string {
     }
 
     case "web_fetch": {
-      // Boxed like a read, because that is what it is: someone else's document,
-      // fetched verbatim. The frame is what says the words inside it are the
-      // page's and not the agent's.
       const fetched = nonEmptyLines(v.result).length;
-      return F.box(
-        { verb: name, arg: s(v.args.url ?? v.args.uri ?? "") },
-        F.boxOutput(previewLines(bodyOf(v.result), READ_PREVIEW_ROWS)),
-        { parts: [OBSERVED, `${fetched} lines`, elapsed(v.durationMs)] },
-      ).join("\n");
+      return F.toolRow({
+        name,
+        arg: s(v.args.url ?? v.args.uri ?? ""),
+        metric: F.receiptOf([`${fetched} lines`, elapsed(v.durationMs)]),
+      });
     }
 
     case "todo_write": {
@@ -1104,7 +1113,7 @@ export function renderTranscript(lines: TranscriptLineView[]): string {
  * row already is the whole story. Kept in this module so the two forms of a
  * call are written next to each other and cannot drift apart.
  */
-export function renderToolDetail(v: ToolActivityView): string | null {
+export function renderToolDetail(v: ToolActivityView, previewRows = DETAIL_HEAD): string | null {
   if (!v.success) return null;
   const out = tryJson(v.result);
   switch (v.toolName) {
@@ -1117,13 +1126,22 @@ export function renderToolDetail(v: ToolActivityView): string | null {
       const failed = out?.timed_out === true || (exit != null && exit !== 0);
       // A failure already showed an excerpt; everything else showed its first
       // lines, a counted elision and its last.
-      const shownInline = failed ? EXCERPT_HEAD + EXCERPT_TAIL + 2 : INLINE_HEAD + 2;
-      if (all.length <= shownInline) return null;
       const checked = isVerificationCommand(command);
+      const shownInline = failed ? EXCERPT_HEAD + EXCERPT_TAIL + 2 : checked ? INLINE_HEAD + 2 : 0;
+      if (all.length <= shownInline) return null;
       const timedOut = out?.timed_out === true;
       const summary = timedOut ? "timed out" : commandOutcome(body);
       const closing = all.length > 1 ? all.pop()!.trim() : "";
-      const clipped = F.clip(all, DETAIL_HEAD, DETAIL_TAIL);
+      const tail = previewRows < DETAIL_HEAD ? 0 : DETAIL_TAIL;
+      const clipped =
+        previewRows < DETAIL_HEAD
+          ? all.length <= previewRows
+            ? all
+            : [
+                ...all.slice(0, previewRows),
+                `${glyph("elision")} ${all.length - previewRows} more lines`,
+              ]
+          : F.clip(all, previewRows, tail);
       return F.box(
         { verb: VERB.bash!, arg: command },
         F.boxOutput(closing ? [...clipped, closing] : clipped, failed ? F.failurePaint : muted),
@@ -1137,7 +1155,7 @@ export function renderToolDetail(v: ToolActivityView): string | null {
         },
         // The opened form is the whole point of opening it: the 12-row cap is
         // what the COMMITTED box holds back, so it does not apply here.
-        { rows: DETAIL_HEAD + DETAIL_TAIL + 2 },
+        { rows: previewRows + tail + 2 },
       ).join("\n");
     }
     case "edit_file":
@@ -1145,28 +1163,27 @@ export function renderToolDetail(v: ToolActivityView): string | null {
       const path = s(out?.path ?? v.args.path);
       const raw = s(out?.diff);
       if (!raw) return null;
-      const full = F.parseDiff(raw, DETAIL_HEAD);
-      const shown = F.parseDiff(raw);
+      const full = F.parseDiff(raw, previewRows);
       // Worth opening only when the committed hunk actually dropped rows.
-      if (full.rows.length <= shown.rows.length) return null;
+      if (full.rows.length <= CHANGE_PREVIEW_ROWS - 1) return null;
       const hunkNote = full.hunks > 0 ? `${full.hunks} hunk${full.hunks === 1 ? "" : "s"}` : "";
       return F.box(
         { verb: "edit", arg: listingPath(path), argTone: "path" },
         boxDiff(full.rows, path),
         { status: "none", parts: [OBSERVED, F.editMetric(full.added, full.removed, hunkNote)] },
-        { rows: DETAIL_HEAD },
+        { rows: previewRows + 1 },
       ).join("\n");
     }
     case "write_file": {
       const path = s(out?.path ?? v.args.path);
       const body = s(v.args.content);
       const total = body ? body.split("\n").length : 0;
-      if (total <= WRITE_PREVIEW_ROWS) return null;
+      if (total <= CHANGE_PREVIEW_ROWS - 1) return null;
       return F.box(
         { verb: VERB.write_file!, arg: listingPath(path), argTone: "path" },
-        boxDiff(writeRows(body, DETAIL_HEAD), path),
+        boxDiff(writeRows(body, previewRows), path),
         { status: "none", parts: [OBSERVED, F.editMetric(total, 0, "new file")] },
-        { rows: DETAIL_HEAD },
+        { rows: previewRows + 1 },
       ).join("\n");
     }
     case "apply_patch": {
@@ -1179,10 +1196,9 @@ export function renderToolDetail(v: ToolActivityView): string | null {
         const path = s(file.path ?? file.moved_to);
         const raw = s(file.diff);
         const full = raw
-          ? F.parseDiff(raw, DETAIL_HEAD)
+          ? F.parseDiff(raw, previewRows)
           : { rows: [], added: 0, removed: 0, hunks: 0 };
-        const shown = raw ? F.parseDiff(raw) : full;
-        if (full.rows.length > shown.rows.length) dropped = true;
+        if (full.rows.length > CHANGE_PREVIEW_ROWS - 1) dropped = true;
         const action = s(file.action);
         const note =
           action === "deleted"
@@ -1197,7 +1213,7 @@ export function renderToolDetail(v: ToolActivityView): string | null {
             { verb: "edit", arg: listingPath(path), argTone: "path" },
             boxDiff(full.rows, path),
             { status: "none", parts: [OBSERVED, F.editMetric(full.added, full.removed, note)] },
-            { rows: DETAIL_HEAD },
+            { rows: previewRows + 1 },
           ),
         );
       }
@@ -1205,13 +1221,13 @@ export function renderToolDetail(v: ToolActivityView): string | null {
     }
     case "read_file":
     case "web_fetch": {
-      // The committed box shows three lines of what came back. The fold holds
-      // the rest of it -- the same frame, the same receipt, more of the file.
+      // Even a one-line result needs a fold: the compact row shows no output.
       const content = v.toolName === "read_file" ? s(out?.content) : bodyOf(v.result);
       if (!content) return null;
-      const full = previewLines(content, DETAIL_HEAD);
-      if (full.length <= READ_PREVIEW_ROWS + 1) return null;
+      const full = previewLines(content, previewRows);
       const total = typeof out?.total_lines === "number" ? out.total_lines : null;
+      const shown = typeof out?.lines_shown === "number" ? out.lines_shown : null;
+      const offset = typeof out?.offset === "number" ? out.offset : 0;
       const arg =
         v.toolName === "read_file"
           ? listingPath(s(out?.path ?? v.args.path))
@@ -1222,11 +1238,15 @@ export function renderToolDetail(v: ToolActivityView): string | null {
         {
           parts: [
             OBSERVED,
-            total != null ? `${total} lines` : `${nonEmptyLines(v.result).length} lines`,
+            total != null && shown != null && shown < total
+              ? `lines ${offset + 1}-${offset + shown}`
+              : total != null
+                ? `${total} lines`
+                : `${nonEmptyLines(v.result).length} lines`,
             elapsed(v.durationMs),
           ],
         },
-        { rows: DETAIL_HEAD },
+        { rows: previewRows + 1 },
       ).join("\n");
     }
     case "read_many": {
@@ -1333,7 +1353,15 @@ export function renderChamberHead(views: ToolActivityView[]): string {
 
 /** The chamber, opened: the same head, then every call it holds, per row. */
 export function renderChamberDetail(views: ToolActivityView[]): string {
-  return [renderChamberHead(views), ...views.map((view) => renderToolActivity(view))].join("\n");
+  // Opening a long group must not splice thousands of file lines into the
+  // transcript and evict the conversation. Each call keeps its identity and
+  // a bounded excerpt; the work log carries the longer individual outputs.
+  const previewRows = Math.max(1, Math.min(8, Math.floor(320 / views.length) - 3));
+  return [
+    renderChamberHead(views),
+    ...views.map((view) => renderToolDetail(view, previewRows) ?? renderToolActivity(view)),
+    F.toolNote("ctrl+r for the full work log"),
+  ].join("\n");
 }
 
 /** Back-compat name for the collapsed gathering row. */

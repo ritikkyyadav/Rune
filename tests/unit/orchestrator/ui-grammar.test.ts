@@ -21,7 +21,10 @@
 
 import { describe, expect, it } from "bun:test";
 import * as F from "../../../packages/orchestrator/src/bin/ui/flow";
-import { renderToolActivity } from "../../../packages/orchestrator/src/bin/ui/activity";
+import {
+  renderToolActivity,
+  renderToolDetail,
+} from "../../../packages/orchestrator/src/bin/ui/activity";
 import { autoApprovedChip } from "../../../packages/orchestrator/src/bin/ui/composer";
 import { heldCloseReceipt, heldOutcomeRow } from "../../../packages/orchestrator/src/bin/ui/held";
 import { TurnRenderer, type TurnSink } from "../../../packages/orchestrator/src/bin/ui/turn";
@@ -271,7 +274,7 @@ function boxes(): Array<[string, string]> {
     ],
     [
       "read",
-      renderToolActivity({
+      renderToolDetail({
         toolName: "read_file",
         args: { path: "src/streaming.ts" },
         result: JSON.stringify({
@@ -280,7 +283,7 @@ function boxes(): Array<[string, string]> {
           lines_shown: 40,
           offset: 0,
           content: "   1\timport { x } from './y';\n   2\t\n   3\texport const z = 1;",
-        }),
+        })!,
         success: true,
       }),
     ],
@@ -313,12 +316,12 @@ function boxes(): Array<[string, string]> {
     ],
     [
       "fetch",
-      renderToolActivity({
+      renderToolDetail({
         toolName: "web_fetch",
         args: { url: "https://example.com/docs/streaming" },
         result: "# Streaming\n\nThe endpoint returns server-sent events.\n",
         success: true,
-      }),
+      })!,
     ],
   ];
 }

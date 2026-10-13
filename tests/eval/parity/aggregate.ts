@@ -130,6 +130,14 @@ export function validateRow(v: unknown): string[] {
   if (!ARM_SET.has(v.arm as ParityArm)) p.push(`arm ${JSON.stringify(v.arm)} unknown`);
   if (!MODE_SET.has(v.mode as ParityMode)) p.push(`mode ${JSON.stringify(v.mode)} unknown`);
   if (!isStr(v.model)) p.push("model must be a string");
+  if (
+    v.authIsolation !== undefined &&
+    !(
+      v.authIsolation === "default-safe-mode" ||
+      (isStr(v.authIsolation) && /^dedicated-profile:[0-9a-f]{64}$/.test(v.authIsolation))
+    )
+  )
+    p.push("authIsolation must name default-safe-mode or a hashed dedicated profile");
   if (v.provider !== undefined && !isStr(v.provider)) p.push("provider must be a string");
   if (!isNonEmptyStr(v.version)) p.push("version missing: a row without it is not evidence");
   if (
@@ -544,6 +552,19 @@ export function comparabilityProblems(
         out.mixedConfig.push(
           `${mode} mode mixes ${new Set(settings).size} ${armLabel(arm)} configurations: ${counted(settings)}`,
         );
+      if (arm === "claude-code" && mode === "product") {
+        const routes = list.map((r) => r.authIsolation ?? "unrecorded");
+        if (new Set(routes).size > 1)
+          out.mixedConfig.push(
+            `${mode} mode mixes ${new Set(routes).size} Claude Code auth isolation routes: ${counted(
+              routes.map((route) =>
+                route.startsWith("dedicated-profile:")
+                  ? `dedicated profile ${route.slice(-64, -52)}`
+                  : route,
+              ),
+            )}`,
+          );
+      }
       // What each run CALLED. Where every row states the roster its arm was
       // configured with, the calls are held to that: one roster on every row,
       // and no call outside it. A configured helper that one run needed and

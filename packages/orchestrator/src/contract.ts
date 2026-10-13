@@ -546,6 +546,7 @@ export function carryForward(
   const constraints = [
     ...new Set([
       ...(contract.constraints ?? []),
+      ...(brief.explicitRequirements ?? []),
       ...brief.leave.map((s) => String(s).trim()).filter(Boolean),
       ...criteria.filter((c) => c.source === "user").map((c) => c.text),
     ]),

@@ -162,12 +162,17 @@ export function codexEffortFor(
   return wanted;
 }
 
+/** Whether a request carries a `reasoning` block: a reasoning model, thinking not switched off. */
+function sendsReasoning(request: InferenceRequest): boolean {
+  return request.thinking?.enabled !== false && REASONING_MODEL.test(request.model);
+}
+
 export function toResponsesBody(
   request: InferenceRequest,
   stream: boolean,
   promptCacheKey?: string,
 ): Record<string, unknown> {
-  const reason = request.thinking?.enabled !== false && REASONING_MODEL.test(request.model);
+  const reason = sendsReasoning(request);
   const body: Record<string, unknown> = {
     model: request.model,
     instructions: request.system ?? "",
@@ -198,19 +203,70 @@ export function toResponsesBody(
 // ─── SSE parsing (pure, exported for tests) ───
 
 /**
+ * What a Codex stream is doing, as far as its silence is concerned.
+ *
+ *   queued   — the request is out and nothing has come back
+ *   thinking — the stream is open and the model is not writing: the request
+ *              was just acknowledged, a reasoning item is open, or one output
+ *              item has closed and the next has not opened
+ *   writing  — text or tool-call arguments are arriving
+ */
+export type CodexStreamPhase = "queued" | "thinking" | "writing";
+
+/**
+ * The phase a stream is in once this event has arrived. An event this does
+ * not know leaves the phase where it was, except that anything at all on the
+ * wire means the request is no longer queued.
+ */
+function phaseAfter(
+  type: string,
+  ev: Record<string, unknown>,
+  was: CodexStreamPhase,
+): CodexStreamPhase {
+  switch (type) {
+    case "response.output_text.delta":
+    case "response.function_call_arguments.delta":
+      return "writing";
+    case "response.output_item.added": {
+      const kind = (ev.item as { type?: string } | undefined)?.type;
+      return kind === "message" || kind === "function_call" ? "writing" : "thinking";
+    }
+    case "response.created":
+    case "response.in_progress":
+    case "response.output_item.done":
+    case "response.reasoning_summary_part.added":
+    case "response.reasoning_summary_text.delta":
+    case "response.reasoning_text.delta":
+      return "thinking";
+    default:
+      return was === "queued" ? "thinking" : was;
+  }
+}
+
+/**
  * Parse a Responses API `text/event-stream` into Rune StreamEvents. Handles the
  * event types Rune needs: text deltas, function-call items + argument deltas,
  * reasoning-summary deltas, and completion (with usage). Unknown events are
  * ignored so the stream is resilient to additive backend event types.
+ *
+ * `onWire` hears every event that arrives, with the phase the stream is in
+ * after it — including the many this parser translates into nothing
+ * (`response.in_progress`, a reasoning item opening, a summary part, an empty
+ * delta). Whether a stream is alive is a fact about the wire, and reading it
+ * off the translated events called a thinking model dead.
  */
 // Structural stream type so both the DOM and node:stream/web ReadableStream
 // (which differ only in optionality of `value`) satisfy it without a cast.
 type ByteStream = { getReader(): { read(): Promise<{ value?: Uint8Array; done: boolean }> } };
 
-export async function* parseResponsesStream(body: ByteStream): AsyncGenerator<StreamEvent> {
+export async function* parseResponsesStream(
+  body: ByteStream,
+  onWire?: (phase: CodexStreamPhase) => void,
+): AsyncGenerator<StreamEvent> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let phase: CodexStreamPhase = "queued";
   let contentStarted = false;
   // Whether the model emitted a function call this response. The stop reason MUST
   // be "tool_use" when it did, or the agent loop treats the turn as finished and
@@ -253,6 +309,8 @@ export async function* parseResponsesStream(body: ByteStream): AsyncGenerator<St
       }
       const type = ev.type as string | undefined;
       if (!type) continue;
+      phase = phaseAfter(type, ev, phase);
+      onWire?.(phase);
 
       switch (type) {
         case "response.created": {
@@ -845,6 +903,35 @@ export function parseCodexCatalog(body: unknown): ModelInfo[] {
     });
 }
 
+// ─── Silence ───
+//
+// A stream that says nothing is either dead or thinking, and from here the two
+// look the same. What tells them apart is what the stream was last seen doing,
+// which the parser reports with every event that arrives (`CodexStreamPhase`).
+
+/**
+ * How long a Codex stream may stay silent before it is called dead, in ms: by
+ * what it was last seen doing, and by the effort the request went out at
+ * ("none" when it carries no reasoning block).
+ *
+ * Past this the watchdog cuts the stream and the gateway sends the request
+ * again from the start. So a figure shorter than the model's own thinking
+ * recovers nothing: it throws the thinking away and asks for it again. A
+ * figure too long is what a dead socket costs before anyone is told. The
+ * Codex CLI, on this same backend, waits 300s between any two events unless
+ * told otherwise (`stream_idle_timeout_ms`).
+ */
+export function codexSilenceAllowanceMs(phase: CodexStreamPhase, effort: ReasoningEffort): number {
+  // Not answered yet, or thinking on a request that was asked to think: the
+  // wait the Codex CLI itself gives this backend. 120s stood here, and on
+  // 2026-10-12 gpt-6.1-sol at `max` outlasted it ten recorded times in one
+  // session before it showed a first sign of thought.
+  if (phase === "queued" || (phase === "thinking" && effort !== "none")) return 300_000;
+  // Words that started and then stopped, or silence from a request that was
+  // never asked to think: nothing is being worked out, so 120s is long.
+  return 120_000;
+}
+
 // ─── Provider ───
 
 export class CodexProvider implements LlmProvider {
@@ -860,17 +947,25 @@ export class CodexProvider implements LlmProvider {
 
   async *inferStream(request: InferenceRequest, opts?: StreamOpts): AsyncGenerator<StreamEvent> {
     // Wedged-stream protection: previously no timeout — a stalled SSE session
-    // hung the turn until the user hit Esc. The FIRST-token allowance stays
-    // very generous: the Codex backend serves hidden-reasoning gpt-5.x models
-    // that legitimately go silent for minutes before they emit anything.
+    // hung the turn until the user hit Esc. How long a silence is allowed is
+    // decided by what the stream was last seen doing (`codexSilenceAllowanceMs`),
+    // and the watchdog is fed by the WIRE: every event that arrives, whether
+    // or not the parser makes anything of it.
     //
-    // The BETWEEN-chunk allowance was 240s, and that was pure loss. Once the
-    // stream is producing, this backend emits reasoning-summary deltas while
-    // it thinks, so mid-stream silence means wedged, not busy — and every
-    // recorded stall ("stream stalled — no data for 240s") cost four minutes
-    // before the gateway was allowed to retry or fall back. 120s is still
-    // twice any healthy gap observed, and halves the price of a dead socket.
-    const guard = new IdleWatchdog(this.name, opts?.signal, 300_000, 120_000);
+    // Both halves replace a mistake. The watchdog used to beat once per
+    // TRANSLATED event, and its generous first allowance ended at the first of
+    // those — which is `response.created`, the backend's acknowledgement, sent
+    // before the model has thought at all. So the thinking itself ran on the
+    // between-chunk allowance (120s), fed only by non-empty summary deltas.
+    // Recorded 2026-10-12 on gpt-6.1-sol at `max`: one session cut again and
+    // again exactly 120s after the acknowledgement, each cut restarting the
+    // request and throwing its thinking away, so the next attempt needed just
+    // as long and met the same end.
+    const effort: ReasoningEffort = sendsReasoning(request)
+      ? codexEffortFor(request.model, request.thinking)
+      : "none";
+    const allowed = (phase: CodexStreamPhase) => codexSilenceAllowanceMs(phase, effort);
+    const guard = new IdleWatchdog(this.name, opts?.signal, allowed("queued"), allowed("writing"));
     // The caller's stable key (the Rune session) when it gave one: a
     // per-instance id changes every time the gateway is rebuilt, and the
     // backend's prompt cache is keyed on it.
@@ -889,8 +984,8 @@ export class CodexProvider implements LlmProvider {
       if (!res.ok || !res.body) throw await codexHttpError(res);
       // The meter: read on every response, and carried on its usage event.
       const capacity = parseCodexCapacity(res.headers);
-      for await (const ev of parseResponsesStream(res.body)) {
-        guard.beat();
+      const alive = (phase: CodexStreamPhase) => guard.beat(allowed(phase));
+      for await (const ev of parseResponsesStream(res.body, alive)) {
         yield capacity && ev.type === "message_stop" ? { ...ev, capacity } : ev;
       }
     } catch (err) {

@@ -71,7 +71,11 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-import { claudeCodeArm } from "../comparison/arms/claude-code";
+import {
+  CLAUDE_PARITY_CONFIG_ENV,
+  claudeCodeArm,
+  defaultAuthSafeMode,
+} from "../comparison/arms/claude-code";
 import { codexArm } from "../comparison/arms/codex";
 import { OPENCODE_PROVIDER, opencodeArm } from "../comparison/arms/opencode";
 import {
@@ -468,6 +472,7 @@ export function configFingerprint(
   mode: ParityMode,
   spec: Pick<ArmSpec, "model" | "reasoningEffort">,
   provider: string | undefined,
+  authIsolation?: string,
 ): string {
   return sha256({
     arm,
@@ -475,7 +480,17 @@ export function configFingerprint(
     model: spec.model,
     provider: provider ?? null,
     reasoningEffort: spec.reasoningEffort ?? null,
+    ...(authIsolation ? { authIsolation } : {}),
   });
+}
+
+/** Claude's actual product auth route, without writing a profile path to a row. */
+export function claudeAuthIsolation(limits: ArmLimits): string | undefined {
+  if (limits.mode === "harness") return undefined;
+  const source = limits.env ?? process.env;
+  const profile = source[CLAUDE_PARITY_CONFIG_ENV]?.trim();
+  if (profile) return `dedicated-profile:${sha256(profile)}`;
+  return defaultAuthSafeMode(limits) ? "default-safe-mode" : undefined;
 }
 
 /** Every path the run created, modified, deleted or committed. Pure. */
@@ -736,6 +751,8 @@ export interface RowInput {
   arm: ParityArm;
   mode: ParityMode;
   spec: ArmSpec;
+  /** Claude product auth route; a dedicated profile's path is hashed. */
+  authIsolation?: string;
   /** What the tool's `--version` said just before this run. */
   version: string;
   binarySha256?: string;
@@ -781,8 +798,9 @@ export function parityRow(input: RowInput): ParityRunResult {
     fingerprints: {
       task: input.taskFingerprint,
       grader: input.task.grader,
-      config: configFingerprint(input.arm, input.mode, input.spec, provider),
+      config: configFingerprint(input.arm, input.mode, input.spec, provider, input.authIsolation),
     },
+    ...(input.authIsolation ? { authIsolation: input.authIsolation } : {}),
     version: input.version,
     ...(input.binarySha256 ? { binarySha256: input.binarySha256 } : {}),
     ...(input.sourceBuild ? { sourceBuild: input.sourceBuild } : {}),
@@ -1420,6 +1438,9 @@ export async function runPairs(options: PairSeriesOptions): Promise<PairSeriesRe
         arm,
         mode: options.mode,
         spec,
+        ...(arm === "claude-code" && options.mode === "product"
+          ? { authIsolation: claudeAuthIsolation(limits) }
+          : {}),
         version,
         ...(binarySha256 ? { binarySha256 } : {}),
         ...(builds[arm] ? { sourceBuild: builds[arm] } : {}),
@@ -1473,6 +1494,9 @@ export async function runPairs(options: PairSeriesOptions): Promise<PairSeriesRe
         arm,
         mode: options.mode,
         spec: options.specs[arm]!,
+        ...(arm === "claude-code" && options.mode === "product"
+          ? { authIsolation: claudeAuthIsolation(limitsFor(options, arm, job.task)) }
+          : {}),
         version: versions[arm]!,
         ...(shas[arm] ? { binarySha256: shas[arm] } : {}),
         ...(builds[arm] ? { sourceBuild: builds[arm] } : {}),
@@ -1644,7 +1668,9 @@ Each arm takes --<arm>-model, --<arm>-provider, --<arm>-effort and --<arm>-bin;
 --model and --effort set every arm that takes them. Rune takes no effort: the
 parity profile runs it on its shipped defaults. Claude Code product mode needs
 RUNE_PARITY_CLAUDE_CONFIG_DIR (a profile signed in once, by hand:
-CLAUDE_CONFIG_DIR=<dir> claude, then /login); harness mode needs ANTHROPIC_API_KEY.
+CLAUDE_CONFIG_DIR=<dir> claude, then /login), or the explicit
+RUNE_PARITY_CLAUDE_DEFAULT_AUTH=1 opt-in to use normal login under --safe-mode.
+Harness mode needs ANTHROPIC_API_KEY.
 
 The limits are hard stops, counted by the rig and checked before every arm run:
 --max-pairs, --max-attempts (arm runs, retries included) and --wall-allowance-min.

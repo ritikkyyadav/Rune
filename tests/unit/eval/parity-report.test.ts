@@ -667,6 +667,41 @@ describe("evidence that cannot be shown comparable is refused", () => {
     expect(f).toMatchObject({ status: "PASS", reasons: [] });
   });
 
+  test("Claude product auth routes cannot be pooled as one configuration", () => {
+    const profile = `dedicated-profile:${"a".repeat(64)}`;
+    const rows = perfect().map((r) =>
+      r.arm === "claude-code"
+        ? { ...r, authIsolation: r.task === "c" ? "default-safe-mode" : profile }
+        : r,
+    );
+    const problems = refusal(rows);
+    expect(problems).toEqual([
+      "product mode mixes 2 Claude Code auth isolation routes: dedicated profile aaaaaaaaaaaa × 4, default-safe-mode × 2",
+      "pass --allow-mixed-config to report across them: the report then says so and cannot PASS",
+    ]);
+    const allowed = buildReport({ rows, inputs: [], now: NOW, b: B, allowMixedConfig: true });
+    expect(allowed.modes.product.families[0]!.status).toBe("PROVISIONAL");
+    expect(allowed.modes.product.economics).toBeNull();
+    expect(validateRow({ ...rows[1], authIsolation: "/private/profile" })).toContain(
+      "authIsolation must name default-safe-mode or a hashed dedicated profile",
+    );
+  });
+
+  test.each([undefined, `dedicated-profile:${"a".repeat(63)}b`])(
+    "Claude auth comparisons use complete identities and refuse missing identity (%s)",
+    (otherRoute) => {
+      const rows = perfect().map((r) =>
+        r.arm === "claude-code"
+          ? {
+              ...r,
+              authIsolation: r.task === "c" ? otherRoute : `dedicated-profile:${"a".repeat(64)}`,
+            }
+          : r,
+      );
+      expect(refusal(rows).join("\n")).toContain("mixes 2 Claude Code auth isolation routes");
+    },
+  );
+
   test("a current row that does not say what it was given or graded by is not a row", () => {
     const base = row({ task: "a", run: 1, arm: "rune" });
     const { fingerprints, ...bare } = base;

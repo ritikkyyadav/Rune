@@ -1,0 +1,8 @@
+{
+  "provider": "loopback mock",
+  "remote_provider_calls": 0,
+  "completed_scripted_response": true,
+  "mock_requests": 6,
+  "version_edit_written": true,
+  "test_file_written": true
+}

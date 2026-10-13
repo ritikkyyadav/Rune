@@ -34,9 +34,14 @@ export class IdleWatchdog {
     this.arm(this.firstMs);
   }
 
-  /** Call once per received chunk: keeps the timer live while awaiting the next. */
-  beat(): void {
-    this.arm(this.betweenMs);
+  /**
+   * Call once per received chunk: keeps the timer live while awaiting the next.
+   * A provider that knows what its stream is doing may name the silence that
+   * state is allowed (a model that is thinking is quiet for longer than one
+   * that is writing); without one, the allowance is `betweenMs`.
+   */
+  beat(allowanceMs: number = this.betweenMs): void {
+    this.arm(allowanceMs);
   }
 
   /** Stream finished (or errored) — stop the timer. Safe to call twice. */

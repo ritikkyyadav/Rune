@@ -819,13 +819,17 @@ export const FRAME_METHODS = {
       let lines = base.lines.slice(1);
       let caretRow = Math.max(0, base.caretRow - 1);
       const matches = this.slashMatches();
-      if (matches.length > 0) {
+      if (
+        matches.length > 0 ||
+        (this.mode === "input" && this.input.startsWith("/") && !/\s/.test(this.input))
+      ) {
         const palette = renderSlashPalette(
           matches,
           this.slashSel,
           wide ? PANEL_COLS + 1 : this.contentCols(),
           Math.max(1, r.bandRows - PANEL_MIN_ROWS - lines.length - 1),
           this.slashCatalog().length,
+          this.input,
         );
         lines = [...palette, ...lines];
         caretRow += palette.length;

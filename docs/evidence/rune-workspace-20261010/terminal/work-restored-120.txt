@@ -1,0 +1,44 @@
+# frame: work-restored-120
+# terminal: 40 rows x 120 cols (real pty, alt screen)
+# ------------------------------------------------------------
+#0.........1.........2.........3.........4.........5.........6.........7.........8.........9.........0.........1.........
+ 1|
+ 2|  R U N E   /private/tmp/rune-ui-agent-20261010/code/lantern                                                     v1.3.4
+ 3|  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ 4|  │    1 + const { test } = require("node:test");                                                                   │
+ 5|  │    2 + const assert = require("node:assert");                                                                   │
+ 6|  │    3 + const { parseArgs } = require("../src/cli.js");                                                          │
+ 7|  │    4 +                                                                                                          │
+ 8|  │    5 + test("--version sets the version flag", () => {                                                          │
+ 9|  │    … 10 more lines · ctrl+o                                                                                     │
+10|  └ · observed · +15 | new file ────────────────────────────────────────────────────────────────────────────────────┘
+11|
+12|  ◇ package.json carries the version, so the flag reads it from there.
+13|  ┌ edit  src/cli.js ───────────────────────────────────────────────────────────────────────────────────────────────┐
+14|  │    2   // lantern -- a very small task runner.                                                                  │
+15|  │    3                                                                                                            │
+16|  │    4   function parseArgs(argv) {                                                                               │
+17|  │    5 -   const args = { command: null, json: false };                                                           │
+18|  │    5 +   const args = { command: null, json: false, version: false };                                           │
+19|  │    … 14 more diff lines · ctrl+o                                                                                │
+20|  └ · observed · +7 -2 | 2 hunks ───────────────────────────────────────────────────────────────────────────────────┘
+21|
+22|  ◇ Running the suite and the flag itself.
+23|  ┌ run   node --test test/cli.test.js && node src/cli.js --version ────────────────────────────────────────────────┐
+24|  │ ✔ --version sets the version flag (0.670542ms)                                                                  │
+25|  │ ✔ a command without --version is unaffected (0.056083ms)                                                        │
+26|  │ ℹ tests 2                                                                                                       │
+27|  │ ℹ suites 0                                                                                                      │
+28|  │ … 6 more lines                                                                                                  │
+29|  │ 0.3.2                                                                                                           │
+30|  └ ✓ exit 0 · 221ms ───────────────────────────────────────────────────────────────────────────────────────────────┘
+31|
+32|  ◇ --version and -v now print the version from package.json, and two tests cover the parser. Both tests pass and the
+33|    flag prints 0.3.2.
+34|
+35|    │ ✓ check  npm test
+36|  ▁▁▁▁▁▁▁▁▁▁▁▁ done · 10s
+37|  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+38|  › describe a change, or / for commands
+39|  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+40|  ››› 3rd gear · edits + sandboxed shell · 2 files edited                            mock-small   ctrl+o open  ? keys

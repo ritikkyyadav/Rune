@@ -736,10 +736,10 @@ export class TurnRenderer {
   /** The block set down last -- the one whose height the rhythm remembers. */
   private lastRef: BlockRef | null = null;
   private latestPlanKey: string | null = null;
-  /** The plan as last committed to scrollback, and as last rendered. The first
-   *  version goes to the timeline; the final one goes to the close if it moved.
-   *  The revisions in between belong to the live rung. */
+  /** The visible plan is amended in place; inline scrollback gets snapshots.
+   * Every revision remains in the work log. */
   private committedPlan: string | null = null;
+  private planRef: BlockRef | null = null;
   private latestPlan: string | null = null;
   private narratedPlan = false;
   private verificationRunning = false;
@@ -1994,7 +1994,8 @@ export class TurnRenderer {
     const queued = this.routineQueue.splice(0);
     if (queued.length === 0) return;
     if (queued.length < CHAMBER_AT) {
-      for (const view of queued) this.commitTimeline(renderToolActivity(view));
+      for (const view of queued)
+        this.commitTimeline(renderToolActivity(view), renderToolDetail(view) ?? undefined);
       return;
     }
     this.commitTimeline(renderChamberHead(queued), renderChamberDetail(queued));
@@ -2138,7 +2139,10 @@ export class TurnRenderer {
       durationMs: event.output?.durationMs,
     };
     const rendered = renderToolActivity(view);
-    this.addLog(rendered, name === "edit_file" || name === "multi_edit" || name === "apply_patch");
+    // The work review has no per-call folds. Preserve the expanded file and
+    // diff evidence there; bash already appends its output separately below.
+    const logBlock = name === "bash" ? rendered : (renderToolDetail(view) ?? rendered);
+    this.addLog(logBlock, name === "edit_file" || name === "multi_edit" || name === "apply_patch");
     // The narrative tools draw their rows from the narrative events that
     // follow them (hypothesis, decision); the call row would say it twice.
     const narrative = success && (name === "note_hypothesis" || name === "record_decision");
@@ -2568,14 +2572,14 @@ export class TurnRenderer {
           this.todos.map((item) => [item.content, item.status, item.unproven ?? null]),
         );
         this.addLog(plan);
-        // The shape of the work is committed ONCE per turn, when it is first
-        // known -- that is the part a reader needs in scrollback, and it is
-        // the moment they can still object to it. Every later revision is a
-        // tick moving, and a tick moving does not justify reprinting all seven
-        // steps. And a first checklist identical to the one the previous turn
-        // set down is carried-over state, not news: it is not reprinted at
-        // all. finish() sets down the final state only if it moved.
-        if (this.committedPlan === null) {
+        // One plan per turn in the fixed frame. Keep every revision in the
+        // work log, while the visible checklist follows the current state.
+        // Inline scrollback cannot amend, so it retains initial/final snapshots.
+        if (this.live) {
+          if (this.planRef) this.amendBlock(this.planRef, plan);
+          else if (key !== this.opts.priorPlanKey) this.planRef = this.commitTimeline(plan);
+          this.committedPlan = plan;
+        } else if (this.committedPlan === null) {
           this.committedPlan = plan;
           if (key !== this.opts.priorPlanKey) this.commitTimeline(plan);
         }

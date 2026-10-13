@@ -27,7 +27,7 @@
 import type { AgentTurnEvent } from "@rune/protocol";
 import { verificationOutcome } from "@rune/protocol";
 import type { DelegationEntry } from "../../delegation-replay";
-import { renderToolActivity, stepBlock, targetOf, verbOf } from "./activity";
+import { renderToolActivity, renderToolDetail, stepBlock, targetOf, verbOf } from "./activity";
 import { formatEvent } from "./events";
 import * as F from "./flow";
 import { glyph } from "./glyphs";
@@ -268,7 +268,9 @@ function callRows(call: {
   error?: string;
   durationMs?: number;
 }): string[] {
-  return rowsOf(renderToolActivity(call));
+  // This pane is already an explicit inspection. Unlike the lead's timeline,
+  // it has no per-call folds, so retain a bounded excerpt of routine output.
+  return rowsOf(renderToolDetail(call, F.BOX_BODY_ROWS) ?? renderToolActivity(call));
 }
 
 /** The head of a call's arguments, as far as they have arrived. */

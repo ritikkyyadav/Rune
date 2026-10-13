@@ -1,0 +1,44 @@
+# frame: work-review-120
+# terminal: 40 rows x 120 cols (real pty, alt screen)
+# ------------------------------------------------------------
+#0.........1.........2.........3.........4.........5.........6.........7.........8.........9.........0.........1.........
+ 1|
+ 2|  R U N E   /private/tmp/rune-ui-agent-20261010/code/lantern                                                     v1.3.4
+ 3|  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ 4|    │ ✓ check  npm test
+ 5|  Work details | 5 actions · 60-95 of 95
+ 6|  │    9       else if (!args.command) args.command = arg;                                                          │
+ 7|  │   10     }                                                                                                      │
+ 8|  │   11     return args;                                                                                           │
+ 9|  │    … unchanged lines                                                                                            │
+10|  │   16 +   if (args.version) {                                                                                    │
+11|  │   17 +     console.log(require("../package.json").version);                                                     │
+12|  │   18 +     return;                                                                                              │
+13|  │   19 +   }                                                                                                      │
+14|  │   20     if (!args.command) {                                                                                   │
+15|  │   21       console.log("usage: lantern <command> [--json]");                                                    │
+16|  │   22       process.exit(1);                                                                                     │
+17|  └ · observed · +7 -2 | 2 hunks ───────────────────────────────────────────────────────────────────────────────────┘
+18|  ◇ Running the suite and the flag itself.
+19|  ┌ run   node --test test/cli.test.js && node src/cli.js --version ────────────────────────────────────────────────┐
+20|  │ ✔ --version sets the version flag (0.670542ms)                                                                  │
+21|  │ ✔ a command without --version is unaffected (0.056083ms)                                                        │
+22|  │ ℹ tests 2                                                                                                       │
+23|  │ ℹ suites 0                                                                                                      │
+24|  │ … 6 more lines                                                                                                  │
+25|  │ 0.3.2                                                                                                           │
+26|  └ ✓ exit 0 · 221ms ───────────────────────────────────────────────────────────────────────────────────────────────┘
+27|    command output
+28|      ✔ --version sets the version flag (0.670542ms)
+29|      ✔ a command without --version is unaffected (0.056083ms)
+30|      ℹ tests 2
+31|      ℹ suites 0
+32|      ℹ pass 2
+33|      ℹ fail 0
+34|      ℹ cancelled 0
+35|      ℹ skipped 0
+36|      ℹ todo 0
+37|      ℹ duration_ms 69.467875
+38|      0.3.2
+39|  ◇ --version and -v now print the version from package.json, and two tests cover the parser. Both tests pass and the
+40|  ... 3 more lines below

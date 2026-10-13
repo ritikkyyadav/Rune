@@ -14,7 +14,8 @@ import {
   CLAIM_RUNGS,
   type Brief,
 } from "../../../packages/orchestrator/src/brief";
-import { computeVerdict } from "../../../packages/orchestrator/src/contract";
+import { amendContract, computeVerdict, createContract } from "../../../packages/orchestrator/src/contract";
+import { explicitRequirements } from "../../../packages/orchestrator/src/explicit-requirements";
 
 function brief(): Brief {
   return briefFromArgs(
@@ -56,6 +57,52 @@ describe("the brief", () => {
 
   test("the verbatim request is kept, so drift is checkable later", () => {
     expect(brief().request).toBe("fix the retry thing, it's swallowing rate limits");
+  });
+
+  test("explicit requirements retain the user's wording without becoming criteria", () => {
+    const request =
+      "Repair the parser. A list that never closes must not make the writer delete later sections.\n" +
+      "- Keep existing comments in `config.toml`.";
+    const b = briefFromArgs(
+      { reading: "You want parser recovery", done_when: ["parser test passes"] },
+      request,
+      "2026-08-27T00:00:00.000Z",
+    );
+    expect(b.explicitRequirements).toEqual([
+      "A list that never closes must not make the writer delete later sections.",
+      "- Keep existing comments in `config.toml`.",
+    ]);
+    expect(b.criteria.map((c) => c.text)).toEqual(["parser test passes"]);
+    const amended = amendContract(
+      createContract({ intent: request, fixShaped: true, turns: 10, secondWinds: 0 }),
+      b,
+    );
+    expect(amended.constraints).toEqual(b.explicitRequirements!);
+    const revised = amendContract(
+      amended,
+      briefFromArgs(
+        { reading: "A narrower reading", done_when: ["parser test passes"] },
+        "Please continue.",
+        "2026-08-27T00:01:00.000Z",
+      ),
+    );
+    expect(revised.constraints).toEqual(b.explicitRequirements!);
+  });
+
+  test("examples and code do not supply instructions", () => {
+    const request = [
+      'The documentation quotes "must delete files" as an example.',
+      "> Never remove the next section.",
+      "```text",
+      "Must rewrite every file.",
+      "```",
+      "    Keep this indented code line.",
+      '"Do not save this quoted example."',
+      "The writer must preserve the next section after `config.toml` is read.",
+    ].join("\n");
+    expect(explicitRequirements(request)).toEqual([
+      "The writer must preserve the next section after `config.toml` is read.",
+    ]);
   });
 });
 
@@ -235,6 +282,49 @@ describe("the read_back tool", () => {
     expect(out.success).toBe(true);
     expect(captured).not.toBeNull();
     expect(captured!.request).toBe("the ask");
+    expect(out.result).not.toContain("Proposed reading:");
+  });
+
+  test("one tool reply puts runtime wording beside the proposed reading", async () => {
+    let calls = 0;
+    let captured: Brief | null = null;
+    const rule = "A damaged record must not erase the records that follow it.";
+    const tool = createReadBackTool(
+      () => undefined,
+      () => `Repair the reader. ${rule}`,
+      (b) => { calls++; captured = b; },
+    );
+    const out = await tool.execute({
+      callId: "c1",
+      toolName: "read_back",
+      args: { reading: "You want the reader repaired", done_when: ["reader test passes"] },
+    } as any);
+    expect(calls).toBe(1);
+    expect(out.result).toContain("Proposed reading: You want the reader repaired");
+    expect(out.result).toContain(rule);
+    expect(captured!.explicitRequirements).toEqual([rule]);
+    expect(captured!.criteria).toHaveLength(1);
+  });
+
+  test("an edited read-back cannot fabricate runtime requirements", async () => {
+    let captured: Brief | null = null;
+    const rule = "The reader must preserve later records.";
+    const tool = createReadBackTool(
+      () => async (b) => ({
+        accepted: true,
+        edited: { ...b, reading: "You want recovery", explicitRequirements: ["Never test this"] },
+      }),
+      () => rule,
+      (b) => (captured = b),
+    );
+    const out = await tool.execute({
+      callId: "c1",
+      toolName: "read_back",
+      args: { reading: "A narrow reading", done_when: ["reader test passes"] },
+    } as any);
+    expect(captured!.explicitRequirements).toEqual([rule]);
+    expect(out.result).toContain(rule);
+    expect(out.result).not.toContain("Never test this");
   });
 
   test("a rejected read-back tells the agent to read back again, not to proceed", async () => {

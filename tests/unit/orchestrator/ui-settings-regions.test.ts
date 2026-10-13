@@ -238,7 +238,10 @@ describe("§2.8: /config and /sandbox open in the workspace, as a picker", () =>
     // `renderPicker` lowercases its own title row; the content is the claim.
     expect(all).toContain("settings | 22 total");
     expect(all).toContain("Model and reasoning");
-    expect(all).toContain("setting 19");
+    expect(all).toContain("1-10 of 22");
+    t.picker.sel = CONFIG_ITEMS.length - 1;
+    const last = workspaceBlock(t);
+    expect(stripAnsi(last.lines[last.caretRow]!)).toContain("setting 19");
     // Every row lands inside the LEFT column -- a picker drawn at the window's
     // measure would be clipped by `bound()` with nothing saying so.
     for (const line of block.lines) expect(visLen(line)).toBeLessThanOrEqual(r.workspaceCols);

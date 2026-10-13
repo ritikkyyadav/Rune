@@ -234,6 +234,8 @@ export interface Brief {
   criteria: Criterion[];
   /** Verbatim request this was read back FROM, so drift is checkable. */
   request: string;
+  /** Explicit directive sentences copied by the runtime from that request; never criteria. */
+  explicitRequirements?: string[];
   createdAt: string;
 }
 

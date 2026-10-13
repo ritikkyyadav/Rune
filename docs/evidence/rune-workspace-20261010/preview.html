@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rune · Workspace refinement</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #0e1016;
+        color: #d6dae3;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      main {
+        width: min(1600px, 100%);
+        margin: auto;
+        padding: 48px clamp(20px, 4vw, 64px) 64px;
+      }
+      .eyebrow {
+        font-size: 11px;
+        letter-spacing: 0.17em;
+        text-transform: uppercase;
+        color: #959da9;
+        margin: 0 0 18px;
+      }
+      h1 {
+        font-size: clamp(28px, 4vw, 42px);
+        letter-spacing: -0.04em;
+        font-weight: 550;
+        margin: 0 0 16px;
+      }
+      h2 {
+        margin: 0 0 10px;
+        font-size: 19px;
+        font-weight: 550;
+        letter-spacing: -0.015em;
+      }
+      p {
+        color: #aeb5c0;
+        line-height: 1.65;
+        font-size: 14px;
+        margin: 0 0 12px;
+        max-width: 760px;
+      }
+      .intro {
+        font-size: 16px;
+      }
+      .preserved {
+        color: #d6dae3;
+      }
+      .facts {
+        display: flex;
+        gap: 26px;
+        flex-wrap: wrap;
+        font-size: 12px;
+        color: #9099a7;
+        margin: 24px 0 32px;
+      }
+      .facts strong {
+        color: #d6dae3;
+        font-weight: 550;
+      }
+      nav {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        padding: 0 0 18px;
+        margin-bottom: 28px;
+        border-bottom: 1px solid #292e38;
+      }
+      button {
+        font: inherit;
+        font-size: 13px;
+        padding: 10px 16px;
+        border: 1px solid transparent;
+        border-radius: 6px;
+        background: transparent;
+        color: #aeb5c0;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #191d26;
+        color: #edf0f5;
+      }
+      button[aria-pressed="true"] {
+        color: #edf0f5;
+        border-color: #414854;
+        background: #222731;
+      }
+      button:focus-visible,
+      a:focus-visible {
+        outline: 2px solid #b8c0cc;
+        outline-offset: 3px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        align-items: start;
+        gap: 24px;
+        margin: 24px 0;
+      }
+      figure {
+        margin: 0;
+        min-width: 0;
+      }
+      figcaption {
+        color: #abb3bf;
+        font-size: 12px;
+        line-height: 1.55;
+        margin: 12px 0 0;
+      }
+      .label {
+        font-size: 12px;
+        margin: 0 0 12px;
+        color: #c5cbd4;
+        font-weight: 550;
+      }
+      img {
+        display: block;
+        width: 100%;
+        height: auto;
+        border: 1px solid #292e38;
+        border-radius: 9px;
+      }
+      .notes {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 24px;
+        border-top: 1px solid #292e38;
+        padding-top: 22px;
+        margin-top: 24px;
+      }
+      .notes p {
+        font-size: 13px;
+      }
+      .notes strong {
+        display: block;
+        font-size: 13px;
+        color: #d6dae3;
+        font-weight: 550;
+        margin-bottom: 6px;
+      }
+      .run {
+        max-width: 1120px;
+        margin: 20px 0;
+      }
+      .switch {
+        display: flex;
+        gap: 6px;
+        margin: 18px 0;
+      }
+      footer {
+        display: flex;
+        gap: 20px;
+        flex-wrap: wrap;
+        border-top: 1px solid #292e38;
+        margin-top: 36px;
+        padding-top: 20px;
+        font-size: 12px;
+        color: #9099a7;
+      }
+      a {
+        color: #c5cbd4;
+        text-underline-offset: 4px;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      @media (max-width: 800px) {
+        main {
+          padding-top: 28px;
+        }
+        .grid,
+        .notes {
+          grid-template-columns: 1fr;
+        }
+        .facts {
+          gap: 12px 20px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">Rune / interface review / 10 October 2026</p>
+      <h1>A calmer workspace. Clearer evidence.</h1>
+      <p class="intro">
+        Routine work takes less space. Changes and check results stay easy to find. Command panels
+        hold their layout as you navigate.
+      </p>
+      <p class="preserved">The glyph, header, footer, palette and core theme are unchanged.</p>
+      <div class="facts">
+        <span><strong>958</strong> UI tests passed</span>
+        <span><strong>14–19%</strong> fewer rows in two session replays</span>
+        <span><strong>0</strong> remote provider calls during captures</span>
+      </div>
+      <nav aria-label="Review sections">
+        <button type="button" data-panel="workspace" aria-pressed="true" aria-controls="workspace">
+          Workspace comparison
+        </button>
+        <button type="button" data-panel="panels" aria-pressed="false" aria-controls="panels">
+          Commands &amp; settings
+        </button>
+        <button type="button" data-panel="terminal" aria-pressed="false" aria-controls="terminal">
+          Terminal verification
+        </button>
+      </nav>
+      <section id="workspace">
+        <h2>Keep the work in view</h2>
+        <p>
+          The same sequence, rendered at 80 columns. This controlled fixture makes the layout change
+          visible; the sample test result inside it is not live execution evidence.
+        </p>
+        <div class="grid">
+          <figure>
+            <div class="label">Before</div>
+            <a href="work-before.png" target="_blank" rel="noreferrer"
+              ><img
+                src="work-before.png"
+                alt="Previous workspace with bordered read output, command output and a long new-file preview"
+                width="757"
+                height="914"
+            /></a>
+            <figcaption>Routine output and long previews consume the conversation.</figcaption>
+          </figure>
+          <figure>
+            <div class="label">After</div>
+            <a href="work-after.png" target="_blank" rel="noreferrer"
+              ><img
+                src="work-after.png"
+                alt="Refined workspace with compact activity rows, a six-row change preview and a visible verification result"
+                width="757"
+                height="656"
+            /></a>
+            <figcaption>
+              Compact receipts, bounded change previews and the same evidence styling.
+            </figcaption>
+          </figure>
+        </div>
+        <div class="notes">
+          <p>
+            <strong>Routine activity recedes</strong>Reads, fetched pages and successful ordinary
+            commands use compact rows. Ctrl+O opens their output.
+          </p>
+          <p>
+            <strong>Evidence remains accessible</strong>Changes carry exact totals and counted
+            expansion hints. Checks and failures keep their evidence.
+          </p>
+          <p>
+            <strong>One current plan</strong>The live plan updates in place. Earlier revisions
+            remain in the work log, including unproven steps.
+          </p>
+        </div>
+      </section>
+      <section id="panels" hidden>
+        <h2>Panels that stay steady</h2>
+        <p>
+          Actual source-CLI captures at 80×24. Stable columns, visible list position and a dedicated
+          selected-item description give the lists a clear reading order.
+        </p>
+        <div class="grid">
+          <figure>
+            <div class="label">Slash commands</div>
+            <a href="commands.png" target="_blank" rel="noreferrer"
+              ><img
+                src="commands.png"
+                alt="Rune slash panel showing a selected command, stable description column and visible item range"
+                width="757"
+                height="538"
+            /></a>
+            <figcaption>
+              Descriptions keep the same column while scrolling. Unmatched searches explain how to
+              recover.
+            </figcaption>
+          </figure>
+          <figure>
+            <div class="label">Settings</div>
+            <a href="settings.png" target="_blank" rel="noreferrer"
+              ><img
+                src="settings.png"
+                alt="Rune settings panel with ten visible options, current values and a selected-setting description"
+                width="757"
+                height="538"
+            /></a>
+            <figcaption>
+              All options remain available. Current-choice markers have reserved space; long
+              descriptions no longer compete with values.
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+      <section id="terminal" hidden>
+        <h2>Checked in the real terminal</h2>
+        <p>
+          A local scripted provider drove the actual TUI: two scratch files changed, two real Node
+          tests passed, and the CLI printed the expected version. Ctrl+O expansion, Ctrl+R work
+          review and terminal resizing were exercised.
+        </p>
+        <div class="switch" aria-label="Tool output state">
+          <button type="button" data-run="closed" aria-pressed="true">Compact output</button>
+          <button type="button" data-run="open" aria-pressed="false">Expanded with Ctrl+O</button>
+        </div>
+        <figure class="run">
+          <a id="run-link" href="agent-work.png" target="_blank" rel="noreferrer"
+            ><img
+              id="run-image"
+              src="agent-work.png"
+              alt="Real terminal after the scripted task: shortened edit previews and passing test evidence above the unchanged composer and footer"
+              width="1119"
+              height="854"
+          /></a>
+          <figcaption>
+            The most recent command output expands in place. This is a UI flow check with scripted
+            responses, not a benchmark of agent ability.
+          </figcaption>
+        </figure>
+        <p>
+          Existing resize limit: committed history retains its original wrapping when the window
+          shrinks. Long old rows clip until the width is restored; fresh rendering uses the new
+          width. See the <a href="terminal/work-resized-80.txt">80-column capture</a> and
+          <a href="terminal/work-review-120.txt">work review</a>.
+        </p>
+      </section>
+      <footer>
+        <a href="../../program/rune-workspace-refinement-20261010.md">Plan and validation</a>
+        <a href="README.md">Capture details and reproduction</a>
+        <span>Installed locally · startup, tools and terminal checks passed</span>
+      </footer>
+    </main>
+    <script>
+      for (const button of document.querySelectorAll("[data-panel]")) {
+        button.addEventListener("click", () => {
+          for (const candidate of document.querySelectorAll("[data-panel]")) {
+            const selected = candidate === button;
+            candidate.setAttribute("aria-pressed", String(selected));
+            document.getElementById(candidate.dataset.panel).hidden = !selected;
+          }
+        });
+      }
+      for (const button of document.querySelectorAll("[data-run]")) {
+        button.addEventListener("click", () => {
+          for (const candidate of document.querySelectorAll("[data-run]"))
+            candidate.setAttribute("aria-pressed", String(candidate === button));
+          const open = button.dataset.run === "open";
+          const path = open ? "agent-work-expanded.png" : "agent-work.png";
+          document.getElementById("run-image").src = path;
+          document.getElementById("run-image").alt = open
+            ? "Real terminal with the full command test output expanded by Ctrl+O"
+            : "Real terminal with the compact command output and unchanged Rune frame";
+          document.getElementById("run-link").href = path;
+        });
+      }
+    </script>
+  </body>
+</html>

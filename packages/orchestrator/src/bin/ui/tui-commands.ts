@@ -1506,13 +1506,24 @@ export const COMMAND_METHODS = {
   async showSettings(this: Tui): Promise<void> {
     const engine = this.ctx.engine;
     const shortcuts = [
-      { label: "Model and reasoning", hint: "choose intelligence", command: "model" },
+      {
+        label: "Model and reasoning",
+        hint: "model, provider and thinking depth",
+        description: "Choose the model for this session and adjust how deeply it reasons.",
+        command: "model",
+      },
       {
         label: "API keys and internet search",
         hint: "manage keys \u00b7 /login to connect",
+        description: "Manage saved provider credentials and web search connections.",
         command: "keys",
       },
-      { label: "Browser", hint: engine.isBrowserEnabled() ? "on" : "off", command: "browser" },
+      {
+        label: "Browser",
+        hint: engine.isBrowserEnabled() ? "on" : "off",
+        description: "Control whether the agent can use the web browser.",
+        command: "browser",
+      },
     ];
     while (true) {
       const rows: PickerItem[] = [
@@ -1522,13 +1533,13 @@ export const COMMAND_METHODS = {
           return {
             label: s.key.replaceAll("_", " "),
             hint: value === undefined ? "per effort" : displaySettingValue(s, value),
+            description: s.description,
           };
         }),
       ];
-      // The total is in the heading and the footnote, never only in the list:
-      // a window that cannot show all of them says how many it is not showing.
+      // The shared picker supplies the visible range and total in its heading.
       const chrome = settingsPickerChrome(shortcuts.length);
-      const selected = await this.pick(chrome.title, rows, 0, undefined, chrome.footnote);
+      const selected = await this.pick("Settings", rows, 0, undefined, chrome.footnote);
       if (selected === null) return;
       if (selected < shortcuts.length) {
         await this.handleSlash(`/${shortcuts[selected]!.command}`);
@@ -1543,7 +1554,7 @@ export const COMMAND_METHODS = {
         const values = setting.kind === "boolean" ? ["true", "false"] : [...setting.values!];
         const choice = await this.pick(
           setting.key.replaceAll("_", " "),
-          values.map((v) => ({ label: displaySettingValue(setting, v) })),
+          values.map((v) => ({ label: displaySettingValue(setting, v), current: v === current })),
           Math.max(0, values.indexOf(current ?? "")),
           undefined,
           setting.description,

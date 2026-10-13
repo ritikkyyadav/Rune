@@ -1270,6 +1270,8 @@ export function renderPermissionCard(
 export interface PickerItem {
   label: string;
   hint?: string;
+  /** Explanation for the selected item, separate from its current value. */
+  description?: string;
   /** Pre-painted theme swatch or other compact visual signal. */
   prefix?: string;
   /** Marks the live model/theme without relying on cursor position. */
@@ -1289,8 +1291,13 @@ export interface PickerOptions {
  * grey like every other receipt. `current` is the one that says where you ARE,
  * and gets the secondary ink.
  */
-function pickerTags(tags: readonly string[], current: boolean): string {
-  const parts = [...tags.map((tag) => faint(tag)), ...(current ? [quiet("current")] : [])];
+function pickerTags(tags: readonly string[], current: boolean, budget: number): string {
+  const parts: string[] = [];
+  for (const tag of [...(current ? [quiet("current")] : []), ...tags.map((tag) => faint(tag))]) {
+    const next = [...parts, tag].join(faint(` ${glyph("observed")} `));
+    if (visLen(next) + 2 > budget) break;
+    parts.push(tag);
+  }
   return parts.length > 0 ? "  " + parts.join(faint(` ${glyph("observed")} `)) : "";
 }
 
@@ -1329,31 +1336,56 @@ export function renderPicker(
   options: PickerOptions = {},
 ): RenderedBlock {
   const maxWidth = Math.max(8, F.measure(width - 1));
-  const lines: string[] = [clampVisible(`${PAD}${muted(title.toLowerCase())}`, maxWidth)];
+  const lines: string[] = [];
   const sel = items.length ? Math.max(0, Math.min(selected, items.length - 1)) : 0;
   // The footnote occupies a row too. Keep the selected item visible even when
   // the caller can give a dialog only its header, one item and key hints.
   const showFootnote = Boolean(options.footnote) && height >= 4;
-  const chromeRows = 2 + (showFootnote ? 1 : 0);
-  const maxItems = Math.max(1, Math.min(items.length || 1, Math.floor(height) - chromeRows));
+  const description = (item: PickerItem): string =>
+    item.description ?? (visLen(item.hint ?? "") > maxWidth / 2 ? (item.hint ?? "") : "");
+  // Reserve the same space throughout navigation, so the list does not jump
+  // when a long explanation becomes selected. Tiny terminals keep the list.
+  const detailRows = height >= 8 && items.some((item) => description(item)) ? 3 : 0;
+  const chromeRows = 2 + (showFootnote ? 1 : 0) + detailRows;
+  const maxItems = Math.max(1, Math.min(10, items.length || 1, Math.floor(height) - chromeRows));
   let start = 0;
   if (items.length > maxItems) {
     start = Math.min(Math.max(0, sel - Math.floor(maxItems / 2)), items.length - maxItems);
   }
   const numbered = items.length <= 9;
   const view = items.slice(start, start + maxItems);
+  const position =
+    items.length > maxItems ? `${start + 1}-${start + view.length} of ${items.length}` : "";
+  lines.push(F.flowRow(`${PAD}${muted(title.toLowerCase())}`, faint(position), maxWidth));
+  if (items.length === 0) lines.push(`${PAD}${muted("No options available")}`);
   view.forEach((it, i) => {
     const on = start + i === sel;
     const marker = on ? glyph("selection") : " ";
     const number = numbered ? `${faint(`${start + i + 1}.`)} ` : "";
-    const label = on ? bold(text(it.label)) : text(it.label);
     const prefix = it.prefix ? `${it.prefix} ` : "";
-    const tags = pickerTags(it.tags ?? [], it.current === true);
-    const fixed = visLen(`${PAD}${marker} ${number}${prefix}`) + visLen(label) + visLen(tags);
+    const lead = `${PAD}${marker} ${number}${prefix}`;
+    const tags = pickerTags(
+      it.tags ?? [],
+      it.current === true,
+      Math.max(0, maxWidth - visLen(lead) - 12),
+    );
+    const labelText = truncate(it.label, Math.max(1, maxWidth - visLen(lead) - visLen(tags)));
+    const label = on ? bold(text(labelText)) : text(labelText);
+    const fixed = visLen(lead) + visLen(label) + visLen(tags);
     const hint = it.hint ? fitHint(it.hint, Math.min(52, maxWidth - fixed - 2)) : "";
-    const row = clampVisible(`${PAD}${marker} ${number}${prefix}${label}${hint}${tags}`, maxWidth);
+    const row = clampVisible(`${lead}${label}${hint}${tags}`, maxWidth);
     lines.push(on ? F.band(row, maxWidth) : row);
   });
+  if (detailRows) {
+    const details = wrap(description(items[sel]!), Math.max(1, maxWidth - F.BODY.length));
+    lines.push("");
+    for (let i = 0; i < 2; i++) {
+      const more = i === 1 && details.length > 2 ? ` ${glyph("elision")}` : "";
+      lines.push(
+        `${F.BODY}${quiet(truncate((details[i] ?? "") + more, maxWidth - F.BODY.length))}`,
+      );
+    }
+  }
   if (showFootnote) {
     lines.push(`${PAD}${faint(truncate(options.footnote ?? "", maxWidth - 4))}`);
   }
@@ -1362,7 +1394,7 @@ export function renderPicker(
     ...(numbered && items.length > 1 ? [`1-${items.length} jump`] : []),
     "esc close",
   ];
-  lines.push(`${PAD}${faint(keys.join(` ${glyph("observed")} `))}`);
+  lines.push(clampVisible(`${PAD}${faint(keys.join(` ${glyph("observed")} `))}`, maxWidth));
   return { lines, caretRow: sel - start + 1, caretCol: 0 };
 }
 
@@ -1393,29 +1425,47 @@ export function renderSlashPalette(
   width: number,
   maxVisible = 8,
   total?: number,
+  query?: string,
 ): string[] {
-  if (items.length === 0) return [];
+  const maxWidth = Math.max(8, F.measure(width - 1));
+  if (items.length === 0) {
+    if (query == null) return [];
+    return [
+      clampVisible(`${PAD}${muted("No matching commands")}`, maxWidth),
+      clampVisible(`${PAD}${quiet("Edit your search, or esc to close")}`, maxWidth),
+    ];
+  }
   const MAX = Math.max(1, Math.min(8, maxVisible));
   const sel = Math.max(0, Math.min(selected, items.length - 1));
   let start = 0;
   if (items.length > MAX)
     start = Math.min(Math.max(0, sel - Math.floor(MAX / 2)), items.length - MAX);
   const view = items.slice(start, start + MAX);
-  const nameW = Math.min(18, Math.max(...view.map((it) => it.name.length)));
-  const maxWidth = Math.max(8, F.measure(width - 1));
+  // All matches set the column, not the moving window. A long custom command
+  // yields by display cells instead of shoving its description off screen.
+  const nameW = Math.min(
+    Math.max(8, Math.floor(maxWidth * 0.4)),
+    Math.max(...items.map((it) => visLen(it.name))),
+  );
   const sep = ` ${glyph("observed")} `;
 
   const rows = view.map((it, i) => {
     const on = start + i === sel;
     const marker = on ? glyph("selection") : " ";
-    const name = on ? bold(text(it.name.padEnd(nameW))) : text(it.name.padEnd(nameW));
+    const fitted = truncate(it.name, nameW);
+    const padded = fitted + " ".repeat(Math.max(0, nameW - visLen(fitted)));
+    const name = on ? bold(text(padded)) : text(padded);
     const descMax = Math.max(8, maxWidth - nameW - 7);
     const desc = it.desc ? "  " + quiet(truncate(it.desc, descMax)) : "";
     const row = clampVisible(`${PAD}${marker} ${name}${desc}`, maxWidth);
     return on ? F.band(row, maxWidth) : row;
   });
   const count =
-    total != null && total !== items.length ? `${items.length} of ${total}` : String(items.length);
+    items.length > MAX
+      ? `${start + 1}-${start + view.length} of ${items.length}`
+      : total != null && total !== items.length
+        ? `${items.length} of ${total}`
+        : String(items.length);
   const heading = `${PAD}${muted("commands")}${faint(`${sep}${count}`)}`;
   // Arrows, enter and esc are what every list does; tab is the one key here a
   // person would not guess, so it is the last to go.

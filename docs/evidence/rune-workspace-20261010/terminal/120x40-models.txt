@@ -1,0 +1,44 @@
+# frame: 120x40-models
+# terminal: 40 rows x 120 cols (real pty, alt screen)
+# ------------------------------------------------------------
+#0.........1.........2.........3.........4.........5.........6.........7.........8.........9.........0.........1.........
+ 1|
+ 2|  R U N E   /private/tmp/rune-ui-panels-20261010/workspace                                                       v1.3.4
+ 3|  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ 4|  try  "fix the failing test" · "explain how this repo is wired"
+ 5|  tip: Rune can learn your style over time -- /memory
+ 6|  › /config
+ 7|  › /model
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|
+20|
+21|
+22|
+23|
+24|
+25|
+26|
+27|
+28|
+29|
+30|
+31|
+32|
+33|
+34|
+35|
+36|  model · current ollama/gpt-oss:20b
+37|  › 1. Ollama (local)  ◇ active · localhost:11434  current · local
+38|    2. Type provider/model...  anything not listed
+39|  subscriptions (ChatGPT): rune login · keys: /keys
+40|  enter select · 1-2 jump · esc close

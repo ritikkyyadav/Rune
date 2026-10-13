@@ -188,6 +188,8 @@ export interface ParityRunResult {
   models?: string[];
   /** On every `parity-run/2` row. A `parity-run/1` row recorded none. */
   fingerprints?: Fingerprints;
+  /** Claude product auth isolation; dedicated profile path is hashed, never recorded. */
+  authIsolation?: string;
   /** What the tool's own `--version` said. A row without it is not evidence. */
   version: string;
   /** sha256 of the executable measured, when it is a single file. */

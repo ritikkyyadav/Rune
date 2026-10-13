@@ -1,0 +1,28 @@
+# frame: 80x24-no-match
+# terminal: 24 rows x 80 cols (real pty, alt screen)
+# ------------------------------------------------------------
+#0.........1.........2.........3.........4.........5.........6.........7.........
+ 1|
+ 2|  R U N E   /private/tmp/rune-ui-panels-20261010/workspace               v1.3.4
+ 3|  ─────────────────────────────────────────────────────────────────────────────
+ 4|  try  "fix the failing test" · "explain how this repo is wired"
+ 5|  tip: Rune can learn your style over time -- /memory
+ 6|
+ 7|
+ 8|
+ 9|
+10|
+11|
+12|
+13|
+14|
+15|
+16|
+17|
+18|
+19|  No matching commands
+20|  Edit your search, or esc to close
+21|  ────────────────────────────────────────────────────────────────────────────
+22|  › /no-such-command
+23|  ────────────────────────────────────────────────────────────────────────────
+24|  › 1st gear · every action asks first                            gpt-oss:20b

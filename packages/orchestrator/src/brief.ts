@@ -99,6 +99,7 @@ const UNRECOGNISED_CHECK_NEXT_STEP =
 export type { Criterion, Brief, ClaimRung, Evidence, BriefDecision } from "@rune/protocol";
 import type { Brief, ClaimRung, Criterion, Evidence } from "@rune/protocol";
 import type { StampedRevision } from "./lifecycle";
+import { explicitRequirements } from "./explicit-requirements";
 
 /** Why a criterion refused to move. Returned rather than thrown — a rejected
  *  claim is information for the surface, not an exception. */
@@ -314,14 +315,26 @@ export function briefFromArgs(
     if (leave.some((entry) => entry.toLowerCase().includes(trimmed.toLowerCase()))) continue;
     leave.push(trimmed);
   }
+  const required = explicitRequirements(request);
   return {
     reading: String(args.reading ?? "").trim(),
     touch: strings(args.touch),
     leave,
     criteria: strings(args.done_when).map((text) => ({ text, rung: null })),
     request,
+    ...(required.length ? { explicitRequirements: required } : {}),
     createdAt: now,
   };
+}
+
+/** One tool reply, with the model's reading beside the runtime's verbatim reminder. */
+function requirementReminder(brief: Brief): string {
+  if (!brief.explicitRequirements?.length) return "";
+  return (
+    `\nProposed reading: ${brief.reading}` +
+    "\nVerbatim requirements from the request (not marked done):" +
+    brief.explicitRequirements.map((line) => `\n${line}`).join("")
+  );
 }
 
 export const READ_BACK_SCHEMA: ToolSchema = {
@@ -455,7 +468,8 @@ export function createReadBackTool(
         onBrief(brief);
         return done(
           "Read-back recorded (no interactive surface to confirm it). Work to it, and say so " +
-            "plainly the moment what you find contradicts it.",
+            "plainly the moment what you find contradicts it." +
+            requirementReminder(brief),
         );
       }
 
@@ -469,6 +483,11 @@ export function createReadBackTool(
       const settled = reply.edited
         ? {
             ...reply.edited,
+            // The person's edit can change the reading, but these lines come
+            // only from the runtime request, never from an edited payload.
+            ...(brief.explicitRequirements?.length
+              ? { explicitRequirements: brief.explicitRequirements }
+              : { explicitRequirements: undefined }),
             // `??=`, not an overwrite: an `evaluator` criterion that happens
             // to be on the brief the person edited is still the runtime's, and
             // relabelling it `user` would hand the model a way to cite it.
@@ -477,12 +496,16 @@ export function createReadBackTool(
         : brief;
       onBrief(settled);
       if (reply.accepted) {
-        return done("Accepted. Work to this brief and report against these criteria.");
+        return done(
+          "Accepted. Work to this brief and report against these criteria." +
+            requirementReminder(settled),
+        );
       }
       return done(
         "Not accepted as written." +
           (reply.note ? ` They said: ${reply.note}` : "") +
-          " Read back again with the correction folded in before doing any work.",
+          " Read back again with the correction folded in before doing any work." +
+          requirementReminder(settled),
       );
     },
   };

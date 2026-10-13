@@ -183,8 +183,8 @@ describe("TurnRenderer — customizer activity stream", () => {
     h.turn.finish();
     // One chamber row states the whole burst; the per-call record is the fold.
     expect(h.output()).toContain("read 1 file, listed 1 directory, ran 1 command");
-    expect(h.output()).not.toContain("\u250c read  src/app.ts");
-    expect(h.detail()).toContain("\u250c read  src/app.ts");
+    expect(h.output()).not.toContain("│   read  src/app.ts");
+    expect(h.detail()).toContain("│   read  src/app.ts");
     expect(h.detail()).toContain("│   list  src/");
     expect(h.detail()).toContain("\u250c run   git status --short");
   });
@@ -195,7 +195,7 @@ describe("TurnRenderer — customizer activity stream", () => {
     h.turn.onEvent(toolEnd("list_dir", { path: "src" }));
     h.turn.onEvent({ type: "text_delta", text: "Two calls, both worth naming." });
     h.turn.finish();
-    expect(h.output()).toContain("\u250c read  src/app.ts");
+    expect(h.output()).toContain("│   read  src/app.ts");
     expect(h.output()).toContain("│   list  src/");
   });
 
@@ -531,8 +531,8 @@ describe("renderReplay", () => {
     expect(output).not.toContain("› fix the bug"); // no longer a chevron marker
     expect(output).toContain("◇ I am reading the files.");
     // Two reads are below the chamber threshold: both worth naming.
-    expect(output).toContain("\u250c read  a.ts");
-    expect(output).toContain("\u250c read  b.ts");
+    expect(output).toContain("│   read  a.ts");
+    expect(output).toContain("│   read  b.ts");
     expect(output).toContain("1 file changed · 1 check passed");
     expect(output).toContain("Fixed and verified.");
   });
@@ -742,9 +742,9 @@ describe("TurnRenderer — a sink that can amend", () => {
     read(0);
     read(1);
     // Two paths are worth naming, and they are on screen already.
-    expect(h.output()).toContain("\u250c read  src/file-0.ts");
-    expect(h.output()).toContain("\u2514 · observed · 10 lines");
-    expect(h.output()).toContain("\u250c read  src/file-1.ts");
+    expect(h.output()).toContain("│   read  src/file-0.ts");
+    expect(h.output()).toContain("10 lines");
+    expect(h.output()).toContain("│   read  src/file-1.ts");
     expect(h.blocks()).toBe(2);
     read(2);
     // The third makes the run one fact: one chamber row, the calls in its fold.
@@ -762,7 +762,7 @@ describe("TurnRenderer — a sink that can amend", () => {
     expect(h.output().indexOf("read 30 files")).toBeLessThan(
       h.output().indexOf("The implementation is mapped."),
     );
-    expect(h.output()).toContain("\u250c read  src/file-30.ts");
+    expect(h.output()).toContain("│   read  src/file-30.ts");
     h.turn.finish();
   });
 

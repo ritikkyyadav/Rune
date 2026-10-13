@@ -71,7 +71,7 @@ function tool(over: Partial<ToolActivityView>): ToolActivityView {
 }
 
 describe("renderToolActivity — one call, one row", () => {
-  it("frames a read, with the span it reported in the receipt", () => {
+  it("keeps a read on one row with its reported span and no success badge", () => {
     const out = plain(
       renderToolActivity(
         tool({
@@ -86,19 +86,10 @@ describe("renderToolActivity — one call, one row", () => {
         }),
       ),
     );
-    // A read produced a FILE, and a file is code: §2.3 frames it. With nothing
-    // to preview -- this result carried no content -- the box is its two
-    // structural rows and no body, which is still a frame and still says which
-    // file and how much of it.
-    expectClosed(out);
-    const { title, body, receipt } = boxParts(out);
-    expect(body).toEqual([]);
-    expect(title).toContain("read  src/engine.ts");
-    // The neutral mark, and the rung in words. A read is quotable output, so it
-    // is `observed`; the tick costs a test that failed on the parent commit and
-    // a box that spent it here would outrank the ledger.
-    expect(receipt).toContain("· observed · 120 lines");
-    expect(receipt).not.toContain("✓");
+    expect(out.split("\n")).toHaveLength(1);
+    expect(out).toContain("read  src/engine.ts");
+    expect(out).toContain("120 lines");
+    expect(out).not.toContain("✓");
   });
 
   it("names the range when a read was partial, rather than implying the whole file", () => {
@@ -264,7 +255,7 @@ describe("renderToolActivity — one call, one row", () => {
     expect(out).toContain("exit 1");
   });
 
-  it("keeps an ordinary one-line command to one body row", () => {
+  it("keeps an ordinary command to one outcome row", () => {
     const out = plain(
       renderToolActivity(
         tool({
@@ -274,12 +265,9 @@ describe("renderToolActivity — one call, one row", () => {
         }),
       ),
     );
-    expectClosed(out);
-    const { body, text, receipt } = boxParts(out);
-    // One line in, one line out: reformatted never, inside the frame.
-    expect(body).toHaveLength(1);
-    expect(text[0]).toBe("9be117a");
-    expect(receipt).toContain("exit 0");
+    expect(out.split("\n")).toHaveLength(1);
+    expect(out).toContain("git rev-parse HEAD");
+    expect(out).toContain("exit 0");
   });
 
   it("ALWAYS shows an edit's diff, with real line numbers and signed counts", () => {
@@ -427,14 +415,12 @@ describe("renderTranscript — batch replay", () => {
     expect(plain(renderTranscript(reads))).toBe("    │ › read 3 files");
   });
 
-  it("keeps a single read as its own box", () => {
+  it("keeps a single read as its own outcome row", () => {
     const out = plain(
       renderTranscript([L({ role: "tool", toolName: "read_file", args: { path: "only.ts" } })]),
     );
-    // One read is worth naming; three are a burst and collapse to the chamber
-    // row above. The named one is framed like every other call.
-    expect(out).toContain("┌ read  only.ts");
-    expect(out.split("\n").at(-1)).toMatch(/^ {2}\u2514 .+\u2518$/);
+    expect(out).toContain("│   read  only.ts");
+    expect(out.split("\n")).toHaveLength(1);
   });
 
   it("interleaves prose → work → prose as three distinct blocks", () => {
@@ -446,9 +432,7 @@ describe("renderTranscript — batch replay", () => {
       ]),
     ).split("\n");
     expect(out.filter((l) => l.startsWith(`  ${STEP} `))).toHaveLength(2);
-    // The work between them is a box, which is the whole of what separates it
-    // from the two sentences around it.
-    expect(out.some((l) => l.includes("\u250c run   ls"))).toBe(true);
+    expect(out.some((l) => l.includes("│   run   ls"))).toBe(true);
   });
 
   it("spends the green tick only on a command that checked something", () => {
@@ -473,8 +457,9 @@ describe("renderTranscript — batch replay", () => {
     expect(run("bun run typecheck")).toContain("\u2514 ✓ ");
     // Anything that merely ran takes the neutral mark: a tick spent on fifteen
     // routine calls is a tick that has been spent before the one that mattered.
-    expect(run("git status --short")).toContain("\u2514 · ");
-    expect(run("mkdir -p dist")).toContain("\u2514 · ");
+    expect(run("git status --short")).toContain("exit 0");
+    expect(run("git status --short")).not.toContain("✓");
+    expect(run("mkdir -p dist")).not.toContain("✓");
     // A failure still interrupts, checked or not.
     expect(run("npx vitest run", 1)).toContain("\u2514 ✗ ");
     expect(run("git push", 1)).toContain("\u2514 ✗ ");
@@ -559,8 +544,8 @@ describe("the harness envelope around a tool result", () => {
   });
 });
 
-describe("a command that merely ran shows its first lines and its last", () => {
-  it("five lines inline, the rest counted, the whole print-out in the fold", () => {
+describe("routine command output remains available behind its compact row", () => {
+  it("one row inline, the print-out in the fold", () => {
     const stdout = Array.from({ length: 12 }, (_, i) => `row ${i + 1}`).join("\n");
     const view = tool({
       toolName: "bash",
@@ -568,25 +553,26 @@ describe("a command that merely ran shows its first lines and its last", () => {
       result: JSON.stringify({ stdout, stderr: "", exit_code: 0, timed_out: false }),
     });
     const out = plain(renderToolActivity(view));
-    expect(out).toContain("\u250c run   ls -lh");
-    for (const n of [1, 2, 3, 4]) expect(out).toContain(`│ row ${n}`);
-    expect(out).not.toContain("row 5\n");
-    expect(out).toContain("7 more lines");
-    expect(out).toContain("│ row 12"); // the verdict line, last
+    expect(out).toContain("│   run   ls -lh");
+    expect(out.split("\n")).toHaveLength(1);
+    expect(out).not.toContain("row 1");
     const detail = plain(renderToolDetail(view) ?? "");
+    expectClosed(detail);
+    expect(detail).toContain("row 1");
     expect(detail).toContain("row 5");
     expect(detail).toContain("row 11");
+    expect(detail).toContain("row 12");
   });
 
-  it("a short output is shown whole, with no count", () => {
+  it("even one output line can be opened, with its whitespace intact", () => {
     const out = plain(
-      renderToolActivity(
+      renderToolDetail(
         tool({
           toolName: "bash",
           args: { command: "wc -l app.js" },
           result: JSON.stringify({ stdout: "  995 app.js", stderr: "", exit_code: 0 }),
         }),
-      ),
+      )!,
     );
     // Reformatted never: `wc -l` right-aligns its count and the box keeps the
     // two leading spaces it aligned with. The rail used to trim them.

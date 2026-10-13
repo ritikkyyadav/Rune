@@ -1,0 +1,28 @@
+# frame: 80x24-settings
+# terminal: 24 rows x 80 cols (real pty, alt screen)
+# ------------------------------------------------------------
+#0.........1.........2.........3.........4.........5.........6.........7.........
+ 1|
+ 2|  R U N E   /private/tmp/rune-ui-panels-20261010/workspace               v1.3.4
+ 3|  ─────────────────────────────────────────────────────────────────────────────
+ 4|  try  "fix the failing test" · "explain how this repo is wired"
+ 5|  tip: Rune can learn your style over time -- /memory
+ 6|  › /config
+ 7|
+ 8|
+ 9|  settings  1-10 of 27
+10|  › Model and reasoning  model, provider and thinking depth
+11|    API keys and internet search  manage keys · /login to connect
+12|    Browser  off
+13|    budget  7.25
+14|    memory  auto
+15|    parallel  3
+16|    subagent budget  per effort
+17|    evidence gate  attest
+18|    shadow controller  on
+19|    controller authority  none
+20|
+21|    Choose the model for this session and adjust how deeply it reasons.
+22|
+23|  Up/down reaches all 27. Changes apply now and are saved.
+24|  enter select · esc close
