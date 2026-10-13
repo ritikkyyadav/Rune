@@ -52,6 +52,7 @@ import {
   type TaskBaseline,
 } from "./baseline";
 import { envFingerprint } from "./brief";
+import { checkEnvironment } from "./check-env";
 import {
   attributable,
   attributeFailures,
@@ -426,6 +427,12 @@ export interface CommandVerifierConfig {
   slowChecksPath?: string;
   /** The clock, for tests. Defaults to `Date.now`. */
   now?: () => number;
+  /**
+   * The environment this session was started with. A check is started with
+   * this less the session's own state (check-env.ts), never with it as it is.
+   * Defaults to the process's own.
+   */
+  env?: NodeJS.ProcessEnv;
   /**
    * When this session began, in epoch ms. A file the working tree shows as
    * changed but whose inode has not changed since then was dirty before the
@@ -1020,9 +1027,12 @@ async function runCommand(
   command: string,
   cwd: string,
   timeoutMs: number,
-  signal?: AbortSignal,
-  /** Laid over the inherited environment — where generated state goes. */
-  extraEnv?: Record<string, string>,
+  signal: AbortSignal | undefined,
+  /**
+   * Everything the command is started with. Required, and never this process's
+   * own environment as it stands: see `CommandVerifier.checkEnv`.
+   */
+  env: Record<string, string | undefined>,
 ): Promise<{ exitCode: number; output: string; timedOut: boolean; durationMs: number }> {
   const started = Date.now();
   const proc = Bun.spawn(["bash", "-c", command], {
@@ -1032,7 +1042,7 @@ async function runCommand(
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, ...extraEnv },
+    env,
     // detached → the shell leads its own process group, so the deadline and a
     // cancelled run stop the WHOLE tree. Killing only the shell orphaned
     // whatever it had started, and the orphan kept the output pipes open: the
@@ -1840,6 +1850,20 @@ export class CommandVerifier implements Verifier {
     return this.config.commands && this.config.commands.length > 0 ? this.config.commands : null;
   }
 
+  /** The environment this session was started with. */
+  private sessionEnv(): NodeJS.ProcessEnv {
+    return this.config.env ?? process.env;
+  }
+
+  /**
+   * What a check is started with: the session's environment less the session's
+   * own state, with `extra` — where a check's generated state goes — laid over
+   * it. Every command this verifier starts gets its environment from here.
+   */
+  private checkEnv(extra: Record<string, string> = {}): Record<string, string | undefined> {
+    return { ...checkEnvironment(this.sessionEnv(), () => this.cacheDir()), ...extra };
+  }
+
   private detectOptions(): DetectOptions {
     return { ecosystems: this.config.ecosystems };
   }
@@ -1958,6 +1982,7 @@ export class CommandVerifier implements Verifier {
         laid.cwd,
         timeoutMs,
         signal,
+        this.checkEnv(),
       );
       if (signal?.aborted) return { unknown: "cancelled" };
       if (timedOut) return { unknown: "the check did not finish on the tree the run started from" };
@@ -2322,11 +2347,13 @@ export class CommandVerifier implements Verifier {
         this.config.workspaceRoot,
         limit,
         signal,
-        generatedStateEnv(
-          join(this.config.workspaceRoot, scoped.project),
-          scoped.ecosystem,
-          process.env,
-          () => this.cacheDir(),
+        this.checkEnv(
+          generatedStateEnv(
+            join(this.config.workspaceRoot, scoped.project),
+            scoped.ecosystem,
+            this.sessionEnv(),
+            () => this.cacheDir(),
+          ),
         ),
       );
       const base = {
@@ -2427,12 +2454,15 @@ export class CommandVerifier implements Verifier {
         // By the check's ecosystem — which only a DETECTED check has. A command
         // the person wrote in `[verify] commands` carries none of its own (it
         // is filed under JS, which has no switch), so it runs in exactly the
-        // environment they wrote it for.
-        generatedStateEnv(
-          join(this.config.workspaceRoot, check.project),
-          check.ecosystem,
-          process.env,
-          () => this.cacheDir(),
+        // environment they wrote it for — less this session's own state,
+        // which no command was written for (check-env.ts).
+        this.checkEnv(
+          generatedStateEnv(
+            join(this.config.workspaceRoot, check.project),
+            check.ecosystem,
+            this.sessionEnv(),
+            () => this.cacheDir(),
+          ),
         ),
       );
       const base = { command: cmd, ecosystem: check.ecosystem, kind: check.kind, durationMs };
