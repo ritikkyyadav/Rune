@@ -84,7 +84,10 @@ export function createSkillTool(loader: SkillLoader): ToolHandler {
       try {
         if (search) return done(renderSearch(loader, search));
         if (name && file) return done(await renderBundledFile(await loader.load(name, args), file));
-        if (file) throw new Error('`file` names a file bundled with a skill: pass that skill\'s `name` too.');
+        if (file)
+          throw new Error(
+            "`file` names a file bundled with a skill: pass that skill's `name` too.",
+          );
         if (name) return done(renderLoaded(await loader.load(name, args)));
         return done(renderCatalog(loader));
       } catch (err) {
