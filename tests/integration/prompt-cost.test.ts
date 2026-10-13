@@ -118,8 +118,15 @@ const SUMMARY_RESULT_HEAD_CHARS = 1_680;
  * were cut along with everything else, so there is less of them to drop — the
  * whole prompt is about a third smaller, and that saving is paid on every
  * request rather than from the second one on.
+ *
+ * Re-measured 2026-10-14: 2,772. "# The read-back" — an opening-only section —
+ * is 12 bytes shorter (2,752 → 2,740) since it stopped asking a run with one
+ * small deliverable for a read-back, and those 12 bytes are the whole of the
+ * difference: the two sections that grew in the same change ("# Plan and
+ * track", "# Building interfaces") are read on every turn and cancel here.
+ * Less to drop at the switch because there is less on the first request.
  */
-const C2_PHASE_SWITCH_SAVING_AT_HEAD = 2_784;
+const C2_PHASE_SWITCH_SAVING_AT_HEAD = 2_772;
 
 // ─── The script ───
 
