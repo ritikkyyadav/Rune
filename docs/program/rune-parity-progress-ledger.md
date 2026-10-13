@@ -2530,3 +2530,173 @@ older than the "after" runs. The pages were not looked at again side by side.
 
 **Next step, the founder's:** whether a small build should carry less of that
 ceremony, and what a run that could not show its own criteria should exit with.
+
+## The cost-and-latency lane, 2026-10-13 → 14 · **built and gated on this Mac in a worktree; fifteen commits, local; nothing measured live**
+
+The founder's instruction: take the plan Codex wrote with `gpt-6-astra` ("Rune: cost and
+latency execution proposal", cards E0 to E5), leave its Haiku and Sonnet assignments,
+and fix the problem. Done on `lane/cost-latency-20261013` in
+`.claude/worktrees/cost-latency-20261013`, from `0fe45a7` — Codex's snapshot of `2dabdb2`
+plus the working tree as it stood (22 modified, 13 untracked), checked byte for byte
+against the live tree. The main checkout was not touched. No model was called, nothing
+was pushed, nothing was installed.
+
+**Where the time and money were**, read from the databases of fifteen recorded runs
+(nine serious, six UI):
+
+- **The end-of-turn check:** 915 s of the nine serious runs' 4,026 s. Six of the nine
+  ended on a check killed at 120 s — 745 s, between 16% and 43% of each of those runs.
+- **The reviewer:** $0.568 of the three UI runs' $2.33. Three reviews in the path of an
+  action were all false alarms: `render` and `delete` as words in a script, and a URL
+  with `/post/` in it.
+- **Completions that only kept the ledger:** 80 of 445 (18%) — 63 a `todo_write` alone,
+  17 a `record_evidence` alone — for 584 s of 4,753 s of model time and $1.25 of $9.19.
+- **`web_fetch` loaded on demand:** the tool list changed, and the next request was
+  sent uncached: 15.6k, 20.0k and 16.8k tokens, three UI runs out of three.
+- **The first file written:** 60 to 158 s into the three newest UI runs, 55 to 100 s
+  into eight of the nine serious ones and 232 s into the ninth.
+- What is left after those is the work itself. On the six runs profiled, primary input
+  is already 90 to 96% from the cache; on the landing page 363 of 368 s was the model,
+  at the ceiling every turn.
+
+**The 120 s wait was not a suite that cannot finish.** That is what it was taken for
+(A1 and A2, above), and on the recorded runs it is wrong:
+
+- In `b2-s6 … startup-selection` the agent ran `bun test tests/unit/` itself, twice, in
+  its own shell: 5,002 tests in 54.2 s and 52.0 s, green. `bun run test` is that
+  command. The end-of-turn check ran it on the same tree and was killed at 120 s. Same
+  shape on `header-version-session`: the suite ran to its end in 73.9 s in the agent's
+  shell (two tests red at that point in the work), and was killed at 120 s in the check.
+- The agent's shell starts a command with a cleared environment. The check started it
+  with **Rune's own** — and the comparison rig starts Rune with `RUNE_HOME`,
+  `RUNE_DB_PATH` and `RUNE_CONFIG_PATH` pointing at the run's profile and
+  `RUNE_CREDENTIALS_PATH`, `RUNE_CREDENTIAL_INDEX_PATH` and `RUNE_SECRETS_PATH` at the
+  founder's real files. The fixture is Rune's own repository, and its tests read those
+  names. The profile of that run holds two log lines from the check, 20.0 s apart, and
+  then nothing.
+- Reproduced with nothing real behind any variable (a copy of the recorded tree, a
+  scratch home, scratch files where the rig has the real ones, file stores so the
+  keychain is never reached):
+
+  | The same tree, the same command                  | Result                                                     |
+  | ------------------------------------------------ | ---------------------------------------------------------- |
+  | on the host, clean environment, empty Rune home  | 52.6 s · 4,988 pass, 0 fail                                |
+  | the unchanged check, state variables set (twice) | 116.6 s and 116.2 s · red: four "MCP OAuth 2.1 flow" tests |
+  | this lane's check, the same session environment  | 62.3 s · typecheck, test and lint all green                |
+  | the recorded live run                            | 125.3 s · killed at the limit, nothing measured            |
+
+- In the reproduction the suite also **wrote into the file `RUNE_CREDENTIALS_PATH`
+  named**: 2 bytes before, 667 after. There it was a scratch file. In the recorded runs
+  that variable named the founder's real `credentials.json`, and the rig forces no
+  store, so on macOS the default is the keychain. I did not open the real file or the
+  keychain; whether test entries were left there is for the founder to look at.
+- On **today's** tree the unit suite takes 228 s here, so in this repository as it now
+  stands the limit is real. The recorded fixtures are earlier commits, at 37 to 74 s.
+
+**What changed.**
+
+- **E4, the reviewer** (`9a1b34a`, `0b962de`). A service's name counts only where its
+  command is invoked — one predicate, `isRemoteMutationCommand`, for the risk scan and
+  the containment route. A URL's path segment is not a payload. A script from a
+  quoted here-document, a loop over literal words and `node --test` are ordinary.
+  Replayed over the three UI runs: $0.568 → about $0.08, in-path reviews 3 → 0, screens
+  17 → 10.
+- **E1, the small task** (`b5293dc`). The pre-flight note no longer reads as a request
+  for a read-back; the art-direction and greenfield notes stand down when nobody can
+  answer; a small self-contained page, component or script is one work unit; the
+  design skill's own files are read with `skill(name, file)`; `web_fetch` is a core
+  tool. Doctrine 5,402 → 5,450 tokens (ceiling 5,500).
+- **E1, the final state** (`dd6abf8`, `44c5c9d`). The headless envelope carries
+  `shortfall`: `observed_failure`, `outside_terms` or `own_terms_unshown`. The exit
+  code is unchanged; that decision is still the founder's.
+- **E2, a pass the run already watched** (`7c3fae5`). `check-receipts.ts`: the check is
+  not run again when the agent ran it, the line could not have hidden a failure, and
+  the tree is byte-for-byte the same. On `startup-selection` that is the whole suite.
+- **E2, what a check is started with** (`b82ac5e`). `check-env.ts`: the session's
+  environment less the sixteen variables that locate or unlock the session's state, an
+  empty Rune home, and the file stores. Nothing else moves. A test reads the source
+  for every home-, path-, directory- and token-shaped variable Rune reads and fails on
+  one that is unclassified.
+- **E3, effort** (`f1cf163`, `8c57d60`, `4f155c1`, `c04031d`). Each cost row records the
+  effort its call asked for. `[llm] effortRouting = "task"`: one effort for the
+  request, raised at most once and never lowered; a gate that refuses the finish raises
+  nothing. Off unless set. The default routing is as it was.
+- **E0, the measurement** (`86abfc4`, `a9c4c29`). `tests/eval/parity/run-profile.ts`
+  reads one run's database: first tool, first and last write, what the checks cost and
+  said, the reviewer apart from the work, ledger-only completions, cached share, effort
+  per call. An unpriced call leaves the cost unknown, not zero. The figures above that
+  it covers agree with it.
+- **Found by the gates** (`76a6337`). `prompt-cost.test.ts` pins the phase switch's
+  saving; the read-back section is 12 bytes shorter since `b5293dc`, so it is 2,772
+  where it was 2,784. The integration suite had not been run against that commit.
+- Changelog, `docs/verification.md` and `docs/run-economics.md` (`168faee`).
+
+**Verification, exact.** All on `168faee`, a clean tree, outside the sandbox, under
+`caffeinate -i`:
+
+- `bun run typecheck --force` → 15 of 15, none cached.
+- `TERM=xterm-256color bun test --preload ./tests/scratch-home.ts tests/unit </dev/null`
+  → **7,790 pass, 4 skip, 0 fail** (492 files, 228 s).
+- `bun test --preload ./tests/scratch-home.ts tests/integration </dev/null` → **466 pass,
+  7 skip, 0 fail** (78 files, 164 s).
+- `bun run eval` → 63 of 63, baseline unchanged.
+- `bun run eval:auto-safety` → the same output as on `0fe45a7`, line for line.
+- `bun run format:check` → **fails on two files, neither of them this lane's**:
+  `packages/orchestrator/src/explicit-requirements.ts` and
+  `tests/unit/orchestrator/brief-ledger.test.ts`, both byte-identical to `0fe45a7` and
+  failing there the same way. Left as they are — that work is someone else's. Every
+  file this lane changed passes.
+- Rust is unchanged and was not run.
+- **141 deliberate breaks** across the cards; 140 failed a test. The one that did not
+  cannot: the fix-verified gate fires only on a fix, and a fix already runs at the
+  ceiling, so under task routing there is nothing for it to raise.
+- **The candidate, built and started in a fresh shell.** Compiled in place into the
+  worktree's ignored `dist/`: `dist/candidate-20261014/bin/rune-compiled` from `168faee`
+  (`2e9a9fd3…f643a7`) and, for the comparison, `dist/baseline-0fe45a7/bin/rune-compiled`
+  from `0fe45a7` (`97c9c0c9…6184e0`). Both with the native tools at `dbc683aa…7966f0`,
+  which is what is installed; Rust did not change. For each: `--version`, `--help`,
+  `tools-smoke` and `scripts/smoke-print.ts` (a prompt in and an answer out, against a
+  fake model) pass with an empty home and no session environment. `build.json` beside
+  each. Nothing was installed.
+
+**What is not shown.** Anything about a live run. That a notch less reasoning costs
+nothing in quality. That the model follows the reworded instructions: the doctrine now
+says a plan update is never a turn of its own, and the recorded runs show an
+instruction of exactly that kind (cite in the same response as the check) not followed
+17 times. That the check environment was the whole of the hang in the live runs — the
+reproduction went red at 116 s on scratch files, the live run was killed at 120 s on
+real ones, and the keychain was deliberately not part of the reproduction.
+
+**The live checkpoint, planned and not run.** The rig pairs every Rune run with a
+comparator run, so the plan's three arms are two sittings of four arm runs, eight in
+all; the two extra are OpenCode's, on the same tasks, and are the first measure of its
+own run-to-run swing. One small task and one serious one
+(`note-field-and-exporter`, `f7-6af7bb5-startup-selection`), `gpt-6-sol`, OpenCode at
+`high`, Rune on its shipped defaults. Both planned with `--dry-run`, which starts
+nothing: 2 pairs, 4 arm runs and at most 130 minutes each, stop at 70% of the window,
+no retry. The manifests are in `dist/checkpoint-20261014/`. What to read afterwards is
+`run-profile.ts` on each Rune run, not the totals: one run a task swings ±40%.
+
+**For the founder.**
+
+1. The live checkpoint above, in your words: the task count, the arm order, the
+   allowance. Task routing would be a third sitting of its own, with
+   `[llm] effortRouting = "task"`.
+2. Bringing the lane into the working tree. It is fifteen commits on a snapshot of the
+   tree as it stood on the 13th; other sessions have been writing in that tree since.
+3. **A check still runs outside the sandbox, with whatever you exported.** The agent's
+   shell is sandboxed and starts clean; the end-of-turn check runs a project script —
+   which the agent can edit — on the host with your environment. This lane took Rune's
+   own state out of that environment and nothing else.
+4. Whether the real `credentials.json`, its index or the keychain hold test entries
+   from the recorded runs' checks.
+5. The exit code of a run whose only shortfall is `own_terms_unshown`.
+6. The injection probe flags Rune's own unit-test output, and then every action in
+   that run is reviewed in its path.
+7. Background screens read almost nothing from the cache on Codex. The transcript they
+   are sent is append-only; the cause is not known offline. About six calls would say.
+8. A note at the point of use for a ledger-only completion — the same kind as the
+   batching note — is the next cheap thing. Not built: the doctrine line is unmeasured,
+   and so would that be.
+
+**Next step.** The checkpoint, on the founder's word.
