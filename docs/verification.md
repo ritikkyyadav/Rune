@@ -147,6 +147,60 @@ ignored path in the same seconds: a watcher the run started, or a second agent
 working in the same tree. If either matters, or if the next check is much
 slower without the build it would have reused, set `keepGenerated = true`.
 
+## What a check is started with
+
+A check is the project's, not the session's. It is started with the environment Rune
+itself was started with — `PATH`, the toolchain's own variables, a `DATABASE_URL` the
+project's tests read — **less Rune's own state**:
+
+- the variables that say where this session keeps its home, database, configuration,
+  preferences, memory, logs and control socket, and the ones that name or unlock the
+  saved sign-ins (`RUNE_HOME`, `RUNE_DB_PATH`, `RUNE_CONFIG_PATH`,
+  `RUNE_CREDENTIALS_PATH`, `RUNE_CREDENTIAL_INDEX_PATH`, `RUNE_SECRETS_PATH` and ten
+  more; the list is `SESSION_STATE_ENV` in `check-env.ts`) are removed;
+- `RUNE_HOME` is set to an empty directory that goes when the session does;
+- `RUNE_CREDENTIAL_BACKEND` and `RUNE_MEMORY_KEY_BACKEND` are `file`, so nothing a check
+  starts reaches the operating system's keychain through Rune.
+
+For almost every project this changes nothing: nothing in a Go module reads
+`RUNE_DB_PATH`. It matters for a project that reads Rune's variables — Rune's own
+repository, or anything that starts the CLI or the SDK in its tests. Measured
+2026-10-14 on a recorded run of such a project: the agent ran the unit suite in its own
+shell, which starts a command with a cleared environment — 5,002 tests, 52 s, green. The
+end-of-turn check then ran the same suite on the same tree with the session's
+environment and was killed at 120 s. Run again with the state variables pointed at
+scratch files, the old check took 116.6 s and went red on tests that had written into
+the "saved sign-ins" file; this one took 62.3 s and passed all three checks.
+
+It applies to a command you wrote in `[verify] commands` as well. Nothing else is taken
+out: a provider key you exported is still there, and a check still runs outside the
+sandbox the agent's own shell is held to. Those are larger questions than this one.
+
+## A check the run already watched pass
+
+When the agent ran the project's check itself — `bun test`, say — and nothing in the tree
+has changed since, the end-of-turn check does not run it a second time. The report says
+so, and whose run it was:
+
+```
+$ bun run test  (ok — this run already ran it, as `set -o pipefail; bun test 2>&1 | tail -n 8` moments ago in 52s, and nothing has changed since; not run again)
+```
+
+It is taken only when all of this holds:
+
+- the command is the check, or the one plain command a package script of that name runs
+  (no `pre`/`post` hook beside it);
+- the line could not have hidden a failure. A bare `… | tail` reports `tail`'s exit code
+  and is never taken. With `set -o pipefail;` in front of it, or with
+  `test ${PIPESTATUS[0]} -eq 0` after it, it is — in the shells where those mean that;
+- the working tree is byte-for-byte what it was when the command passed: the same
+  `HEAD`, and the same content in every changed or untracked file. One edit after the
+  run, and the check is run.
+
+A reused pass was observed in the agent's shell, which is sandboxed and starts with a
+cleared environment; a check that behaves differently outside it is not measured again.
+`reuse = false` turns this off.
+
 ## A check that cannot finish
 
 Every check command has `timeoutSecs` to finish in, 120 by default. One that is killed at
@@ -162,7 +216,9 @@ on one bad run. Raising `timeoutSecs` above the limit it failed under runs it ag
 a day passing; and a command that finishes once is forgotten. The record is kept in the Rune
 home (`verify-slow.json`), never in the workspace; deleting that file forgets everything. On
 a project whose suite takes longer than the limit this was two minutes at the end of every
-turn.
+turn. (On Rune's own repository at the commits the recorded runs used, the suite was not
+longer than the limit: it took 52 s. It did not finish because of what it was started
+with — see "What a check is started with".)
 
 **The tests the change touched are run in its place.** When the command that did not finish
 is the test suite, and the suite is run by `bun test`, the test files the change itself
@@ -182,6 +238,7 @@ commands = ["bun run lint", "bun test tests/unit/"]  # replaces detection wholes
 timeoutSecs = 120
 perStep = true
 keepGenerated = false                            # true leaves what detected checks build
+reuse = true                                     # false re-runs a check the run already watched pass
 
 # Narrower than `commands`: one stack at a time, detection intact for the rest.
 [verify.ecosystems]

@@ -13,6 +13,61 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ### Changed
 
+- **A check is no longer started with Rune's own state.** The end-of-turn check handed a
+  project's commands everything Rune itself was started with, including the variables that say
+  where this session keeps its database, its configuration and your saved sign-ins. For a project
+  that reads those names — Rune's own repository, or anything that starts the CLI or the SDK in
+  its tests — the tests then ran against the live session. Measured on a recorded run: the agent
+  ran the unit suite in its own shell in 52 s, green; the end-of-turn check ran the same suite on
+  the same tree and was killed at its 120 s limit. Six of nine recorded runs on that project ended
+  that way, between a sixth and two fifths of each run. A check now gets the same environment less those
+  sixteen variables, an empty Rune home of its own, and the file credential store instead of the
+  keychain; on the recorded tree the old check took 116.6 s and went red, and this one took 62.3 s
+  and passed. Nothing else is removed from a check's environment. Not yet measured in a live run.
+  See [`docs/verification.md`](docs/verification.md).
+
+- **A check the run already watched pass is not run a second time.** When the agent ran the
+  project's check itself and nothing in the tree has changed since, the end-of-turn check takes
+  that result and says whose run it was. Only when the line could not have hidden a failure (a
+  bare `… | tail` never counts), the command is the check or the one plain command its package
+  script runs, and the tree is byte-for-byte the same; one edit afterwards and the check runs.
+  `[verify] reuse = false` turns it off.
+
+- **In Auto mode, the name of a service in a script is no longer taken for a command that runs
+  it.** A shell command that mentioned `render` and `delete` anywhere — a test file, a `node -e`
+  script, a path — was read as a destructive call to a hosting service and sent to the heavy
+  reviewer before it could run; a URL with `/post/` in its path was read as an upload. The check
+  now looks for the service's command being invoked. A script read from a quoted here-document, a
+  loop over literal words and `node --test` are also recognised as ordinary development commands.
+  Replayed over three recorded runs, the reviewer's cost went from $0.568 of $2.33 to about $0.08:
+  three reviews in the path of an action became none, and seventeen background screens became
+  ten. The safety corpus is unchanged — 55 of 55 blocks, 116 of 116 allows, 56 of 56 dangerous
+  shapes still watched. Not yet measured in a live run.
+
+- **A run with nobody to ask is no longer told to ask, to research or to read back.** In a
+  headless run a note meant to help — "say in your read-back that the layout was not seen" — was
+  taken as a request for a read-back, and two design notes told the run to ask about art
+  direction straight after another had said nobody was there. Those notes now stand down when
+  nobody can answer, and the instructions call a small self-contained page, component or script
+  one unit of work, for which no read-back or plan ledger is asked. Two things that cost whole
+  requests are also gone: the design
+  skill's own reference files could not be opened (they live outside the workspace), and are now
+  read with `skill(name, file)`; and `web_fetch` is always available beside `web_search`, where
+  loading it on demand changed the tool list and re-sent the whole prompt uncached (15.6k to
+  20.0k tokens, three runs out of three). Not yet measured in a live run.
+
+- **A headless run says why its verdict is short of met.** The result of `rune -P` now carries
+  `shortfall`: `observed_failure` (something was seen to fail), `outside_terms` (a term you or an
+  evaluator set is not shown), or `own_terms_unshown` (only terms the run wrote for itself are
+  not shown). The exit code is what it was.
+
+- **`[llm] effortRouting = "task"`: one reasoning effort for a request, raised at most once.**
+  A short, clear request runs one notch below the ceiling on every turn; a fix, an investigation,
+  a migration or a long brief runs at the ceiling; real difficulty raises it once, for good. No
+  change of effort is ever made twice, so on Codex the cache is thrown away at most once a run.
+  Off unless set, and what it does to the quality of the work has not been measured. Each cost
+  row now records the effort its call asked for.
+
 - **A check that cannot finish stops being waited for, and the tests a change touched are run in
   its place.** A check command killed at its time limit measured nothing, and on a project whose
   suite takes longer than the limit that was two minutes at the end of every turn. A command that

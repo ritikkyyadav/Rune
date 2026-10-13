@@ -290,8 +290,28 @@ at least once more than it needed to: 12k to 18k tokens on the three live tasks 
 2026-10-07, and 43k on the one request measured after a failed check.
 
 So on Codex the effort of every turn is the ceiling (`effortChangeCostsCache` in
-`cache-policy.ts`), and `[llm] effortRouting` has no effect there. Only Codex has been
-measured, so only Codex is named; on every other host routing is unchanged.
+`cache-policy.ts`), and `[llm] effortRouting = "conservative"` has no effect there. Only
+Codex has been measured, so only Codex is named; on every other host routing is unchanged.
+
+That keeps the cache and gives up the economy: every turn of every task reasons at the
+ceiling, and reasoning is what output tokens, and most of a run's wall time, are made of.
+`[llm] effortRouting = "task"` (`/config routing task`) is the other way to keep the
+cache — **one effort for the whole request, and at most one change**:
+
+- a short, clear request starts one notch below the ceiling (`high` under `max` or
+  `xhigh`, `medium` under `high`) and stays there, the planning turn included;
+- a fix, a question of why, an investigation, an audit, a review, a migration or a
+  change across modules, a request that asks for care by name, or a brief longer than
+  1,500 characters starts at the ceiling;
+- when the work itself goes wrong — a failed check, a failed criterion, a repeating
+  call, a stale turn — the effort is raised to the ceiling **once**, for the rest of
+  the run. It is not lowered again when the checks go green, and a gate that refuses
+  the finish does not raise it: that is the harness asking for something.
+
+Each cost row now carries the effort its call asked for (`effort`), so a run's own
+record shows what was sent. What this setting does to the **quality** of the work is not
+measured: the request traces are held by tests, the result is not. It is off unless set,
+and the default is unchanged until a comparison on live runs says otherwise.
 
 ### The doctrine phase
 
