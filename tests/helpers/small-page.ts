@@ -117,6 +117,8 @@ export interface ScriptedRun {
   contained: boolean;
   /** A workspace file as the run left it, or "" when it is not there. */
   read(path: string): string;
+  /** Every model call the run's own ledger recorded, in order: what for, and at what effort. */
+  costs: Array<{ role: string; effort: string | undefined }>;
   dispose(): void;
 }
 
@@ -135,6 +137,8 @@ export async function runScripted(
   script: ContentBlock[][],
   /** Files the workspace starts with, committed. None: an empty repository. */
   files: Record<string, string> = {},
+  /** Engine settings laid over the defaults below. */
+  settings: Record<string, unknown> = {},
 ): Promise<ScriptedRun> {
   const dir = mkdtempSync(join(tmpdir(), "page-ws-"));
   const home = mkdtempSync(join(tmpdir(), "page-home-"));
@@ -168,6 +172,7 @@ export async function runScripted(
     context: { repoMap: false },
     evolve: { playbook: false },
     memory: { enabled: false },
+    ...settings,
   } as ConstructorParameters<typeof Engine>[0]);
   const dispose = (): void => {
     try {
@@ -233,6 +238,16 @@ export async function runScripted(
       everythingShown: JSON.stringify(primary.map((r) => r.messages)),
       contained: isOsIsolationAvailable(),
       read: (path) => (existsSync(join(dir, path)) ? readFileSync(join(dir, path), "utf8") : ""),
+      costs: stored.flatMap(({ event }) =>
+        event.type === "cost"
+          ? [
+              {
+                role: String((event.payload as { role?: unknown }).role ?? ""),
+                effort: (event.payload as { effort?: string }).effort,
+              },
+            ]
+          : [],
+      ),
       dispose,
     };
   } catch (err) {

@@ -250,8 +250,14 @@ export interface AgentLoopConfig {
    * and turn 1 (planning) always run at the ceiling. Off = ceiling everywhere.
    * The engine defaults the MAIN loop to "conservative"; sub-agents, which
    * already route via model tiers, leave it off.
+   *
+   * "task" chooses ONE effort for the whole request before the first
+   * completion — a notch below the ceiling for work `startsBelowCeiling` says
+   * can take it, the ceiling otherwise — and moves at most once, upward, when
+   * the work itself goes wrong. It exists for hosts where a change of effort
+   * costs the prompt cache, on which "conservative" cannot route at all.
    */
-  effortRouting?: "conservative" | "off";
+  effortRouting?: "conservative" | "task" | "off";
   /**
    * What this loop's completions are, for the ledger: "primary" (the default,
    * the user's own turn) or "subagent" when the loop is running a delegated
@@ -828,6 +834,51 @@ export function stepDownEffort(ceiling: ReasoningEffort): ReasoningEffort {
   if (ceiling === "max" || ceiling === "xhigh") return "high";
   if (ceiling === "high") return "medium";
   return ceiling;
+}
+
+/**
+ * A request that asks for an explanation to be FOUND rather than for a thing
+ * to be made, or that asks in so many words for care. Under "task" routing
+ * these start at the ceiling.
+ */
+const DEPTH_SHAPED_RE =
+  /\b(?:why|diagnos\w*|investigat\w*|root[- ]cause|debug\w*|audit\w*|analy[sz]\w*|review\w*|research\w*|carefully|thorough\w*|in\s+depth|deep(?:ly|\s+dive)?|think\s+hard)\b/i;
+
+/**
+ * Past this a request is a brief, not a task: several deliverables, or one
+ * with enough conditions on it that reading it is half the work. Measured on
+ * the recorded corpora — the small tasks and the page builds run 400 to 1,000
+ * characters, the hard tasks 1,900 to 3,300.
+ */
+export const TASK_ROUTING_MAX_CHARS = 1_500;
+
+/**
+ * Whether a task starts one notch below the ceiling under "task" routing.
+ *
+ * Decided once, from the words of the request, with no model call — and the
+ * whole of the policy is in this function, so it is the one place to change
+ * it. It errs toward the ceiling: a task that starts there loses a notch of
+ * economy, and a task that starts below and should not have loses the work.
+ *
+ * The ceiling, from the first completion, for:
+ *   · a fix — "diagnosis is never routed down" is the oldest rule this routing
+ *     has, and it is kept;
+ *   · anything that asks why, or to investigate, audit, review or research;
+ *   · a change that crosses module boundaries (the same test that delivers the
+ *     architecture plan);
+ *   · a request that asks for care by name, or is long enough to be a brief.
+ * Everything else — a page, a component, a small feature, a well-specified
+ * edit — starts a notch down and is raised if the work goes wrong.
+ *
+ * Not measured live. Whether a notch less reasoning costs quality on these
+ * tasks is exactly what the comparison this setting exists for will say.
+ */
+export function startsBelowCeiling(request: string): boolean {
+  const text = request.trim();
+  if (!text || text.length > TASK_ROUTING_MAX_CHARS) return false;
+  if (isFixShaped(text) || DEPTH_SHAPED_RE.test(text)) return false;
+  if (doctrineForRequest(text).includes("architecture")) return false;
+  return true;
 }
 
 const TRIVIAL_EVIDENCE_RE =
@@ -2559,7 +2610,39 @@ export class AgentLoop {
     // difficulty; every transition is reported so the routing is auditable.
     let effortLatched = false;
     let effortRoutedReported = false;
-    const latchEffort = (why: string): void => {
+    // ── "task" routing: one effort for the request, one move if it goes wrong ──
+    // Whether this task starts below the ceiling is settled at the first
+    // request and not revisited; whether it has been raised is settled once
+    // and never undone. So a run sends at most two efforts, in one order, and
+    // on a host where a change of effort costs the cache it pays for that
+    // change at most once — for a reason that is on the record.
+    const taskRouting = this.config.effortRouting === "task";
+    let taskStartsBelow: boolean | null = null;
+    let taskRaised = false;
+    /**
+     * `kind` says what went wrong. "difficulty" is the work: a failed check, a
+     * replan, a loop the run cannot get out of. "gate" is the harness refusing
+     * a finish over something it wants recorded or looked at, which more
+     * reasoning does not supply. "conservative" has always raised on both and
+     * still does; "task" raises on the first only, because its one move is the
+     * only one it has.
+     */
+    const latchEffort = (why: string, kind: "difficulty" | "gate" = "difficulty"): void => {
+      if (taskRouting) {
+        if (kind !== "difficulty" || taskRaised) return;
+        taskRaised = true;
+        // Already at the ceiling: nothing moves, and nothing is claimed.
+        if (taskStartsBelow !== true) return;
+        const ceiling = this.config.thinkingEffort ?? "high";
+        this.report(
+          "loop.effort_latched",
+          "warn",
+          "effortRoute",
+          `reasoning effort raised from ${stepDownEffort(ceiling)} to the ${ceiling} ceiling, ` +
+            `once, for the rest of the run: ${why}`,
+        );
+        return;
+      }
       if (effortLatched || (this.config.effortRouting ?? "off") !== "conservative") return;
       effortLatched = true;
       this.report(
@@ -2575,6 +2658,8 @@ export class AgentLoop {
     // signal that the difficulty has actually passed, so they release it —
     // the next failure latches again, and every transition stays audited.
     const releaseEffortLatch = (why: string): void => {
+      // Never under "task": coming back down is the second change of effort,
+      // and on Codex the second cache it costs.
       if (!effortLatched) return;
       effortLatched = false;
       this.report(
@@ -3135,6 +3220,25 @@ export class AgentLoop {
           enabled: this.config.thinking !== false,
           effort: ((): ReasoningEffort => {
             const ceiling = this.config.thinkingEffort ?? "high";
+            if (taskRouting) {
+              if (taskStartsBelow === null) {
+                taskStartsBelow =
+                  stepDownEffort(ceiling) !== ceiling &&
+                  startsBelowCeiling(this.config.taskState?.currentRequest() || userMessage);
+                if (taskStartsBelow) {
+                  this.report(
+                    "loop.effort_routed",
+                    "warn",
+                    "effortRoute",
+                    `this task runs at ${stepDownEffort(ceiling)} under a ${ceiling} ceiling, ` +
+                      "every turn — raised once, for the rest of the run, if the work goes wrong",
+                  );
+                }
+              }
+              // Read against the ceiling as it is NOW: a person who turns the
+              // dial mid-run has chosen the cache miss that comes with it.
+              return taskStartsBelow && !taskRaised ? stepDownEffort(ceiling) : ceiling;
+            }
             if ((this.config.effortRouting ?? "off") !== "conservative") return ceiling;
             // ── Where a change of effort costs the cache, there is no change ──
             // Routing moves the effort at turn 2, back up at the first sign of
@@ -4226,7 +4330,7 @@ export class AgentLoop {
             "verifying",
             () => shadowState("verifying"),
           );
-          latchEffort("delegation-evidence gate refused the finish");
+          latchEffort("delegation-evidence gate refused the finish", "gate");
           this.report(
             "loop.delegation_gate",
             "warn",
@@ -4335,7 +4439,7 @@ export class AgentLoop {
             "verifying",
             () => shadowState("verifying"),
           );
-          latchEffort("execution-evidence gate refused the finish");
+          latchEffort("execution-evidence gate refused the finish", "gate");
           this.report(
             "loop.evidence_gate",
             "warn",
@@ -4403,7 +4507,7 @@ export class AgentLoop {
             "verifying",
             () => shadowState("verifying"),
           );
-          latchEffort("fix-verified gate refused the finish");
+          latchEffort("fix-verified gate refused the finish", "gate");
           this.report(
             "loop.fix_verified_gate",
             "warn",
@@ -4462,7 +4566,7 @@ export class AgentLoop {
             "verifying",
             () => shadowState("verifying"),
           );
-          latchEffort("product-sight gate refused the finish");
+          latchEffort("product-sight gate refused the finish", "gate");
           this.report(
             "loop.product_sight_gate",
             "warn",
@@ -4540,7 +4644,7 @@ export class AgentLoop {
               "repairing",
               () => shadowState("repairing"),
             );
-            latchEffort("open-steps gate refused the finish");
+            latchEffort("open-steps gate refused the finish", "gate");
             this.report(
               "loop.open_steps_gate",
               "warn",

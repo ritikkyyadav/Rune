@@ -444,13 +444,20 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
       "Per-turn reasoning-effort routing. 'conservative' (default) runs ordinary turns one " +
       "notch below the effort ceiling and pins the ceiling for the rest of the run at the " +
       "first sign of difficulty (failed check, replan, refused finish) — the planning turn " +
-      "and fix-shaped tasks always get the ceiling. 'off' runs the ceiling on every turn.",
+      "and fix-shaped tasks always get the ceiling. 'task' holds ONE effort for the whole " +
+      "request — a notch down for small, clear work, the ceiling for a fix, an investigation " +
+      "or a cross-module change — and raises it at most once, for good, if the work goes " +
+      "wrong; it is the mode for a host where changing effort between turns costs the prompt " +
+      "cache (Codex), on which 'conservative' runs every turn at the ceiling. 'off' runs the " +
+      "ceiling on every turn.",
     kind: "enum",
-    values: ["conservative", "off"],
+    values: ["conservative", "task", "off"],
     valueAliases: {
       on: "conservative",
       auto: "conservative",
       smart: "conservative",
+      once: "task",
+      "per-task": "task",
       disabled: "off",
       none: "off",
     },

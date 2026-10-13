@@ -909,9 +909,11 @@ export interface EngineConfig {
    * Reasoning-effort routing for the MAIN loop. "conservative" (default) runs
    * ordinary turns one notch below the reasoningEffort ceiling and latches
    * back to the ceiling on the first sign of difficulty; "off" runs the
-   * ceiling everywhere. Persisted at llm.effortRouting (/config routing).
+   * ceiling everywhere; "task" holds one effort for the whole request and
+   * raises it at most once (see AgentLoopConfig.effortRouting). Persisted at
+   * llm.effortRouting (/config routing).
    */
-  effortRouting?: "conservative" | "off";
+  effortRouting?: "conservative" | "task" | "off";
   /**
    * Where Rune's OWN calls go — the compaction summarizer, the intent read,
    * the sub-agent report repair. "auto" (default) picks the cheapest healthy
@@ -5329,7 +5331,7 @@ export class Engine {
         this.config.doctrineDelivery = canonicalValue as "jit" | "full";
         return { ok: true };
       case "routing":
-        this.config.effortRouting = canonicalValue as "conservative" | "off";
+        this.config.effortRouting = canonicalValue as "conservative" | "task" | "off";
         return { ok: true };
       case "helper":
         this.config.helperRoute = canonicalValue;

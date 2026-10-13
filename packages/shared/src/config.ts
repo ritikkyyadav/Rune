@@ -44,8 +44,16 @@ export interface RuneConfig {
     reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
     /** "jit" (default) injects situational doctrine at first relevance; "full" keeps it in every request. */
     doctrineDelivery?: "jit" | "full";
-    /** "conservative" (default) steps ordinary turns one effort notch down, escalating on difficulty; "off" disables routing. */
-    effortRouting?: "conservative" | "off";
+    /**
+     * "conservative" (default) steps ordinary turns one effort notch down,
+     * escalating on difficulty; "off" disables routing. "task" picks one
+     * effort for the whole request — a notch down for small, clear work, the
+     * ceiling for a fix, an investigation or a cross-module change — and
+     * raises it at most once, for good, if the work goes wrong. For hosts
+     * where changing effort between turns costs the prompt cache (Codex),
+     * where "conservative" runs every turn at the ceiling.
+     */
+    effortRouting?: "conservative" | "task" | "off";
     anthropic?: {
       apiKey: string;
       model: string;
