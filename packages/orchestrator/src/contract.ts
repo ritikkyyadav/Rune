@@ -1710,6 +1710,14 @@ function outcomeOf(
   };
 }
 
+/**
+ * The two gaps that are not about a criterion: steps the plan left open, and a
+ * check whose last run failed. Named once, so the reader of a verdict that asks
+ * "was anything SEEN to fail?" looks for the same words this writes.
+ */
+export const PLAN_GAP = "the plan";
+export const CHECKS_GAP = "the checks";
+
 /** Why a criterion that is not accepted is not accepted, in one clause. */
 function gapWhy(criterion: Criterion, status: CriterionStatus): string {
   const detail = criterion.evidence?.detail?.replace(/\s+/g, " ").trim();
@@ -1821,12 +1829,12 @@ export function computeVerdict(input: VerdictInputs): CompletionVerdict {
   }));
   if (stepsOpen) {
     gaps.push({
-      criterion: "the plan",
+      criterion: PLAN_GAP,
       why: `${input.openSteps} of ${input.totalSteps} planned steps still open`,
     });
   }
   for (const command of red) {
-    gaps.push({ criterion: "the checks", why: `\`${command}\` last failed` });
+    gaps.push({ criterion: CHECKS_GAP, why: `\`${command}\` last failed` });
   }
   return { kind: "partial", criteria, gaps, execution, ...evaluators };
 }

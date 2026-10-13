@@ -21,7 +21,7 @@ import type {
   UserPermissionDecision,
 } from "@rune/protocol";
 import { assertNeverSoft } from "@rune/protocol";
-import { verdictLine } from "./contract";
+import { CHECKS_GAP, PLAN_GAP, verdictLine } from "./contract";
 
 export interface HeadlessOptions {
   /** Emit a JSON envelope instead of plain text — for machine consumers. */
@@ -407,6 +407,51 @@ export function unfinishedVerdict(
   return `The task is ${verdict.kind}; the completion criteria were not all satisfied.`;
 }
 
+/**
+ * Why a finished run's verdict is short of `met` — three different facts that
+ * `partial` and `unmet` each cover, and that a reader has until now had to
+ * work out from the gap text.
+ *
+ *   observed_failure   something was SEEN to fall short: a criterion's bound
+ *                      check failed, a check's last run failed, or planned
+ *                      steps were left open.
+ *   outside_terms      nothing was seen to fail, and a criterion from outside
+ *                      the run — the person's, or an `--acceptance` check — is
+ *                      not satisfied.
+ *   own_terms_unshown  nothing was seen to fail, and every criterion that is
+ *                      short is one the run wrote for itself and could not
+ *                      show: no check bound, evidence that only a person can
+ *                      settle, a test the run authored.
+ *
+ * Recorded 2026-10-07 to 2026-10-09 on six benchmark runs
+ * (`~/rune-evidence/b2-s5…`, `b2-s6…`, `design-ab2…`): five ended `partial`
+ * and all five were the third kind but one, which also had a red check. In an
+ * empty folder there is no check that existed before the run, so a build from
+ * nothing that reads its plan back can reach no other ending.
+ *
+ * This changes nothing about what a run exits with: `unfinishedVerdict` is
+ * exactly as it was. It is the same verdict, said so that "could not show its
+ * own terms" and "a check failed" are not one word.
+ */
+export type VerdictShortfall = "observed_failure" | "outside_terms" | "own_terms_unshown";
+
+export function verdictShortfall(
+  verdict: CompletionVerdict | undefined,
+): VerdictShortfall | undefined {
+  if (verdict?.kind !== "unmet" && verdict?.kind !== "partial") return undefined;
+  if (verdict.criteria.length === 0) return undefined;
+  const seenToFail =
+    verdict.criteria.some((c) => c.status === "failed") ||
+    (verdict.kind === "partial" &&
+      verdict.gaps.some((g) => g.criterion === PLAN_GAP || g.criterion === CHECKS_GAP));
+  if (seenToFail) return "observed_failure";
+  const outside = verdict.criteria.some(
+    (c) =>
+      (c.source ?? "inferred") !== "inferred" && c.required !== false && c.status !== "satisfied",
+  );
+  return outside ? "outside_terms" : "own_terms_unshown";
+}
+
 /** The exit code a result deserves. */
 export function headlessExitCode(r: HeadlessResult): number {
   // Checked BEFORE ok, because a denied permission does not raise: the turn
@@ -450,6 +495,8 @@ export function headlessEnvelope(
       // question: `end_turn` with none of the stated criteria verified is a
       // finished loop and an unfinished task.
       verdict: r.verdict,
+      // …and, when it is short of `met`, which of three things that means.
+      ...(verdictShortfall(r.verdict) ? { shortfall: verdictShortfall(r.verdict) } : {}),
       toolCalls: r.toolCalls,
       toolErrors: r.toolErrors,
       filesChanged: r.filesChanged,

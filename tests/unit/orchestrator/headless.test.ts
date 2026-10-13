@@ -19,9 +19,11 @@ import {
   headlessExitCode,
   headlessPermissionHandler,
   runHeadless,
+  verdictShortfall,
   HEADLESS_EXIT,
   type HeadlessResult,
 } from "../../../packages/orchestrator/src/headless";
+import { computeVerdict } from "../../../packages/orchestrator/src/contract";
 import type { Engine, PermissionPrompt } from "../../../packages/orchestrator/src/engine";
 import type { CompletionVerdict } from "@rune/protocol";
 
@@ -317,6 +319,139 @@ describe("a verdict makes a finished run a failed one only where a promise was m
     expect(headlessExitCode({ ...result, permissionsDenied: 1 })).toBe(
       HEADLESS_EXIT.needsPermission,
     );
+  });
+});
+
+describe("why a finished run is short of met, as three facts and not one word", () => {
+  // `partial` covers a red check and a criterion nobody could settle alike.
+  // Recorded 2026-10-07 to 2026-10-09 on six benchmark runs: five ended
+  // `partial`, every criterion on all five was the run's own, and one had a
+  // check that failed. The other four had failed nothing.
+  type Outcome = CompletionVerdict["criteria"][number];
+  const own = (status: Outcome["status"]): Outcome => ({ text: "a term", rung: null, status });
+  const from = (source: "user" | "evaluator", status: Outcome["status"]): Outcome => ({
+    ...own(status),
+    source,
+  });
+  const partial = (
+    criteria: Outcome[],
+    gaps: Array<{ criterion: string; why: string }> = [
+      { criterion: "a term", why: "no check bound" },
+    ],
+  ): CompletionVerdict => ({ kind: "partial", criteria, gaps });
+
+  test("the run's own terms, none of them seen to fail", () => {
+    for (const status of ["unassessed", "needs_review", "stale"] as const) {
+      expect(verdictShortfall(partial([own(status), own("satisfied")]))).toBe("own_terms_unshown");
+    }
+    expect(
+      verdictShortfall({ kind: "unmet", criteria: [own("unassessed")], missing: ["a term"] }),
+    ).toBe("own_terms_unshown");
+  });
+
+  test("something was seen to fail, whoever wrote the term", () => {
+    expect(verdictShortfall(partial([own("failed")]))).toBe("observed_failure");
+    expect(verdictShortfall(partial([from("user", "failed")]))).toBe("observed_failure");
+    // A check whose last run failed, and steps the plan left open, are seen too.
+    expect(
+      verdictShortfall(
+        partial([own("satisfied")], [{ criterion: "the checks", why: "`bun test` last failed" }]),
+      ),
+    ).toBe("observed_failure");
+    expect(
+      verdictShortfall(
+        partial(
+          [own("satisfied")],
+          [{ criterion: "the plan", why: "2 of 5 planned steps still open" }],
+        ),
+      ),
+    ).toBe("observed_failure");
+    // Seen-to-fail outranks the rest: one red check beside unshown terms is a failure.
+    expect(
+      verdictShortfall(
+        partial(
+          [own("unassessed"), from("user", "unassessed")],
+          [{ criterion: "the checks", why: "`bun test` last failed" }],
+        ),
+      ),
+    ).toBe("observed_failure");
+  });
+
+  test("a term from outside the run that is not satisfied, with nothing seen to fail", () => {
+    for (const source of ["user", "evaluator"] as const) {
+      expect(verdictShortfall(partial([own("satisfied"), from(source, "unassessed")]))).toBe(
+        "outside_terms",
+      );
+      expect(verdictShortfall(partial([from(source, "needs_review")]))).toBe("outside_terms");
+    }
+    // An OPTIONAL outside term is accepted whatever happened to it: only the run's own are short.
+    expect(
+      verdictShortfall(
+        partial([own("unassessed"), { ...from("user", "unassessed"), required: false }]),
+      ),
+    ).toBe("own_terms_unshown");
+  });
+
+  test("nothing is short where nothing was promised or everything was met", () => {
+    expect(verdictShortfall(undefined)).toBeUndefined();
+    expect(verdictShortfall({ kind: "met", criteria: [own("satisfied")] })).toBeUndefined();
+    expect(
+      verdictShortfall({ kind: "none", criteria: [], reason: "a conversational answer" }),
+    ).toBeUndefined();
+    expect(
+      verdictShortfall({ kind: "unmet", criteria: [], missing: ["no criteria stated"] }),
+    ).toBeUndefined();
+  });
+
+  test("it reads the words the verdict itself writes for a red check and an open plan", () => {
+    // Built by the real function, not by hand: if the gap's name ever changes
+    // in one place and not the other, this is where it shows.
+    const base = {
+      criteria: [{ text: "the parser keeps trailing lines", rung: null as null }],
+      revision: null,
+      stopReason: "end_turn",
+      wrote: true,
+    };
+    const red = computeVerdict({
+      ...base,
+      checks: [{ command: "bun test", passed: false, at: "2026-10-13T00:00:00Z" }],
+      openSteps: 0,
+      totalSteps: 0,
+    } as never);
+    expect(red.kind).toBe("partial");
+    expect(verdictShortfall(red)).toBe("observed_failure");
+
+    const open = computeVerdict({ ...base, checks: [], openSteps: 2, totalSteps: 5 } as never);
+    expect(open.kind).toBe("partial");
+    expect(verdictShortfall(open)).toBe("observed_failure");
+
+    const neither = computeVerdict({ ...base, checks: [], openSteps: 0, totalSteps: 0 } as never);
+    expect(verdictShortfall(neither)).toBe("own_terms_unshown");
+  });
+
+  test("the envelope says which, beside the verdict — and what the run exits with is unchanged", () => {
+    const result: HeadlessResult = {
+      text: "Built it.",
+      ok: true,
+      toolCalls: 4,
+      toolErrors: 0,
+      filesChanged: ["index.html"],
+      permissionsDenied: 0,
+      inputTokens: 1,
+      outputTokens: 1,
+      cacheReadTokens: 0,
+      durationMs: 1,
+      stopReason: "end_turn",
+      verdict: partial([own("unassessed")]),
+    };
+    const envelope = JSON.parse(headlessEnvelope(result));
+    expect(envelope.shortfall).toBe("own_terms_unshown");
+    // The rule itself has not moved: held to its own terms, not shown, a change made.
+    expect(envelope.ok).toBe(false);
+    expect(headlessExitCode(result)).toBe(HEADLESS_EXIT.failed);
+    // And a met run carries no such field at all.
+    const met = JSON.parse(headlessEnvelope({ ...result, verdict: { kind: "met", criteria: [] } }));
+    expect("shortfall" in met).toBe(false);
   });
 });
 

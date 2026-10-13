@@ -34,6 +34,26 @@ describe("Rune completion verdict in the parity arm", () => {
     expect(parsed.scored).toBe(true);
   });
 
+  test("the reason a verdict is short rides the detail, and moves no signal", () => {
+    const envelope = {
+      ok: false,
+      stopReason: "end_turn",
+      verdict: { kind: "partial" },
+      error: "The task is partial; the completion criteria were not all satisfied.",
+    };
+    const plain = parseRuneOutput(capture(envelope), EMPTY_LEDGER);
+    const reasoned = parseRuneOutput(
+      capture({ ...envelope, shortfall: "own_terms_unshown" }),
+      EMPTY_LEDGER,
+    );
+    expect(reasoned.detail).toBe("completion_partial:own_terms_unshown");
+    expect(plain.detail).toBe("completion_partial");
+    // Scored exactly as before: the reason is for the reader.
+    expect(reasoned.signals).toEqual(plain.signals);
+    expect(terminalOf(reasoned.signals)).toBe("incomplete");
+    expect(reasoned.claimedSuccess).toBe(false);
+  });
+
   test("a legacy ok:true unmet verdict cannot claim success", () => {
     const parsed = parseRuneOutput(
       capture({ ok: true, stopReason: "end_turn", verdict: { kind: "unmet" } }, 0),

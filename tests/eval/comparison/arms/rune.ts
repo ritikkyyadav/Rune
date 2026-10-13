@@ -121,6 +121,8 @@ interface RuneEnvelope {
   error?: string;
   stopReason?: string;
   verdict?: { kind?: string };
+  /** Why a `partial` or `unmet` verdict is short: see `verdictShortfall` in headless.ts. */
+  shortfall?: string;
   usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number };
 }
 
@@ -253,14 +255,23 @@ export function parseRuneOutput(
         cacheWriteTokens: 0,
       }
     : null;
+  // The verdict with its reason beside it, where the run gave one. It is the
+  // difference between a run that failed a check and one that finished and
+  // could not show terms it wrote for itself — both `partial`, both scored
+  // "incomplete" above, and until 2026-10-13 told apart only by reading the
+  // gap text of each. Descriptive: the signals, and so the score, do not read it.
+  const verdictDetail =
+    incompleteVerdict && typeof envelope?.shortfall === "string"
+      ? `${incompleteVerdict}:${envelope.shortfall}`
+      : incompleteVerdict;
   const detail = capture.stopped
     ? capture.stopped
     : !envelope
       ? capture.exitCode === 0
         ? "no envelope on stdout"
         : "no envelope; exited non-zero"
-      : envelope.ok
-        ? incompleteVerdict
+      : envelope.ok || honestCompletionStop
+        ? verdictDetail
         : (stop ?? "error");
   return judged(signals, {
     resultText: typeof envelope?.text === "string" ? envelope.text : null,
