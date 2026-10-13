@@ -31,6 +31,10 @@ import {
   startsBelowCeiling,
 } from "../../../packages/orchestrator/src/agent-loop";
 import type { AgentTurnEvent } from "../../../packages/orchestrator/src/agent-loop";
+import {
+  normalizeSettingValue,
+  resolveSetting,
+} from "../../../packages/orchestrator/src/config-settings";
 import { TaskStateStore } from "../../../packages/orchestrator/src/task-state";
 
 function ev(type: string, extra: Record<string, unknown> = {}) {
@@ -354,6 +358,21 @@ describe("when the work goes wrong the effort is raised once, and stays", () => 
     await collect(loop.run("fix the crash in the date parser", "s1", "/tmp"));
     expect(new Set(gw.efforts)).toEqual(new Set(["max"]));
     expect(incidents.some((i) => i.class === "loop.effort_latched")).toBe(false);
+  });
+});
+
+describe("the setting", () => {
+  test("`/config routing task` is a value the catalogue takes, by name and by its other names", () => {
+    const routing = resolveSetting("routing")!;
+    expect(routing.tomlPath).toBe("llm.effortRouting");
+    expect(normalizeSettingValue(routing, "task")).toEqual({ value: "task" });
+    expect(normalizeSettingValue(routing, "once")).toEqual({ value: "task" });
+    expect(normalizeSettingValue(routing, "per-task")).toEqual({ value: "task" });
+    // The two it had are untouched, and `on` still means what it meant.
+    expect(normalizeSettingValue(routing, "conservative")).toEqual({ value: "conservative" });
+    expect(normalizeSettingValue(routing, "on")).toEqual({ value: "conservative" });
+    expect(normalizeSettingValue(routing, "off")).toEqual({ value: "off" });
+    expect("error" in normalizeSettingValue(routing, "always")).toBe(true);
   });
 });
 
