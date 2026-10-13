@@ -2700,3 +2700,90 @@ no retry. The manifests are in `dist/checkpoint-20261014/`. What to read afterwa
    and so would that be.
 
 **Next step.** The checkpoint, on the founder's word.
+
+## The cost-and-latency lane, measured live, 2026-10-14 · **six runs on the founder's word: the same work as OpenCode in less time and for no more money on both tasks; every Rune run still ends "incomplete"**
+
+The founder, after the entry above: "well proceed i have the available quota for gpt
+subs it just reseted do the evals and report me that where does our program stands
+now". Three single-pair sittings on the rig, harness mode, `gpt-6-sol` on the Codex
+subscription for both tools, OpenCode 1.18.30 at `high`, Rune on its shipped defaults,
+`RUNE_EVAL_QUOTA_PCT=70`, no retry. Rune ran first in each pair. Evidence in
+`~/rune-evidence/cost-latency-20261014/`.
+
+**Six runs, not the eight planned.** The old binary was not run on the serious task.
+Its end-of-turn check starts the fixture's tests with `RUNE_CREDENTIALS_PATH` set, and
+`tests/unit/tools/mcp-oauth.test.ts` at that commit builds its store as
+`new FileCredentialStore({ ...process.env, RUNE_HOME: tmp })`: the path variable wins
+over the home, so the store the test writes tokens into is the founder's real
+`credentials.json`. That is what wrote 667 bytes in the reproduction. Running it again
+knowingly was not mine to do; the serious baseline below is the recorded run.
+
+| Task                    | Arm             | Hidden tests | Wall    | Calls | List cost | Exit | Ended      |
+| ----------------------- | --------------- | ------------ | ------- | ----- | --------- | ---- | ---------- |
+| note-field-and-exporter | Rune, this lane | 3 of 3       | 22.1 s  | 4     | $0.046    | 0    | incomplete |
+|                         | OpenCode        | 3 of 3       | 33.6 s  | 7     | $0.061    | 0    | completed  |
+|                         | Rune, `0fe45a7` | 3 of 3       | 41.5 s  | 11    | $0.104    | 0    | incomplete |
+|                         | OpenCode, again | 3 of 3       | 45.8 s  | 11    | $0.083    | 0    | completed  |
+| startup-selection       | Rune, this lane | 15 of 15     | 313.1 s | 32    | $0.649    | 1    | incomplete |
+|                         | OpenCode        | 15 of 15     | 368.3 s | 36    | $0.654    | 0    | completed  |
+
+No regression, nothing out of scope and no false completion in any of the six.
+
+**The small task.** The lane against the build it started from, minutes apart: 41.5 s →
+22.1 s, eleven calls → four, $0.104 → $0.046. What went is what the lane was aimed at:
+four completions that only kept the ledger (12 s, $0.047) became none, and one
+background screen became none. OpenCode's two runs of the same task, 33.6 s and 45.8 s
+on seven and eleven calls, are its own swing.
+
+**The serious task, and the check.** The end-of-turn check took **62 s and passed** —
+typecheck, the whole unit suite, lint. On this task it had been cut at 120 s with
+nothing measured both times before. It is the first answer that check has given here.
+
+| Evening          | Rune                                             | OpenCode                    |
+| ---------------- | ------------------------------------------------ | --------------------------- |
+| 7 October        | 422.2 s · 27 calls · $0.655 · check 124 s, cut   | 424.2 s · 40 calls · $0.694 |
+| 8 October        | 573.4 s · 39 calls · $0.885 · check 125 s, cut   | 328.1 s · 28 calls · $0.633 |
+| 14 October, lane | 313.1 s · 32 calls · $0.649 · check 62 s, passed | 368.3 s · 36 calls · $0.654 |
+
+Rune's own loop was 298, 448 and 251 s on the three evenings, so most of the difference
+between any two of them is the run and not the build. The 62 s is the build.
+
+**The rig's own report** (`report-candidate/`, harness mode, PROVISIONAL, one pair a
+family): two of two complete for each tool; cost per clean completion $0.3475 for Rune
+and $0.3575 for OpenCode; median paired ratio, Rune ÷ OpenCode, 0.87× on list cost and
+0.75× on wall time. On 8 October the same rig on two serious tasks read 1.54× the time
+and 1.16× the cost.
+
+**What did not move.**
+
+- **Every Rune run ended "incomplete".** The small one: `unmet — no criteria stated`,
+  exit 0. The serious one: `partial`, `own_terms_unshown`, exit 1 — with fifteen of
+  fifteen hidden tests passing and all three of its own checks green. The lane named
+  the reason on the envelope and changed nothing else; this is A3, and it is now the
+  whole of the difference between these rows and "completed".
+- **Ledger-only completions on the serious run:** 5 of 30 — four plan updates and one
+  citation, 26 s, $0.083. The instruction that a plan update is never a turn of its own
+  did not change that.
+- **One false flag cost $0.114**, 18% of the serious run. The background screen flagged
+  `bun test … > /tmp/x.log 2>&1; result=$?; tail -n 28 /tmp/x.log; exit $result`; the
+  reviewer on the heavy model overruled it. Neither request read anything from the
+  cache.
+- The effort was `high` on all 30 calls and never changed. Task routing was not run.
+
+**The window.** Rune's meter: five-hour 0% before, 9% after its serious run; weekly 20%
+then 21%. OpenCode's use is not metered by the rig.
+
+**Limits.** One run in each cell, two tasks, one evening, Rune first in every pair.
+Harness mode is attribution, never the gate. **The UI family was not run** — the one
+with the largest recorded gap (2.9 times OpenCode's cost on 9 October), and the one the
+reviewer and ceremony changes were mostly for.
+
+**For the founder.**
+
+1. What a run should say when its work is right and its own terms were shown only by
+   its own tests (A3). It decides the exit code, and the rig's word for every run above.
+2. The three UI prompts on this build: three runs, Rune alone, against the recorded
+   runs of the other two tools.
+3. Bringing the lane into the working tree.
+
+**Next step.** The founder's, on the three above.
