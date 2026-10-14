@@ -129,7 +129,8 @@ describe("a quota cap ends the run", () => {
     // This exit emitted nothing terminal at all, so the envelope carried an
     // `error` with no `stopReason` key — `JSON.stringify` drops undefined —
     // and the lifecycle row was invented afterwards. A non-retryable provider
-    // failure IS `provider_lost`; what changes is that the run says so itself.
+    // failure that does NOT carry the cap's structural code (this gateway
+    // sends only the sentence) is `provider_lost`; the run says so itself.
     const events = await run(gatewayCappedAfterPlanning(), new TaskStateStore());
     const terminal = events.at(-1) as Extract<AgentTurnEvent, { type: "turn_complete" }>;
     expect(terminal.type).toBe("turn_complete");
@@ -149,6 +150,78 @@ describe("a quota cap ends the run", () => {
     const started = Date.now();
     await run(gatewayCappedAfterPlanning(), new TaskStateStore());
     expect(Date.now() - started).toBeLessThan(2000);
+  });
+});
+
+/**
+ * What the real gateway sends for a plan or usage cap: the sentence, and the
+ * kind (`usage_cap`) and the reset (`resetAt`) as fields. The loop dropped
+ * both until 2026-10-14 and ended the run `provider_lost` — 39 of 44 such
+ * endings in one install's record were a Codex limit with a known reset.
+ */
+describe("a usage cap the gateway names ends the run `quota_wall`, with its reset", () => {
+  const RESET_AT = Date.parse("2026-10-14T17:14:00Z");
+  function gatewayWithStructuralCap() {
+    const gw = gatewayCappedAfterPlanning();
+    const planning = gw.inferStream;
+    gw.inferStream = async function* (...args: unknown[]) {
+      if (gw.calls === 0) {
+        yield* planning(...args);
+        return;
+      }
+      gw.calls++;
+      yield {
+        type: "error",
+        error: QUOTA_ERROR,
+        retryable: false,
+        code: "usage_cap",
+        resetAt: RESET_AT,
+      };
+    };
+    return gw;
+  }
+
+  test("the terminal event says quota_wall and carries the provider's reset", async () => {
+    const events = await run(gatewayWithStructuralCap(), new TaskStateStore());
+    const terminal = events.at(-1) as Extract<AgentTurnEvent, { type: "turn_complete" }>;
+    expect(terminal.type).toBe("turn_complete");
+    expect(terminal.stopReason).toBe("quota_wall");
+    expect(terminal.resumeAt).toBe(RESET_AT);
+  });
+
+  test("the handoff is written as a quota wall, before the error", async () => {
+    const ts = new TaskStateStore();
+    const events = await run(gatewayWithStructuralCap(), ts);
+    const iHandoff = events.findIndex((e) => e.type === "handoff");
+    const handoff = events[iHandoff] as Extract<AgentTurnEvent, { type: "handoff" }>;
+    expect(handoff.reason).toBe("quota_wall");
+    expect(iHandoff).toBeLessThan(events.findIndex((e) => e.type === "error"));
+    expect(ts.hasOpenTodos()).toBe(true);
+  });
+
+  test("it still stops on the first capped turn and never waits on the cap", async () => {
+    const gw = gatewayWithStructuralCap();
+    const started = Date.now();
+    await run(gw, new TaskStateStore());
+    expect(gw.calls).toBe(2);
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
+  test("a non-retryable failure that is not a cap still ends provider_lost", async () => {
+    const gw = gatewayCappedAfterPlanning();
+    const planning = gw.inferStream;
+    gw.inferStream = async function* (...args: unknown[]) {
+      if (gw.calls === 0) {
+        yield* planning(...args);
+        return;
+      }
+      gw.calls++;
+      yield { type: "error", error: "No credits on openrouter.", retryable: false };
+    };
+    const events = await run(gw, new TaskStateStore());
+    const terminal = events.at(-1) as Extract<AgentTurnEvent, { type: "turn_complete" }>;
+    expect(terminal.stopReason).toBe("provider_lost");
+    expect(terminal.resumeAt).toBeUndefined();
   });
 });
 

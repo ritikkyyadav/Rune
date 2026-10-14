@@ -78,6 +78,11 @@ export interface HeadlessResult {
    * `end_turn`, `ok: true`, exit 0. Absent when no contract was in scope.
    */
   verdict?: CompletionVerdict;
+  /**
+   * Epoch ms when a run that stopped at a `quota_wall` can go on — the
+   * provider's reset, off the terminal event. Absent on every other ending.
+   */
+  resumeAt?: number;
   toolCalls: number;
   toolErrors: number;
   /** Workspace-relative paths the run wrote or edited. */
@@ -100,16 +105,33 @@ export interface HeadlessResult {
   lifecycle?: TaskLifecycle;
 }
 
-/** Process exit codes. Distinct so a caller can tell WHY a run failed. */
+/**
+ * Process exit codes: how the run ENDED, so a caller can tell why it stopped.
+ *
+ * Until 2026-10-14 a finished run whose own verdict was `partial` or `unmet`
+ * exited 1, the same code as a crash. Every live run in the October sittings
+ * did exactly that on work that passed every hidden check, and none of the
+ * 163 runs recorded since 14 September ever exited 0 that way. Whether the
+ * TASK was met is in the envelope (`ok`, `verdict`, `shortfall`), unchanged;
+ * the exit code is execution only, as Claude Code's `-p` does it.
+ * `--strict-verdict` restores the old rule for a caller that wants it.
+ */
 export const HEADLESS_EXIT = {
+  /** The run ended on its own: the model finished its turn. */
   ok: 0,
-  /** Execution failed, or a change was held to criteria it did not satisfy. */
+  /** Execution failed: an error, a stall, a stopped loop, open steps, a safety halt. */
   failed: 1,
   /**
    * The run stopped because it needed permission and had no way to ask.
    * Separate from a plain failure: the fix is a flag, not a retry.
    */
   needsPermission: 3,
+  /** The run stopped at a limit: turns, output tokens or budget. */
+  limit: 4,
+  /** The provider could not go on: a usage cap (see `resumeAt`) or lost after retries. */
+  provider: 5,
+  /** The run was cancelled. A signal's own code (129, 130, 143) wins over this. */
+  cancelled: 130,
 } as const;
 
 /**
@@ -159,6 +181,8 @@ export async function runHeadless(
   let stopReason: string | undefined;
   // What the run did against the contract, off the same terminal event.
   let verdict: CompletionVerdict | undefined;
+  // When a run paused at a quota wall can go on, off the same terminal event.
+  let resumeAt: number | undefined;
   // The lifecycle projection, latest wins — the last one carries the ending.
   let lifecycle: TaskLifecycle | undefined;
 
@@ -250,6 +274,7 @@ export async function runHeadless(
         case "turn_complete":
           stopReason = event.stopReason;
           if (event.verdict) verdict = event.verdict;
+          resumeAt = event.resumeAt;
           break;
 
         // ── The lifecycle projection ──
@@ -302,6 +327,7 @@ export async function runHeadless(
       error: err instanceof Error ? err.message : String(err),
       ...(stopReason ? { stopReason } : {}),
       ...(verdict ? { verdict } : {}),
+      ...(resumeAt !== undefined ? { resumeAt } : {}),
       toolCalls,
       toolErrors,
       filesChanged: [...filesChanged],
@@ -326,6 +352,7 @@ export async function runHeadless(
     ...(error === undefined ? {} : { error }),
     ...(stopReason ? { stopReason } : {}),
     ...(verdict ? { verdict } : {}),
+    ...(resumeAt !== undefined ? { resumeAt } : {}),
     toolCalls,
     toolErrors,
     filesChanged: [...filesChanged],
@@ -358,6 +385,10 @@ export const UNFINISHED_STOP: Record<string, string | undefined> = {
   // with no error at all, and silence read as success.
   provider_lost:
     "The provider stopped answering before the run finished; the output above is partial.",
+  // The gateway's own sentence already says when; this is the line a run owes
+  // when that error was not the first one recorded.
+  quota_wall:
+    "The provider's usage limit was reached and the run paused; it can resume when the limit resets.",
   // Nothing new happened for many turns and the loop stopped it. Both stall
   // paths used to emit no terminal event whatsoever, so the envelope carried
   // an `error` and no `stopReason` key — JSON.stringify drops undefined.
@@ -452,19 +483,111 @@ export function verdictShortfall(
   return outside ? "outside_terms" : "own_terms_unshown";
 }
 
-/** The exit code a result deserves. */
-export function headlessExitCode(r: HeadlessResult): number {
-  // Checked BEFORE ok, because a denied permission does not raise: the turn
-  // completes, the model explains it could not write the file, and `ok` is
-  // true. Observed exactly that — a run that created nothing exiting 0.
+/**
+ * How a headless run ended, in one word — the envelope's `subtype`, named as
+ * Claude Code's `-p` result names its own.
+ *
+ *   success                 the model finished its turn. Whether the TASK was
+ *                           met is the verdict's to say, not this.
+ *   error_max_turns         the turn ceiling
+ *   error_max_tokens        the output-token limit
+ *   error_budget            the run's budget refused the next request
+ *   error_quota             a provider usage cap; `resumeAt` says when it lifts
+ *   error_provider          the provider stopped answering after the retries
+ *   error_halted            the safety broker halted the run
+ *   error_open_steps        the loop ended the run with its own planned steps
+ *                           still open, after refusing the finish once (G21)
+ *   error_cancelled         the run was cancelled
+ *   error_during_execution  anything else: an error, a stall, a stopped loop
+ *
+ * `open_steps` is an ending, not a verdict: the loop itself stopped a run that
+ * left its own plan undone. What the exit code no longer follows is a verdict
+ * the run could not SHOW (`partial` or `unmet` on terms it wrote itself).
+ */
+export type HeadlessSubtype =
+  | "success"
+  | "error_max_turns"
+  | "error_max_tokens"
+  | "error_budget"
+  | "error_quota"
+  | "error_provider"
+  | "error_halted"
+  | "error_open_steps"
+  | "error_cancelled"
+  | "error_during_execution";
+
+const SUBTYPE_OF_STOP: Record<string, HeadlessSubtype> = {
+  end_turn: "success",
+  open_steps: "error_open_steps",
+  max_turns: "error_max_turns",
+  max_tokens: "error_max_tokens",
+  budget: "error_budget",
+  quota_wall: "error_quota",
+  provider_lost: "error_provider",
+  halted: "error_halted",
+  aborted: "error_cancelled",
+  stalled: "error_during_execution",
+  loop_detected: "error_during_execution",
+  barren: "error_during_execution",
+};
+
+export function headlessSubtype(r: HeadlessResult): HeadlessSubtype {
+  const fromStop = r.stopReason ? SUBTYPE_OF_STOP[r.stopReason] : undefined;
+  // A provider's own stop words (`tool_use`, `stop`) are an ordinary finish,
+  // exactly as `statusFromStopReason` reads them. No terminal event at all is
+  // a host older than it, judged by whether it raised: a thrown turn always
+  // carries an error.
+  const subtype = fromStop ?? (r.stopReason || r.ok ? "success" : "error_during_execution");
+  // A finish that carries an error the loop did not attribute — a provider
+  // refusal, a thrown turn — is not a success. A verdict-only shortfall is.
+  if (
+    subtype === "success" &&
+    r.error &&
+    r.error !== unfinishedVerdict(r.verdict, r.filesChanged)
+  ) {
+    const own = r.stopReason ? UNFINISHED_STOP[r.stopReason] : undefined;
+    if (r.error !== own) return "error_during_execution";
+  }
+  return subtype;
+}
+
+const EXIT_OF_SUBTYPE: Record<HeadlessSubtype, number> = {
+  success: HEADLESS_EXIT.ok,
+  error_max_turns: HEADLESS_EXIT.limit,
+  error_max_tokens: HEADLESS_EXIT.limit,
+  error_budget: HEADLESS_EXIT.limit,
+  error_quota: HEADLESS_EXIT.provider,
+  error_provider: HEADLESS_EXIT.provider,
+  error_halted: HEADLESS_EXIT.failed,
+  error_open_steps: HEADLESS_EXIT.failed,
+  error_cancelled: HEADLESS_EXIT.cancelled,
+  error_during_execution: HEADLESS_EXIT.failed,
+};
+
+/**
+ * The exit code a result deserves: how it ended (`headlessSubtype`).
+ *
+ * `strictVerdict` is the rule before 2026-10-14 for a caller that wants it: a
+ * finished run whose verdict is short of what it was held to exits 1.
+ */
+export function headlessExitCode(
+  r: HeadlessResult,
+  opts: { strictVerdict?: boolean } = {},
+): number {
+  // Checked BEFORE everything, because a denied permission does not raise: the
+  // turn completes, the model explains it could not write the file, and `ok`
+  // is true. Observed exactly that — a run that created nothing exiting 0.
   // A caller reading only the exit code would record a success.
   //
   // A blocked run is a configuration problem, not a capability one, and a
   // benchmark that cannot tell them apart scores the agent for the harness's
   // missing flag.
   if (r.permissionsDenied > 0) return HEADLESS_EXIT.needsPermission;
-  if (r.ok && !unfinishedVerdict(r.verdict, r.filesChanged)) return HEADLESS_EXIT.ok;
-  return HEADLESS_EXIT.failed;
+  const subtype = headlessSubtype(r);
+  if (subtype === "success" && opts.strictVerdict) {
+    if (!r.ok || unfinishedVerdict(r.verdict, r.filesChanged)) return HEADLESS_EXIT.failed;
+  }
+  return EXIT_OF_SUBTYPE[subtype];
 }
 
 /**
@@ -491,6 +614,10 @@ export function headlessEnvelope(
       // How it ended, so "cancelled", "out of turns" and "done" are three
       // different answers to a machine consumer, not one boolean.
       stopReason: r.stopReason,
+      // …the same, in the words the exit code is chosen by.
+      subtype: headlessSubtype(r),
+      // …and, for a run paused at a usage cap, when it can go on (epoch ms).
+      ...(r.resumeAt !== undefined ? { resumeAt: r.resumeAt } : {}),
       // …and what it did against what was ASKED, which is a different
       // question: `end_turn` with none of the stated criteria verified is a
       // finished loop and an unfinished task.

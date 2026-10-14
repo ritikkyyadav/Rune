@@ -204,6 +204,10 @@ export function parseRuneOutput(
   if (!provider && !envelope && !events && !capture.stopped)
     provider = failureCategory(`${capture.stderr}\n${capture.stdout}`);
   if (!provider && stop === "provider_lost") provider = "outage";
+  // A usage cap (Rune ≥ 1.4.3 names it): the provider is reachable and said
+  // when it answers again — unscored, exactly as the gateway's quota sentence
+  // already was through `failureCategory`.
+  if (!provider && stop === "quota_wall") provider = "quota";
 
   const reachedModel = ledger.entries > 0 || usageEvents > 0;
   const incompleteVerdict =
@@ -228,6 +232,7 @@ export function parseRuneOutput(
     (envelope?.ok === false || honestCompletionStop) &&
     typeof envelope.stopReason === "string" &&
     envelope.stopReason !== "provider_lost" &&
+    envelope.stopReason !== "quota_wall" &&
     !RUNE_LIMIT_STOPS[envelope.stopReason]
       ? envelope.stopReason === "end_turn"
         ? honestCompletionStop

@@ -1372,7 +1372,11 @@ export class FleetLedger {
       const status = child.status ?? "";
       const clean = status === "end_turn" || status === "completed";
       const failed =
-        status === "" || status === "stalled" || status === "provider_lost" || status === "error";
+        status === "" ||
+        status === "stalled" ||
+        status === "provider_lost" ||
+        status === "quota_wall" ||
+        status === "error";
       card.state = failed ? "failed" : "done";
       card.retired = true;
       card.restored = true;

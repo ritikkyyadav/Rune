@@ -2938,6 +2938,8 @@ export class Tui {
     let filesChanged = 0;
     let turnFailed = false;
     let quotaStop: string | null = null;
+    // When the provider said it answers again, off a `quota_wall` ending.
+    let quotaWallAt: number | null = null;
     this.activeLoopId = scheduledLoop?.id ?? null;
 
     try {
@@ -2996,6 +2998,16 @@ export class Tui {
             if (ev.error.includes("Quota exceeded")) quotaStop = ev.error;
             break;
 
+          // A usage cap ends `quota_wall` and says when it lifts. The resume is
+          // timed from that rather than from the minutes in the sentence; the
+          // sentence stays the fallback for a host older than the ending.
+          case "turn_complete":
+            if (ev.stopReason === "quota_wall") {
+              quotaWallAt = ev.resumeAt ?? null;
+              quotaStop = quotaStop ?? "quota wall";
+            }
+            break;
+
           // ── Named and deliberately not counted by the shell ──
           // The transcript renderer above (`turn.onEvent`) draws all of these;
           // this reducer exists only for the shell's own bookkeeping — the
@@ -3009,7 +3021,6 @@ export class Tui {
           case "thinking_delta":
           case "tool_call_start":
           case "tool_call_args_delta":
-          case "turn_complete":
           case "context_warning":
           case "notice":
           case "verification_started":
@@ -3095,7 +3106,7 @@ export class Tui {
       const hadQueued = this.queued.length > 0;
       this.drainQueue(wasAborted);
       if (quotaStop && !wasAborted) {
-        this.scheduleQuotaResume(quotaStop);
+        this.scheduleQuotaResume(quotaStop, quotaWallAt);
       } else if (!quotaStop) {
         this.quotaResumeAttempts = 0; // a turn without a wall resets the backoff
       }
@@ -3248,7 +3259,7 @@ export class Tui {
   quotaResume: { timer: ReturnType<typeof setTimeout>; at: number } | null = null;
   quotaResumeAttempts = 0;
 
-  scheduleQuotaResume(stopMessage: string): void {
+  scheduleQuotaResume(stopMessage: string, resetAt: number | null = null): void {
     if (this.ctx.quotaAutoResume === false) return;
     if (this.mode !== "input" || this.queued.length > 0) return; // user is already driving
     if (this.quotaResume) return;
@@ -3259,9 +3270,11 @@ export class Tui {
       return;
     }
     this.quotaResumeAttempts++;
+    // The provider's own reset when the run carried one; else the minutes in
+    // the gateway's sentence; else fifteen.
     const m = stopMessage.match(/resume this session in ~(\d+)m/);
-    const mins = m ? Number(m[1]) : 15;
-    const delayMs = Math.min(Math.max(mins * 60_000 + 30_000, 60_000), 6 * 60 * 60_000);
+    const waitMs = resetAt !== null ? resetAt - Date.now() : (m ? Number(m[1]) : 15) * 60_000;
+    const delayMs = Math.min(Math.max(waitMs + 30_000, 60_000), 6 * 60 * 60_000);
     const at = Date.now() + delayMs;
     const hhmm = new Date(at).toTimeString().slice(0, 5);
     this.print(

@@ -363,8 +363,11 @@ function outcomeOf(state: TaskState | null, rows: EventRow[], opts: DeriveOption
   const stale = !!handoff && !!opts.sinceAt && handoffAt < opts.sinceAt;
   const ending = runEnding(rows, handoff && !stale ? handoffAt : undefined);
   const own = !!handoff?.reason && !stale && ending.handoffSeq >= 0 && !ending.diedWins;
-  // provider_lost is the loop's own account of the error that follows it.
-  if (own && handoff?.reason === "provider_lost") return "provider_lost";
+  // provider_lost and quota_wall are the loop's own account of the error that
+  // follows them.
+  if (own && (handoff?.reason === "provider_lost" || handoff?.reason === "quota_wall")) {
+    return handoff.reason;
+  }
   if (opts.runError) return "error";
   if (own && handoff?.reason) return handoff.reason;
   if (ending.diedWins) return "error";
@@ -996,7 +999,7 @@ export interface ScoreRow {
   maxTurns: number;
   /** Runs the supervisor halted. */
   halted: number;
-  /** context_exhausted and provider_lost — the residual after the named ones. */
+  /** context_exhausted, provider_lost and quota_wall — the residual after the named ones. */
   other: number;
   stepsTotal: number;
   stepsDone: number;

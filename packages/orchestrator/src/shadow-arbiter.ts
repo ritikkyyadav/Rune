@@ -153,6 +153,7 @@ const ENUM_INPUTS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
       "aborted",
       "halted",
       "provider_lost",
+      "quota_wall",
       "open_steps",
       "stalled",
       "budget",

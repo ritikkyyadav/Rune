@@ -53,6 +53,11 @@ export type TaskLifecycleStatus =
   | "max_turns"
   | "max_tokens"
   | "provider_lost"
+  // A plan or usage cap: the provider is reachable and said, with a time, when
+  // it will answer again. Recorded as `provider_lost` until 2026-10-14, which
+  // is how 39 of 44 "lost provider" endings in one install's record turned out
+  // to be one Codex limit: a paused run, not a failed one.
+  | "quota_wall"
   | "open_steps"
   | "stalled"
   // ── What the HARNESS stopped (Phase 5B) ──
@@ -187,6 +192,12 @@ export type AgentTurnEvent =
       stopReason: string;
       totalTurns: number;
       verdict?: CompletionVerdict;
+      /**
+       * Epoch ms when a run that stopped at a `quota_wall` can go on: the
+       * provider's own reset when it reported one, the gateway's cooldown
+       * otherwise. Absent on every other ending.
+       */
+      resumeAt?: number;
     }
   | { type: "error"; error: string; recoverable: boolean }
   | { type: "context_warning"; message: string }

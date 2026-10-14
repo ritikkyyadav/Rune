@@ -161,6 +161,62 @@ describe("exit codes", () => {
     expect(headlessExitCode(base)).toBe(HEADLESS_EXIT.ok);
   });
 
+  // How the run ENDED decides the code (1.4.3); the verdict is the envelope's.
+  test.each([
+    ["end_turn", HEADLESS_EXIT.ok, "success"],
+    ["tool_use", HEADLESS_EXIT.ok, "success"],
+    ["max_turns", HEADLESS_EXIT.limit, "error_max_turns"],
+    ["max_tokens", HEADLESS_EXIT.limit, "error_max_tokens"],
+    ["budget", HEADLESS_EXIT.limit, "error_budget"],
+    ["quota_wall", HEADLESS_EXIT.provider, "error_quota"],
+    ["provider_lost", HEADLESS_EXIT.provider, "error_provider"],
+    ["halted", HEADLESS_EXIT.failed, "error_halted"],
+    ["aborted", HEADLESS_EXIT.cancelled, "error_cancelled"],
+    ["stalled", HEADLESS_EXIT.failed, "error_during_execution"],
+    ["loop_detected", HEADLESS_EXIT.failed, "error_during_execution"],
+    ["barren", HEADLESS_EXIT.failed, "error_during_execution"],
+  ] as const)("a run that ended %s exits %i, subtype %s", (stopReason, code, subtype) => {
+    const ok = stopReason === "end_turn" || stopReason === "tool_use";
+    const r = { ...base, ok, stopReason, ...(ok ? {} : { error: "the run's own line" }) };
+    expect(headlessExitCode(r)).toBe(code);
+    expect(JSON.parse(headlessEnvelope(r)).subtype).toBe(subtype);
+  });
+
+  test("open steps are an ending, not a verdict: the loop stopped a run that left its plan undone (G21)", () => {
+    const r = {
+      ...base,
+      ok: false,
+      stopReason: "open_steps",
+      error: "The run ended with planned steps still open; the task is not finished.",
+    };
+    expect(headlessExitCode(r)).toBe(HEADLESS_EXIT.failed);
+    expect(JSON.parse(headlessEnvelope(r)).subtype).toBe("error_open_steps");
+    expect(JSON.parse(headlessEnvelope(r)).ok).toBe(false);
+  });
+
+  test("an error the loop did not attribute fails a finished turn", () => {
+    const r = { ...base, ok: false, stopReason: "end_turn", error: "No credits on openrouter." };
+    expect(headlessExitCode(r)).toBe(HEADLESS_EXIT.failed);
+    expect(JSON.parse(headlessEnvelope(r)).subtype).toBe("error_during_execution");
+  });
+
+  test("a quota wall carries its reset into the envelope", () => {
+    const resumeAt = Date.parse("2026-10-14T17:14:00Z");
+    const r = { ...base, ok: false, stopReason: "quota_wall", resumeAt, error: "Quota exceeded" };
+    const envelope = JSON.parse(headlessEnvelope(r));
+    expect(envelope.resumeAt).toBe(resumeAt);
+    expect(envelope.subtype).toBe("error_quota");
+    expect("resumeAt" in JSON.parse(headlessEnvelope(base))).toBe(false);
+  });
+
+  test("a denied permission outranks every ending", () => {
+    for (const stopReason of ["end_turn", "quota_wall", "max_turns"]) {
+      expect(headlessExitCode({ ...base, stopReason, permissionsDenied: 1 })).toBe(
+        HEADLESS_EXIT.needsPermission,
+      );
+    }
+  });
+
   test("a plain failure is 1", () => {
     expect(headlessExitCode({ ...base, ok: false, error: "boom" })).toBe(HEADLESS_EXIT.failed);
   });
@@ -216,16 +272,23 @@ describe("a verdict makes a finished run a failed one only where a promise was m
     criteria,
     gaps: [{ criterion: "tests", why: "not run" }],
   });
-  const failedEverywhere = (result: Awaited<ReturnType<typeof runHeadless>>, kind: string) => {
+  // The task failed on every surface that judges the TASK; the exit code says
+  // how the run ENDED — it finished — unless the caller asked for the rule
+  // before 1.4.3 with `--strict-verdict`.
+  const taskFailed = (result: Awaited<ReturnType<typeof runHeadless>>, kind: string) => {
     expect(result.ok).toBe(false);
     expect(result.error).toBe(
       `The task is ${kind}; the completion criteria were not all satisfied.`,
     );
     expect(result.text).toContain("Implemented the change.");
-    expect(headlessExitCode(result)).toBe(HEADLESS_EXIT.failed);
+    expect(headlessExitCode(result)).toBe(HEADLESS_EXIT.ok);
+    expect(headlessExitCode(result, { strictVerdict: true })).toBe(HEADLESS_EXIT.failed);
     expect(JSON.parse(headlessEnvelope(result)).ok).toBe(false);
+    expect(JSON.parse(headlessEnvelope(result)).subtype).toBe("success");
     // An embedder that still supplies execution-only `ok` cannot override it.
-    expect(headlessExitCode({ ...result, ok: true })).toBe(HEADLESS_EXIT.failed);
+    expect(headlessExitCode({ ...result, ok: true }, { strictVerdict: true })).toBe(
+      HEADLESS_EXIT.failed,
+    );
     expect(JSON.parse(headlessEnvelope({ ...result, ok: true })).ok).toBe(false);
     expect(JSON.parse(headlessEnvelope({ ...result, ok: true, error: undefined })).error).toContain(
       kind,
@@ -240,10 +303,10 @@ describe("a verdict makes a finished run a failed one only where a promise was m
     expect(envelope.error).toBeUndefined();
   };
 
-  test("a change held to the run's own criteria, and not shown to meet them, is unsuccessful on every surface", async () => {
+  test("a change held to the run's own criteria, and not shown to meet them, fails the task on every surface that judges it", async () => {
     const criteria = [own("the parser keeps the lines that follow an unterminated list")];
-    failedEverywhere(await ended(unmet(criteria), WROTE), "unmet");
-    failedEverywhere(await ended(partial(criteria), WROTE), "partial");
+    taskFailed(await ended(unmet(criteria), WROTE), "unmet");
+    taskFailed(await ended(partial(criteria), WROTE), "partial");
   });
 
   test("no criteria were stated: a greeting, a first prompt, a bare reply — judged by whether it ran", async () => {
@@ -272,15 +335,15 @@ describe("a verdict makes a finished run a failed one only where a promise was m
     // Asked to build something, held to someone else's check, and changed nothing.
     for (const source of ["evaluator", "user"] as const) {
       const criteria = [{ ...own("the build exits 0"), source }];
-      failedEverywhere(await ended(unmet(criteria)), "unmet");
-      failedEverywhere(await ended(partial(criteria)), "partial");
+      taskFailed(await ended(unmet(criteria)), "unmet");
+      taskFailed(await ended(partial(criteria)), "partial");
     }
     // One outside criterion among the run's own is enough.
     const mixed = [
       own("a note is written"),
       { ...own("the build exits 0"), source: "evaluator" as const },
     ];
-    failedEverywhere(await ended(partial(mixed)), "partial");
+    taskFailed(await ended(partial(mixed)), "partial");
   });
 
   test("a failed tool call changed nothing, so it is not a change the criteria were about", async () => {
@@ -435,7 +498,7 @@ describe("why a finished run is short of met, as three facts and not one word", 
     expect(verdictShortfall(neither)).toBe("own_terms_unshown");
   });
 
-  test("the envelope says which, beside the verdict — and what the run exits with is unchanged", () => {
+  test("the envelope says which, beside the verdict — and the exit code says the run finished", () => {
     const result: HeadlessResult = {
       text: "Built it.",
       ok: true,
@@ -452,9 +515,13 @@ describe("why a finished run is short of met, as three facts and not one word", 
     };
     const envelope = JSON.parse(headlessEnvelope(result));
     expect(envelope.shortfall).toBe("own_terms_unshown");
-    // The rule itself has not moved: held to its own terms, not shown, a change made.
+    // The verdict's rule has not moved: held to its own terms, not shown, a
+    // change made. Since 1.4.3 that is the envelope's to say, and the exit
+    // code is how the run ended; `--strict-verdict` keeps the old exit.
     expect(envelope.ok).toBe(false);
-    expect(headlessExitCode(result)).toBe(HEADLESS_EXIT.failed);
+    expect(envelope.subtype).toBe("success");
+    expect(headlessExitCode(result)).toBe(HEADLESS_EXIT.ok);
+    expect(headlessExitCode(result, { strictVerdict: true })).toBe(HEADLESS_EXIT.failed);
     // And a met run carries no such field at all.
     const met = JSON.parse(headlessEnvelope({ ...result, verdict: { kind: "met", criteria: [] } }));
     expect("shortfall" in met).toBe(false);

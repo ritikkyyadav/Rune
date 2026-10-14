@@ -496,6 +496,24 @@ describe("TurnRenderer — customizer activity stream", () => {
     expect(h.output()).not.toContain("✓ Done");
   });
 
+  it("draws a usage cap as a pause with its reset, not as an error", () => {
+    // The cap arrives as a hard error, so this row read "stopped on an error"
+    // for a run whose work was intact and whose provider had said when it
+    // answers again.
+    const h = harness();
+    const resumeAt = Date.parse("2026-10-14T17:14:00Z");
+    h.turn.onEvent({
+      type: "error",
+      error: "Quota exceeded on codex/gpt-6.1-sol — The usage limit has been reached.",
+      recoverable: false,
+    });
+    h.turn.onEvent({ type: "turn_complete", stopReason: "quota_wall", totalTurns: 3, resumeAt });
+    h.turn.finish();
+    const at = new Date(resumeAt).toTimeString().slice(0, 5);
+    expect(h.output()).toContain(`paused at the provider's usage limit -- it resets at ${at}`);
+    expect(h.output()).not.toContain("stopped on an error");
+  });
+
   it("records an interrupted turn without pretending it completed", () => {
     const h = harness();
     h.turn.onEvent(toolEnd("read_file", { path: "a.ts" }));

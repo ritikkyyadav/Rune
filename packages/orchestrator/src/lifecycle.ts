@@ -501,6 +501,8 @@ const STATUSES: ReadonlySet<string> = new Set<TaskLifecycleStatus>([
   "max_turns",
   "max_tokens",
   "provider_lost",
+  // A plan or usage cap with a time on it: paused, resumable at the reset.
+  "quota_wall",
   "open_steps",
   "stalled",
   // Phase 5B: the three exits the harness itself takes. Before them the loop
@@ -534,6 +536,7 @@ export function statusFromHandoffReason(reason: HandoffReason): TaskLifecycleSta
     case "open_steps":
     case "stalled":
     case "provider_lost":
+    case "quota_wall":
       return reason;
     // Neither has a `turn_complete` spelling of its own: an exhausted context
     // ends the run out of tokens, and a plain error ends it lost.

@@ -103,6 +103,21 @@ describe("classifying how a headless run ended", () => {
     const ending = classifyEnding(result({ ok: false, error: QUOTA }), T0 + HOUR);
     expect(ending).toEqual({ kind: "wall", providerUntil: T0 + HOUR });
   });
+
+  test("a quota_wall ending is a wall, and its own reset beats the persisted cooldown", () => {
+    // The run's terminal event says when the provider answers again; the
+    // gateway's stored cap is a guess made earlier (often a 15-minute default).
+    const wall = result({ ok: false, stopReason: "quota_wall", resumeAt: T0 + 3 * HOUR });
+    expect(classifyEnding(wall, T0 + 15 * MIN)).toEqual({
+      kind: "wall",
+      providerUntil: T0 + 3 * HOUR,
+    });
+    // Without a reset on the run, the stored window still answers.
+    expect(classifyEnding(result({ ok: false, stopReason: "quota_wall" }), T0 + 15 * MIN)).toEqual({
+      kind: "wall",
+      providerUntil: T0 + 15 * MIN,
+    });
+  });
 });
 
 describe("the loop", () => {

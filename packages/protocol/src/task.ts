@@ -311,4 +311,6 @@ export type HandoffReason =
   /** The run stopped because nothing had changed for many turns. */
   | "stalled"
   /** The provider stopped answering after the retry budget; the work stands where the ledger says. */
-  | "provider_lost";
+  | "provider_lost"
+  /** The provider's plan or usage cap was reached; the run paused until it resets. */
+  | "quota_wall";

@@ -126,6 +126,7 @@ const CHILD_STATUSES: Record<string, ChildLifecycleStatus> = {
   max_turns: "max_turns",
   max_tokens: "max_tokens",
   provider_lost: "provider_lost",
+  quota_wall: "quota_wall",
   open_steps: "open_steps",
   stalled: "stalled",
   running: "running",

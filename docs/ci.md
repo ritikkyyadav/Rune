@@ -19,14 +19,25 @@ That is the CI form, and every part of it is load-bearing:
 ## The exit-code contract
 
 ```
-0   execution completed, and no verdict made it a failure
-1   execution failed, or a change was held to criteria it did not satisfy
-3   the run needed permission and had nobody to ask
+0     the run finished: the model ended its turn
+1     execution failed: an error, a stall, a stopped loop, open steps, a safety halt
+3     the run needed permission and had nobody to ask
+4     the run stopped at a limit: turns, output tokens or budget
+5     the provider could not go on: a usage cap (see resumeAt) or lost after retries
+130   the run was cancelled; a signal's own code wins (129 SIGHUP, 130 SIGINT, 143 SIGTERM)
 ```
+
+The exit code says how the run **ended**. Whether the task was **met** is the
+envelope's to say: `ok`, `verdict` and `shortfall`, which mean what they meant
+before. Until 1.4.3 a finished run whose own verdict was `partial` or `unmet`
+exited 1, the same code as a crash, and every live run in the October sittings
+did that on work that passed every hidden check. `--strict-verdict` keeps that
+rule for a caller that wants it: with it, a finished run exits 1 when its
+verdict fails it, in the two cases below.
 
 An `end_turn` event describes the model stopping, not whether it satisfied the
 request. A `partial` or `unmet` verdict produces `ok: false` in the JSON envelope
-and exit 1 in two cases; the run's text and evidence remain available either way.
+in two cases; the run's text and evidence remain available either way.
 
 - The run stated what done means (a read-back) **and changed files**, and did not
   show all of it.
@@ -39,6 +50,27 @@ stated" by construction), and a run that only read back its own terms and change
 nothing (a review, a plan, an answer), for which `partial` is the best verdict there
 is. A conversational `none` exits 0. Older hosts without a verdict retain their
 execution status.
+
+### How a run ends
+
+The envelope's `stopReason` is the loop's own word for it, and `subtype` is the
+same thing in the words the exit code is chosen by.
+
+| `stopReason`                         | `subtype`                | Exit | What to do                                                                                                  |
+| ------------------------------------ | ------------------------ | ---- | ----------------------------------------------------------------------------------------------------------- |
+| `end_turn`                           | `success`                | 0    | Read `verdict` for whether the task was met                                                                 |
+| `open_steps`                         | `error_open_steps`       | 1    | The loop stopped the run with its own planned steps open, after refusing the finish once; resume or re-plan |
+| `max_turns`, `max_tokens`            | `error_max_turns`, `…`   | 4    | Continue with `rune resume`, or raise the limit                                                             |
+| `budget`                             | `error_budget`           | 4    | Raise the budget, or switch to a priced model                                                               |
+| `quota_wall`                         | `error_quota`            | 5    | The provider's usage cap: wait until `resumeAt` (epoch ms), or let `--resume-until` wait for you            |
+| `provider_lost`                      | `error_provider`         | 5    | The provider stopped answering after the retries; try again later, `rune resume` continues from the handoff |
+| `halted`                             | `error_halted`           | 1    | The safety broker stopped the run; read what it read before resuming                                        |
+| `aborted`                            | `error_cancelled`        | 130  | Cancelled; the partial work is kept                                                                         |
+| `stalled`, `loop_detected`, `barren` | `error_during_execution` | 1    | Nothing was progressing; resume with a different approach                                                   |
+
+A usage cap was recorded as `provider_lost` before 1.4.3. In one install's
+record, 39 of 44 runs that ended that way had hit a Codex limit with a known
+reset rather than lost the provider.
 
 `3` is separate from `1` on purpose: the fix is a flag, not a retry. A headless
 run **denies every permission request by default**, because the alternative is

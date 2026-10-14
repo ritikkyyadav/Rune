@@ -266,7 +266,8 @@ const INFRA_ERROR_RE =
  * Two shapes count, and nothing else does:
  *
  *   · the loop's own verdict that the provider stopped answering after its
- *     retry budget (`provider_lost`), whatever work came before it;
+ *     retry budget (`provider_lost`), or that its usage limit was reached
+ *     (`quota_wall`), whatever work came before it;
  *   · a transport failure with no completed turn — the task never started.
  *
  * A pass is never excused. Neither is a run that recovered from a transient
@@ -280,6 +281,7 @@ export function classifyInfra(r: {
 }): string | null {
   if (r.pass) return null;
   if (r.outcome === "provider_lost") return "the provider stopped answering (provider_lost)";
+  if (r.outcome === "quota_wall") return "the provider's usage limit was reached (quota_wall)";
   if (r.turns > 0) return null;
   const hit = r.errors.find((e) => INFRA_ERROR_RE.test(e) && !isThrottleError(e));
   return hit ? hit.split("\n")[0]!.slice(0, 200) : null;

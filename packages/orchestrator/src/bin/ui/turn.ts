@@ -2935,10 +2935,12 @@ export class TurnRenderer {
           event.stopReason === "max_tokens" ||
           event.stopReason === "halted" ||
           event.stopReason === "provider_lost" ||
+          event.stopReason === "quota_wall" ||
           event.stopReason === "open_steps" ||
           event.stopReason === "stalled"
         ) {
           this.stoppedEarly = event.stopReason;
+          this.resumeAt = event.resumeAt ?? null;
         }
         return;
 
@@ -2991,8 +2993,17 @@ export class TurnRenderer {
    * `aborting` flag rather than the `aborted` the loop had already told it.
    */
   private stoppedEarly:
-    "max_turns" | "max_tokens" | "halted" | "provider_lost" | "open_steps" | "stalled" | null =
-    null;
+    | "max_turns"
+    | "max_tokens"
+    | "halted"
+    | "provider_lost"
+    | "quota_wall"
+    | "open_steps"
+    | "stalled"
+    | null = null;
+
+  /** When a run that stopped at a `quota_wall` can go on (epoch ms). */
+  private resumeAt: number | null = null;
 
   /** Last live repaint driven by streaming prose (throttled to ~80ms). */
   private lastProseLiveAt = 0;
@@ -3010,6 +3021,16 @@ export class TurnRenderer {
     const latestCheck = [...this.checks].reverse().find((check) => check.status !== "not-run");
     const repaired = this.failures > 0 && latestCheck?.status === "passed";
     const failed = this.hardError && !repaired;
+    // A usage cap is a pause with a time on it, not an error: it arrives as a
+    // hard error, so this row came out "stopped on an error" for a run whose
+    // work was intact and whose provider had said when it answers again.
+    if (!aborted && this.stoppedEarly === "quota_wall") {
+      const at = this.resumeAt ? new Date(this.resumeAt).toTimeString().slice(0, 5) : null;
+      return F.flowRow(
+        `${F.MARK}${warn("!")} ${text(at ? `paused at the provider's usage limit -- it resets at ${at}` : "paused at the provider's usage limit")}`,
+        faint(F.receiptOf([...this.workReceipt(), "work kept"])),
+      );
+    }
     if (!aborted && !failed && this.stoppedEarly) {
       // Honest ceiling row: the run stopped because it ran OUT, not because
       // it was done. Silence here read as success and cost real trust.

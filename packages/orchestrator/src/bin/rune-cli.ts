@@ -181,6 +181,9 @@ const { values, positionals } = parseArgs({
     // NDJSON: every event as it happens, the envelope last. See docs/protocol.md.
     "stream-json": { type: "boolean", default: false },
     "auto-approve": { type: "boolean", default: false },
+    // The exit-code rule before 1.4.3: a finished run whose verdict is short
+    // of what it was held to exits 1. The default now says how the run ended.
+    "strict-verdict": { type: "boolean", default: false },
     // Opt a headless run into resuming after a provider wall (M6): until a
     // deadline, within a cumulative budget, at most N times. missions-cli.ts.
     "resume-until": { type: "string" },
@@ -363,7 +366,14 @@ if (values.help) {
         "                                 and list anything the entry script loads in the criterion's `files` array.\n" +
         `    --sandbox / --no-sandbox     Force the OS command sandbox on/off for this run (overrides /sandbox + config; see /sandbox for modes, overrides and exclusions)\n` +
         `    --browser / --no-browser     Force the agent browser (Playwright MCP) on/off for this run (overrides /browser + config)\n` +
-        `    -h, --help                   Show this help\n\n`,
+        `    -h, --help                   Show this help\n\n` +
+        `  Headless (CI, scripts) — see docs/ci.md:\n` +
+        `    -P, --print "<prompt>"       One prompt in; the answer on stdout, progress on stderr\n` +
+        `    --json / --stream-json       The result as one JSON envelope / every event as NDJSON, the envelope last\n` +
+        `    --auto-approve               Grant permission requests (nobody is there to ask; denied by default)\n` +
+        `    --strict-verdict             Exit 1 when a finished run's verdict is short of what it was held to\n` +
+        `                                 Exit codes: 0 finished · 1 failed · 3 needed permission · 4 hit a limit\n` +
+        `                                 · 5 provider unavailable (usage cap: see resumeAt) · 129/130/143 signal\n\n`,
     ),
   );
   process.exit(0);
@@ -1871,7 +1881,10 @@ async function main() {
     engine.close();
     // Stopped by a signal: the envelope above says how the run ended, and the
     // exit code is the signal's, as a supervisor expects.
-    process.exit(signalShutdown.owedExitCode() ?? headlessExitCode(result));
+    process.exit(
+      signalShutdown.owedExitCode() ??
+        headlessExitCode(result, { strictVerdict: values["strict-verdict"] === true }),
+    );
   }
 
   if (useTui) {

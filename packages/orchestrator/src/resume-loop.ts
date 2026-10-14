@@ -27,15 +27,23 @@ const BLOCKED_RE =
 /**
  * How a headless run ended, as a resume plan needs to know it.
  *
- * Only a provider wall is resumable: the gateway's quota stop, or the loop's
+ * Only a provider wall is resumable: a usage cap (`quota_wall`, or the
+ * gateway's quota sentence from a host older than that ending), or the loop's
  * own `provider_lost`. A finished run is done. Everything the run decided for
  * itself — a turn cap, a halt, a cancel, open steps — stays its decision.
+ *
+ * A `quota_wall` carries the provider's own reset (`resumeAt`), which beats
+ * the gateway's persisted cooldown: it is this run's answer, not a guess.
  */
 export function classifyEnding(result: HeadlessResult, providerUntil: number | null): RunEnding {
   if (result.ok) return { kind: "finished" };
   const error = result.error ?? "";
-  if (QUOTA_STOP_RE.test(error) || result.stopReason === "provider_lost") {
-    return { kind: "wall", providerUntil };
+  if (
+    result.stopReason === "quota_wall" ||
+    QUOTA_STOP_RE.test(error) ||
+    result.stopReason === "provider_lost"
+  ) {
+    return { kind: "wall", providerUntil: result.resumeAt ?? providerUntil };
   }
   if (BLOCKED_RE.test(error)) {
     return { kind: "blocked", why: `a person has to fix this first: ${error.split("\n")[0]}` };

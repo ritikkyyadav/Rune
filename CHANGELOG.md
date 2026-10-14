@@ -11,6 +11,35 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+### Changed
+
+- **The exit code of `rune -P` says how the run ended.**
+  - 0: finished.
+  - 1: failed, including a run the loop stopped with its own planned steps open.
+  - 3: needed permission.
+  - 4: stopped at a limit (turns, output tokens or budget).
+  - 5: the provider could not go on (a usage cap, or lost after the retries).
+  - 130: cancelled. A signal's own code still wins (129, 130, 143).
+
+  Whether the task was met is the envelope's to say, as before: `ok`, `verdict` and `shortfall`.
+  Until now a finished run whose own verdict was `partial` or `unmet` exited 1, the same code as a
+  crash, and every live run in the October sittings did that on work that passed every hidden
+  check. `--strict-verdict` keeps that rule for anyone who wants it. The envelope also gains a
+  `subtype` (`success`, `error_max_turns`, `error_quota`, `error_provider`, …). `rune --help` now
+  lists the headless flags and exit codes, and `docs/ci.md` has a table of every way a run ends.
+
+- **A usage cap is named as one: `quota_wall`, with when it lifts.** The gateway already told a
+  plan cap from a lost provider and knew when the cap resets; the loop dropped both. In one
+  install's record, 39 of the 44 runs that ended `provider_lost` had hit a Codex limit. Now:
+  - the run ends `quota_wall`, and the provider's reset is carried as `resumeAt`;
+  - the handoff names the wall;
+  - the closing row reads "paused at the provider's usage limit -- it resets at HH:MM" instead of
+    "stopped on an error";
+  - the TUI's auto-resume and `--resume-until` wait for that exact time instead of reading
+    minutes back out of a sentence.
+
+  A refusal that is not a cap still ends `provider_lost`.
+
 ## [1.4.2] - 2026-10-14
 
 **Runs that cost less and wait less, and file edits that refuse what they would damage.** The

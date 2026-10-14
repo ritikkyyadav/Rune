@@ -2238,13 +2238,19 @@ export class AgentLoop {
    * The finish path computes its verdict EARLIER — before the final
    * compaction, on the same state the gates saw — and passes it in.
    */
-  private terminal(stopReason: string, turn: number, verdict?: CompletionVerdict): AgentTurnEvent {
+  private terminal(
+    stopReason: string,
+    turn: number,
+    verdict?: CompletionVerdict,
+    extra?: { resumeAt?: number },
+  ): AgentTurnEvent {
     const decided = verdict ?? this.verdictFor(stopReason);
     return {
       type: "turn_complete",
       stopReason,
       totalTurns: turn,
       ...(decided ? { verdict: decided } : {}),
+      ...(extra?.resumeAt !== undefined ? { resumeAt: extra.resumeAt } : {}),
     };
   }
 
@@ -3425,13 +3431,25 @@ export class AgentLoop {
                 "abandoned(environment)",
                 () => shadowState(),
               );
-              yield* this.handoffEvents("error");
+              // A plan or usage cap is a wall with a time on it, not a lost
+              // provider: the gateway says so structurally and says when it
+              // lifts. Ending it `provider_lost` is how 39 of 44 "lost
+              // provider" endings in one install's record were one Codex limit.
+              const wall = result.code === "usage_cap";
+              yield* this.handoffEvents(wall ? "quota_wall" : "error");
               yield { type: "error", error: result.error, recoverable: false };
               // The terminal event goes LAST, after the error it explains.
               // This exit emitted none at all, so `engine.ts` reconciled it
               // afterwards — and a provider outage, a budget refusal, a loop
               // kill and a barren kill all recorded identically.
-              yield this.terminal("provider_lost", turn);
+              yield wall
+                ? this.terminal(
+                    "quota_wall",
+                    turn,
+                    undefined,
+                    result.resetAt !== undefined ? { resumeAt: result.resetAt } : undefined,
+                  )
+                : this.terminal("provider_lost", turn);
               return;
             }
             // ── The prompt FLOOR does not fit (G15) ──
@@ -7079,6 +7097,10 @@ export class AgentLoop {
     usage?: TokenUsage;
     error?: string;
     retryable?: boolean;
+    /** The gateway's structural kind for the failure (`usage_cap` for a plan cap). */
+    code?: string;
+    /** Epoch ms when the limit behind the failure lifts, when the gateway knows it. */
+    resetAt?: number;
     reset?: boolean;
   } {
     switch (event.type) {
@@ -7219,7 +7241,15 @@ export class AgentLoop {
         };
 
       case "error":
-        return { error: event.error, retryable: event.retryable };
+        // `code` and `resetAt` were dropped here, so a plan cap reached the
+        // loop as a sentence: it ended `provider_lost` and the TUI read the
+        // minutes back out of the wording to schedule its resume.
+        return {
+          error: event.error,
+          retryable: event.retryable,
+          ...(event.code ? { code: event.code } : {}),
+          ...(event.resetAt !== undefined ? { resetAt: event.resetAt } : {}),
+        };
 
       default:
         return {};
