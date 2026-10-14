@@ -226,6 +226,8 @@ fn hard_link_note(_target: &Path, _replacing: Option<&fs::Metadata>) -> Option<S
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Only the unix tests below touch the filesystem.
+    #[cfg(unix)]
     use tempfile::TempDir;
 
     #[test]
