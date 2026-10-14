@@ -11,6 +11,12 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+## [1.4.5] - 2026-10-14
+
+**What stops a run: a safety block stops the action, and the turn ceiling is the person's.** A
+patch on 1.4.4, the fourth phase of the reliability plan. Full notes:
+[`docs/releases/v1.4.5.md`](docs/releases/v1.4.5.md).
+
 ### Changed
 
 - **A safety block stops the action, not the run.** Between 14 September and 14 October Auto mode
@@ -1152,7 +1158,8 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.4...HEAD
+[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.5...HEAD
+[1.4.5]: https://github.com/ritikkyyadav/Rune/compare/v1.4.4...v1.4.5
 [1.4.4]: https://github.com/ritikkyyadav/Rune/compare/v1.4.3...v1.4.4
 [1.4.3]: https://github.com/ritikkyyadav/Rune/compare/v1.4.2...v1.4.3
 [1.4.2]: https://github.com/ritikkyyadav/Rune/compare/v1.3.4...v1.4.2
