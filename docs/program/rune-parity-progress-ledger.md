@@ -2787,3 +2787,44 @@ reviewer and ceremony changes were mostly for.
 3. Bringing the lane into the working tree.
 
 **Next step.** The founder's, on the three above.
+
+## The lane on GitHub, 2026-10-14 · **pushed on the founder's word; CI green on Linux, macOS and Windows; not installed, not merged**
+
+The founder: "well i would suggest install it and push the changes to github !!".
+
+**Pushed** as its own branch, `lane/cost-latency-20261013`, nothing else moved: 28
+commits past `origin/main` (`ea19e90`) — the five local commits of
+`gear/phase-0-stabilize` from 8 and 9 October that the lane sits on, Codex's snapshot
+of the working tree (`0fe45a7`, authored "Codex"; 59 files, 0.7 MB, no `videos/`), and
+the lane's own. Read before pushing: no co-author trailer, nothing shaped like a key or
+token, no address but a test's `t@example.invalid`; absolute home paths only in the
+snapshot's evidence files, as on `main` already.
+
+**Found on the way, and fixed.**
+
+- **`bun run lint` had not been run.** It is `prettier --check src/` inside each
+  package, and `.prettierignore`'s `skills/` also hides `packages/tool-registry/src/skills/`
+  from the root check, so a line `b5293dc` added there passed `format:check` and failed
+  lint (`1e93e5a`). Two files from the snapshot failed both (`f0abf2d`, layout only);
+  in CI that stops `ts-lint` before its unit tests, and `build`, `integration` and
+  `eval` all wait on it.
+- **The first CI run (`38475139729`) failed ten unit tests on Ubuntu and Windows that
+  pass on this Mac** — every one a test that took the Mac for the world. `/bin/sh` is
+  dash on Ubuntu, with neither `pipefail` nor `PIPESTATUS` (such a line errors, and is
+  never a receipt; zsh and ksh are not installed there either); the product-sight gate
+  reads the machine's browser, which a runner has none of — two of those tests came
+  with `19b127d`; a Windows path has backslashes; a Windows check is not stopped at its
+  limit; Windows holds a closed database file. Each test now states its machine
+  (`5ba49b4`, `5bbe197`). The reuse integration test, which would have failed on Ubuntu
+  next, picks the faithful line for the agent's shell; it passes here with
+  `RUNE_SHELL=/bin/dash`.
+- **CI run `38524410319` on `5bbe197`: success** — `ts-lint` on Ubuntu and macOS,
+  `ts-windows`, `build`, `integration` and `eval` on both, `eval-real`, the Rust jobs on
+  all three, `packaged-e2e` on all three, `shellcheck`, `cargo-audit`.
+
+**Not installed.** `scripts/install.sh` refuses, by its own rule, to replace a dirty
+build from another worktree: the installed build came from the main checkout's dirty
+tree. Getting past it means `RUNE_ALLOW_NON_FF_INSTALL=1`, and an install from here
+would then make every install from the main checkout refuse in turn until the lane is
+merged. Merging first and installing from the main checkout needs none of that. Either
+is the founder's to choose.
