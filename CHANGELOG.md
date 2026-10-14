@@ -11,6 +11,48 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+### Fixed
+
+- **A laptop that sleeps no longer ends a run.** On 12 October the lid closed over a research run at
+  01:21. Every failure that run recorded fell inside the dark wakes that followed: the few seconds a
+  closed Mac runs between sleeps, with no network (`pmset -g log` beside the black box). Each
+  failure spent the run's error budget. The outage clock ran through the sleep, so at 01:49, the
+  third dark wake, the run ended `provider_lost`: "3 consecutive errors, 600s unanswered". Now:
+  - a call cut by a sleep, or started within 30 seconds of a wake, does not count as an error and
+    does not run the outage clock;
+  - it is sent again only once the machine has been awake for 10 seconds straight, so a closed
+    lid's dark wakes are waited through instead of failed in;
+  - free re-sends are bounded: 3 per wake and 50 per run;
+  - the notice says how long the computer slept, and the black box records `provider.slept`.
+
+  The sleep is read from a once-a-second timer that does not fire while the process is suspended.
+  A gap of more than 5 seconds counts as a suspension, and 30 seconds or more of it is what cut a
+  call.
+
+- **A response cut after it finished tool calls keeps them.** A stream that failed partway used to
+  be re-sent from zero, even when the model had already finished tool calls in it: a long think or a
+  long file was paid for and written twice. The gateway now ends such a stream there
+  (`message_cut`) when the agent loop asks. The loop runs every call the response finished, drops
+  the half-sent one and any text after the last finished call, and continues from the results.
+  Recorded as `provider.stream_cut`. A response that failed before it finished any call is re-sent
+  from zero as before, and other callers of the gateway keep the re-send.
+
+- **An over-limit prompt is never sent again unchanged.** When the provider refused the prompt as
+  over the model's window and compaction could not make it fit, the identical prompt was re-sent
+  until the error budget ran out, and the run ended `provider_lost`, blaming a provider that was
+  answering. It now ends at once with a named error that says what to do. This install's record
+  holds no such refusal; the path was found by reading the code.
+
+### Not in this release, and why
+
+- **One retry ladder** (ten attempts, 0.5 s to 32 s, three kinds of 429). The outage deadline
+  already bounds the total wait, and changing retry counts without live measurements risks longer
+  hangs. It waits for the live sitting (R8).
+- **A response cut after text alone** is still re-sent from zero, and a stall gets no per-phase
+  rule. Continuing from half an answer needs the live sitting to judge.
+- **Shrinking `max_tokens` on an over-limit refusal.** Reading each provider's wording for the
+  input and output split is provider-specific. The named ending above covers the case.
+
 ## [1.4.3] - 2026-10-14
 
 **A run says how it ended: the exit code is execution, and a usage cap is a pause with a reset

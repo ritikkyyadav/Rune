@@ -40,6 +40,7 @@ import {
   resultSignature,
 } from "./call-signature";
 import { TurnRefunds } from "./turn-refunds";
+import { sharedSuspendClock, type SuspendProbe } from "./suspend-clock";
 import { doctrineForRequest, jitDoctrineText, type JitDoctrineSection } from "./prompts";
 import type { IncidentContext, IncidentReporter, IncidentSeverity } from "@rune/shared";
 import type { IncidentClass } from "@rune/shared";
@@ -152,6 +153,13 @@ export interface AgentLoopConfig {
   maxTokens: number;
   maxTurns: number;
   maxConsecutiveErrors: number;
+  /**
+   * How the loop knows the machine slept through a request (R2): a call that
+   * failed across a suspension is re-sent without spending one of the run's
+   * consecutive errors or its outage clock. Defaults to the process's shared
+   * clock; `false` turns the check off.
+   */
+  suspendClock?: SuspendProbe | false;
   /**
    * Second winds: how many times the turn ceiling may extend itself when the
    * plan is open AND moving (a step completed with evidence since the window
@@ -495,6 +503,61 @@ const TRANSPORT_TRANSITIONS: readonly Transition[] = ["working", abandoned("envi
 
 /** `[reliability] providerDeadlineSecs`, for a loop built with no policy. */
 export const DEFAULT_PROVIDER_DEADLINE_MS = 600_000;
+
+// ── Asleep, not unanswered (R2.3) ──
+//
+// 12 October, `pmset -g log` beside the black box: the lid closed at 01:21,
+// and every failure of the run that died that night fell inside a dark wake —
+// the few seconds a closed Mac runs between sleeps, with no network. A re-send
+// fired at once would only fail in the same dark wake, so the rule is three
+// parts: a call the machine slept through, or one started just after it woke,
+// is not counted; it is re-sent only once the machine has been awake long
+// enough for its network to be back; and the free re-sends are bounded per
+// wake and per run, so a clock that misreads cannot keep a dead provider's run
+// alive.
+
+/** Suspension totalling this long or longer is what cut the call. */
+const SLEPT_CUT_MS = 30_000;
+/** A call started this soon after a wake failed because of the sleep too. */
+const WAKE_GRACE_MS = 30_000;
+/** Awake this long without a break before a slept call is sent again. */
+export const AWAKE_SETTLE_MS = 10_000;
+/** Free re-sends per wake: past this, the failure is the network's own. */
+const MAX_RESENDS_PER_WAKE = 3;
+/** Free re-sends per run, whatever the clock says. */
+const MAX_SLEPT_RESENDS = 50;
+/** Polls of the settle wait — running time, not wall time: a night asleep is hours of one and minutes of the other. */
+const SETTLE_POLLS_MAX = 600;
+
+/**
+ * Waits until the machine has been awake `AWAKE_SETTLE_MS` without a break.
+ * A dark wake is shorter than that, so a run whose lid is closed waits through
+ * each one rather than failing in it, and goes on when the lid opens.
+ */
+export async function untilAwake(
+  probe: SuspendProbe | null,
+  signal?: AbortSignal,
+  pollMs = 1_000,
+): Promise<void> {
+  if (!probe) return;
+  for (let i = 0; i < SETTLE_POLLS_MAX && !signal?.aborted; i++) {
+    const wake = probe.lastWakeAt();
+    if (wake === null || Date.now() - wake >= AWAKE_SETTLE_MS) return;
+    await abortableSleep(pollMs, signal);
+  }
+}
+
+/** What the person sees when a call is re-sent after the machine slept. */
+export function sleptNotice(ms: number): string {
+  const mins = Math.round(ms / 60_000);
+  const span =
+    ms < 90_000
+      ? `${Math.round(ms / 1000)}s`
+      : mins < 90
+        ? `${mins}m`
+        : `${Math.floor(mins / 60)}h ${mins % 60}m`;
+  return `The computer was asleep for ${span} and the connection dropped — sending the request again once it is awake.`;
+}
 
 /**
  * Stream events the GATEWAY writes about a call. Every other event is the
@@ -2427,6 +2490,37 @@ export class AgentLoop {
     // clean stream still resets it to zero below, so a resumed run that works
     // is not put on probation — the rule is "failures IN A ROW".
     let consecutiveErrors = this.inheritedRepair("transport");
+    // Calls re-sent because the machine slept through them; bounded, so a
+    // clock that misreads a starved event loop cannot re-send forever.
+    let sleptResends = 0;
+    // Resolved — and so started — here, with the run: a clock first asked at
+    // the failure has ticked once and seen no gap, and the sleep that cut the
+    // run's first failing call would go unseen.
+    const suspendProbe =
+      this.config.suspendClock === false
+        ? null
+        : (this.config.suspendClock ?? sharedSuspendClock());
+    let sleptWake: number | null = null;
+    let resendsThisWake = 0;
+    /**
+     * How long the machine slept during the call that started at `since`, or
+     * just before it, when that is what cut the call and a free re-send is
+     * left; null otherwise. Counts the re-send it grants.
+     */
+    const sleptThrough = (since: number): number | null => {
+      if (!suspendProbe || sleptResends >= MAX_SLEPT_RESENDS) return null;
+      const ms = suspendProbe.suspendedSince(since - WAKE_GRACE_MS);
+      if (ms < SLEPT_CUT_MS) return null;
+      const wake = suspendProbe.lastWakeAt();
+      if (wake !== sleptWake) {
+        sleptWake = wake;
+        resendsThisWake = 0;
+      }
+      if (resendsThisWake >= MAX_RESENDS_PER_WAKE) return null;
+      sleptResends++;
+      resendsThisWake++;
+      return ms;
+    };
     // ── The outage clock (T1) ──
     // The count above bounds how many times a request is re-sent and says
     // nothing of how long that takes. A provider that stalls instead of
@@ -3294,6 +3388,8 @@ export class AgentLoop {
         callId: string;
         toolName: string;
         argsJson: string;
+        /** The call's `tool_use_stop` arrived: its arguments are whole. */
+        done?: boolean;
       }> = [];
 
       // The call's own cancel: the person's, forwarded, and the deadline's.
@@ -3304,6 +3400,8 @@ export class AgentLoop {
       if (signal?.aborted) call.abort();
       else signal?.addEventListener("abort", cancelCall, { once: true });
       let heardAt = performance.now();
+      // Wall time, for asking the suspend clock what this call lived through.
+      const callWallStart = Date.now();
       let deadlineHit = false;
       let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
       // The request is going unanswered: start the clock if it is not running,
@@ -3334,6 +3432,9 @@ export class AgentLoop {
         const streamOpts: StreamOpts = {
           signal: call.signal,
           ...(this.config.cacheKey ? { cacheKey: this.config.cacheKey } : {}),
+          // A response cut after it finished tool calls ends with them kept,
+          // not re-sent from zero (R2); the cut is handled just below.
+          keepCompletedOnCut: true,
         };
         for await (const event of this.gateway.inferStream(request, streamOpts)) {
           if (event.type === "retry" || event.type === "fallback") unanswered();
@@ -3348,6 +3449,35 @@ export class AgentLoop {
             yield {
               type: "notice",
               message: "Response interrupted mid-stream — restarting it.",
+            };
+          }
+          if (result.cut) {
+            // Keep what the response FINISHED (R2): its finished tool calls
+            // and everything before the last of them. An unfinished call and
+            // anything after the last finished one are dropped, so the model
+            // gets a result for every call it completed and continues from
+            // there. Until 2026-10-14 the whole response was re-streamed from
+            // zero — a long think or a long file paid for twice.
+            const finished = new Set(pendingToolCalls.filter((t) => t.done).map((t) => t.callId));
+            for (let i = pendingToolCalls.length - 1; i >= 0; i--) {
+              if (!pendingToolCalls[i]!.done) pendingToolCalls.splice(i, 1);
+            }
+            let lastKept = -1;
+            contentBlocks.forEach((b, i) => {
+              if (b.type === "tool_use" && finished.has(b.toolCallId)) lastKept = i;
+            });
+            const kept = contentBlocks.filter(
+              (b, i) => i <= lastKept && (b.type !== "tool_use" || finished.has(b.toolCallId)),
+            );
+            contentBlocks.length = 0;
+            contentBlocks.push(...kept);
+            stopReason = "tool_use";
+            const n = finished.size;
+            yield {
+              type: "notice",
+              message:
+                `The response was cut after ${n} finished tool call${n === 1 ? "" : "s"} — ` +
+                `running ${n === 1 ? "it" : "them"} and continuing.`,
             };
           }
           if (result.stopReason) stopReason = result.stopReason;
@@ -3542,6 +3672,53 @@ export class AgentLoop {
               }
               // Compaction found nothing to cut — fall through to normal error handling.
             }
+            // ── Still over the window, and nothing above changed it (R2.4) ──
+            //
+            // Compaction was not possible, found nothing to cut, failed, or
+            // has had its tries. The prompt that comes next is the one the
+            // provider just refused, and re-sending it can only be refused the
+            // same way. That burn spent the error budget and ended the run
+            // `provider_lost`, blaming a provider that was answering. End now,
+            // named, the way the fixed-floor check above ends.
+            if (isContextOverflowError(result.error) && !signal?.aborted) {
+              this.state = "error";
+              this.report(
+                "context.budget_overflow",
+                "error",
+                "overflow.unchanged",
+                `the prompt is over the model's window and nothing shrank it; not re-sent: ${result.error.slice(0, 150)}`,
+              );
+              yield* this.handoffEvents("error");
+              yield {
+                type: "error",
+                error:
+                  `The conversation no longer fits this model's context window, and compacting ` +
+                  `it did not make it fit, so the same request was not sent again. Resume in a ` +
+                  `fresh session from the handoff, or use a model with a larger window. ` +
+                  `(Provider: ${result.error.slice(0, 160)})`,
+                recoverable: false,
+              };
+              yield this.terminal("max_tokens", turn);
+              return;
+            }
+            // Asleep, not unanswered (R2.3): the call died because the machine
+            // slept through it, or woke just before it with no network yet.
+            // Re-sent once the machine is awake, without spending an error or
+            // the outage clock — nobody was waiting on the provider.
+            const slept = sleptThrough(callWallStart);
+            if (slept !== null) {
+              unansweredSince = null;
+              this.report(
+                "provider.slept",
+                "warn",
+                "inferStream",
+                `suspended ${Math.round(slept / 1000)}s around the call; re-sent without spending an error: ${result.error}`,
+              );
+              yield { type: "notice", message: sleptNotice(slept) };
+              await untilAwake(suspendProbe, signal);
+              streamErrored = true;
+              break;
+            }
             unanswered();
             consecutiveErrors++;
             this.report("provider.stream_error", "warn", "inferStream", result.error);
@@ -3605,9 +3782,25 @@ export class AgentLoop {
           yield this.terminal("aborted", turn);
           return;
         }
+        const msg = err instanceof Error ? err.message : String(err);
+        // Asleep, not unanswered (R2.3) — the same rule as a failed stream, for
+        // a call that threw: a dead socket on waking, or the deadline timer
+        // firing the moment the machine woke after a long sleep.
+        const slept = sleptThrough(callWallStart);
+        if (slept !== null) {
+          unansweredSince = null;
+          this.report(
+            "provider.slept",
+            "warn",
+            "inferStream.catch",
+            `suspended ${Math.round(slept / 1000)}s around the call; re-sent without spending an error: ${msg}`,
+          );
+          yield { type: "notice", message: sleptNotice(slept) };
+          await untilAwake(suspendProbe, signal);
+          continue;
+        }
         unanswered();
         consecutiveErrors++;
-        const msg = err instanceof Error ? err.message : String(err);
         // A call the deadline cut threw because it was cut: what it threw is
         // this loop's own cancel coming back, not a thing the provider said.
         if (!deadlineHit) {
@@ -7090,7 +7283,7 @@ export class AgentLoop {
   private processStreamEvent(
     event: StreamEvent,
     contentBlocks: ContentBlock[],
-    pendingToolCalls: Array<{ callId: string; toolName: string; argsJson: string }>,
+    pendingToolCalls: Array<{ callId: string; toolName: string; argsJson: string; done?: boolean }>,
   ): {
     event?: AgentTurnEvent;
     stopReason?: string;
@@ -7102,6 +7295,8 @@ export class AgentLoop {
     /** Epoch ms when the limit behind the failure lifts, when the gateway knows it. */
     resetAt?: number;
     reset?: boolean;
+    /** The response was cut after finishing tool calls, which are kept (R2). */
+    cut?: { reason: string; completedCalls: number };
   } {
     switch (event.type) {
       case "content_delta":
@@ -7192,9 +7387,13 @@ export class AgentLoop {
         const pending = pendingToolCalls.find((t) => t.callId === event.toolCallId);
         if (pending) {
           pending.argsJson = JSON.stringify(event.toolInput);
+          pending.done = true;
         }
         return {};
       }
+
+      case "message_cut":
+        return { cut: { reason: event.reason, completedCalls: event.completedCalls } };
 
       case "message_stop":
         return { stopReason: event.stopReason, usage: event.usage };

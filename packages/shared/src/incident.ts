@@ -22,6 +22,12 @@ export const INCIDENT_CLASSES = [
   "provider.auth",
   "provider.no_credits",
   "provider.stream_error",
+  // A call that failed across a suspension (the machine asleep), re-sent
+  // without spending an error (R2).
+  "provider.slept",
+  // A response that failed after finishing tool calls, kept instead of
+  // re-sent from zero (R2).
+  "provider.stream_cut",
   "provider.terminal",
   "provider.fallback_triggered",
   "provider.truncation",

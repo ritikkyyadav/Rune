@@ -72,6 +72,12 @@ A usage cap was recorded as `provider_lost` before 1.4.3. In one install's
 record, 39 of 44 runs that ended that way had hit a Codex limit with a known
 reset rather than lost the provider.
 
+`max_tokens` is also how a run ends when the conversation no longer fits the
+model's context window and compacting it could not make it fit. The error says
+so: resume in a fresh session from the handoff, or use a model with a larger
+window. Before 1.4.4 the same prompt was sent again until the run ended
+`provider_lost`.
+
 `3` is separate from `1` on purpose: the fix is a flag, not a retry. A headless
 run **denies every permission request by default**, because the alternative is
 silently granting whatever a model asked for to a process nobody is watching.

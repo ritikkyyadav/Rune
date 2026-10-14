@@ -8717,16 +8717,18 @@ export class Engine {
         const cls: IncidentClass =
           gi.kind === "fallback"
             ? "provider.fallback_triggered"
-            : gi.status === 429
-              ? "provider.rate_limit"
-              : gi.status === 401 || gi.status === 403
-                ? "provider.auth"
-                : gi.status === 402
-                  ? "provider.no_credits"
-                  : "provider.terminal";
+            : gi.kind === "cut"
+              ? "provider.stream_cut"
+              : gi.status === 429
+                ? "provider.rate_limit"
+                : gi.status === 401 || gi.status === 403
+                  ? "provider.auth"
+                  : gi.status === 402
+                    ? "provider.no_credits"
+                    : "provider.terminal";
         this.recorder.record({
           class: cls,
-          severity: gi.kind === "fallback" ? "warn" : "error",
+          severity: gi.kind === "fallback" || gi.kind === "cut" ? "warn" : "error",
           component: "gateway",
           where: "gateway#inferStream",
           message:

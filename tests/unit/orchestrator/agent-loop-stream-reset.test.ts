@@ -180,3 +180,94 @@ describe("AgentLoop — context-overflow recovery", () => {
     expect(call).toBe(2);
   });
 });
+
+/**
+ * R2.4 of docs/program/rune-reliability-plan-20261014.md: an over-limit prompt
+ * that nothing shrank is never re-sent unchanged. Before, it fell through to
+ * the ordinary retry, was refused the same way until the error budget was
+ * spent, and the run ended `provider_lost` — blaming a provider that answered.
+ */
+describe("AgentLoop — an over-limit prompt nothing shrank is not re-sent", () => {
+  const OVER = "prompt is too long: 210000 tokens > 200000 maximum";
+
+  function overflowing() {
+    const gw = {
+      calls: 0,
+      inferStream: async function* () {
+        gw.calls++;
+        yield { type: "error", error: OVER };
+      },
+    } as any;
+    return gw;
+  }
+
+  function engine(compacted: boolean) {
+    return {
+      buildPrompt: (system: string, _tools: unknown[], messages: Message[]) => ({
+        messages,
+        system,
+        tools: [],
+        totalTokens: 1,
+        evictedCount: 0,
+      }),
+      noteRealUsage: () => {},
+      shouldCompact: () => false,
+      compactWorkingSet: async (messages: Message[]) => ({ messages, compacted }),
+    } as unknown as ContextEngine;
+  }
+
+  function endsNamed(events: AgentTurnEvent[]) {
+    const fatal = events.find((e) => e.type === "error" && e.recoverable === false) as
+      Extract<AgentTurnEvent, { type: "error" }> | undefined;
+    expect(fatal?.error).toContain("no longer fits this model's context window");
+    expect(fatal?.error).toContain(OVER);
+    const last = events.at(-1) as Extract<AgentTurnEvent, { type: "turn_complete" }>;
+    expect(last.type).toBe("turn_complete");
+    expect(last.stopReason).toBe("max_tokens");
+  }
+
+  test("with nothing to compact, the run ends named after one refusal", async () => {
+    const gw = overflowing();
+    const events = await collect(
+      loopWith(gw, { contextEngine: engine(false) }).run("go", "s1", "/ws"),
+    );
+    expect(gw.calls).toBe(1);
+    endsNamed(events);
+  });
+
+  test("with no context engine at all, the same", async () => {
+    const gw = overflowing();
+    const events = await collect(loopWith(gw).run("go", "s1", "/ws"));
+    expect(gw.calls).toBe(1);
+    endsNamed(events);
+  });
+
+  test("when compaction has had its tries, the next refusal ends it", async () => {
+    // Each compaction changes the prompt, so each re-send is a new request;
+    // once the two tries are spent, the third refusal is not re-sent.
+    const gw = overflowing();
+    const events = await collect(
+      loopWith(gw, { contextEngine: engine(true) }).run("go", "s1", "/ws"),
+    );
+    expect(gw.calls).toBe(3);
+    endsNamed(events);
+  });
+
+  test("an ordinary failure still takes the ordinary retry", async () => {
+    let calls = 0;
+    const gw = {
+      inferStream: async function* () {
+        calls++;
+        if (calls === 1) {
+          yield { type: "error", error: "upstream connect error" };
+          return;
+        }
+        yield textDelta("fine");
+        yield stopEvent();
+      },
+    } as any;
+    const events = await collect(loopWith(gw).run("go", "s1", "/ws"));
+    expect(calls).toBe(2);
+    expect(events.some((e) => e.type === "error" && e.recoverable === false)).toBe(false);
+  });
+});

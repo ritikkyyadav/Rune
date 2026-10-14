@@ -552,6 +552,10 @@ export type StreamEvent =
       capacity?: ProviderCapacity;
     }
   | { type: "notice"; message: string }
+  // The response failed after it had finished `completedCalls` tool calls and
+  // the caller asked to keep them (`keepCompletedOnCut`): the stream ends here,
+  // with no `message_stop` and no usage — the provider never reported any.
+  | { type: "message_cut"; reason: string; completedCalls: number }
   // The gateway abandoned `from` and is about to stream from `to` instead.
   // Structured (provider/model/status/backoff) so UIs can render a real
   // fallback banner instead of regex-parsing an English sentence. Emitted in
@@ -623,6 +627,13 @@ export interface StreamOpts {
    * so throws away a warm cache. Providers without the concept ignore it.
    */
   cacheKey?: string;
+  /**
+   * When a response fails mid-stream after it has FINISHED one or more tool
+   * calls, end it there with `message_cut` instead of re-sending the request
+   * from zero (R2). The agent loop asks for this: it runs the finished calls
+   * and continues from their results. Every other caller keeps the re-send.
+   */
+  keepCompletedOnCut?: boolean;
 }
 
 /** A model exposed by a provider's discovery endpoint (or its static preset list). */
@@ -1271,7 +1282,7 @@ export interface GatewayConfig {
 
 /** What the gateway reports to the black box (kept provider-agnostic). */
 export interface GatewayIncidentEvent {
-  kind: "fallback" | "terminal" | "retry";
+  kind: "fallback" | "terminal" | "retry" | "cut";
   provider: string;
   model?: string;
   status?: number;

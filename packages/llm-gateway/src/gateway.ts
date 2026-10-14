@@ -525,9 +525,12 @@ export class LlmGateway {
         // Per attempt, and per PROVIDER: a request that fell back measures the
         // provider that actually served it, not the one that refused (P3B I3).
         const attemptStartedAt = new Date();
+        // Tool calls this attempt FINISHED: a `tool_use_stop` went out.
+        let completedCalls = 0;
         try {
           const gen = provider.inferStream(adjustedRequest, opts);
           for await (const event of gen) {
+            if (event.type === "tool_use_stop") completedCalls++;
             if (event.type === "message_stop") {
               release?.();
               this.recordCost(
@@ -548,6 +551,24 @@ export class LlmGateway {
           // User abort: stop dead. Retrying or falling back on an aborted
           // request wastes calls and delays the Esc response.
           if (opts?.signal?.aborted) throw err;
+
+          // Cut after finishing tool calls (R2): re-sending from zero would
+          // throw away work the model finished — a long think, a long file —
+          // to get the same calls back. A caller that can run them asks to
+          // keep them; the response ends here and the turn goes on.
+          if (opts?.keepCompletedOnCut && completedCalls > 0) {
+            const reason =
+              (err as Error)?.message?.split("\n")[0]?.slice(0, 200) ?? "stream failed";
+            this.reportIncident({
+              kind: "cut",
+              provider: providerName,
+              model: adjustedRequest.model,
+              status: (err as Record<string, unknown>).status as number | undefined,
+              message: `response cut after ${completedCalls} finished tool call(s); kept instead of re-sending: ${reason}`,
+            });
+            yield { type: "message_cut", reason, completedCalls };
+            return;
+          }
 
           lastError = err as Error;
           lastStatus = (err as Record<string, unknown>).status as number | undefined;

@@ -176,3 +176,122 @@ describe("gateway stream_reset on mid-stream failure", () => {
     expect((backup as unknown as { calls: number }).calls).toBe(0); // no fallback either
   });
 });
+
+/**
+ * R2 of docs/program/rune-reliability-plan-20261014.md: a response that fails
+ * after it FINISHED tool calls is not re-sent from zero when the caller can run
+ * what was finished — the agent loop asks with `keepCompletedOnCut`.
+ */
+describe("a response cut after finished tool calls (keepCompletedOnCut)", () => {
+  const callA: StreamEvent[] = [
+    { type: "tool_use_start", toolCallId: "a", toolName: "read_file" },
+    { type: "tool_use_stop", toolCallId: "a", toolInput: { path: "a.ts" } },
+  ];
+  const callBStarted: StreamEvent = {
+    type: "tool_use_start",
+    toolCallId: "b",
+    toolName: "read_file",
+  };
+  const stall = Object.assign(new Error("stream stalled — no data for 120s"), { status: 504 });
+
+  test("ends with message_cut after the finished call, and does not re-send", async () => {
+    const provider = flakyProvider("anthropic", {
+      failCalls: 1,
+      err: stall,
+      partial: [...callA, callBStarted],
+      full: [textDelta("a whole second answer"), stop],
+    });
+    const gw = gatewayWith(provider);
+
+    const events = await collect(gw.inferStream(REQ, { keepCompletedOnCut: true }));
+    const types = events.map((e) => e.type);
+
+    expect(provider.calls).toBe(1);
+    expect(types).not.toContain("stream_reset");
+    expect(types).toContain("tool_use_stop");
+    const cut = events.at(-1) as Extract<StreamEvent, { type: "message_cut" }>;
+    expect(cut.type).toBe("message_cut");
+    expect(cut.completedCalls).toBe(1);
+    expect(cut.reason).toContain("stream stalled");
+  });
+
+  test("with nothing finished it re-sends from zero, as before", async () => {
+    const provider = flakyProvider("anthropic", {
+      failCalls: 1,
+      err: stall,
+      partial: [textDelta("thinking out loud"), callBStarted],
+      full: [textDelta("answer"), stop],
+    });
+    const gw = gatewayWith(provider);
+
+    const events = await collect(gw.inferStream(REQ, { keepCompletedOnCut: true }));
+    expect(provider.calls).toBe(2);
+    expect(events.map((e) => e.type)).toContain("stream_reset");
+    expect(events.at(-1)?.type).toBe("message_stop");
+  });
+
+  test("a caller that did not ask keeps the re-send", async () => {
+    const provider = flakyProvider("anthropic", {
+      failCalls: 1,
+      err: stall,
+      partial: [...callA, callBStarted],
+      full: [textDelta("answer"), stop],
+    });
+    const gw = gatewayWith(provider);
+
+    const events = await collect(gw.inferStream(REQ));
+    expect(provider.calls).toBe(2);
+    expect(events.map((e) => e.type)).not.toContain("message_cut");
+    expect(events.at(-1)?.type).toBe("message_stop");
+  });
+
+  test("a user abort is still an abort, finished calls or not", async () => {
+    const controller = new AbortController();
+    const provider = flakyProvider("anthropic", {
+      failCalls: 1,
+      err: new Error("aborted"),
+      partial: [...callA],
+      full: [],
+    });
+    const original = provider.inferStream;
+    provider.inferStream = async function* (req: InferenceRequest, opts?: StreamOpts) {
+      controller.abort();
+      yield* original(req, opts);
+    };
+    const gw = gatewayWith(provider);
+
+    await expect(
+      collect(gw.inferStream(REQ, { keepCompletedOnCut: true, signal: controller.signal })),
+    ).rejects.toThrow("aborted");
+  });
+});
+
+describe("a kept cut is reported, never silent", () => {
+  test("the black box hears of it as a cut, with the provider's status", async () => {
+    const incidents: Array<{ kind: string; status?: number; message: string }> = [];
+    const gw = new LlmGateway({
+      providers: {},
+      defaultProvider: "anthropic",
+      maxRetries: 2,
+      retryBaseMs: 1,
+      modelIntegrity: "flex",
+      onIncident: (i) => incidents.push(i),
+    });
+    gw.registerProvider(
+      flakyProvider("anthropic", {
+        failCalls: 1,
+        err: Object.assign(new Error("upstream closed the stream"), { status: 502 }),
+        partial: [
+          { type: "tool_use_start", toolCallId: "a", toolName: "read_file" },
+          { type: "tool_use_stop", toolCallId: "a", toolInput: { path: "a.ts" } },
+        ],
+        full: [stop],
+      }),
+    );
+    await collect(gw.inferStream(REQ, { keepCompletedOnCut: true }));
+    const cut = incidents.find((i) => i.kind === "cut");
+    expect(cut?.status).toBe(502);
+    expect(cut?.message).toContain("1 finished tool call");
+    expect(cut?.message).toContain("upstream closed the stream");
+  });
+});
