@@ -11,6 +11,12 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-10-14
+
+**A run says how it ended: the exit code is execution, and a usage cap is a pause with a reset
+time.** A patch on 1.4.2, the second phase of the reliability plan. Full notes:
+[`docs/releases/v1.4.3.md`](docs/releases/v1.4.3.md).
+
 ### Changed
 
 - **The exit code of `rune -P` says how the run ended.**
@@ -1054,7 +1060,8 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.2...HEAD
+[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.3...HEAD
+[1.4.3]: https://github.com/ritikkyyadav/Rune/compare/v1.4.2...v1.4.3
 [1.4.2]: https://github.com/ritikkyyadav/Rune/compare/v1.3.4...v1.4.2
 [1.3.4]: https://github.com/ritikkyyadav/Rune/compare/v1.3.3...v1.3.4
 [1.3.3]: https://github.com/ritikkyyadav/Rune/compare/v1.3.2...v1.3.3
