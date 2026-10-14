@@ -41,6 +41,10 @@ pub struct ReadFileOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base64: Option<String>,
     pub bytes: u64,
+    /// Set when the text is not valid UTF-8: what that means and what the write tools will
+    /// do with it, so the next call is not an edit that can only be refused.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// Image formats every vision-capable provider accepts, keyed by magic bytes
@@ -171,6 +175,7 @@ pub fn execute(input: ReadFileInput, workspace_root: &Path) -> Result<ReadFileOu
                 Some(base64_encode(&raw))
             },
             bytes: size,
+            note: None,
         });
     }
 
@@ -194,6 +199,7 @@ pub fn execute(input: ReadFileInput, workspace_root: &Path) -> Result<ReadFileOu
             media_type: None,
             base64: None,
             bytes: size,
+            note: None,
         });
     }
 
@@ -229,6 +235,7 @@ pub fn execute(input: ReadFileInput, workspace_root: &Path) -> Result<ReadFileOu
         media_type: None,
         base64: None,
         bytes: size,
+        note: crate::text_file::utf8_problem(&raw).map(|p| p.read_note(&input.path)),
     })
 }
 
@@ -448,5 +455,25 @@ mod tests {
         assert!(out.content.contains("line1"));
         assert!(out.base64.is_none());
         assert!(out.media_type.is_none());
+        assert!(out.note.is_none());
+    }
+
+    /// The read that precedes probe P4: the text is still shown, and the note says why
+    /// an edit would be refused before one is attempted.
+    #[test]
+    fn text_that_is_not_utf8_is_shown_with_a_note() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(
+            tmp.path().join("l.py"),
+            b"# caf\xe9 latin-1 comment\nx = 1\n",
+        )
+        .unwrap();
+
+        let out = read(&tmp, "l.py");
+        assert_eq!(out.kind, "text");
+        assert!(out.content.contains("x = 1"));
+        let note = out.note.expect("a note for a file that is not UTF-8");
+        assert!(note.contains("not valid UTF-8"), "{note}");
+        assert!(note.contains("will refuse"), "{note}");
     }
 }

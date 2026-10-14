@@ -8,4 +8,5 @@ pub mod read_file;
 pub mod repo_map;
 pub mod search_code;
 pub mod symbol_search;
+pub mod text_file;
 pub mod write_file;

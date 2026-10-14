@@ -2,10 +2,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use similar::{ChangeTag, TextDiff};
 use std::fs;
-use std::io::Write;
 use std::path::Path;
 
 use crate::error::ToolError;
+use crate::text_file::{self, Eol};
 
 #[derive(Debug, Deserialize)]
 pub struct EditFileInput {
@@ -22,32 +22,28 @@ pub struct EditFileOutput {
     pub hash: String,
     pub diff: String,
     pub replacements: usize,
-    /// Which matching tier produced the edit: "exact", "whitespace", or "indentation".
+    /// How `old_text` was found: "exact", or "line-endings" when it matched only once its
+    /// line breaks were written in the file's own convention. Both are byte-exact matches.
     pub strategy: String,
-}
-
-/// The matching tier that located `old_text` within the file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MatchStrategy {
-    /// Tier 1: exact substring match.
-    Exact,
-    /// Tier 2: line-based, each line right-trimmed (trailing spaces/tabs/\r stripped).
-    Whitespace,
-    /// Tier 3: line-based, each line fully trimmed (leading + trailing whitespace).
-    Indentation,
-}
-
-impl MatchStrategy {
-    fn as_str(self) -> &'static str {
-        match self {
-            MatchStrategy::Exact => "exact",
-            MatchStrategy::Whitespace => "whitespace",
-            MatchStrategy::Indentation => "indentation",
-        }
-    }
+    /// The file had changed since it was last read, and `old_text` still matched it
+    /// exactly once, so the edit was applied to the current content.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub changed_since_read: bool,
+    /// What the caller should know about this write: the change since the read, other
+    /// hard links to the file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 pub fn execute(input: EditFileInput, workspace_root: &Path) -> Result<EditFileOutput, ToolError> {
+    if input.old_text.is_empty() {
+        return Err(ToolError::InvalidArgs(
+            "old_text is empty: give the exact text to replace (use write_file to create or \
+             overwrite a whole file)."
+                .to_string(),
+        ));
+    }
+
     let resolved = if Path::new(&input.path).is_absolute() {
         Path::new(&input.path).to_path_buf()
     } else {
@@ -68,6 +64,7 @@ pub fn execute(input: EditFileInput, workspace_root: &Path) -> Result<EditFileOu
             detail: e.to_string(),
         },
     )?);
+
     if !canonical.starts_with(&workspace_canonical) {
         return Err(ToolError::PathEscape {
             path: resolved.display().to_string(),
@@ -75,214 +72,247 @@ pub fn execute(input: EditFileInput, workspace_root: &Path) -> Result<EditFileOu
         });
     }
 
-    // Read current file
-    let raw = fs::read(&canonical).map_err(|e| ToolError::Io {
+    let io = |e: std::io::Error| ToolError::Io {
         path: canonical.display().to_string(),
         detail: e.to_string(),
-    })?;
+    };
+    let meta = fs::metadata(&canonical).map_err(io)?;
+    let raw = fs::read(&canonical).map_err(io)?;
     let current_hash = hex::encode(Sha256::digest(&raw));
 
-    // Hash check — reject stale edits
-    if current_hash != input.expected_hash {
-        return Err(ToolError::InvalidArgs(format!(
-            "Hash mismatch: file has changed since last read. Expected {}, got {}. Re-read the file first.",
-            input.expected_hash, current_hash
-        )));
-    }
+    // Strict UTF-8 or nothing: a lossy decode used to write U+FFFD over every byte that
+    // did not decode, anywhere in the file, on an edit somewhere else entirely (probe P4).
+    let file = text_file::decode(&raw, &input.path, "edit_file")?;
 
-    let old_content = String::from_utf8_lossy(&raw).to_string();
+    // A file that changed after it was read is edited only when the text the caller meant
+    // is still there exactly once. Anything else means the caller's picture of the file is
+    // out of date, and that is what the refusal says (19 of 788 recorded edits were refused
+    // for a stale hash that this rule would have let through).
+    let stale = current_hash != input.expected_hash;
     let replace_all = input.replace_all.unwrap_or(false);
-
-    // Locate and apply the edit using the 3-tier matching strategy. Falls back
-    // from exact substring -> whitespace-insensitive -> indentation-insensitive,
-    // but only when the match is unambiguous (otherwise it errors instead of guessing).
-    let Edit {
-        content: new_content,
-        replacements,
-        strategy,
-    } = apply_edit(
-        &old_content,
+    let edit = match apply_edit(
+        &file.text,
+        file.eol,
         &input.old_text,
         &input.new_text,
         replace_all,
         &input.path,
-    )?;
+    ) {
+        Ok(edit) => edit,
+        Err(_) if stale => {
+            return Err(ToolError::InvalidArgs(format!(
+                "Hash mismatch: {} has changed since it was last read (expected {}, now {}), \
+                 and old_text no longer matches it exactly once. Re-read the file first.",
+                input.path, input.expected_hash, current_hash
+            )));
+        }
+        Err(err) => return Err(err),
+    };
 
-    // Generate unified diff
-    let diff = generate_diff(&input.path, &old_content, &new_content);
+    let new_bytes = text_file::encode(&edit.content, file.bom);
+    let diff = generate_diff(&input.path, &file.text, &edit.content);
 
-    // Atomic write: temp → fsync → rename
-    let dir = canonical.parent().unwrap_or(workspace_root);
-    let mut tmp = tempfile::NamedTempFile::new_in(dir).map_err(|e| ToolError::Io {
-        path: dir.display().to_string(),
-        detail: format!("Failed to create temp file: {e}"),
-    })?;
-
-    let new_bytes = new_content.as_bytes();
-    tmp.write_all(new_bytes).map_err(|e| ToolError::Io {
-        path: canonical.display().to_string(),
-        detail: format!("Write failed: {e}"),
-    })?;
-
-    tmp.as_file().sync_all().map_err(|e| ToolError::Io {
-        path: canonical.display().to_string(),
-        detail: format!("Fsync failed: {e}"),
-    })?;
-
-    tmp.persist(&canonical).map_err(|e| ToolError::Io {
-        path: canonical.display().to_string(),
-        detail: format!("Rename failed: {e}"),
-    })?;
-
-    let new_hash = hex::encode(Sha256::digest(new_bytes));
+    let mut notes: Vec<String> = Vec::new();
+    if stale {
+        notes.push(format!(
+            "{} changed after it was last read; old_text still matched exactly once, so the edit \
+             was applied to the current content. Re-read it before an edit that depends on the \
+             code around this one.",
+            input.path
+        ));
+    }
+    // Identical bytes mean there is nothing to write: the file keeps its inode and mtime.
+    let link_note = if new_bytes != raw {
+        text_file::write_atomic(&canonical, &new_bytes, Some(&meta))?
+    } else {
+        None
+    };
+    notes.extend(link_note);
 
     Ok(EditFileOutput {
         path: canonical.display().to_string(),
-        hash: new_hash,
+        hash: hex::encode(Sha256::digest(&new_bytes)),
         diff,
-        replacements,
-        strategy: strategy.as_str().to_string(),
+        replacements: edit.replacements,
+        strategy: edit.strategy.to_string(),
+        changed_since_read: stale,
+        note: (!notes.is_empty()).then(|| notes.join(" ")),
     })
 }
 
-/// Result of a successful 3-tier match + replace.
+/// Result of a successful match and replace.
 struct Edit {
     content: String,
     replacements: usize,
-    strategy: MatchStrategy,
+    strategy: &'static str,
 }
 
-/// Apply a single find-and-replace using the 3-tier matching strategy, mirroring
-/// the semantics of `packages/tool-registry/src/tools/multi-edit.ts`.
+/// Find `old_text` in `content` byte for byte, and replace it.
 ///
-/// - Tier 1 (exact): exact substring match. With `replace_all`, replaces every
-///   occurrence; otherwise requires exactly one (errors if >1, falls through if 0).
-/// - Tier 2 (whitespace): line-based, each line right-trimmed (trailing spaces,
-///   tabs, and `\r` stripped) before comparison. Same uniqueness rules.
-/// - Tier 3 (indentation): line-based, each line fully trimmed. Same uniqueness rules.
+/// Matching is exact, and only exact. Until 2026-10-14 a miss fell back to
+/// whitespace-insensitive and then indentation-insensitive line matching, splicing
+/// `new_text` in verbatim. When the model's indentation was wrong in `old_text` it was
+/// wrong in `new_text` too, so the indentation tier applied a Python edit that no longer
+/// parsed and reported success (probe P6). Across 1,448 recorded edit_file and multi_edit
+/// edits the two loose tiers had matched 3 times. A miss now says what nearly matched
+/// instead (`miss_message`), which is what makes exact matching workable.
 ///
-/// On a line-window match, the original file lines are replaced with `new_text`
-/// split into lines.
+/// The one conversion allowed is line endings. `old_text` is tried as given, then with its
+/// line breaks in the file's convention, then in the other one. Each candidate is still a
+/// byte-exact match against the file, and the replacement is written with the line
+/// endings of the text it replaces, so a CRLF file stays CRLF (probe P5) and a mixed file
+/// keeps its mix outside the edit.
 fn apply_edit(
     content: &str,
+    eol: Eol,
     old_text: &str,
     new_text: &str,
     replace_all: bool,
     path: &str,
 ) -> Result<Edit, ToolError> {
-    // ── Tier 1: exact substring ──
-    let exact = content.matches(old_text).count();
-    if exact > 0 {
-        if !replace_all && exact > 1 {
+    let other = match eol {
+        Eol::Lf => Eol::Crlf,
+        Eol::Crlf => Eol::Lf,
+    };
+    let mut candidates: Vec<(String, &'static str)> = vec![(old_text.to_string(), "exact")];
+    for convention in [eol, other] {
+        let converted = text_file::to_eol(old_text, convention);
+        if candidates.iter().all(|(c, _)| *c != converted) {
+            candidates.push((converted, "line-endings"));
+        }
+    }
+
+    for (needle, strategy) in &candidates {
+        let count = content.matches(needle.as_str()).count();
+        if count == 0 {
+            continue;
+        }
+        if count > 1 && !replace_all {
             return Err(ToolError::InvalidArgs(format!(
-                "old_text matches {exact} times in {path}. \
+                "old_text matches {count} times in {path}. \
                  Use replace_all=true or provide more context to make the match unique."
             )));
         }
-        let new_content = if replace_all {
-            content.replace(old_text, new_text)
+        let region = if needle.contains("\r\n") {
+            Eol::Crlf
+        } else if needle.contains('\n') {
+            Eol::Lf
         } else {
-            content.replacen(old_text, new_text, 1)
+            eol
+        };
+        let replacement = text_file::to_eol(new_text, region);
+        let content = if replace_all {
+            content.replace(needle.as_str(), &replacement)
+        } else {
+            content.replacen(needle.as_str(), &replacement, 1)
         };
         return Ok(Edit {
-            content: new_content,
-            replacements: if replace_all { exact } else { 1 },
-            strategy: MatchStrategy::Exact,
-        });
-    }
-
-    // ── Tiers 2 & 3: line-based normalized matching ──
-    let lines: Vec<&str> = content.split('\n').collect();
-    let old_lines: Vec<&str> = old_text.split('\n').collect();
-    let new_lines: Vec<&str> = new_text.split('\n').collect();
-
-    type NormalizeFn = fn(&str) -> &str;
-    let tiers: [(MatchStrategy, NormalizeFn); 2] = [
-        (MatchStrategy::Whitespace, rtrim),
-        (MatchStrategy::Indentation, str::trim),
-    ];
-
-    for (strategy, norm) in tiers {
-        let norm_old: Vec<&str> = old_lines.iter().map(|l| norm(l)).collect();
-        let starts = locate_windows(&lines, &norm_old, norm);
-        if starts.is_empty() {
-            continue;
-        }
-        if !replace_all && starts.len() > 1 {
-            return Err(ToolError::InvalidArgs(format!(
-                "old_text matches {} times in {} after {}-insensitive matching. \
-                 Use replace_all=true or provide more context to make the match unique.",
-                starts.len(),
-                path,
-                strategy.as_str(),
-            )));
-        }
-        let targets: &[usize] = if replace_all { &starts } else { &starts[..1] };
-        let out = splice_windows(&lines, targets, old_lines.len(), &new_lines);
-        return Ok(Edit {
-            content: out.join("\n"),
-            replacements: targets.len(),
+            content,
+            replacements: if replace_all { count } else { 1 },
             strategy,
         });
     }
 
-    Err(ToolError::InvalidArgs(format!(
-        "old_text not found in {path} \
-         (tried exact, whitespace-insensitive, and indentation-insensitive matching). \
-         The file may have changed or the text is incorrect."
+    Err(ToolError::InvalidArgs(miss_message(
+        content, old_text, path,
     )))
 }
 
-/// Right-trim: strip trailing spaces, tabs, and carriage returns (matches the
-/// `/[ \t\r]+$/` regex used in the TypeScript implementation).
-fn rtrim(s: &str) -> &str {
-    s.trim_end_matches([' ', '\t', '\r'])
+fn strip_cr(line: &str) -> &str {
+    line.strip_suffix('\r').unwrap_or(line)
 }
 
-/// Return the non-overlapping start indices of every line-window in `lines`
-/// that matches `norm_old` once each line is run through `norm`.
-fn locate_windows(lines: &[&str], norm_old: &[&str], norm: fn(&str) -> &str) -> Vec<usize> {
-    let mut starts = Vec::new();
-    if norm_old.is_empty() || norm_old.len() > lines.len() {
-        return starts;
+/// The first line-window of `lines` that equals `wanted` once both sides go through `norm`.
+fn find_window(lines: &[&str], wanted: &[&str], norm: fn(&str) -> &str) -> Option<usize> {
+    if wanted.is_empty() || wanted.len() > lines.len() {
+        return None;
     }
-    let mut i = 0;
-    while i + norm_old.len() <= lines.len() {
-        let matched = norm_old
+    (0..=lines.len() - wanted.len()).find(|&i| {
+        wanted
             .iter()
             .enumerate()
-            .all(|(j, expected)| norm(lines[i + j]) == *expected);
-        if matched {
-            starts.push(i);
-            i += norm_old.len(); // non-overlapping
-        } else {
-            i += 1;
-        }
-    }
-    starts
+            .all(|(j, w)| norm(lines[i + j]) == norm(w))
+    })
 }
 
-/// Replace each line-window beginning at one of `starts` (each `old_len` lines
-/// long) with `new_lines`, leaving all other lines untouched.
-fn splice_windows(
-    lines: &[&str],
-    starts: &[usize],
-    old_len: usize,
-    new_lines: &[&str],
-) -> Vec<String> {
-    let start_set: std::collections::HashSet<usize> = starts.iter().copied().collect();
-    let mut out: Vec<String> = Vec::new();
-    let mut i = 0;
-    while i < lines.len() {
-        if start_set.contains(&i) {
-            out.extend(new_lines.iter().map(|s| s.to_string()));
-            i += old_len;
-        } else {
-            out.push(lines[i].to_string());
-            i += 1;
+fn trim_trailing(s: &str) -> &str {
+    s.trim_end_matches([' ', '\t'])
+}
+
+fn describe_indent(line: &str) -> String {
+    let lead: Vec<char> = line
+        .chars()
+        .take_while(|c| *c == ' ' || *c == '\t')
+        .collect();
+    let tabs = lead.iter().filter(|c| **c == '\t').count();
+    let spaces = lead.len() - tabs;
+    let plural = |n: usize, one: &str| format!("{n} {one}{}", if n == 1 { "" } else { "s" });
+    match (tabs, spaces) {
+        (0, 0) => "no indentation".to_string(),
+        (0, s) => plural(s, "space"),
+        (t, 0) => plural(t, "tab"),
+        (t, s) => format!("{} and {}", plural(t, "tab"), plural(s, "space")),
+    }
+}
+
+/// Why `old_text` was not found, in terms the caller can act on: which lines nearly
+/// matched and what differs. `packages/tool-registry/src/tools/text-file.ts` words it the
+/// same way for multi_edit and apply_patch.
+fn miss_message(content: &str, old_text: &str, path: &str) -> String {
+    let lines: Vec<&str> = content.split('\n').map(strip_cr).collect();
+    let mut wanted: Vec<&str> = old_text.split('\n').map(strip_cr).collect();
+    if wanted.len() > 1 && wanted.last() == Some(&"") {
+        wanted.pop(); // old_text ended with a line break
+    }
+
+    if let Some(start) = find_window(&lines, &wanted, trim_trailing) {
+        return format!(
+            "old_text not found in {path}. Lines {}–{} match it once trailing whitespace is \
+             ignored: copy them exactly as read_file shows them, trailing spaces and tabs included.",
+            start + 1,
+            start + wanted.len()
+        );
+    }
+    if let Some(start) = find_window(&lines, &wanted, str::trim) {
+        let window = &lines[start..start + wanted.len()];
+        if let Some((offset, (file_line, wanted_line))) = window
+            .iter()
+            .zip(wanted.iter())
+            .enumerate()
+            .find(|(_, (f, w))| describe_indent(f) != describe_indent(w))
+        {
+            return format!(
+                "old_text not found in {path}. Lines {}–{} match it once indentation is ignored: \
+                 line {} is indented with {} in the file and {} in old_text. Send old_text and \
+                 new_text with the file's own indentation; edits are never re-indented.",
+                start + 1,
+                start + wanted.len(),
+                start + offset + 1,
+                describe_indent(file_line),
+                describe_indent(wanted_line)
+            );
         }
     }
-    out
+    if let Some(first) = wanted.iter().map(|l| l.trim()).find(|l| !l.is_empty()) {
+        let at: Vec<String> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.trim() == first)
+            .map(|(i, _)| (i + 1).to_string())
+            .take(5)
+            .collect();
+        if !at.is_empty() {
+            return format!(
+                "old_text not found in {path}. Its first line appears at line {}, but what \
+                 follows differs: re-read that region and copy it exactly.",
+                at.join(", ")
+            );
+        }
+    }
+    format!(
+        "old_text not found in {path}. The file may have changed, or the text differs from what \
+         it holds: re-read the region you are editing and copy it exactly."
+    )
 }
 
 fn generate_diff(path: &str, old: &str, new: &str) -> String {
@@ -316,8 +346,33 @@ mod tests {
     use sha2::{Digest, Sha256};
     use tempfile::TempDir;
 
-    fn hash_of(content: &str) -> String {
-        hex::encode(Sha256::digest(content.as_bytes()))
+    fn hash_of(content: &[u8]) -> String {
+        hex::encode(Sha256::digest(content))
+    }
+
+    fn edit(dir: &Path, path: &str, old: &str, new: &str) -> Result<EditFileOutput, ToolError> {
+        let raw = fs::read(dir.join(path)).unwrap();
+        execute(
+            EditFileInput {
+                path: path.to_string(),
+                old_text: old.to_string(),
+                new_text: new.to_string(),
+                expected_hash: hash_of(&raw),
+                replace_all: None,
+            },
+            dir,
+        )
+    }
+
+    fn refused_with(result: Result<EditFileOutput, ToolError>, needle: &str) -> String {
+        match result {
+            Err(ToolError::InvalidArgs(msg)) => {
+                assert!(msg.contains(needle), "expected {needle:?} in: {msg}");
+                msg
+            }
+            Err(other) => panic!("expected InvalidArgs, got {other}"),
+            Ok(out) => panic!("expected a refusal, got an edit: {}", out.diff),
+        }
     }
 
     #[test]
@@ -326,19 +381,12 @@ mod tests {
         let content = "fn main() {\n    println!(\"hello\");\n}\n";
         fs::write(tmp.path().join("main.rs"), content).unwrap();
 
-        let output = execute(
-            EditFileInput {
-                path: "main.rs".to_string(),
-                old_text: "\"hello\"".to_string(),
-                new_text: "\"world\"".to_string(),
-                expected_hash: hash_of(content),
-                replace_all: None,
-            },
-            tmp.path(),
-        )
-        .unwrap();
+        let output = edit(tmp.path(), "main.rs", "\"hello\"", "\"world\"").unwrap();
 
         assert_eq!(output.replacements, 1);
+        assert_eq!(output.strategy, "exact");
+        assert!(!output.changed_since_read);
+        assert!(output.note.is_none());
         let result = fs::read_to_string(tmp.path().join("main.rs")).unwrap();
         assert!(result.contains("\"world\""));
         assert!(!result.contains("\"hello\""));
@@ -364,14 +412,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_stale_hash() {
+    fn a_stale_hash_is_refused_when_old_text_no_longer_matches() {
         let tmp = TempDir::new().unwrap();
         fs::write(tmp.path().join("file.txt"), "original").unwrap();
 
         let result = execute(
             EditFileInput {
                 path: "file.txt".to_string(),
-                old_text: "original".to_string(),
+                old_text: "what the caller remembers".to_string(),
                 new_text: "modified".to_string(),
                 expected_hash: "wrong_hash".to_string(),
                 replace_all: None,
@@ -379,29 +427,71 @@ mod tests {
             tmp.path(),
         );
 
-        assert!(
-            matches!(result, Err(ToolError::InvalidArgs(msg)) if msg.contains("Hash mismatch"))
+        refused_with(result, "Hash mismatch");
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("file.txt")).unwrap(),
+            "original"
         );
     }
 
     #[test]
-    fn rejects_non_unique_match_without_replace_all() {
+    fn a_stale_hash_is_refused_when_old_text_became_ambiguous() {
         let tmp = TempDir::new().unwrap();
-        let content = "foo bar foo baz foo\n";
-        fs::write(tmp.path().join("dups.txt"), content).unwrap();
+        fs::write(tmp.path().join("file.txt"), "x = 1\nx = 1\n").unwrap();
 
         let result = execute(
             EditFileInput {
-                path: "dups.txt".to_string(),
-                old_text: "foo".to_string(),
-                new_text: "qux".to_string(),
-                expected_hash: hash_of(content),
+                path: "file.txt".to_string(),
+                old_text: "x = 1".to_string(),
+                new_text: "x = 2".to_string(),
+                expected_hash: hash_of(b"x = 1\n"),
                 replace_all: None,
             },
             tmp.path(),
         );
 
-        assert!(matches!(result, Err(ToolError::InvalidArgs(msg)) if msg.contains("3 times")));
+        refused_with(result, "Hash mismatch");
+    }
+
+    #[test]
+    fn a_stale_hash_still_applies_when_old_text_matches_exactly_once() {
+        let tmp = TempDir::new().unwrap();
+        // Read as "a\nb\n"; something else appended a line since.
+        fs::write(tmp.path().join("file.txt"), "a\nb\nc\n").unwrap();
+
+        let output = execute(
+            EditFileInput {
+                path: "file.txt".to_string(),
+                old_text: "b".to_string(),
+                new_text: "B".to_string(),
+                expected_hash: hash_of(b"a\nb\n"),
+                replace_all: None,
+            },
+            tmp.path(),
+        )
+        .unwrap();
+
+        assert!(output.changed_since_read);
+        assert!(
+            output
+                .note
+                .as_deref()
+                .unwrap()
+                .contains("changed after it was last read")
+        );
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("file.txt")).unwrap(),
+            "a\nB\nc\n"
+        );
+        assert_eq!(output.hash, hash_of(b"a\nB\nc\n"));
+    }
+
+    #[test]
+    fn rejects_non_unique_match_without_replace_all() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("dups.txt"), "foo bar foo baz foo\n").unwrap();
+
+        refused_with(edit(tmp.path(), "dups.txt", "foo", "qux"), "3 times");
     }
 
     #[test]
@@ -415,7 +505,7 @@ mod tests {
                 path: "dups.txt".to_string(),
                 old_text: "foo".to_string(),
                 new_text: "qux".to_string(),
-                expected_hash: hash_of(content),
+                expected_hash: hash_of(content.as_bytes()),
                 replace_all: Some(true),
             },
             tmp.path(),
@@ -428,42 +518,35 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_old_text_is_refused() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("f.txt"), "abc\n").unwrap();
+
+        refused_with(edit(tmp.path(), "f.txt", "", "x"), "old_text is empty");
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("f.txt")).unwrap(),
+            "abc\n"
+        );
+    }
+
+    #[test]
     fn rejects_old_text_not_found() {
         let tmp = TempDir::new().unwrap();
-        let content = "actual content\n";
-        fs::write(tmp.path().join("file.txt"), content).unwrap();
+        fs::write(tmp.path().join("file.txt"), "actual content\n").unwrap();
 
-        let result = execute(
-            EditFileInput {
-                path: "file.txt".to_string(),
-                old_text: "does not exist".to_string(),
-                new_text: "replacement".to_string(),
-                expected_hash: hash_of(content),
-                replace_all: None,
-            },
-            tmp.path(),
+        let msg = refused_with(
+            edit(tmp.path(), "file.txt", "does not exist", "replacement"),
+            "not found",
         );
-
-        assert!(matches!(result, Err(ToolError::InvalidArgs(msg)) if msg.contains("not found")));
+        assert!(msg.contains("re-read"), "{msg}");
     }
 
     #[test]
     fn generates_valid_diff() {
         let tmp = TempDir::new().unwrap();
-        let content = "line1\nline2\nline3\nline4\n";
-        fs::write(tmp.path().join("diff.txt"), content).unwrap();
+        fs::write(tmp.path().join("diff.txt"), "line1\nline2\nline3\nline4\n").unwrap();
 
-        let output = execute(
-            EditFileInput {
-                path: "diff.txt".to_string(),
-                old_text: "line2".to_string(),
-                new_text: "LINE_TWO".to_string(),
-                expected_hash: hash_of(content),
-                replace_all: None,
-            },
-            tmp.path(),
-        )
-        .unwrap();
+        let output = edit(tmp.path(), "diff.txt", "line2", "LINE_TWO").unwrap();
 
         assert!(output.diff.contains("--- a/diff.txt"));
         assert!(output.diff.contains("+++ b/diff.txt"));
@@ -472,186 +555,266 @@ mod tests {
     }
 
     #[test]
-    fn exact_match_reports_exact_strategy() {
+    fn trailing_whitespace_drift_is_refused_and_located() {
         let tmp = TempDir::new().unwrap();
-        let content = "alpha\nbeta\ngamma\n";
-        fs::write(tmp.path().join("f.txt"), content).unwrap();
-
-        let output = execute(
-            EditFileInput {
-                path: "f.txt".to_string(),
-                old_text: "beta".to_string(),
-                new_text: "BETA".to_string(),
-                expected_hash: hash_of(content),
-                replace_all: None,
-            },
-            tmp.path(),
-        )
-        .unwrap();
-
-        assert_eq!(output.strategy, "exact");
-        assert_eq!(output.replacements, 1);
-    }
-
-    #[test]
-    fn whitespace_fallback_matches_on_trailing_whitespace_drift() {
-        let tmp = TempDir::new().unwrap();
-        // File has trailing spaces/tabs the model didn't reproduce.
+        // The file carries trailing spaces and a tab that old_text leaves out.
         let content = "fn main() {  \n    let x = 1;\t\n}\n";
         fs::write(tmp.path().join("ws.rs"), content).unwrap();
 
-        // old_text has clean line endings (no trailing whitespace), so exact
-        // substring match fails and tier 2 (right-trim) must kick in.
-        let output = execute(
-            EditFileInput {
-                path: "ws.rs".to_string(),
-                old_text: "fn main() {\n    let x = 1;\n}".to_string(),
-                new_text: "fn main() {\n    let x = 2;\n}".to_string(),
-                expected_hash: hash_of(content),
-                replace_all: None,
-            },
-            tmp.path(),
-        )
-        .unwrap();
-
-        assert_eq!(output.strategy, "whitespace");
-        assert_eq!(output.replacements, 1);
-        let result = fs::read_to_string(tmp.path().join("ws.rs")).unwrap();
-        // The whole window is rewritten from new_text, normalizing the trailing
-        // whitespace away, and the trailing newline is preserved.
-        assert_eq!(result, "fn main() {\n    let x = 2;\n}\n");
+        let msg = refused_with(
+            edit(
+                tmp.path(),
+                "ws.rs",
+                "fn main() {\n    let x = 1;\n}",
+                "fn main() {\n    let x = 2;\n}",
+            ),
+            "Lines 1–3 match it once trailing whitespace is ignored",
+        );
+        assert!(msg.contains("ws.rs"), "{msg}");
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("ws.rs")).unwrap(),
+            content
+        );
     }
 
     #[test]
-    fn indentation_fallback_matches_on_leading_whitespace_drift() {
+    fn a_trailing_space_in_old_text_is_not_trimmed_away() {
         let tmp = TempDir::new().unwrap();
-        // File is indented with a tab; model supplied spaces (or none).
+        let content = "x = 1;\nx = 1;\n";
+        fs::write(tmp.path().join("amb.rs"), content).unwrap();
+
+        refused_with(
+            edit(tmp.path(), "amb.rs", "x = 1; ", "x = 2;"),
+            "trailing whitespace is ignored",
+        );
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("amb.rs")).unwrap(),
+            content
+        );
+    }
+
+    #[test]
+    fn indentation_drift_is_refused_and_named() {
+        let tmp = TempDir::new().unwrap();
+        // The file indents with tabs; old_text uses spaces.
         let content = "if cond {\n\t\tdo_thing();\n}\n";
         fs::write(tmp.path().join("indent.rs"), content).unwrap();
 
-        // Leading whitespace differs, so neither exact nor right-trim matches;
-        // tier 3 (full trim) must kick in.
-        let output = execute(
-            EditFileInput {
-                path: "indent.rs".to_string(),
-                old_text: "if cond {\n    do_thing();\n}".to_string(),
-                new_text: "if cond {\n    done();\n}".to_string(),
-                expected_hash: hash_of(content),
-                replace_all: None,
-            },
-            tmp.path(),
-        )
-        .unwrap();
-
-        assert_eq!(output.strategy, "indentation");
-        assert_eq!(output.replacements, 1);
-        let result = fs::read_to_string(tmp.path().join("indent.rs")).unwrap();
-        assert_eq!(result, "if cond {\n    done();\n}\n");
-    }
-
-    #[test]
-    fn rejects_ambiguous_whitespace_fallback_without_replace_all() {
-        let tmp = TempDir::new().unwrap();
-        // File lines carry NO trailing whitespace; old_text lines DO. The exact
-        // substring "x = 1; " (trailing space) is absent, so tier 1 fails, but
-        // both lines match after right-trimming -> 2 ambiguous windows.
-        let content = "x = 1;\nx = 1;\n";
-        fs::write(tmp.path().join("amb.rs"), content).unwrap();
-
-        let result = execute(
-            EditFileInput {
-                path: "amb.rs".to_string(),
-                old_text: "x = 1; ".to_string(),
-                new_text: "x = 2;".to_string(),
-                expected_hash: hash_of(content),
-                replace_all: None,
-            },
-            tmp.path(),
+        let msg = refused_with(
+            edit(
+                tmp.path(),
+                "indent.rs",
+                "if cond {\n    do_thing();\n}",
+                "if cond {\n    done();\n}",
+            ),
+            "match it once indentation is ignored",
         );
-
-        assert!(matches!(
-            result,
-            Err(ToolError::InvalidArgs(msg))
-                if msg.contains("2 times") && msg.contains("whitespace-insensitive")
-        ));
-    }
-
-    #[test]
-    fn whitespace_fallback_replace_all_hits_every_window() {
-        let tmp = TempDir::new().unwrap();
-        // Same setup: exact match impossible (old_text has a trailing space the
-        // file lines lack), tier 2 matches both windows, replace_all hits both.
-        let content = "x = 1;\nx = 1;\n";
-        fs::write(tmp.path().join("amb.rs"), content).unwrap();
-
-        let output = execute(
-            EditFileInput {
-                path: "amb.rs".to_string(),
-                old_text: "x = 1; ".to_string(),
-                new_text: "x = 2;".to_string(),
-                expected_hash: hash_of(content),
-                replace_all: Some(true),
-            },
-            tmp.path(),
-        )
-        .unwrap();
-
-        assert_eq!(output.strategy, "whitespace");
-        assert_eq!(output.replacements, 2);
-        let result = fs::read_to_string(tmp.path().join("amb.rs")).unwrap();
-        assert_eq!(result, "x = 2;\nx = 2;\n");
-    }
-
-    #[test]
-    fn not_found_error_mentions_all_three_tiers() {
-        let tmp = TempDir::new().unwrap();
-        let content = "completely\nunrelated\ncontent\n";
-        fs::write(tmp.path().join("nf.txt"), content).unwrap();
-
-        let result = execute(
-            EditFileInput {
-                path: "nf.txt".to_string(),
-                old_text: "no such\nlines here".to_string(),
-                new_text: "x".to_string(),
-                expected_hash: hash_of(content),
-                replace_all: None,
-            },
-            tmp.path(),
+        assert!(
+            msg.contains("line 2 is indented with 2 tabs in the file and 4 spaces in old_text"),
+            "{msg}"
         );
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("indent.rs")).unwrap(),
+            content
+        );
+    }
 
-        assert!(matches!(
-            result,
-            Err(ToolError::InvalidArgs(msg))
-                if msg.contains("not found")
-                    && msg.contains("indentation-insensitive")
-        ));
+    /// Probe P6 of docs/evidence/rune-reliability-probes-20261014, which the indentation
+    /// tier used to apply with `strategy: "indentation"` and leave unparseable.
+    #[test]
+    fn the_python_reindent_probe_is_refused() {
+        let tmp = TempDir::new().unwrap();
+        let content = "def f():\n    if x:\n        return 1\n    return 0\n";
+        fs::write(tmp.path().join("p6.py"), content).unwrap();
+
+        refused_with(
+            edit(
+                tmp.path(),
+                "p6.py",
+                "if x:\n    return 1",
+                "if x:\n    log()\n    return 1",
+            ),
+            "Lines 2–3 match it once indentation is ignored",
+        );
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("p6.py")).unwrap(),
+            content
+        );
     }
 
     #[test]
-    fn exact_match_takes_priority_over_fallback() {
+    fn a_first_line_anchor_is_reported_when_the_rest_differs() {
         let tmp = TempDir::new().unwrap();
-        // An exact occurrence exists alongside whitespace-variant lines; the
-        // exact tier should win and replace only the exact one.
+        fs::write(tmp.path().join("f.ts"), "const a = 1;\nconst b = 2;\n").unwrap();
+
+        refused_with(
+            edit(tmp.path(), "f.ts", "const a = 1;\nconst c = 3;", "x"),
+            "first line appears at line 1",
+        );
+    }
+
+    #[test]
+    fn exact_match_is_byte_exact_beside_a_near_twin() {
+        let tmp = TempDir::new().unwrap();
+        // "value = 1;\n" occurs once; the second line has trailing spaces first.
         let content = "value = 1;\nvalue = 1;  \n";
         fs::write(tmp.path().join("prio.rs"), content).unwrap();
 
-        let output = execute(
-            EditFileInput {
-                path: "prio.rs".to_string(),
-                old_text: "value = 1;\n".to_string(),
-                new_text: "value = 9;\n".to_string(),
-                expected_hash: hash_of(content),
-                replace_all: None,
-            },
-            tmp.path(),
-        )
-        .unwrap();
+        let output = edit(tmp.path(), "prio.rs", "value = 1;\n", "value = 9;\n").unwrap();
 
-        // "value = 1;\n" appears exactly once as a substring (the second line
-        // has trailing spaces before its newline), so the exact tier matches.
         assert_eq!(output.strategy, "exact");
         assert_eq!(output.replacements, 1);
         let result = fs::read_to_string(tmp.path().join("prio.rs")).unwrap();
         assert_eq!(result, "value = 9;\nvalue = 1;  \n");
+    }
+
+    /// Probe P5: LF old_text against a CRLF file.
+    #[test]
+    fn a_crlf_file_stays_crlf() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("w.txt"), "a = 1\r\nb = 2\r\nc = 3\r\n").unwrap();
+
+        let output = edit(tmp.path(), "w.txt", "a = 1\nb = 2", "a = 10\nb = 20").unwrap();
+
+        assert_eq!(output.strategy, "line-endings");
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("w.txt")).unwrap(),
+            "a = 10\r\nb = 20\r\nc = 3\r\n"
+        );
+    }
+
+    #[test]
+    fn a_one_line_match_in_a_crlf_file_writes_new_lines_as_crlf() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("w.txt"), "a\r\nb\r\n").unwrap();
+
+        let output = edit(tmp.path(), "w.txt", "a", "a\nx").unwrap();
+
+        assert_eq!(output.strategy, "exact");
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("w.txt")).unwrap(),
+            "a\r\nx\r\nb\r\n"
+        );
+    }
+
+    #[test]
+    fn a_mixed_file_keeps_its_mix_outside_the_edit() {
+        let tmp = TempDir::new().unwrap();
+        // Mostly LF, with one CRLF line break in the middle.
+        fs::write(tmp.path().join("m.txt"), "a\nb\r\nc\nd\n").unwrap();
+
+        let output = edit(tmp.path(), "m.txt", "b\nc", "B\nC").unwrap();
+
+        assert_eq!(output.strategy, "line-endings");
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("m.txt")).unwrap(),
+            "a\nB\r\nC\nd\n"
+        );
+    }
+
+    #[test]
+    fn a_utf8_bom_is_kept() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("b.cs"), b"\xEF\xBB\xBFint x = 1;\n").unwrap();
+
+        edit(tmp.path(), "b.cs", "x = 1", "x = 2").unwrap();
+
+        assert_eq!(
+            fs::read(tmp.path().join("b.cs")).unwrap(),
+            b"\xEF\xBB\xBFint x = 2;\n"
+        );
+    }
+
+    /// Probe P4: one Latin-1 byte anywhere used to be rewritten as U+FFFD.
+    #[test]
+    fn a_file_that_is_not_utf8_is_refused_byte_for_byte() {
+        let tmp = TempDir::new().unwrap();
+        let raw: &[u8] = b"# caf\xe9 latin-1 comment\nx = 1\n";
+        fs::write(tmp.path().join("l.py"), raw).unwrap();
+
+        let msg = refused_with(
+            edit(tmp.path(), "l.py", "x = 1", "x = 2"),
+            "not valid UTF-8",
+        );
+        assert!(msg.contains("offset 5, line 1"), "{msg}");
+        assert!(msg.contains("nothing was written"), "{msg}");
+        assert_eq!(fs::read(tmp.path().join("l.py")).unwrap(), raw);
+    }
+
+    #[test]
+    fn a_no_op_edit_writes_nothing() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("n.txt"), "same\n").unwrap();
+        #[cfg(unix)]
+        let inode = {
+            use std::os::unix::fs::MetadataExt;
+            fs::metadata(tmp.path().join("n.txt")).unwrap().ino()
+        };
+
+        let output = edit(tmp.path(), "n.txt", "same", "same").unwrap();
+
+        assert_eq!(output.hash, hash_of(b"same\n"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            assert_eq!(fs::metadata(tmp.path().join("n.txt")).unwrap().ino(), inode);
+        }
+    }
+
+    /// Probe P1: an edit used to leave an executable at mode 600.
+    #[cfg(unix)]
+    #[test]
+    fn an_edit_keeps_the_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new().unwrap();
+        let script = tmp.path().join("run.sh");
+        fs::write(&script, "#!/bin/sh\necho hi\n").unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+
+        edit(tmp.path(), "run.sh", "echo hi", "echo bye").unwrap();
+
+        let mode = fs::metadata(&script).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o755);
+        assert_eq!(
+            fs::read_to_string(&script).unwrap(),
+            "#!/bin/sh\necho bye\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_inside_the_workspace_edits_its_target() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("target.txt"), "old\n").unwrap();
+        std::os::unix::fs::symlink("target.txt", tmp.path().join("link.txt")).unwrap();
+
+        edit(tmp.path(), "link.txt", "old", "new").unwrap();
+
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("target.txt")).unwrap(),
+            "new\n"
+        );
+        assert!(
+            fs::symlink_metadata(tmp.path().join("link.txt"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_hard_linked_file_is_edited_at_this_path_and_says_so() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("a.txt"), "old\n").unwrap();
+        fs::hard_link(tmp.path().join("a.txt"), tmp.path().join("b.txt")).unwrap();
+
+        let output = edit(tmp.path(), "a.txt", "old", "new").unwrap();
+
+        assert!(output.note.as_deref().unwrap().contains("hard links"));
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("b.txt")).unwrap(),
+            "old\n"
+        );
     }
 }
