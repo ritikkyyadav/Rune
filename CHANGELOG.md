@@ -11,6 +11,12 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-10-14
+
+**Runs that cost less and wait less, and file edits that refuse what they would damage.** The
+first release of the 1.4 line; there was no 1.4.0 or 1.4.1. Full notes:
+[`docs/releases/v1.4.2.md`](docs/releases/v1.4.2.md).
+
 ### Fixed
 
 - **A file edit no longer changes what it was not asked to change.** Six same-input probes
@@ -1019,7 +1025,8 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.3.4...HEAD
+[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.2...HEAD
+[1.4.2]: https://github.com/ritikkyyadav/Rune/compare/v1.3.4...v1.4.2
 [1.3.4]: https://github.com/ritikkyyadav/Rune/compare/v1.3.3...v1.3.4
 [1.3.3]: https://github.com/ritikkyyadav/Rune/compare/v1.3.2...v1.3.3
 [1.3.2]: https://github.com/ritikkyyadav/Rune/compare/v1.3.1...v1.3.2
