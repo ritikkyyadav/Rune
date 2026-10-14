@@ -441,11 +441,13 @@ export function autoApprovedChip(notice: {
   const headline =
     kind === "halted"
       ? warn("run halted")
-      : kind === "deferred"
-        ? warn("held for you")
-        : kind === "redirected"
-          ? muted("redirected")
-          : muted("contained");
+      : kind === "blocked"
+        ? warn("blocked")
+        : kind === "deferred"
+          ? warn("held for you")
+          : kind === "redirected"
+            ? muted("redirected")
+            : muted("contained");
   // The row says what happened to the work. It does not say which tier decided
   // it or what risk score it carried: `safe-listed | risk low` is the audit
   // layer describing its own machinery, in the one place the reader can do
@@ -455,11 +457,13 @@ export function autoApprovedChip(notice: {
   const detail =
     kind === "halted"
       ? "the run stopped here, nothing further ran"
-      : kind === "redirected" && notice.substitute
-        ? `ran instead: ${notice.substitute.slice(0, 60)}`
-        : kind === "deferred"
-          ? "waiting for you at the end of the turn"
-          : "kept inside the sandbox";
+      : kind === "blocked"
+        ? "not run; the rest of the work goes on"
+        : kind === "redirected" && notice.substitute
+          ? `ran instead: ${notice.substitute.slice(0, 60)}`
+          : kind === "deferred"
+            ? "waiting for you at the end of the turn"
+            : "kept inside the sandbox";
   return F.flowRow(
     `${F.MARK}${warn(glyph("selection"))} ${headline}  ${text(notice.toolName)}`,
     faint(detail),

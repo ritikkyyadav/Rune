@@ -40,6 +40,7 @@ import {
   resultSignature,
 } from "./call-signature";
 import { TurnRefunds } from "./turn-refunds";
+import { UNBOUNDED_TURNS } from "./reliability-policy";
 import { sharedSuspendClock, type SuspendProbe } from "./suspend-clock";
 import { doctrineForRequest, jitDoctrineText, type JitDoctrineSection } from "./prompts";
 import type { IncidentContext, IncidentReporter, IncidentSeverity } from "@rune/shared";
@@ -1539,6 +1540,11 @@ export class AgentLoop {
    * The lifecycle projection needs them at every boundary, and a run that is
    * killed at turn 60 of 80 needs them to have been persisted BEFORE it died.
    */
+  /** " of N" for a run with a turn ceiling; nothing for one without. */
+  private turnCeilingText(): string {
+    return this.config.maxTurns >= UNBOUNDED_TURNS ? "" : ` of ${this.config.maxTurns}`;
+  }
+
   getBudgetProgress(): { turnsUsed: number; turnsMax: number; secondWindsUsed: number } {
     return {
       turnsUsed: this.turnsUsed,
@@ -2643,7 +2649,12 @@ export class AgentLoop {
     // once per turn, up to a quarter of the base ceiling. A clocked sub-agent
     // gets none: its ceiling is a deadline it was told to watch, not a
     // runaway guard, and a refund would move the clock it is reading.
-    this.refunds = new TurnRefunds(this.config.turnBudgetNotice ? 0 : this.config.maxTurns);
+    // No ceiling (an interactive session, since 1.4.5): nothing to refund against.
+    this.refunds = new TurnRefunds(
+      this.config.turnBudgetNotice || this.config.maxTurns >= UNBOUNDED_TURNS
+        ? 0
+        : this.config.maxTurns,
+    );
     this.currentTurn = 0;
     // The request right after a compaction carries a boosted task-state block:
     // that is the moment the verbatim spec just left the transcript.
@@ -3064,7 +3075,7 @@ export class AgentLoop {
           "loop.wrapup_reserve",
           "warn",
           "wrapUp",
-          `turn ${turn} of ${this.config.maxTurns} with open todos — injected the wrap-up protocol`,
+          `turn ${turn}${this.turnCeilingText()} with open todos — injected the wrap-up protocol`,
         );
         this.appendMessage(
           {
@@ -3073,7 +3084,7 @@ export class AgentLoop {
               {
                 type: "text",
                 text:
-                  `[Harness note] Budget reserve: turn ${turn} of ${this.config.maxTurns}.` +
+                  `[Harness note] Budget reserve: turn ${turn}${this.turnCeilingText()}.` +
                   (quotaWallSighted
                     ? " The provider has already thrown one rate/quota wall this run, so the window may close well before the turn ceiling."
                     : "") +

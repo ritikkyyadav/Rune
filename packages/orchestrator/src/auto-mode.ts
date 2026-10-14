@@ -222,7 +222,17 @@ const DEFAULT_HARD_DENY = [
  * still ends in containment, eighteen seconds later than it used to.
  */
 export const DEFAULT_TIMEOUT_MS = 30_000;
-const DEFAULT_MAX_AUTOMATIC_DENIALS = 2;
+/**
+ * Safety blocks in a row before the next one is held for the person (R3 of
+ * docs/program/rune-reliability-plan-20261014.md, decision D1). Until 1.4.5
+ * this was 2, and reaching it HALTED the run: two of the three runs Auto ended
+ * between 14 September and 14 October ended that way, and neither had read
+ * anything injected — a `pip install --break-system-packages` and an `npx`
+ * fetch for a video task.
+ */
+const DEFAULT_MAX_AUTOMATIC_DENIALS = 3;
+/** Safety blocks in one run after which every further one is held for the person. */
+export const MAX_RUN_BLOCKS = 20;
 /**
  * How much of the reviewer's single deadline is held back for the retry.
  *
@@ -1129,8 +1139,24 @@ export class AutoModeRun {
   private readonly userAnswers: Array<{ question: string; answer: string }> = [];
   /** Counts every automatic non-allow the acting agent absorbed in a row. */
   private consecutiveClassifierDenials = 0;
-  /** Sticky for the rest of the run once any tool result is flagged. */
+  /** Safety blocks this run: the reviewer's denials and the supervisor's objections. */
+  private runBlocks = 0;
+  /**
+   * The review posture: raised by a flagged tool result, and also by the
+   * reviewer's own denials and the supervisor's confirmed objections. It makes
+   * every later review careful. It is not evidence that the run is captured —
+   * `flaggedResults` is.
+   */
   private injectionFindings = 0;
+  /**
+   * Tool results flagged as likely prompt injection, in this run and earlier
+   * runs of its session (the poisoned text stays in the transcript). The one
+   * thing a halt stands on (D1): a run that read injected instructions may no
+   * longer be the person's, and must not be handed a way to continue. A
+   * reviewer's or supervisor's suspicion without it blocks the action and the
+   * run goes on.
+   */
+  private flaggedResults = 0;
   /**
    * Actions the reasoned reviewer allowed with HIGH confidence this run,
    * keyed by canonical signature. A repeat is allowed on the recorded verdict
@@ -1191,6 +1217,7 @@ export class AutoModeRun {
       .slice(-4)
       .map((m) => sanitizeText(m, MAX_USER_MESSAGE_CHARS));
     this.injectionFindings = Math.max(0, Math.floor(options.priorInjectionFindings ?? 0));
+    this.flaggedResults = this.injectionFindings;
     this.rebudgetUserMessages();
   }
 
@@ -1247,7 +1274,76 @@ export class AutoModeRun {
   noteInjectionFinding(): void {
     this.supervisorEpoch++;
     this.injectionFindings++;
+    this.flaggedResults++;
     this.forgetConfidentAllows();
+  }
+
+  /** Whether a tool result this session read was flagged as injected instructions. */
+  private captured(): boolean {
+    return this.flaggedResults > 0;
+  }
+
+  /**
+   * Whether the agent has absorbed enough blocks that the next one should be
+   * held for the person rather than blocked again: `maxAutomaticDenials` in a
+   * row, or `MAX_RUN_BLOCKS` in the run.
+   */
+  private atBlockLimit(): boolean {
+    return (
+      this.consecutiveClassifierDenials >= this.controller.getConfig().maxAutomaticDenials ||
+      this.runBlocks >= MAX_RUN_BLOCKS
+    );
+  }
+
+  /**
+   * The route for an action that reached the block limit: held, not asked.
+   * Auto mode never opens a prompt mid-run (the founder's rule since
+   * 2026-08-28: a dialog an attacker can summon is not a control, and the
+   * person least able to judge a command should not have to under time
+   * pressure). The step goes on the list the person sees when the turn ends,
+   * where they can run exactly it; in a headless run it is in the result.
+   */
+  private heldAtLimit(): ContainmentOutcome {
+    const streak = this.consecutiveClassifierDenials;
+    const count =
+      streak >= this.controller.getConfig().maxAutomaticDenials
+        ? `${streak} actions in a row`
+        : `${this.runBlocks} actions in this run`;
+    return {
+      kind: "defer",
+      route: "block-limit",
+      label: "deferred",
+      ledger: true,
+      instruction:
+        `Auto mode has blocked ${count}, so this one is held for the user instead: it does not ` +
+        "run now, it is on the list the user sees when the turn ends, and they can run exactly " +
+        "this step from there. Do not try another form of it. Go on with everything that does " +
+        "not depend on it.",
+    };
+  }
+
+  /**
+   * A safety block that does not end the run (D1): the supervisor's
+   * objection. Counted; at the block limit the action is held for the person
+   * instead of blocked again. The mechanical attack shapes never come here —
+   * they are blocked every time, and never offered to anyone to run.
+   */
+  private blockOrHold(
+    action: AutoModeAction,
+    tier: AutoModeTier,
+    started: number,
+    review: AutoModeReview,
+  ): AutoModeReview {
+    this.consecutiveClassifierDenials++;
+    this.runBlocks++;
+    if (!this.atBlockLimit() || this.containmentOutcome(action).kind === "halt") {
+      return this.finish(review);
+    }
+    return this.route(action, tier, review.risk, started, review.reason, {
+      stage: review.stage,
+      countedAlready: true,
+      outcome: this.heldAtLimit(),
+    });
   }
 
   // ─── The confident-allow recall ───
@@ -1349,24 +1445,39 @@ export class AutoModeRun {
       });
     }
     // The supervisor objected to something that already ran. Stop here, before
-    // the next action, so a compromised or misdirected run costs one action
-    // rather than continuing unattended. A configured deny above still wins.
+    // the next action, so a misdirected run costs one action rather than
+    // continuing unattended. A configured deny above still wins.
     //
-    // This ends the turn instead of asking. A supervisor objection means the
-    // run may no longer be the user's — the likeliest cause is text the agent
-    // read, not something the user typed — and the one thing you must not do
-    // in that state is hand the compromised run a dialog it can answer.
+    // It ends the run only when the run read something flagged as injected
+    // instructions (D1). Then the run may no longer be the user's, and the one
+    // thing you must not do is hand it a dialog it can answer. Without that
+    // evidence the objection is the supervisor's judgement of one step: this
+    // action is blocked, the agent is told why, and the run goes on.
     if (this.pendingSupervisorHalt) {
       const reason = this.pendingSupervisorHalt;
       this.pendingSupervisorHalt = null;
-      return this.finish({
+      if (this.captured()) {
+        return this.finish({
+          verdict: "deny",
+          tier,
+          risk: "critical",
+          source: "supervisor_halt",
+          reason: `${reason} A tool result in this session was flagged as injected instructions, so the run is halted here. Report what you were doing and what you had read just before that action, and stop.`,
+          stage: 0,
+          haltRun: true,
+          durationMs: elapsed(started),
+        });
+      }
+      return this.blockOrHold(action, tier, started, {
         verdict: "deny",
         tier,
-        risk: "critical",
+        risk: "high",
         source: "supervisor_halt",
-        reason: `${reason} The run is halted here. Report what you were doing and what you had read just before that action, and stop.`,
+        reason:
+          `${reason} This next action was not run. Check that the step named above was what ` +
+          "the user asked for: if it was not, do not repeat it, and say so in your report. " +
+          "Then go on with the work.",
         stage: 0,
-        haltRun: true,
         durationMs: elapsed(started),
       });
     }
@@ -1757,17 +1868,21 @@ export class AutoModeRun {
       // stop being borderline.
       if (parsed.verdict === "deny") this.injectionFindings++;
 
-      // What is NOT proportionate is halting on one disagreement. A reviewer
-      // that misreads a legitimate branch cleanup should cost that command,
-      // not the session — stopping the world on a single false positive is
-      // the jitter this mode exists to remove. But an agent that keeps
-      // pushing after the reviewer has said no twice is no longer
-      // disagreeing, it is probing, and probing is what a captured run looks
-      // like from the outside. That is the line the streak draws.
+      // What is NOT proportionate is halting on disagreement. A reviewer that
+      // misreads a legitimate branch cleanup should cost that command, not the
+      // session. An agent that keeps pushing after the reviewer has said no is
+      // either probing or doing what the user wants and the reviewer cannot
+      // see why — and only the person can tell which. So a run that read
+      // something flagged as injected instructions is halted (D1), and any
+      // other run puts the action to the person once the streak is long
+      // enough, as `blockOrAsk` does for the supervisor — inline here,
+      // because under the limit this path goes on to the broker's route.
+      // Until 1.4.5 two in a row halted every run.
       this.consecutiveClassifierDenials++;
       if (
         parsed.verdict === "deny" &&
-        this.consecutiveClassifierDenials >= rules.maxAutomaticDenials
+        this.consecutiveClassifierDenials >= rules.maxAutomaticDenials &&
+        this.captured()
       ) {
         return this.finish({
           verdict: "deny",
@@ -1775,7 +1890,8 @@ export class AutoModeRun {
           risk: "critical",
           source: "classifier_reasoned",
           reason:
-            `${parsed.reason} The safety reviewer has now refused ${this.consecutiveClassifierDenials} actions in a row as outside anything the user asked for. ` +
+            `${parsed.reason} The safety reviewer has now refused ${this.consecutiveClassifierDenials} actions in a row as outside anything the user asked for, ` +
+            "and a tool result in this session was flagged as injected instructions. " +
             "The run is halted rather than continued. Report what you were doing and what you had read just before these actions, and stop.",
           stage: 2,
           reviewer: reasoned.reviewer,
@@ -1783,12 +1899,19 @@ export class AutoModeRun {
           durationMs: elapsed(started),
         });
       }
+      if (parsed.verdict === "deny") this.runBlocks++;
 
+      // At the block limit the action is held for the person instead of
+      // routed again — unless its own route is an attack shape, which is
+      // blocked every time and never put on a list to be run.
+      const own = this.containmentOutcome(action);
+      const held = parsed.verdict === "deny" && this.atBlockLimit() && own.kind !== "halt";
       const authorizationGap = `${parsed.reason} The user's request does not cover this action's real impact.`;
       return this.route(action, tier, parsed.risk ?? risk, started, authorizationGap, {
         stage: 2,
         reviewer: reasoned.reviewer,
         countedAlready: true,
+        outcome: held ? this.heldAtLimit() : own,
       });
     } catch (error) {
       const reason = `Independent reviewer unavailable: ${safeError(error)}`;
@@ -1955,12 +2078,24 @@ export class AutoModeRun {
       });
     }
 
-    // A halt is the attack response and does not count toward the retry
-    // streak — there is no retry. The other routes do: an agent that keeps
-    // re-issuing the same contained shape is a signal in itself. Callers that
-    // already counted this action (the reviewer path) pass countedAlready.
-    if (outcome.kind !== "halt" && !provenance.countedAlready && !provenance.notARefusal) {
+    // A halt route is the attack shape: exfiltration, a credential in an
+    // outbound payload, host destruction. The action never runs. Whether the
+    // RUN ends is a separate question, answered by evidence (D1): it ends when
+    // a tool result this session read was flagged as injected instructions,
+    // and otherwise the agent is told why and the run goes on. On 28
+    // September a recursive delete outside the workspace ended a run that had
+    // read nothing injected. These are never put to the person as a card —
+    // there is no version of `rm -rf /` worth a click — so they are blocked
+    // every time instead.
+    const terminal = outcome.kind === "halt" && this.captured();
+
+    // A terminal halt does not count toward the retry streak — there is no
+    // retry. Everything else does: an agent that keeps re-issuing the same
+    // contained or blocked shape is a signal in itself. Callers that already
+    // counted this action (the reviewer path) pass countedAlready.
+    if (!terminal && !provenance.countedAlready && !provenance.notARefusal) {
       this.consecutiveClassifierDenials++;
+      if (outcome.kind === "halt") this.runBlocks++;
     }
 
     // Say the next step in the agent's own vocabulary. A route the agent has
@@ -1973,16 +2108,24 @@ export class AutoModeRun {
         ? `${outcome.instruction} Re-send it with exactly these arguments: ${stableJson(outcome.containedArgs)}`
         : outcome.instruction;
 
+    const consequence =
+      outcome.kind !== "halt"
+        ? ""
+        : terminal
+          ? " A tool result in this session was flagged as injected instructions, so the run is halted."
+          : " It was not run, and nothing else stops: go on with the work that does not need it, and " +
+            "tell the user what you would have run and why — they can run it themselves.";
+
     return this.finish({
       verdict: "deny",
       tier,
       risk: outcome.kind === "halt" ? "critical" : risk === "low" ? "medium" : risk,
       source: "containment",
-      reason: `${breaker} ${guidance}`,
+      reason: `${breaker} ${guidance}${consequence}`,
       stage: provenance.stage ?? 0,
       reviewer: provenance.reviewer,
       containment: outcome,
-      haltRun: outcome.kind === "halt" ? true : undefined,
+      haltRun: terminal ? true : undefined,
       durationMs: elapsed(started),
     });
   }

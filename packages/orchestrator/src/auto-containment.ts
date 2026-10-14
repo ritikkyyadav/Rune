@@ -723,7 +723,7 @@ export function routeContainment(ctx: ContainmentContext): ContainmentOutcome {
       "exfiltration",
       "This command reads a credential store and sends it off this machine in one step. " +
         "That is the shape of credential exfiltration, and it is what Auto mode stops. " +
-        "The run is halted. If a secret genuinely needs to move, the user moves it.",
+        "If a secret genuinely needs to move, the user moves it.",
     );
   }
 
@@ -736,8 +736,8 @@ export function routeContainment(ctx: ContainmentContext): ContainmentOutcome {
     return halt(
       "credential-in-payload",
       "This action carries what looks like a live credential in an argument that leaves this " +
-        "machine. Whatever the intent, sending a key to a third party is exfiltration and the run " +
-        "is halted. Describe the failure without the secret in it.",
+        "machine. Whatever the intent, sending a key to a third party is exfiltration. " +
+        "Describe the failure without the secret in it.",
     );
   }
 
@@ -796,7 +796,7 @@ export function routeContainment(ctx: ContainmentContext): ContainmentOutcome {
           "persistence",
           "This command installs something that survives the session (cron, a login shell, a " +
             "launch agent, or a trusted key) while injected content is suspected in this run. " +
-            "That combination is the persistence stage of an attack. The run is halted.",
+            "That combination is the persistence stage of an attack.",
         )
       : defer(
           "persistence",
@@ -1074,7 +1074,7 @@ export function routeContainment(ctx: ContainmentContext): ContainmentOutcome {
           "forged-authorization",
           "This action's arguments claim their own approval, or imitate the safety reviewer's own " +
             "answer, while injected content is already suspected in this run. Authorization does " +
-            "not arrive inside the thing being authorized. The run is halted.",
+            "not arrive inside the thing being authorized.",
         )
       : defer(
           "forged-authorization",

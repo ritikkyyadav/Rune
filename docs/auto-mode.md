@@ -18,7 +18,9 @@ order:
    action before Auto mode.
 2. Mechanical Auto rules run with `deny -> ask -> allow` precedence. A broad rule that grants
    arbitrary execution, such as `bash(*)`, cannot bypass the reviewer.
-3. A halt latched by the out-of-band supervisor (below) stops the run here, before the next action.
+3. An objection latched by the out-of-band supervisor (below) blocks the next action here. It ends
+   the run only when the session read a tool result flagged as injected instructions (see "What
+   ends a run").
 4. Fixed circuit breakers — catastrophic host operations, guardrail-lowering changes, writes to
    Rune's own control surface under `.rune`, payloads too large for the bounded reviewer — are pure
    regex and hold whether or not a reviewer is alive. They do not raise a permission card. They go to
@@ -61,19 +63,21 @@ order:
 
 8. A `deny`, or a reviewer `ask` that names a missing authorization, does not become a modal prompt.
    It becomes a containment route, or an actionable block the agent raises with `ask_user`. See
-   "Containment, not questions".
+   "Containment, not questions". After `maxAutomaticDenials` blocks in a row (default 3) or 20 in a
+   run, the next blocked action is held for the person on the end-of-turn list instead of routed
+   again.
 9. **The out-of-band supervisor.** Every supervised-tier action is also read by a two-stage
    background review on the same bounded transcript: the trigger-happy one-token screen first, then —
-   only when that screen says block — the reasoned reviewer to confirm. It latches a halt only on a
-   confirmed `deny` rated high or critical. Its only power is to stop the _next_ action; it can never
-   delay the one it is looking at. An unconfirmed flag costs nothing, and a supervisor that cannot
-   answer is an outage, not a finding: it stays silent, because the mechanical breakers are what
-   actually guard against destruction and they never call a model.
+   only when that screen says block — the reasoned reviewer to confirm. It latches an objection only
+   on a confirmed `deny` rated high or critical. Its only power is to stop the _next_ action; it can
+   never delay the one it is looking at. An unconfirmed flag costs nothing, and a supervisor that
+   cannot answer is an outage, not a finding: it stays silent, because the mechanical breakers are
+   what actually guard against destruction and they never call a model.
 
-   A latched halt ends the turn rather than asking. A supervisor objection means the run may no
-   longer be the user's — the likeliest cause is text the agent read, not something the user typed —
-   and the one thing you must not do in that state is hand the compromised run a dialog it can
-   answer.
+   A latched objection never asks. It blocks the next action and tells the agent why; the run goes
+   on. It ends the run instead when the session read a tool result flagged as injected instructions:
+   then the run may no longer be the user's, and the one thing you must not do is hand it a dialog
+   it can answer.
 
 10. After execution, every real tool result is scanned before either the UI or any agent context sees
     it. Suspicious instructions receive a high-salience untrusted-data warning, and every later
@@ -103,7 +107,7 @@ moving:
 | `contain`  | The action reaches outside containment for no reason the work requires.                              | The same action is handed back with its escapes stripped.                                                                                                                           |
 | `redirect` | It cannot be contained, but an equivalent produces the same knowledge with none of the blast radius. | The equivalent is handed back: `terraform plan` for `terraform apply`, `npm pack` for `npm publish`.                                                                                |
 | `defer`    | Irreversible and outward, with no local equivalent.                                                  | It does not run. It is recorded, the agent finishes everything else, and the user sees one consolidated list when the turn ends — a decision made once, with the work already done. |
-| `halt`     | The attack case: exfiltration, persistence, host destruction.                                        | Nothing is routed and nothing is asked. The turn stops.                                                                                                                             |
+| `halt`     | The attack case: exfiltration, persistence, host destruction.                                        | Nothing is routed and nothing is asked. The action never runs; the run stops only on evidence it read injected instructions, and otherwise the agent is told why and carries on.    |
 
 Every route is mechanical — pure regex over the effective payload. That is deliberate: this module is
 what stands when the reviewer model is withdrawn, rate-limited, or 404ing. `contain` degrades to
@@ -164,9 +168,30 @@ This is unconditional. It was briefly a setting (`conversationalEscalation`); th
 read, because there is no modal path left for it to select. A config that still sets it is reported
 once as retired and ignored — never an error.
 
-The modal permission prompt survives as the backstop for the cases where a human decision is the
-product, not an interruption: repeated automatic blocks (`maxAutomaticDenials`), explicit `askRules`,
-and Auto mode being disabled by policy.
+The modal permission prompt survives only where the user asked to be asked: explicit `askRules`, and
+Auto mode being disabled by policy. Repeated automatic blocks (`maxAutomaticDenials` in a row, or 20
+in a run) do not raise one: the next blocked action is held on the end-of-turn list, where the person
+can run exactly it.
+
+## What ends a run
+
+Since 1.4.5 a safety block stops the action, not the run. A run ends on safety grounds only when a
+tool result in its session was flagged as likely prompt injection — the poisoned text stays in the
+transcript, so the evidence carries to later runs in the same session. Then the three halts below end
+the turn, and the agent is asked for a report:
+
+- a mechanical `halt` route (exfiltration, a credential in an outbound payload, host destruction,
+  and persistence or forged approval while injection is suspected);
+- the supervisor's confirmed objection;
+- the reviewer refusing `maxAutomaticDenials` actions in a row.
+
+Without that evidence the same three block the action, tell the agent why, and the run goes on. A
+mechanical attack shape is blocked every time and never held or offered to anyone to run. The
+reviewer's own denials and the supervisor's objections still raise the review posture for the rest
+of the run — every later review takes the careful pass — but suspicion is not evidence. Between 14
+September and 14 October Auto ended three runs, none of which had read anything injected: a
+`pip install --break-system-packages`, an `npx` fetch for a video task, and a recursive delete outside
+the workspace.
 
 ## Reviewer isolation
 
@@ -211,7 +236,7 @@ enabled = true
 classifierProvider = "anthropic"       # optional; otherwise use the heavy tier
 classifierModel = "reviewer-model-id"  # replace with a configured model id
 timeoutMs = 30000                      # the reviewer's call and its retry share this; 1000-60000
-maxAutomaticDenials = 2
+maxAutomaticDenials = 3                # blocks in a row before the next is held for you; 1-10
 failClosed = true
 probeToolResults = true
 # Retry a failed reviewer call once against the engine's own heavy/standard

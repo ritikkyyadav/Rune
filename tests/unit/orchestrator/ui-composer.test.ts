@@ -683,6 +683,23 @@ describe("the Auto chip — only decisions that changed something", () => {
     ).toContain("held for you");
   });
 
+  it("tells a block apart from a halt: the action stopped, the run did not", () => {
+    // Since 1.4.5 a safety block ends the run only on evidence it read
+    // injected instructions; the row must not claim the run stopped.
+    const blocked = stripAnsi(
+      autoApprovedChip({
+        toolName: "bash",
+        risk: "critical",
+        kind: "blocked",
+        route: "exfiltration",
+      }),
+    );
+    expect(blocked).toContain("blocked");
+    expect(blocked).toContain("not run; the rest of the work goes on");
+    expect(blocked).not.toContain("run halted");
+    expect(blocked).not.toContain("exfiltration");
+  });
+
   it("tells a halt in terms of the run, not the classifier that fired", () => {
     const halted = stripAnsi(
       autoApprovedChip({

@@ -25,6 +25,11 @@ export interface ConfigSetting {
   min?: number;
   max?: number;
   integer?: boolean;
+  /**
+   * For number: what 0 means when it is accepted outside `min`..`max` — the
+   * turn ceiling's "no ceiling". `valueAliases` may fold words onto it.
+   */
+  zeroMeans?: string;
   /** For enum: the canonical values, in the order to present them. */
   values?: readonly string[];
   /** Lowercased alias → canonical value (folded in before validation). */
@@ -161,8 +166,11 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     min: 8,
     max: 1000,
     integer: true,
+    zeroMeans: "no ceiling",
+    valueAliases: { none: "0", off: "0", unlimited: "0", "no limit": "0" },
     description:
-      "Maximum model turns in a run before the progress-based extension policy. Applies to the next run.",
+      "Maximum model turns in a run before the progress-based extension policy; 0 for no ceiling, " +
+      "an interactive session's default. Applies to the next run.",
     live: true,
   },
   {
@@ -619,16 +627,20 @@ export function normalizeSettingValue(
 ): { value: string } | { error: string } {
   const v = raw.trim().toLowerCase();
   if (setting.kind === "number") {
-    const n = Number(v);
+    const folded = setting.valueAliases?.[v] ?? v;
+    const n = Number(folded);
+    if (setting.zeroMeans && folded !== "" && n === 0) return { value: "0" };
     if (
-      !v ||
+      !folded ||
       !Number.isFinite(n) ||
       n < (setting.min ?? 0) ||
       n > (setting.max ?? Infinity) ||
       (setting.integer && !Number.isInteger(n))
     ) {
       return {
-        error: `use ${setting.integer ? "a whole number" : "a number"} from ${setting.min ?? 0} to ${setting.max ?? "unlimited"}`,
+        error:
+          `use ${setting.integer ? "a whole number" : "a number"} from ${setting.min ?? 0} to ${setting.max ?? "unlimited"}` +
+          (setting.zeroMeans ? `, or 0 for ${setting.zeroMeans}` : ""),
       };
     }
     return { value: String(n) };
@@ -667,6 +679,7 @@ export function settingTomlValue(
 /** How a canonical value reads back to the user (boolean → on/off). */
 export function displaySettingValue(setting: ConfigSetting, canonical: string): string {
   if (setting.kind === "boolean") return canonical === "true" ? "on" : "off";
+  if (setting.zeroMeans && canonical === "0") return `0 (${setting.zeroMeans})`;
   return canonical;
 }
 
@@ -680,7 +693,10 @@ export function settingsCatalogSummary(): string {
 
 export function settingChoices(setting: ConfigSetting): string {
   if (setting.kind === "boolean") return "on | off";
-  if (setting.kind === "number") return `${setting.min ?? 0}..${setting.max ?? "unlimited"}`;
+  if (setting.kind === "number") {
+    const range = `${setting.min ?? 0}..${setting.max ?? "unlimited"}`;
+    return setting.zeroMeans ? `${range} | 0 (${setting.zeroMeans})` : range;
+  }
   if (setting.kind === "text") return setting.placeholder ?? "text";
   return setting.values!.join(" | ");
 }

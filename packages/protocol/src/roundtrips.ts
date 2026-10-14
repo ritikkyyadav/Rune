@@ -392,8 +392,12 @@ export interface AutoApprovalNotice {
   argsSummary: string;
   risk: string;
   tier: string;
-  /** Which decision this was. Absent means the historical "approved". */
-  kind?: "approved" | "contained" | "redirected" | "deferred" | "halted";
+  /**
+   * Which decision this was. Absent means the historical "approved".
+   * `blocked`: the action did not run and the run went on (since 1.4.5, a
+   * safety block ends the run only on evidence it read injected instructions).
+   */
+  kind?: "approved" | "contained" | "redirected" | "deferred" | "blocked" | "halted";
   /** For a non-approval: the containment route that produced it. */
   route?: string;
   /** For a redirect: the command offered in place of the one that stopped. */

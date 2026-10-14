@@ -173,7 +173,12 @@ import { discoverPlugins, RUNE_VERSION, type LoadedPlugin } from "./plugins";
 import { StruggleDetector } from "./struggle-detector";
 import { TaskStateStore } from "./task-state";
 import type { DecisionRecord, EvidenceRef, PendingDecisionKind } from "@rune/protocol";
-import { policyForModel, type ReliabilityPolicy } from "./reliability-policy";
+import {
+  loopTurnCeiling,
+  policyForModel,
+  UNBOUNDED_TURNS,
+  type ReliabilityPolicy,
+} from "./reliability-policy";
 import {
   NotebookStore,
   buildNotebookBlock,
@@ -3515,14 +3520,27 @@ export class Engine {
               argsSummary: `${toolName} ${JSON.stringify(args).slice(0, 120)}`,
               risk: autoReview.risk,
               tier: autoReview.tier,
+              // A halt-shaped route that did not end the run (D1: no evidence
+              // the run read injected instructions) is a block, not a halt.
               kind:
-                route.kind === "redirect"
-                  ? "redirected"
-                  : route.kind === "defer"
-                    ? "deferred"
-                    : "contained",
+                route.kind === "halt"
+                  ? "blocked"
+                  : route.kind === "redirect"
+                    ? "redirected"
+                    : route.kind === "defer"
+                      ? "deferred"
+                      : "contained",
               route: route.route,
               substitute: route.substitute,
+            });
+          } else if (autoReview.source === "supervisor_halt") {
+            this.notifyAuto({
+              toolName,
+              argsSummary: `${toolName} ${JSON.stringify(args).slice(0, 120)}`,
+              risk: autoReview.risk,
+              tier: autoReview.tier,
+              kind: "blocked",
+              route: "supervisor",
             });
           }
           return {
@@ -5896,10 +5914,11 @@ export class Engine {
     // full 80-turn loop for 53 minutes); real work keeps the full one.
     // Recovery bounds resolved per model family + [reliability] overrides —
     // computed at run start so a /model switch takes effect next run. The
-    // turn ceiling is one of them (`[reliability] maxTurns`, default 80).
+    // turn ceiling is one of them (`[reliability] maxTurns`, default 80; 0 —
+    // an interactive session's default since 1.4.5 — is none).
     const reliability = policyForModel(session.model, this.config.reliability);
     taskState.setEvidenceGate(reliability.evidenceGate);
-    const messageBudget = turnBudgetForMessage(userMessage, reliability.maxTurns);
+    const messageBudget = turnBudgetForMessage(userMessage, loopTurnCeiling(reliability.maxTurns));
 
     // ── The task contract, at intake (Phase 5B) ──
     //
@@ -5916,7 +5935,8 @@ export class Engine {
     this.contract = createContract({
       intent: userMessage,
       fixShaped: isFixShaped(userMessage),
-      turns: messageBudget.maxTurns,
+      // 0 when there is no ceiling: a record says what the run was held to.
+      turns: messageBudget.maxTurns >= UNBOUNDED_TURNS ? 0 : messageBudget.maxTurns,
       secondWinds: messageBudget.conversational ? 0 : reliability.secondWinds,
       costUsd: this.config.maxSessionCostUsd ?? null,
       // The commit this task opens at. Everything committed between here and
@@ -6041,7 +6061,8 @@ export class Engine {
       turnsUsed: inherited?.turnsUsed ?? 0,
       secondWindsUsed: inherited?.secondWindsUsed ?? 0,
     };
-    this.liveTurnsMax = messageBudget.maxTurns;
+    // 0 on the wire when there is no ceiling, as the lifecycle record says.
+    this.liveTurnsMax = messageBudget.maxTurns >= UNBOUNDED_TURNS ? 0 : messageBudget.maxTurns;
     this.syncBudget();
     {
       const started = emitLifecycle("start");

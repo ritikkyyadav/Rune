@@ -11,6 +11,50 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+### Changed
+
+- **A safety block stops the action, not the run.** Between 14 September and 14 October Auto mode
+  ended three runs, and none of them had read anything injected:
+  - a `pip install --break-system-packages`, where the reviewer refused 2 actions in a row;
+  - an `npx` fetch for a video task, where it refused 2 in a row;
+  - a recursive delete outside the workspace.
+
+  A run now ends on safety grounds only when a tool result in its session was flagged as likely
+  prompt injection, and that evidence carries to later runs of the same session. Without it:
+  - the action is not run, the agent is told why, and the run goes on;
+  - an attack shape (exfiltration, a credential in an outbound payload, host destruction) is
+    blocked every time and is never held or offered to anyone to run;
+  - after 3 refusals in a row (it was 2) or 20 in a run, the next blocked action is held on the
+    end-of-turn list, where the person can run exactly it.
+
+  Auto mode still never opens a prompt mid-run. The reviewer's denials still raise the review
+  posture for the rest of the run, but suspicion is not evidence. The screen says `blocked` for an
+  action that stopped while the run went on, and `run halted` only when the run ended. See
+  "What ends a run" in [`docs/auto-mode.md`](docs/auto-mode.md#what-ends-a-run).
+
+- **The turn ceiling belongs to the person.** Five runs in that month ended at 80 turns, and
+  evolab7's plan collapsed against the ceiling. Now:
+  - an interactive session has no turn ceiling unless the person sets `[reliability] maxTurns`, or
+    `0` or `none` through `/config turns`;
+  - a headless run keeps 80 by default;
+  - `rune -P` takes `--max-turns <n>` (0 for none) and `--max-budget-usd <usd>`, and a bad value is
+    a usage error (exit 2) before anything runs.
+
+  The guards that look at what the turns do all stay: the loop detector, the barren-turn breaker,
+  the outage clock and the budget.
+
+### Not in this release, and why
+
+- **The loop detector and the barren-turn breaker still end a run**; the plan had them advisory.
+  In an interactive session, ending hands the turn back to the person, who can say "continue".
+  In a headless run they are what stops a run repeating itself until its ceiling. Neither has fired
+  since 14 September.
+- **The reviewer already never sees tool output, and reads and plain workspace edits already skip
+  it**, with `.git`, `.github`, `.rune` and credential files reviewed. That half of the plan needed
+  no change.
+- **Editor sessions** (`rune engine-host`) keep the default ceiling; only the terminal session
+  changed.
+
 ## [1.4.4] - 2026-10-14
 
 **The connection to the provider: a sleeping laptop no longer ends a run, and a cut response keeps

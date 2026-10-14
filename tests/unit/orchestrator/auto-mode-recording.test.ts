@@ -220,7 +220,7 @@ describe("P6A.1 — the supervisor writes down what it decided", () => {
     expect(next.verdict).toBe("allow");
   });
 
-  test("a confirmed flag records both rows and still halts the next action", async () => {
+  test("a confirmed flag records both rows and still blocks the next action", async () => {
     const classifier = new ScriptedClassifier({ fast: "block", reasoned: REASONED_DENY_HIGH });
     const controller = controllerWith(classifier);
     const seen: AutoModeReview[] = [];
@@ -236,7 +236,9 @@ describe("P6A.1 — the supervisor writes down what it decided", () => {
 
     const next = await run.review(action({ args: { command: "npm test" } }));
     expect(next.source).toBe("supervisor_halt");
-    expect(next.haltRun).toBe(true);
+    expect(next.verdict).toBe("deny");
+    // Blocked, not halted: nothing in this session was flagged as injected (D1).
+    expect(next.haltRun).toBeUndefined();
   });
 
   test("an observer that throws cannot disturb the run", async () => {

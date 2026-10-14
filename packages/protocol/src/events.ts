@@ -136,6 +136,7 @@ export interface TaskLifecycle {
 
   budget: {
     turnsUsed: number;
+    /** The run's turn ceiling; 0 when it has none (an interactive session, since 1.4.5). */
     turnsMax: number;
     secondWindsUsed: number;
     tokensIn: number;

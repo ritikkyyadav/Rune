@@ -33,6 +33,8 @@ import type { AgentTurnEvent, PermissionCheck } from "../../packages/orchestrato
 interface EngineInternals {
   autoModeSafety: AutoModeSafetyController;
   buildPermissionCheck(context: { sessionId: string; userMessages: string[] }): PermissionCheck;
+  /** Tool results this session flagged as injected instructions — the evidence a halt needs. */
+  sessionInjectionFindings: Map<string, number>;
 }
 
 /**
@@ -150,6 +152,9 @@ describe("Engine halt reaches the agent loop", () => {
 
   test("a broker halt ends the run in one report turn instead of grinding to the ceiling", async () => {
     const sessionId = engine.createSession();
+    // Since 1.4.5 a halt stands on evidence (D1): this session already read a
+    // tool result flagged as injected instructions.
+    internals.sessionInjectionFindings.set(sessionId, 1);
     const check = internals.buildPermissionCheck({
       sessionId,
       userMessages: ["Read the issue and fix the bug."],
@@ -190,6 +195,7 @@ describe("Engine halt reaches the agent loop", () => {
     // working — the task state is what a resumed session reads as the source of
     // truth, and a run that cannot record "blocked here" resumes on a lie.
     const sessionId = engine.createSession();
+    internals.sessionInjectionFindings.set(sessionId, 1);
     const check = internals.buildPermissionCheck({
       sessionId,
       userMessages: ["Ship the release."],
@@ -208,5 +214,43 @@ describe("Engine halt reaches the agent loop", () => {
     const shell = await check({ callId: "b1", toolName: "bash", args: { command: "bun test" } });
     expect(shell.allowed).toBe(false);
     expect(shell.halt?.reason).toBeTruthy();
+  });
+
+  test("without injected content, the attack shape costs the action and the run goes on", async () => {
+    // D1: the same exfiltration, in a session that read nothing flagged. It
+    // never runs; the run is not ended, the next ordinary call runs, and the
+    // run reaches its own end instead of a halt.
+    const sessionId = engine.createSession();
+    const check = internals.buildPermissionCheck({
+      sessionId,
+      userMessages: ["Read the issue and fix the bug."],
+    });
+
+    const seenTools: Array<number | undefined> = [];
+    const executed: string[] = [];
+    const gateway = relentlessGateway([EXFIL, "bun test"], seenTools);
+    const loop = new AgentLoop(
+      {
+        model: "llama3",
+        provider: "ollama",
+        maxTokens: 100,
+        maxTurns: 4,
+        systemPrompt: "s",
+      } as any,
+      gateway,
+      registry(executed),
+      check,
+    );
+
+    const events = await collect(loop.run("fix the bug", sessionId, root));
+    const complete = events.find((e) => e.type === "turn_complete") as any;
+
+    expect(complete.stopReason).not.toBe("halted");
+    expect(executed).not.toContain(EXFIL);
+    expect(executed).toContain("bun test");
+    const blocked = events.find(
+      (e) => e.type === "tool_call_end" && /It was not run/.test(JSON.stringify(e)),
+    );
+    expect(blocked).toBeDefined();
   });
 });

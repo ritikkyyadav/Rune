@@ -64,13 +64,20 @@ same thing in the words the exit code is chosen by.
 | `budget`                             | `error_budget`           | 4    | Raise the budget, or switch to a priced model                                                               |
 | `quota_wall`                         | `error_quota`            | 5    | The provider's usage cap: wait until `resumeAt` (epoch ms), or let `--resume-until` wait for you            |
 | `provider_lost`                      | `error_provider`         | 5    | The provider stopped answering after the retries; try again later, `rune resume` continues from the handoff |
-| `halted`                             | `error_halted`           | 1    | The safety broker stopped the run; read what it read before resuming                                        |
+| `halted`                             | `error_halted`           | 1    | The run read instructions flagged as injected and a safety block stopped it; read what it read first        |
 | `aborted`                            | `error_cancelled`        | 130  | Cancelled; the partial work is kept                                                                         |
 | `stalled`, `loop_detected`, `barren` | `error_during_execution` | 1    | Nothing was progressing; resume with a different approach                                                   |
 
 A usage cap was recorded as `provider_lost` before 1.4.3. In one install's
 record, 39 of 44 runs that ended that way had hit a Codex limit with a known
 reset rather than lost the provider.
+
+Since 1.4.5 a safety block stops the action, not the run: `halted` needs
+evidence that the run read injected instructions (see
+[`auto-mode.md`](auto-mode.md#what-ends-a-run)). A headless run's own bounds are
+`--max-turns <n>` (default 80, `0` for none) and `--max-budget-usd <usd>`; an
+interactive session has no turn ceiling unless `[reliability] maxTurns` sets
+one.
 
 `max_tokens` is also how a run ends when the conversation no longer fits the
 model's context window and compacting it could not make it fit. The error says

@@ -51,6 +51,10 @@ export interface ReliabilityPolicy {
    * Turns the harness spends on itself are refunded (turn-refunds.ts) and a
    * moving plan earns the ceiling again `secondWinds` times. Conversational
    * turns keep their own small budget (turn-budget.ts).
+   *
+   * 0: no ceiling. Since 1.4.5 that is what an interactive session runs under
+   * unless the person set a number (`turnCeilingOverride`); a headless run
+   * keeps 80 unless `--max-turns` says otherwise.
    */
   maxTurns: number;
   /** Second winds granted to a main run of real work; sub-agents get none. */
@@ -117,4 +121,70 @@ export function policyForModel(
     }
   }
   return policy;
+}
+
+// ─── The turn ceiling belongs to the person (R3.3, decision D7) ───
+//
+// Five runs between 14 September and 14 October ended at the 80-turn ceiling,
+// and evolab7's plan collapsed against it. A ceiling counts turns; it cannot
+// tell a run that is stuck from one that is long. What tells them apart — the
+// loop detector, the barren-turn breaker, the outage clock, the budget — looks
+// at what the turns do, and all of it stays. In an interactive session the
+// person is there and Esc ends a run, so the count is theirs to set; a
+// headless run has nobody, so it keeps a default.
+
+/**
+ * What the loop is handed when there is no ceiling: a bound no run reaches,
+ * so its arithmetic (the wrap-up reserve, refunds, second winds) needs no
+ * special case.
+ */
+export const UNBOUNDED_TURNS = 1_000_000;
+
+/** The ceiling the loop runs under: `maxTurns`, or none when it is 0. */
+export function loopTurnCeiling(maxTurns: number): number {
+  return maxTurns > 0 ? maxTurns : UNBOUNDED_TURNS;
+}
+
+/**
+ * The `maxTurns` a launch runs under, or undefined to keep the default. A
+ * `--max-turns` flag wins; then `[reliability] maxTurns` as the person set it;
+ * then the mode decides — none for an interactive session, the default for a
+ * headless one.
+ */
+export function turnCeilingOverride(input: {
+  flag?: number;
+  configured?: number;
+  interactive: boolean;
+}): number | undefined {
+  if (input.flag !== undefined) return input.flag;
+  if (input.configured !== undefined) return input.configured;
+  return input.interactive ? 0 : undefined;
+}
+
+/**
+ * `--max-turns`: a whole number, 0 for no ceiling. Undefined when absent; an
+ * error naming the flag when it is not a count.
+ */
+export function parseMaxTurnsFlag(raw: unknown): number | undefined | { error: string } {
+  if (raw === undefined || raw === null) return undefined;
+  const text = String(raw).trim();
+  if (!/^\d+$/.test(text)) {
+    return {
+      error: `--max-turns takes a whole number of turns, or 0 for no ceiling (got "${text}")`,
+    };
+  }
+  return Number(text);
+}
+
+/** `--max-budget-usd`: a positive amount in dollars. */
+export function parseMaxBudgetFlag(raw: unknown): number | undefined | { error: string } {
+  if (raw === undefined || raw === null) return undefined;
+  const text = String(raw).trim().replace(/^\$/, "");
+  const n = Number(text);
+  if (!text || !Number.isFinite(n) || n <= 0) {
+    return {
+      error: `--max-budget-usd takes an amount in dollars above zero (got "${String(raw).trim()}")`,
+    };
+  }
+  return n;
 }

@@ -89,6 +89,7 @@ import { join as joinPath } from "node:path";
 import { parseArgs } from "util";
 import { runSettingsCommand } from "../settings-command";
 import { parseAcceptanceSpecs, type AcceptanceSpec } from "../contract";
+import { parseMaxBudgetFlag, parseMaxTurnsFlag, turnCeilingOverride } from "../reliability-policy";
 import {
   FirstRun,
   MASK_CELL_ASCII,
@@ -184,6 +185,11 @@ const { values, positionals } = parseArgs({
     // The exit-code rule before 1.4.3: a finished run whose verdict is short
     // of what it was held to exits 1. The default now says how the run ended.
     "strict-verdict": { type: "boolean", default: false },
+    // The person's own bounds on a run (R3.3, decision D7): a turn ceiling (0
+    // for none) and a spend cap. An interactive session has no turn ceiling
+    // unless one is set; a headless run keeps the default 80.
+    "max-turns": { type: "string" },
+    "max-budget-usd": { type: "string" },
     // Opt a headless run into resuming after a provider wall (M6): until a
     // deadline, within a cumulative budget, at most N times. missions-cli.ts.
     "resume-until": { type: "string" },
@@ -372,6 +378,9 @@ if (values.help) {
         `    --json / --stream-json       The result as one JSON envelope / every event as NDJSON, the envelope last\n` +
         `    --auto-approve               Grant permission requests (nobody is there to ask; denied by default)\n` +
         `    --strict-verdict             Exit 1 when a finished run's verdict is short of what it was held to\n` +
+        `    --max-turns <n>              Stop the run after n turns (0: no ceiling). Headless default 80;\n` +
+        `                                 an interactive session has none unless [reliability] maxTurns says\n` +
+        `    --max-budget-usd <usd>       Stop the run before it spends more than this\n` +
         `                                 Exit codes: 0 finished · 1 failed · 3 needed permission · 4 hit a limit\n` +
         `                                 · 5 provider unavailable (usage cap: see resumeAt) · 129/130/143 signal\n\n`,
     ),
@@ -1308,6 +1317,22 @@ async function main() {
     }
   }
 
+  // The person's bounds, checked before anything runs: a bad value is a usage
+  // error (exit 2), like a bad --acceptance file.
+  const maxTurnsFlag = parseMaxTurnsFlag(values["max-turns"]);
+  const maxBudgetFlag = parseMaxBudgetFlag(values["max-budget-usd"]);
+  for (const parsed of [maxTurnsFlag, maxBudgetFlag]) {
+    if (typeof parsed === "object") {
+      console.error(`  ${brass("!")} ${parsed.error}`);
+      process.exit(2);
+    }
+  }
+  const turnCeiling = turnCeilingOverride({
+    flag: maxTurnsFlag as number | undefined,
+    configured: config.reliability?.maxTurns,
+    interactive: typeof values.print !== "string",
+  });
+
   const engine = new Engine({
     model,
     provider,
@@ -1330,11 +1355,14 @@ async function main() {
     // Passed through UNSET on purpose: undefined means "decide from the
     // workspace" (P10.1), and `=== true` would have collapsed that to off.
     lspAutoFeedback: config.lsp?.autoFeedback,
-    reliability: config.reliability,
+    reliability:
+      turnCeiling === undefined
+        ? config.reliability
+        : { ...config.reliability, maxTurns: turnCeiling },
     // [controller] shadow — the passive arbiter (M2). Unset is ON for the
     // lead loop; sub-agent loops never get one.
     controller: config.controller,
-    maxSessionCostUsd: config.cost?.maxSessionUsd,
+    maxSessionCostUsd: (maxBudgetFlag as number | undefined) ?? config.cost?.maxSessionUsd,
     // [tools] rateLimit — the tool pacer; `enabled = false` turns it off.
     enableRateLimiting: config.tools?.rateLimit?.enabled,
     rateLimit: config.tools?.rateLimit,

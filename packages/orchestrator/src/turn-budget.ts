@@ -17,6 +17,8 @@
 // in minutes, wraps up honestly, and the user's "continue" (an imperative)
 // gets the full budget back.
 
+import { UNBOUNDED_TURNS } from "./reliability-policy";
+
 /** What a user message earns before the loop starts. */
 export interface TurnBudget {
   maxTurns: number;
@@ -111,6 +113,19 @@ export function applyInheritance(
   const turnsUsed = Math.max(0, Math.floor(inherited.turnsUsed));
   const windsUsed = Math.max(0, Math.floor(inherited.secondWindsUsed));
   if (turnsUsed === 0 && windsUsed === 0) return { budget, secondWinds, line: null };
+
+  // No ceiling to narrow (an interactive session, since 1.4.5): the count of
+  // what was spent is still worth saying.
+  if (budget.maxTurns >= UNBOUNDED_TURNS) {
+    const spent = inherited.spentUsd > 0 ? `, $${inherited.spentUsd.toFixed(2)} already spent` : "";
+    return {
+      budget,
+      secondWinds,
+      line:
+        `Resuming interrupted work: ${turnsUsed} turn${turnsUsed === 1 ? " was" : "s were"} used ` +
+        `before the run died${spent}. This session has no turn ceiling.`,
+    };
+  }
 
   const remaining = Math.max(MIN_RESUMED_TURNS, budget.maxTurns - turnsUsed);
   const winds = Math.max(0, secondWinds - windsUsed);
