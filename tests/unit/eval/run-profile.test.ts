@@ -14,7 +14,14 @@ import { join } from "node:path";
 import { findDatabase, formatProfile, profileRun } from "../../eval/parity/run-profile";
 
 const dir = mkdtempSync(join(tmpdir(), "run-profile-"));
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+afterAll(() => {
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // Windows can hold a database file for a moment after it is closed (EBUSY
+    // on the CI runner). A temporary directory left behind is not a failure.
+  }
+});
 
 type Event = [seconds: number, type: string, payload: Record<string, unknown>];
 

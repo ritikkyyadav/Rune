@@ -24,7 +24,7 @@
  * until it is run the default routing is unchanged.
  */
 
-import { describe, test, expect, mock } from "bun:test";
+import { afterEach, beforeEach, describe, test, expect, mock } from "bun:test";
 import {
   AgentLoop,
   TASK_ROUTING_MAX_CHARS,
@@ -446,6 +446,17 @@ describe("each finish gate on its own: conservative hears it, task routing does 
     },
   ];
   const GATES = rows.map((r) => r.incident);
+  // The product-sight row needs a machine where a browser could look, which is
+  // read off the machine itself: say so, rather than inherit this one's.
+  let saved: string | undefined;
+  beforeEach(() => {
+    saved = process.env.RUNE_TEST_PLAYWRIGHT;
+    process.env.RUNE_TEST_PLAYWRIGHT = import.meta.path;
+  });
+  afterEach(() => {
+    if (saved === undefined) delete process.env.RUNE_TEST_PLAYWRIGHT;
+    else process.env.RUNE_TEST_PLAYWRIGHT = saved;
+  });
   const firstGate = (incidents: Array<{ class: string }>) =>
     incidents.find((i) => GATES.includes(i.class))?.class;
 

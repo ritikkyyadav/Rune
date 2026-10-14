@@ -179,84 +179,131 @@ describe("the shell that runs the agent's commands", () => {
   });
 });
 
-describe("every accepted line, run in a real shell with the check failing, fails", () => {
-  // `./check` exits with whatever `status` holds. A line is run twice in each
-  // shell: once with the check passing, once failing. If the recogniser says
-  // the line speaks for `./check`, the failing run has to exit non-zero —
-  // whatever the shell, because a shell that reads an idiom differently must
-  // read it as a failure, never as a pass.
-  const LINES = [
-    "./check",
-    "./check && true",
-    "true && ./check",
-    "./check 2>&1",
-    "set -o pipefail; ./check | tail -n 8",
-    "set -o pipefail; ./check 2>&1 | tail -n 8",
-    "set -euo pipefail; ./check | tail -5",
-    "set -o pipefail; true && ./check | head -n 3",
-    "./check | tail -n 8; test ${PIPESTATUS[0]} -eq 0",
-    "./check 2>&1 | tail -n 7; test ${PIPESTATUS[0]} -eq 0",
-    "./check | head -n 20; [ ${PIPESTATUS[0]} -eq 0 ]",
-    "true && ./check | tail -n 2; test ${PIPESTATUS[0]} -eq 0",
-    // Lines the recogniser must NOT accept, here so that the table shows why:
-    // each of these exits 0 with the check failing in at least one shell.
-    "./check | tail -n 8",
-    "./check || true",
-    "./check; true",
-    "./check | tail -n 8; exit ${PIPESTATUS[0]}",
-    "./check | tail -n 8; [[ ${PIPESTATUS[0]} -eq 0 ]]",
-    // The option is set only if the command before it succeeded. Here it did
-    // not, so the pipe runs unguarded — which is why a conditional `set` is
-    // refused even though the same line is honest whenever that command passes.
-    "false && set -o pipefail; ./check | tail -n 8",
-  ];
-  const SHELLS = ["/bin/sh", "/bin/bash", "/bin/zsh", "/bin/dash", "/bin/ksh"].filter((s) =>
-    existsSync(s),
-  );
+// Real shells, at their usual paths: none of this is reachable on Windows,
+// where there is no `/bin/sh` to run — and where `shellHonoursPipeIdioms` says
+// no to all of it anyway.
+describe.skipIf(!existsSync("/bin/sh"))(
+  "every accepted line, run in a real shell with the check failing, fails",
+  () => {
+    // `./check` exits with whatever `status` holds. A line is run twice in each
+    // shell: once with the check passing, once failing. If the recogniser says
+    // the line speaks for `./check`, the failing run has to exit non-zero —
+    // whatever the shell, because a shell that reads an idiom differently must
+    // read it as a failure, never as a pass.
+    const LINES = [
+      "./check",
+      "./check && true",
+      "true && ./check",
+      "./check 2>&1",
+      "set -o pipefail; ./check | tail -n 8",
+      "set -o pipefail; ./check 2>&1 | tail -n 8",
+      "set -euo pipefail; ./check | tail -5",
+      "set -o pipefail; true && ./check | head -n 3",
+      "./check | tail -n 8; test ${PIPESTATUS[0]} -eq 0",
+      "./check 2>&1 | tail -n 7; test ${PIPESTATUS[0]} -eq 0",
+      "./check | head -n 20; [ ${PIPESTATUS[0]} -eq 0 ]",
+      "true && ./check | tail -n 2; test ${PIPESTATUS[0]} -eq 0",
+      // Lines the recogniser must NOT accept, here so that the table shows why:
+      // each of these exits 0 with the check failing in at least one shell.
+      "./check | tail -n 8",
+      "./check || true",
+      "./check; true",
+      "./check | tail -n 8; exit ${PIPESTATUS[0]}",
+      "./check | tail -n 8; [[ ${PIPESTATUS[0]} -eq 0 ]]",
+      // The option is set only if the command before it succeeded. Here it did
+      // not, so the pipe runs unguarded — which is why a conditional `set` is
+      // refused even though the same line is honest whenever that command passes.
+      "false && set -o pipefail; ./check | tail -n 8",
+    ];
+    const SHELLS = ["/bin/sh", "/bin/bash", "/bin/zsh", "/bin/dash", "/bin/ksh"].filter((s) =>
+      existsSync(s),
+    );
 
-  function fixture(): string {
-    const dir = scratch("rune-receipt-shell-");
-    writeFileSync(join(dir, "check"), '#!/bin/sh\necho checked\nexit "$(cat status)"\n');
-    chmodSync(join(dir, "check"), 0o755);
-    return dir;
-  }
-  const exitOf = (shell: string, line: string, dir: string, status: 0 | 1): number | null => {
-    writeFileSync(join(dir, "status"), String(status));
-    return spawnSync(shell, ["-c", line], { cwd: dir, stdio: "ignore", timeout: 10_000 }).status;
-  };
-
-  test.each(SHELLS)("%s", (shell) => {
-    const dir = fixture();
-    const wrong: string[] = [];
-    let accepted = 0;
-    for (const line of LINES) {
-      if (!speaksFor(line).includes("./check")) continue;
-      accepted++;
-      if (exitOf(shell, line, dir, 1) === 0) wrong.push(line);
+    function fixture(): string {
+      const dir = scratch("rune-receipt-shell-");
+      writeFileSync(join(dir, "check"), '#!/bin/sh\necho checked\nexit "$(cat status)"\n');
+      chmodSync(join(dir, "check"), 0o755);
+      return dir;
     }
-    // The property: no accepted line hides a failing check, in this shell.
-    expect(wrong).toEqual([]);
-    expect(accepted).toBe(12);
-  });
+    const exitOf = (shell: string, line: string, dir: string, status: 0 | 1): number | null => {
+      writeFileSync(join(dir, "status"), String(status));
+      return spawnSync(shell, ["-c", line], { cwd: dir, stdio: "ignore", timeout: 10_000 }).status;
+    };
 
-  test("and in the shell the tool runs by default, a passing check makes each of them pass", () => {
-    const dir = fixture();
-    for (const line of LINES) {
-      if (!speaksFor(line).includes("./check")) continue;
-      expect({ line, exit: exitOf("/bin/sh", line, dir, 0) }).toEqual({ line, exit: 0 });
-    }
-  });
+    test.each(SHELLS)("%s", (shell) => {
+      const dir = fixture();
+      const wrong: string[] = [];
+      let accepted = 0;
+      for (const line of LINES) {
+        if (!speaksFor(line).includes("./check")) continue;
+        accepted++;
+        if (exitOf(shell, line, dir, 1) === 0) wrong.push(line);
+      }
+      // The property: no accepted line hides a failing check, in this shell.
+      expect(wrong).toEqual([]);
+      expect(accepted).toBe(12);
+    });
 
-  test("the refused lines are refused for cause: each hides a failing check in some shell", () => {
-    const dir = fixture();
-    const refused = LINES.filter((line) => !speaksFor(line).includes("./check"));
-    expect(refused).toHaveLength(6);
-    for (const line of refused) {
-      const hiddenIn = SHELLS.filter((shell) => exitOf(shell, line, dir, 1) === 0);
-      expect({ line, hides: hiddenIn.length > 0 }).toEqual({ line, hides: true });
-    }
-  });
-});
+    // `/bin/sh` is bash on a Mac and dash on Debian and Ubuntu, and dash has
+    // neither `pipefail` nor `PIPESTATUS`: there a line that uses them is an
+    // error whatever the check said. An error is never a receipt, so nothing
+    // false follows from it — which is why what is held here is "passes wherever
+    // the shell has the idiom", asked of each shell rather than assumed of the
+    // platform. (The first run on Ubuntu's CI runner is how this was learned.)
+    test.each(SHELLS)(
+      "%s: a passing check passes each of them, wherever the shell has the idiom",
+      (shell) => {
+        const dir = fixture();
+        const has = (probe: string): boolean => exitOf(shell, probe, dir, 0) === 0;
+        const pipefail = has("set -o pipefail");
+        const pipestatus = has("true | true; test ${PIPESTATUS[0]} -eq 0");
+        let plain = 0;
+        for (const line of LINES) {
+          if (!speaksFor(line).includes("./check")) continue;
+          const needs = { pipefail: /pipefail/.test(line), pipestatus: /PIPESTATUS/.test(line) };
+          const supported = (!needs.pipefail || pipefail) && (!needs.pipestatus || pipestatus);
+          if (!needs.pipefail && !needs.pipestatus) plain++;
+          expect({ line, passes: exitOf(shell, line, dir, 0) === 0 }).toEqual({
+            line,
+            passes: supported,
+          });
+        }
+        // Four of the twelve ask nothing of the shell, and pass in every one.
+        expect(plain).toBe(4);
+      },
+    );
+
+    test("the refused lines are refused for cause: each hides a failing check in the shells named", () => {
+      const dir = fixture();
+      // Where each one exits 0 with the check failing. Most need no particular
+      // shell. The two that read `PIPESTATUS` through `exit` or `[[ ]]` hide the
+      // failure only where that is not bash's variable — zsh and ksh — and a
+      // machine with neither (Ubuntu's runner, for one) has nowhere to show it.
+      // The table says where; the shells this machine has are the ones run.
+      const hidesIn: Record<string, "every shell" | readonly string[]> = {
+        "./check | tail -n 8": "every shell",
+        "./check || true": "every shell",
+        "./check; true": "every shell",
+        "false && set -o pipefail; ./check | tail -n 8": "every shell",
+        "./check | tail -n 8; exit ${PIPESTATUS[0]}": ["/bin/zsh", "/bin/ksh"],
+        "./check | tail -n 8; [[ ${PIPESTATUS[0]} -eq 0 ]]": ["/bin/zsh", "/bin/ksh"],
+      };
+      const refused = LINES.filter((line) => !speaksFor(line).includes("./check"));
+      expect([...refused].sort()).toEqual(Object.keys(hidesIn).sort());
+      for (const line of refused) {
+        const where = hidesIn[line]!;
+        const shells = where === "every shell" ? SHELLS : SHELLS.filter((s) => where.includes(s));
+        for (const shell of shells) {
+          expect({ line, shell, exit: exitOf(shell, line, dir, 1) }).toEqual({
+            line,
+            shell,
+            exit: 0,
+          });
+        }
+      }
+    });
+  },
+);
 
 describe("the same check by another name", () => {
   function project(scripts: Record<string, string>, at = ""): string {

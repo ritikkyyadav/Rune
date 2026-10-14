@@ -210,7 +210,8 @@ const expectIsolated = (seen: Record<string, string>): void => {
   for (const name of MUST_NOT_REACH_A_CHECK) {
     if (name !== "RUNE_HOME") expect({ name, there: name in seen }).toEqual({ name, there: false });
   }
-  expect(seen.RUNE_HOME).toMatch(/rune-check-cache-[^/]+\/rune-home$/);
+  // Either separator: on Windows the temporary directory is `C:\…\rune-check-cache-…`.
+  expect(seen.RUNE_HOME).toMatch(/rune-check-cache-[^/\\]+[/\\]rune-home$/);
   expect(seen.RUNE_CREDENTIAL_BACKEND).toBe("file");
   expect(seen.RUNE_MEMORY_KEY_BACKEND).toBe("file");
   expect(seen.MY_PROJECT_URL).toBe("postgres://kept");
@@ -259,8 +260,10 @@ describe("a check the verifier starts", () => {
     try {
       writeFileSync(
         join(ws, "package.json"),
-        // A suite that cannot finish inside the limit below.
-        JSON.stringify({ name: "probe", scripts: { test: "sleep 30 && bun test" } }),
+        // A suite that cannot finish inside the limit below. Eight seconds, not
+        // more: Windows has no process group to stop at the limit, so there the
+        // check returns when the sleep does, and this test has thirty seconds.
+        JSON.stringify({ name: "probe", scripts: { test: "sleep 8 && bun test" } }),
       );
       writeFileSync(join(ws, "bun.lock"), "");
       writeFileSync(

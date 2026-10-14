@@ -18,6 +18,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 
 import { resolveRuneToolsBinary } from "../helpers/native-binary";
 import { call, runScripted } from "../helpers/small-page";
@@ -52,7 +53,13 @@ describe.skipIf(!native.exists)(
   "a suite the agent ran itself, on a tree it then left alone",
   () => {
     test("is run once: the verifier takes the agent's own pass, and says whose it was", async () => {
-      const line = "set -o pipefail; bun test 2>&1 | tail -n 8";
+      // The line the recorded runs used — where the agent's shell has the
+      // option. `/bin/sh` is dash on Linux, which has no `pipefail`: there the
+      // same line is an error whatever the suite says, so the faithful line
+      // in that shell is the suite on its own.
+      const shell = process.env.RUNE_SHELL || "/bin/sh";
+      const pipefail = spawnSync(shell, ["-c", "set -o pipefail"]).status === 0;
+      const line = pipefail ? "set -o pipefail; bun test 2>&1 | tail -n 8" : "bun test";
       const run = await runScripted(
         native.path,
         REQUEST,
