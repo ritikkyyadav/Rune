@@ -2,7 +2,7 @@
 
 Proposed 14 October 2026; the founder said "proceed" the same evening. Evidence, probe script and queries: [rune-reliability-probes-20261014](../evidence/rune-reliability-probes-20261014/README.md).
 
-**Progress.** R1 and the contract part of R0 landed on `lane/reliability-r1-20261014` (`b2ca5f2`, `895df62`, `3a7024e`), local and not installed; the record is the progress ledger's entry of the same date. D3 was taken as answered by "proceed". R4, R2 and R3 wait for D1, D2 and D7, and for the evidence-based plan's Stage 1.
+**Progress.** R1 and the contract part of R0 shipped in **v1.4.2** (tag at `24e1503`, with the cost-and-latency lane), installed through `rune upgrade`; the records are the progress ledger's entries of the same date. Each later phase ships as the next 1.4 patch (1.4.3, 1.4.4, …), the founder's numbering. D3 was taken as answered by "proceed". R4, R2 and R3 wait for D1, D2 and D7, and for the evidence-based plan's Stage 1.
 
 ## How Claude Code was studied, and what "its level" means here
 

@@ -2917,3 +2917,52 @@ installing from it later is a fast-forward:
 - The unit suite inside the sandbox stalls on 30-second hook timeouts in every test that
   binds a port; run it unsandboxed with `</dev/null`, after checking that no `RUNE_*`
   variable is set.
+
+## v1.4.2 shipped, 2026-10-14 · **the cost-and-latency lane and R1 together; CI green on three systems; installed through `rune upgrade`**
+
+The founder: "merge both the lanes properly cost latency and this one but make sure the
+neither one gets affected by each other !! also install the latest version … and ship it as
+the v.1.4.2 … full till r8 will land in this v.1.4 … after each phases lands … v.1.4.3".
+
+**The merge.** The R1 lane was built on the cost-and-latency lane's head (`fe869ae`), so
+`main` fast-forwarded from `ea19e90` to `24e1503` with no merge commit. Neither lane
+touched the other's code:
+
+- 112 files changed on one side and 20 on the other; the only files in common are
+  `CHANGELOG.md` and this ledger, where R1 only added lines;
+- the one cost-and-latency file that names `apply_patch` (the activity view) reads `path`,
+  `moved_to`, `diff` and `action`, never the `strategies` field R1 added;
+- the combined tree passed unit 7,822/0, integration 485/0 and the mock eval 63/63.
+
+**The release.**
+
+- **`8443ce1` "release: Rune is 1.4.2":** the usual thirteen files; there was no 1.4.0 or
+  1.4.1.
+- **Fresh-clone gate:** typecheck 15/15, lint 7/7, format, unit 7,822/0, `cargo` fmt,
+  clippy and tests, probes 6/6.
+- **CI run `38567965643` failed `rust-lint (windows-latest)`:** in `text_file.rs` the
+  `TempDir` import is used only by `#[cfg(unix)]` tests, so it was unused on Windows.
+  Fixed in `24e1503`. A local Windows clippy could not stand in for CI, because SQLite's
+  and tree-sitter's C sources need the Windows SDK headers.
+- **CI run `38569978437`:** green, 22/22, including Rust tests on Windows and the
+  file-contract integration tests on Linux and macOS release builds.
+- **Tag:** `v1.4.2` at `24e1503`.
+- **Release run `38571946929`:** success, including macOS signing and notarisation,
+  Windows Authenticode and fresh-machine installs on all three systems. 11 assets, marked
+  Latest.
+- **Installed with `rune upgrade`:** `rune --version` reports v1.4.2. The CLI (`29d4f8bc…`)
+  and the tools (`a13a1dcc…`) match the release's `SHA256SUMS`. `rune doctor` and
+  `rune tools-smoke` pass, and the six edit probes pass against the installed tools.
+
+**Not touched, and not in 1.4.2.** The main checkout's `gear/phase-0-stabilize` (`2dabdb2`
+plus other sessions' uncommitted work, including the patch the 14 October Gemini audit did
+not approve) is untouched and now 34 commits behind `main`.
+
+**Seen in `rune doctor`:**
+
+- the Codex plan cap is in force until 22:44;
+- two live Rune sessions keep the previous build until they restart;
+- 106 MB of checkpoints can be reclaimed with `rune doctor prune-checkpoints`.
+
+**Numbering, the founder's rule.** The 1.4 line carries the reliability plan: each phase
+that lands from here is the next patch (1.4.3, 1.4.4, …), through R8.
