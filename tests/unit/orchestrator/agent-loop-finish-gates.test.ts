@@ -10,7 +10,7 @@
  * then the model proceeds — a gate must never become a kill chain.
  */
 
-import { describe, test, expect, mock } from "bun:test";
+import { afterEach, beforeEach, describe, test, expect, mock } from "bun:test";
 import {
   AgentLoop,
   FIX_SHAPED_MAX_CHARS,
@@ -177,6 +177,22 @@ describe("fix-verified gate", () => {
 });
 
 describe("product-sight gate", () => {
+  // The gate asks for a look only where a browser could take one, and that is
+  // read off the machine (`browserUsable`): a Playwright module, or a Chromium
+  // in Playwright's cache. The Mac these were written on has one; a CI runner
+  // has neither, and there these tests failed by asking the wrong machine. So
+  // they say which machine they are about. (`RUNE_TEST_PLAYWRIGHT` names a
+  // module that exists — this file will do — the way the browser tests do.)
+  let saved: string | undefined;
+  beforeEach(() => {
+    saved = process.env.RUNE_TEST_PLAYWRIGHT;
+    process.env.RUNE_TEST_PLAYWRIGHT = import.meta.path;
+  });
+  afterEach(() => {
+    if (saved === undefined) delete process.env.RUNE_TEST_PLAYWRIGHT;
+    else process.env.RUNE_TEST_PLAYWRIGHT = saved;
+  });
+
   test("visual files written and never looked at → refused once, then may finish", async () => {
     const ts = new TaskStateStore();
     const gw = makeGateway([
