@@ -2828,3 +2828,92 @@ tree. Getting past it means `RUNE_ALLOW_NON_FF_INSTALL=1`, and an install from h
 would then make every install from the main checkout refuse in turn until the lane is
 merged. Merging first and installing from the main checkout needs none of that. Either
 is the founder's to choose.
+
+## The reliability plan against Claude Code, and R1 — the file tools, 2026-10-14 · **six of six edit probes failed on the installed build and pass on the lane; local, not installed, not pushed**
+
+The founder: "i want you to( rea ) claude code and according to match that level of
+reliability create an plan for rune", then, on the plan: "well proceed !!".
+
+**How Claude Code was studied.** Not decompiled. Anthropic's terms bar reverse
+engineering Claude Code to build a competing product, and Rune is one; REA stays a tool
+for Rune's own binaries. The sources were its public documentation (the error reference
+names every failure, its automatic handling and the recovery), `claude --help` 2.1.299,
+the package layout and code signature, and same-input probes through Claude Code's own
+Edit and Write from inside a working session. The plan is
+[`rune-reliability-plan-20261014.md`](rune-reliability-plan-20261014.md); the evidence
+and the probe script are in
+[`docs/evidence/rune-reliability-probes-20261014/`](../evidence/rune-reliability-probes-20261014/README.md).
+
+**Baseline, read-only from `rune.db`.** Of 163 recorded runs since 14 September, none
+ended `met`. 44 ended `provider_lost`, and 39 of those were Codex quota walls. Of 1,448
+recorded `edit_file` and `multi_edit` edits, 3 matched through the whitespace or
+indentation tiers. 19 of 788 edits paid a re-read for a stale hash.
+`~/.rune/bin` holds 250 backup binaries, 5.4 GB.
+
+**R1 landed on `lane/reliability-r1-20261014`**, a worktree at
+`.claude/worktrees/reliability-r1-20261014` on `fe869ae` (the installed build's commit), so
+installing from it later is a fast-forward:
+
+- `b2ca5f2` — `crates/rune-tools/src/text_file.rs`, and `edit_file`, `write_file` and
+  `read_file` on it:
+  - strict UTF-8 with the BOM kept;
+  - line endings kept;
+  - the replaced file's mode copied before the rename, and a new file at 0666 under the
+    umask;
+  - exact matching, with line endings as the one conversion;
+  - a miss that names the lines that nearly matched;
+  - a stale hash applies when `old_text` still matches exactly once;
+  - `write_file` writes through a symlink (it used to replace the link) and refuses one
+    that leaves the workspace.
+- `895df62` — the same contract in TypeScript (`text-file.ts`) for `multi_edit` and
+  `apply_patch`:
+  - `multi_edit` returned a 755 script as 644;
+  - `apply_patch` rolls back to the original bytes and mode, and reports how each hunk
+    matched;
+  - `multi_edit` needs a prior read, as `edit_file` does.
+- `3a7024e` — one table, `tests/helpers/file-contract.ts`, run against the Rust binary
+  (integration) and `multi_edit` (unit).
+
+**Measured, zero model calls.**
+
+- **Evidence probes:** installed build 6 of 6 fail; lane build 6 of 6 pass.
+- **Contract table, Rust half:** 15 of 19 fail on the installed binary; 19 of 19 pass on
+  the lane build. The TypeScript half passes 24 of 24.
+- **Mutants:** eight, each turning at least one case red — four Rust (mode copy, strict
+  decode, line-ending candidates, umask mode) and four TypeScript (mode copy, strict
+  decode, replacement endings, indentation diagnosis). Every file was restored and
+  checked by hash.
+- **Rust gates:** `rune-tools` tests 58 → 82; `cargo clippy --all-targets -D warnings`,
+  `cargo fmt --check` and `cargo test --all` clean.
+- **TypeScript gates:** `bun run typecheck` 15/15, `bun run lint` 7/7, `format:check`
+  clean.
+- **Unit suite, unsandboxed:** 7,821 pass, 4 skip, 1 fail. The fail was the A3 test that
+  relied on `multi_edit` writing U+FFFD over a non-UTF-8 file behind an empty diff; that
+  write cannot happen now, so it is a refusal test. Re-run on the committed lane: 7,822
+  pass, 4 skip, 0 fail.
+- **Integration suite, unsandboxed, lane binary:** 485 pass, 7 skip, 0 fail.
+- **Mock eval:** 63/63, no regression against the baseline.
+
+**Departures from the plan, and why.**
+
+- A hard-linked file keeps the rename and says so. The plan had said write it in place,
+  which would edit a package manager's shared store through one project's link.
+- `apply_patch`'s fallback use was never recorded (its 125 calls carry no tier), so the
+  "3 of 1,448" figure covers `edit_file` and `multi_edit` only. D3 was taken as answered
+  by "proceed".
+
+**Not done.**
+
+- Not installed: the daily binary still fails all six probes.
+- Not pushed; no live run.
+- `docs/errors.md` (R0.2) is not started.
+- The transport and process suites of R0.1 belong with R2 and R4, which wait for D1, D2
+  and D7 and for the evidence-based plan's Stage 1.
+
+**Traps on the way.**
+
+- `git worktree add` from inside Claude Code's sandbox fails on the repository's
+  `skills/*/.mcp.json`; it needs the sandbox off.
+- The unit suite inside the sandbox stalls on 30-second hook timeouts in every test that
+  binds a port; run it unsandboxed with `</dev/null`, after checking that no `RUNE_*`
+  variable is set.

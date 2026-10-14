@@ -11,7 +11,48 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+### Fixed
+
+- **A file edit no longer changes what it was not asked to change.** Six same-input probes
+  against the installed build (`docs/evidence/rune-reliability-probes-20261014/edit-probes.sh`)
+  each found the file silently altered. `edit_file` and `write_file` left every file they wrote at
+  mode 600, so an edited script lost its executable bit and git showed a mode change. One byte that
+  was not UTF-8, anywhere in a file, was rewritten as U+FFFD. A CRLF file came back with mixed line
+  endings. An edit whose `old_text` had the wrong indentation was applied anyway, leaving a Python
+  file that no longer parsed, and reported as a success. Now:
+  - A write keeps the permission bits of the file it replaces, and a new file gets what your umask
+    gives.
+  - A file that is not UTF-8 is refused with the offset and line of the first undecodable byte, and
+    nothing is written. `read_file` says so before an edit is tried.
+  - A file's line endings and UTF-8 byte-order mark are kept.
+  - `write_file` writes through a symlink to its target instead of replacing the link, and refuses
+    a link that points out of the workspace.
+  - The same rules hold in `multi_edit` and `apply_patch`, and a failed `apply_patch` rolls back to
+    the original bytes.
+
+  All six probes pass on the new build, as Claude Code's Edit and Write do on the same inputs.
+
 ### Changed
+
+- **Edits match exactly, and a miss says what nearly matched.** `old_text` used to fall back to
+  whitespace-insensitive and then indentation-insensitive matching, splicing `new_text` in as
+  given. Across 1,448 recorded `edit_file` and `multi_edit` edits those fallbacks matched 3
+  times, and the indentation one is how the probe above broke a Python file. Matching is exact
+  now. The one conversion is line endings: LF `old_text` against a CRLF file still matches, byte
+  for byte. A miss names the lines that nearly matched and why ("Lines 2–3 match it once
+  indentation is ignored: line 2 is indented with 4 spaces in the file and no indentation in
+  old_text"), so the next attempt can be right. `apply_patch` hunks follow the same rule and now
+  report how each one matched; nothing recorded that before, so its 125 recorded calls cannot say
+  how often a fallback was used there.
+
+- **An edit to a file that changed since it was read goes through when it still fits.**
+  `edit_file`, and `multi_edit` when given a hash, refused any edit once the file's hash had moved
+  since the last read, even when the text being replaced was untouched; 19 of 788 recorded edits
+  paid a re-read for it. When every
+  edit still matches the current content exactly once it is applied, and the result says the file
+  changed (`changed_since_read`). Otherwise the "Hash mismatch … Re-read the file first" refusal
+  stands. `multi_edit` now also needs the file read or written earlier in the session, as
+  `edit_file` always has.
 
 - **A check is no longer started with Rune's own state.** The end-of-turn check handed a
   project's commands everything Rune itself was started with, including the variables that say
