@@ -395,10 +395,14 @@ export function registerBuiltinTools(
   registry.register(createLspHandler(lspManager));
   registry.register(createTodoWriteHandler());
   registry.register(createGlobHandler());
+  // Read before edit, as edit_file: multi_edit gets the last recorded hash when
+  // the model leaves it out, so a file that moved underneath is noticed, and a
+  // file this process never read or wrote is refused rather than edited blind.
   registry.register(
     withFreshness(
       withLspFeedback(withSyntaxCheck(withFormatting(createMultiEditHandler())), lspManager),
       freshness,
+      { requiresFreshRead: true },
     ),
   );
   // Codex-family edit format. Registered for everyone (execution is model-

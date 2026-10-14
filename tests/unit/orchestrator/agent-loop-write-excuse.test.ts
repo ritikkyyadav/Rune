@@ -18,8 +18,10 @@
  *   delete  `unifiedDiff(prior, "", path)`         — "" for an empty file
  *   add     `unifiedDiff(prior ?? "", content)`    — "" for an empty new file
  *
- * plus `multi_edit` on a file that is not valid UTF-8, where the decoded texts
- * match and the bytes do not.
+ * `multi_edit` on a file that is not valid UTF-8 was a fourth: its decoded
+ * texts matched while the bytes it wrote did not. Since 2026-10-14 (R1 of
+ * docs/program/rune-reliability-plan-20261014.md) multi_edit refuses such a
+ * file before it can rewrite a byte, so that case is a refusal now.
  *
  * Every tool result below that can be measured IS measured: the real
  * `apply_patch` / `multi_edit` handler runs in a temp workspace inside the
@@ -273,13 +275,12 @@ describe("A3 — an empty diff is not an unchanged tree", () => {
     expect(r.origins).toEqual(REARMED);
   });
 
-  test("a multi_edit that rewrote the BYTES of a non-UTF-8 file re-arms the gates", async () => {
-    // `multi_edit` decides what to write by comparing bytes, so an edit that
-    // reproduces the decoded text of a valid-UTF-8 file writes nothing at all
-    // (below). On a file that is NOT valid UTF-8 the decode is lossy: the text
-    // it would write back is the text it matched, and the bytes are not the
-    // bytes on disk. That write is a change, the diff of the two decoded texts
-    // is empty, and the result says so in the only place that can — its hashes.
+  test("a multi_edit on a file that is not UTF-8 is refused before it can rewrite a byte", async () => {
+    // This used to be the case where bytes moved behind an empty diff: the
+    // lossy decode wrote U+FFFD back over the undecodable bytes, the diff of the
+    // two decoded texts was "", and only the hashes told the gates a write had
+    // happened. The tool now refuses the file instead, so there is no write for
+    // the gates to judge — and the bytes on disk are exactly what they were.
     const ws = mkdtempSync(join(tmpdir(), "excuse-me-bin-"));
     const p = join(ws, "fixture.bin");
     writeFileSync(p, Buffer.from("const b = 2;\n\xff\xfe\n", "binary"));
@@ -287,20 +288,10 @@ describe("A3 — an empty diff is not an unchanged tree", () => {
     const out = await multiEdit(ws, "fixture.bin", [
       { old_text: "const b = 2;", new_text: "const b = 2;" },
     ]);
-    expect(out.success).toBe(true);
-    const record = JSON.parse(out.result);
-    expect(record.diff).toBe("");
-    expect(readFileSync(p).equals(before)).toBe(false); // the bytes moved
-    expect(record.unchanged).toBe(false);
-    expect(record.hash).not.toBe(record.prior_hash);
-
-    const r = await afterSettle({
-      tool: "multi_edit",
-      args: { path: "fixture.bin", toolResult: out.result },
-    });
-    expect(r.usefulEdit).toBe(true);
-    expect(r.excused).toBe(false);
-    expect(r.origins).toEqual(REARMED);
+    expect(out.success).toBe(false);
+    expect(out.error).toMatch(/fixture\.bin is not valid UTF-8/);
+    expect(out.error).toMatch(/nothing was written/);
+    expect(readFileSync(p).equals(before)).toBe(true);
   });
 
   test("a mixed patch — one empty hunk, one real — re-arms the gates", async () => {

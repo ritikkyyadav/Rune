@@ -6,9 +6,11 @@
 // success. This tool accepts that envelope natively. The FORMAT is theirs
 // (implemented fresh for interoperability — see THIRD_PARTY_NOTICES.md); the
 // application semantics are Rune's: every hunk routes through multi-edit's
-// applyOneEdit (exact → whitespace → indentation matching, unambiguous-or-
-// error), the whole patch validates in memory before anything is written, and
-// writes are temp+rename with best-effort rollback. Nothing lands partially.
+// applyOneEdit (exact matching, line endings aside; a miss names the lines that
+// nearly matched), files are strict UTF-8 and keep their byte-order mark, line
+// endings and permission bits (./text-file), the whole patch validates in
+// memory before anything is written, and writes are temp+fsync+rename with
+// best-effort rollback to the original bytes. Nothing lands partially.
 //
 // Format accepted:
 //   *** Begin Patch
@@ -23,11 +25,12 @@
 // an error rather than a guess. "*** End of File" is accepted as a hunk
 // terminator.
 
-import { mkdir, readFile, rename, unlink, writeFile } from "fs/promises";
+import { mkdir, readFile, stat, unlink } from "fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "path";
-import { createHash, randomBytes } from "crypto";
+import { createHash } from "crypto";
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
-import { applyOneEdit, type EditOp } from "./multi-edit";
+import { applyOneEdit, type EditOp, type MatchStrategy } from "./multi-edit";
+import { decodeText, encodeText, writeAtomic } from "./text-file";
 import { unifiedDiff } from "./unified-diff";
 import { checkSyntax } from "./diagnostics";
 import { diagnosticsBlockFor } from "./lsp/feedback";
@@ -224,7 +227,7 @@ export function patchTargetPaths(patchText: string): string[] {
 
 // ── Application ──
 
-const sha256Hex = (s: string): string => createHash("sha256").update(s).digest("hex");
+const sha256Hex = (b: Buffer | string): string => createHash("sha256").update(b).digest("hex");
 
 function resolveInside(workspaceRoot: string, p: string): string {
   const abs = isAbsolute(p) ? resolve(p) : resolve(workspaceRoot, p);
@@ -247,7 +250,8 @@ export const APPLY_PATCH_SCHEMA: ToolSchema = {
     "'*** Update File: path' (optional '*** Move to: newpath'; @@ hunks with ' ' context, '-' removed, '+' added lines), " +
     "'*** Delete File: path'. End with '*** End Patch'. " +
     "The entire patch is validated before anything is written — a context mismatch in any hunk applies NOTHING and " +
-    "returns exactly which hunk failed. Context matching tolerates whitespace/indentation drift but errors on ambiguity.",
+    "returns exactly which hunk failed. Context must match the file exactly (line endings may differ); a miss names " +
+    "the lines that nearly matched and what differs, and ambiguity is an error.",
   inputSchema: {
     type: "object",
     properties: {
@@ -268,6 +272,8 @@ interface FileOutcome {
   moved_to?: string;
   hash?: string;
   edits_applied?: number;
+  /** How each hunk matched: "exact", or "line-endings" (still byte-exact). */
+  strategies?: MatchStrategy[];
   syntax_issues?: Array<{ line: number; message: string }>;
   /** The unified diff of this file's change, so the transcript shows red/green.
    *  apply_patch ran in TS with both texts in hand but emitted none. */
@@ -319,14 +325,21 @@ export function createApplyPatchHandler(lspManager?: LspServerManager): ToolHand
       }
 
       // ── Phase 1: validate EVERYTHING in memory. No fs mutation here. ──
+      // `bytes` is what lands on disk; `before`/`after` are the texts the diff
+      // shows; `mode` is the permission bits the result keeps (the updated or
+      // moved file's own), undefined for a new file.
       type Planned =
         | {
             kind: "write";
             abs: string;
             path: string;
-            content: string;
+            bytes: Buffer;
+            before: string;
+            after: string;
+            mode?: number;
             action: "added" | "updated";
             edits?: number;
+            strategies?: MatchStrategy[];
           }
         | {
             kind: "move";
@@ -334,8 +347,12 @@ export function createApplyPatchHandler(lspManager?: LspServerManager): ToolHand
             absTo: string;
             path: string;
             moveTo: string;
-            content: string;
+            bytes: Buffer;
+            before: string;
+            after: string;
+            mode: number;
             edits: number;
+            strategies: MatchStrategy[];
           }
         | { kind: "delete"; abs: string; path: string };
       const planned: Planned[] = [];
@@ -357,7 +374,9 @@ export function createApplyPatchHandler(lspManager?: LspServerManager): ToolHand
               kind: "write",
               abs,
               path: op.path,
-              content: op.content,
+              bytes: Buffer.from(op.content, "utf8"),
+              before: "",
+              after: op.content,
               action: "added",
             });
             continue;
@@ -372,18 +391,27 @@ export function createApplyPatchHandler(lspManager?: LspServerManager): ToolHand
           }
 
           // update
-          let content: string;
+          let raw: Buffer;
+          let mode: number;
           try {
-            content = await readFile(abs, "utf8");
+            raw = await readFile(abs);
+            mode = (await stat(abs)).mode;
           } catch {
             throw new Error(`Update File: cannot read ${op.path} (does it exist?)`);
           }
+          // Strict UTF-8 or the whole patch is refused: a lossy read wrote
+          // U+FFFD over every byte that was not UTF-8 (probe P4).
+          const file = decodeText(raw, op.path, "apply_patch");
+          let content = file.text;
+          const strategies: MatchStrategy[] = [];
           for (let e = 0; e < op.edits.length; e++) {
             // applyOneEdit throws with a precise per-hunk message on
             // mismatch/ambiguity — surfaced verbatim, nothing written.
             const applied = applyOneEdit(content, op.edits[e], e);
             content = applied.content;
+            strategies.push(applied.report.strategy);
           }
+          const bytes = encodeText(content, file.bom);
           if (op.moveTo) {
             const absTo = resolveInside(input.workspaceRoot, op.moveTo);
             if (await fileExists(absTo)) {
@@ -396,17 +424,25 @@ export function createApplyPatchHandler(lspManager?: LspServerManager): ToolHand
               absTo,
               path: op.path,
               moveTo: op.moveTo,
-              content,
+              bytes,
+              before: file.text,
+              after: content,
+              mode,
               edits: op.edits.length,
+              strategies,
             });
           } else {
             planned.push({
               kind: "write",
               abs,
               path: op.path,
-              content,
+              bytes,
+              before: file.text,
+              after: content,
+              mode,
               action: "updated",
               edits: op.edits.length,
+              strategies,
             });
           }
         }
@@ -419,46 +455,53 @@ export function createApplyPatchHandler(lspManager?: LspServerManager): ToolHand
       const outcomes: FileOutcome[] = [];
       try {
         for (const p of planned) {
+          // Rollback restores the original BYTES with their mode: a text
+          // round-trip would rewrite anything the lossy read could not decode.
           if (p.kind === "write") {
-            const prior = (await fileExists(p.abs)) ? await readFile(p.abs, "utf8") : null;
+            const prior = (await fileExists(p.abs)) ? await readFile(p.abs) : null;
             await mkdir(dirname(p.abs), { recursive: true });
-            await atomicWrite(p.abs, p.content);
+            await writeAtomic(p.abs, p.bytes, p.mode);
             rollback.push(async () => {
               if (prior === null) await unlink(p.abs);
-              else await atomicWrite(p.abs, prior);
+              else await writeAtomic(p.abs, prior, p.mode);
             });
             outcomes.push({
               path: p.path,
               action: p.action,
-              hash: sha256Hex(p.content),
+              hash: sha256Hex(p.bytes),
               ...(p.edits !== undefined ? { edits_applied: p.edits } : {}),
-              diff: unifiedDiff(prior ?? "", p.content, p.path),
+              ...(p.strategies !== undefined ? { strategies: p.strategies } : {}),
+              diff: unifiedDiff(p.before, p.after, p.path),
             });
           } else if (p.kind === "move") {
-            const prior = await readFile(p.absFrom, "utf8");
+            const prior = await readFile(p.absFrom);
             await mkdir(dirname(p.absTo), { recursive: true });
-            await atomicWrite(p.absTo, p.content);
+            // The moved file keeps its permission bits, as `mv` would.
+            await writeAtomic(p.absTo, p.bytes, p.mode);
             await unlink(p.absFrom);
             rollback.push(async () => {
-              await atomicWrite(p.absFrom, prior);
+              await writeAtomic(p.absFrom, prior, p.mode);
               await unlink(p.absTo);
             });
             outcomes.push({
               path: p.path,
               action: "moved",
               moved_to: p.moveTo,
-              hash: sha256Hex(p.content),
+              hash: sha256Hex(p.bytes),
               edits_applied: p.edits,
-              diff: unifiedDiff(prior, p.content, p.moveTo),
+              strategies: p.strategies,
+              diff: unifiedDiff(p.before, p.after, p.moveTo),
             });
           } else {
-            const prior = await readFile(p.abs, "utf8");
+            const prior = await readFile(p.abs);
+            const priorMode = (await stat(p.abs)).mode;
             await unlink(p.abs);
-            rollback.push(async () => atomicWrite(p.abs, prior));
+            rollback.push(async () => writeAtomic(p.abs, prior, priorMode));
             outcomes.push({
               path: p.path,
               action: "deleted",
-              diff: unifiedDiff(prior, "", p.path),
+              // Display only: nothing is written from this text.
+              diff: unifiedDiff(prior.toString("utf8"), "", p.path),
             });
           }
         }
@@ -521,10 +564,4 @@ export function createApplyPatchHandler(lspManager?: LspServerManager): ToolHand
 
 async function fileExists(abs: string): Promise<boolean> {
   return Bun.file(abs).exists();
-}
-
-async function atomicWrite(abs: string, content: string): Promise<void> {
-  const tmp = `${abs}.rune-tmp-${randomBytes(6).toString("hex")}`;
-  await writeFile(tmp, content, "utf8");
-  await rename(tmp, abs);
 }

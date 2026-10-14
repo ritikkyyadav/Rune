@@ -110,19 +110,38 @@ describe("createMultiEditHandler", () => {
   });
 
   // ── execute: safety ──
-  test("hash mismatch fails and leaves the file unchanged", async () => {
+  test("a stale hash is refused when an edit no longer matches, and nothing is written", async () => {
     const content = "original\n";
     await writeFile(join(ws, "f.txt"), content);
     const out = await handler.execute(
       inputFor(ws, {
         path: "f.txt",
         expected_hash: "deadbeef",
-        edits: [{ old_text: "original", new_text: "changed" }],
+        edits: [{ old_text: "what the caller remembers", new_text: "changed" }],
       }),
     );
     expect(out.success).toBe(false);
     expect(out.error).toMatch(/Hash mismatch/);
+    expect(out.error).toMatch(/Re-read the file first/);
     expect(await readFile(join(ws, "f.txt"), "utf8")).toBe(content);
+  });
+
+  test("a stale hash still applies when every edit matches the current text exactly once", async () => {
+    // Read as "a\nb\n"; something appended a line since. The edit is about a
+    // line that is still there, once — refusing it only bought a re-read.
+    await writeFile(join(ws, "f.txt"), "a\nb\nc\n");
+    const out = await handler.execute(
+      inputFor(ws, {
+        path: "f.txt",
+        expected_hash: sha("a\nb\n"),
+        edits: [{ old_text: "b", new_text: "B" }],
+      }),
+    );
+    expect(out.success).toBe(true);
+    const parsed = JSON.parse(out.result);
+    expect(parsed.changed_since_read).toBe(true);
+    expect(parsed.note).toContain("changed after it was last read");
+    expect(await readFile(join(ws, "f.txt"), "utf8")).toBe("a\nB\nc\n");
   });
 
   test("if a later edit fails, no earlier edit is written (atomicity)", async () => {
@@ -160,8 +179,14 @@ describe("createMultiEditHandler", () => {
     expect(out.error).toMatch(/Cannot read file/);
   });
 
-  // ── execute: fuzzy fallbacks ──
-  test("falls back to whitespace-insensitive match (trailing spaces in file)", async () => {
+  // ── execute: exact means exact ──
+  //
+  // These two used to apply through whitespace- and indentation-insensitive
+  // tiers that spliced new_text in verbatim; the indentation tier left a Python
+  // file unparseable while reporting success (probe P6 of
+  // docs/evidence/rune-reliability-probes-20261014). Across 1,448 recorded
+  // edits the tiers matched 3 times. A miss now says what nearly matched.
+  test("trailing-whitespace drift is refused, and the lines that nearly matched are named", async () => {
     const content = "function f() {   \n  return 1;\n}\n";
     await writeFile(join(ws, "f.ts"), content);
     const out = await handler.execute(
@@ -175,12 +200,13 @@ describe("createMultiEditHandler", () => {
         ],
       }),
     );
-    expect(out.success).toBe(true);
-    expect(JSON.parse(out.result).edits[0].strategy).toBe("whitespace");
-    expect(await readFile(join(ws, "f.ts"), "utf8")).toContain("return 2;");
+    expect(out.success).toBe(false);
+    expect(out.error).toMatch(/^edit\[0\]: old_text not found in the file/);
+    expect(out.error).toMatch(/Lines 1–3 match it once trailing whitespace is ignored/);
+    expect(await readFile(join(ws, "f.ts"), "utf8")).toBe(content);
   });
 
-  test("falls back to indentation-insensitive match (different indent width)", async () => {
+  test("indentation drift is refused and described, never re-indented", async () => {
     const content = "class A {\n    method() {\n        return 1;\n    }\n}\n";
     await writeFile(join(ws, "f.ts"), content);
     const out = await handler.execute(
@@ -194,8 +220,11 @@ describe("createMultiEditHandler", () => {
         ],
       }),
     );
-    expect(out.success).toBe(true);
-    expect(JSON.parse(out.result).edits[0].strategy).toBe("indentation");
-    expect(await readFile(join(ws, "f.ts"), "utf8")).toContain("return 2;");
+    expect(out.success).toBe(false);
+    expect(out.error).toMatch(/Lines 2–4 match it once indentation is ignored/);
+    expect(out.error).toMatch(
+      /line 2 is indented with 4 spaces in the file and no indentation in old_text/,
+    );
+    expect(await readFile(join(ws, "f.ts"), "utf8")).toBe(content);
   });
 });

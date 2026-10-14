@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, afterAll } from "bun:test";
-import { mkdtemp, writeFile, readFile, mkdir } from "fs/promises";
+import { chmod, mkdtemp, writeFile, readFile, mkdir, stat } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -191,8 +191,36 @@ describe("apply_patch execution", () => {
     expect(await readFile(join(workspace, "two.ts"), "utf8")).toBe("const b = 2;\n");
   });
 
-  test("move with edit, whitespace-drifted context still matches", async () => {
-    await writeFile(join(workspace, "loc.ts"), "function f() {\n    return 1;   \n}\n");
+  test("move with edit applies and the moved file keeps its permission bits", async () => {
+    await writeFile(join(workspace, "loc.sh"), "#!/bin/sh\nf() {\n    return 1\n}\n");
+    if (process.platform !== "win32") await chmod(join(workspace, "loc.sh"), 0o755);
+    const out = await run(`*** Begin Patch
+*** Update File: loc.sh
+*** Move to: moved.sh
+@@
+ f() {
+-    return 1
++    return 2
+ }
+*** End Patch`);
+    expect(out.success).toBe(true);
+    expect(await Bun.file(join(workspace, "loc.sh")).exists()).toBe(false);
+    expect(await readFile(join(workspace, "moved.sh"), "utf8")).toContain("return 2");
+    const file = JSON.parse(out.result).files[0];
+    expect(file.action).toBe("moved");
+    expect(file.strategies).toEqual(["exact"]);
+    if (process.platform !== "win32") {
+      expect((await stat(join(workspace, "moved.sh"))).mode & 0o777).toBe(0o755);
+    }
+  });
+
+  // Context that matches only once whitespace is ignored used to apply through
+  // a whitespace-insensitive tier. Matching is exact now (line endings aside),
+  // so the patch applies NOTHING and the error names the lines that nearly
+  // matched — the same contract as edit_file and multi_edit.
+  test("whitespace-drifted context is refused and the patch applies nothing", async () => {
+    const original = "function f() {\n    return 1;   \n}\n";
+    await writeFile(join(workspace, "loc.ts"), original);
     const out = await run(`*** Begin Patch
 *** Update File: loc.ts
 *** Move to: moved.ts
@@ -202,10 +230,40 @@ describe("apply_patch execution", () => {
 +    return 2;
  }
 *** End Patch`);
+    expect(out.success).toBe(false);
+    expect(out.error).toMatch(/Lines 1–3 match it once trailing whitespace is ignored/);
+    expect(await readFile(join(workspace, "loc.ts"), "utf8")).toBe(original);
+    expect(await Bun.file(join(workspace, "moved.ts")).exists()).toBe(false);
+  });
+
+  test("a file that is not UTF-8 is refused whole, byte for byte", async () => {
+    const raw = Buffer.from("# caf\xe9 latin-1\nx = 1\n", "latin1");
+    await writeFile(join(workspace, "l.py"), raw);
+    const out = await run(`*** Begin Patch
+*** Update File: l.py
+@@
+-x = 1
++x = 2
+*** End Patch`);
+    expect(out.success).toBe(false);
+    expect(out.error).toMatch(
+      /l\.py is not valid UTF-8 \(the first undecodable byte is at offset 5, line 1\)/,
+    );
+    expect((await readFile(join(workspace, "l.py"))).equals(raw)).toBe(true);
+  });
+
+  test("a CRLF file stays CRLF through a patch written with LF lines", async () => {
+    await writeFile(join(workspace, "w.txt"), "a = 1\r\nb = 2\r\nc = 3\r\n");
+    const out = await run(`*** Begin Patch
+*** Update File: w.txt
+@@
+-a = 1
++a = 10
+ b = 2
+*** End Patch`);
     expect(out.success).toBe(true);
-    expect(await Bun.file(join(workspace, "loc.ts")).exists()).toBe(false);
-    expect(await readFile(join(workspace, "moved.ts"), "utf8")).toContain("return 2;");
-    expect(JSON.parse(out.result).files[0].action).toBe("moved");
+    expect(await readFile(join(workspace, "w.txt"), "utf8")).toBe("a = 10\r\nb = 2\r\nc = 3\r\n");
+    expect(JSON.parse(out.result).files[0].strategies).toEqual(["line-endings"]);
   });
 
   test("add of an existing file / delete of a missing file / workspace escape all refuse", async () => {
