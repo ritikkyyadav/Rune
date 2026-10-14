@@ -11,6 +11,12 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+## [1.4.4] - 2026-10-14
+
+**The connection to the provider: a sleeping laptop no longer ends a run, and a cut response keeps
+its finished calls.** A patch on 1.4.3, the third phase of the reliability plan. Full notes:
+[`docs/releases/v1.4.4.md`](docs/releases/v1.4.4.md).
+
 ### Fixed
 
 - **A laptop that sleeps no longer ends a run.** On 12 October the lid closed over a research run at
@@ -1102,7 +1108,8 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.3...HEAD
+[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.4...HEAD
+[1.4.4]: https://github.com/ritikkyyadav/Rune/compare/v1.4.3...v1.4.4
 [1.4.3]: https://github.com/ritikkyyadav/Rune/compare/v1.4.2...v1.4.3
 [1.4.2]: https://github.com/ritikkyyadav/Rune/compare/v1.3.4...v1.4.2
 [1.3.4]: https://github.com/ritikkyyadav/Rune/compare/v1.3.3...v1.3.4
