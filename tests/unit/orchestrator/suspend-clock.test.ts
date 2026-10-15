@@ -10,18 +10,25 @@ import { SuspendClock } from "../../../packages/orchestrator/src/suspend-clock";
 
 function handClock(start = 1_000_000) {
   let wall = start;
-  const clock = new SuspendClock({ start: false, now: () => wall });
+  let mono = 50_000;
+  const clock = new SuspendClock({ start: false, now: () => wall, mono: () => mono });
   return {
     clock,
     /** Ticks once a second for `secs` seconds of a process that ran. */
     run(secs: number) {
       for (let i = 0; i < secs; i++) {
         wall += 1_000;
+        mono += 1_000;
         clock.tick();
       }
     },
-    /** The process does not run for `ms`; no tick fires. */
+    /** The process does not run for `ms`; no tick fires. Both clocks move (macOS). */
     sleep(ms: number) {
+      wall += ms;
+      mono += ms;
+    },
+    /** Someone sets the system time: only the wall clock moves. */
+    setTime(ms: number) {
       wall += ms;
     },
     get wall() {
@@ -76,9 +83,21 @@ describe("SuspendClock", () => {
     expect(h.clock.suspendedSince(since)).toBe(0);
   });
 
+  test("a system time set forward is not a sleep", () => {
+    // 1.4.4's clock read the wall alone, and a test that moved the time left
+    // every later run in its process looking asleep.
+    const h = handClock();
+    const since = h.wall;
+    h.run(2);
+    h.setTime(60 * 60_000);
+    h.run(3);
+    expect(h.clock.suspendedSince(since)).toBe(0);
+    expect(h.clock.lastWakeAt()).toBeNull();
+  });
+
   test("a wall clock set back records nothing", () => {
     let wall = 5_000_000;
-    const clock = new SuspendClock({ start: false, now: () => wall });
+    const clock = new SuspendClock({ start: false, now: () => wall, mono: () => 0 });
     const since = wall - 1;
     wall -= 60 * 60_000;
     clock.tick();

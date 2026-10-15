@@ -48,9 +48,12 @@ describe("transcript health notices", () => {
   });
 
   afterEach(() => {
-    // Closed first: Windows will not remove a folder with the database open.
     engine.close();
-    rmSync(root, { recursive: true, force: true });
+    // Best-effort: Windows can hold the folder a SQLite file was open in for
+    // a moment after it closes, and a leftover temp folder is not a failure.
+    try {
+      rmSync(root, { recursive: true, force: true });
+    } catch {}
   });
 
   const write = () => {

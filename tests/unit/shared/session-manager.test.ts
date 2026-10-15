@@ -178,9 +178,12 @@ describe("transcript write health", () => {
   const dir = mkdtempSync(join(tmpdir(), "rune-session-health-"));
   const opened: SessionManager[] = [];
   afterAll(() => {
-    // Closed first: Windows will not remove a folder with a database open.
     for (const sm of opened) sm.close();
-    rmSync(dir, { recursive: true, force: true });
+    // Best-effort: Windows can hold the folder a SQLite file was open in for
+    // a moment after it closes, and a leftover temp folder is not a failure.
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {}
   });
 
   function store() {

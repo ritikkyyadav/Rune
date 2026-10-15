@@ -14,9 +14,15 @@
 //
 // How it knows: a timer ticks every second, and a timer does not fire while
 // the process is suspended — the machine asleep, or the process stopped. A
-// tick that finds the wall clock far beyond one period lived through a gap it
-// did not run in, and records it. That holds whichever clock the runtime's
-// `performance.now()` uses, and whether or not that clock pauses in sleep.
+// tick that finds BOTH clocks far beyond one period lived through a gap it did
+// not run in, and records it. Both, because the wall clock alone also jumps
+// when the system time is set: in 1.4.4 a test that moved the time
+// (`setSystemTime`) left every later test in its process looking asleep, and
+// CI on Windows failed on runs that re-sent three times "after a sleep". On
+// macOS the monotonic clock keeps counting through sleep (a 600-second
+// deadline fired across 12 October's 23-minute sleep with seconds awake), so
+// a real sleep moves both. Where it pauses in suspend — Linux — a sleep is not
+// seen, which is where 1.4.3 was; a clock change is never taken for one.
 // A starved event loop can register as a gap too; all a gap buys is a re-send
 // that does not count against the run, and those are bounded.
 
@@ -37,7 +43,9 @@ export interface SuspendProbe {
 
 export class SuspendClock implements SuspendProbe {
   private readonly now: () => number;
+  private readonly mono: () => number;
   private last: number;
+  private lastMono: number;
   private gaps: Array<{ at: number; ms: number }> = [];
   private timer: ReturnType<typeof setInterval> | null = null;
 
@@ -45,9 +53,11 @@ export class SuspendClock implements SuspendProbe {
    * `start: false` builds a clock that only moves when `tick` is called —
    * for a test that drives time itself.
    */
-  constructor(opts: { start?: boolean; now?: () => number } = {}) {
+  constructor(opts: { start?: boolean; now?: () => number; mono?: () => number } = {}) {
     this.now = opts.now ?? Date.now;
+    this.mono = opts.mono ?? (() => performance.now());
     this.last = this.now();
+    this.lastMono = this.mono();
     if (opts.start !== false) {
       this.timer = setInterval(() => this.tick(), TICK_MS);
       // Never the reason a process stays alive.
@@ -56,10 +66,12 @@ export class SuspendClock implements SuspendProbe {
   }
 
   /** One tick: record the gap since the last one when it was a suspension. */
-  tick(at: number = this.now()): void {
-    const gap = at - this.last - TICK_MS;
+  tick(at: number = this.now(), mono: number = this.mono()): void {
+    // The smaller of the two: a set clock moves only the wall, and is no gap.
+    const gap = Math.min(at - this.last, mono - this.lastMono) - TICK_MS;
     if (gap > GAP_MS) this.gaps.push({ at, ms: gap });
     this.last = at;
+    this.lastMono = mono;
     while (this.gaps.length > 0 && this.gaps[0]!.at < at - KEEP_MS) this.gaps.shift();
   }
 

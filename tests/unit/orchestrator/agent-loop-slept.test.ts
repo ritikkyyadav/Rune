@@ -12,7 +12,7 @@
  * failure was not counted.
  */
 
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setSystemTime, test } from "bun:test";
 import {
   AWAKE_SETTLE_MS,
   AgentLoop,
@@ -294,5 +294,26 @@ describe("sleptNotice", () => {
     expect(sleptNotice(10 * MIN)).toContain("10m");
     expect(sleptNotice(150 * MIN)).toContain("2h 30m");
     expect(sleptNotice(10 * MIN)).toMatch(/asleep/);
+  });
+});
+
+describe("a system time change is not a sleep", () => {
+  test("with a real ticking clock, a moved system time costs the failure as usual", async () => {
+    // 1.4.4 read the wall clock alone: a test that moved the time left every
+    // later run in its process "asleep", and CI on Windows failed on runs that
+    // re-sent three times. The clock now needs the monotonic clock to agree.
+    const { SuspendClock } = await import("../../../packages/orchestrator/src/suspend-clock");
+    const clock = new SuspendClock();
+    try {
+      setSystemTime(new Date(Date.now() + 60 * MIN));
+      await new Promise((r) => setTimeout(r, 1_200));
+      setSystemTime();
+      const gw = gateway(1);
+      await collect(loop(gw, clock).run("hello", "s1", "/tmp"));
+      expect(gw.calls).toBe(1);
+    } finally {
+      setSystemTime();
+      clock.stop();
+    }
   });
 });

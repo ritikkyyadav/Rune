@@ -43,6 +43,13 @@ Full notes: [`docs/releases/v1.4.6.md`](docs/releases/v1.4.6.md).
 
 ### Fixed
 
+- **The sleep check no longer takes a system time change for a sleep.** 1.4.4's check measured
+  gaps on the wall clock alone, so a moved system time looked like the machine had slept, and the
+  next failures were re-sent without counting. In CI on Windows a test that moved the time made
+  later runs in the same process re-send three times. A gap now counts only when the monotonic
+  clock agrees. On macOS that clock keeps counting through sleep, so a real sleep is still seen; on
+  Linux it pauses in suspend, so a sleep there is not seen, as before 1.4.4.
+
 - **A full disk no longer stops a session saving in silence.** Every transcript write is
   best-effort, so a full disk, a read-only database or an I/O error dropped the rows and a resume
   later found the conversation short. The run now says "Recent messages may not be saved for
