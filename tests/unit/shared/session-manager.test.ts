@@ -176,10 +176,16 @@ describe("deriveSessionTitle", () => {
  */
 describe("transcript write health", () => {
   const dir = mkdtempSync(join(tmpdir(), "rune-session-health-"));
-  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  const opened: SessionManager[] = [];
+  afterAll(() => {
+    // Closed first: Windows will not remove a folder with a database open.
+    for (const sm of opened) sm.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   function store() {
     const sm = new SessionManager(join(dir, `${Math.random().toString(36).slice(2)}.db`));
+    opened.push(sm);
     const id = sm.createSession("/tmp/ws", "m", "anthropic").id;
     const db = (sm as unknown as { db: Database }).db;
     const append = () => sm.appendEvent(id, { type: "note", payload: {} } as never);

@@ -7,7 +7,15 @@
 
 import { afterAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AgentLoop, truncateForTranscript } from "../../../packages/orchestrator/src/agent-loop";
@@ -75,7 +83,10 @@ describe("spillOutput", () => {
   });
 
   test("a place it cannot write gives null, not an error", () => {
-    expect(spillOutput("/", "/dev/null/outputs", "x", "text")).toBeNull();
+    // A folder under a FILE cannot be made on any system.
+    const file = join(fresh("file"), "not-a-folder");
+    writeFileSync(file, "x");
+    expect(spillOutput(file, join(file, "outputs"), "x", "text")).toBeNull();
   });
 });
 
@@ -171,7 +182,8 @@ describe("the loop saves a long result and points the model at it", () => {
       // drain
     }
     const saved = join(".rune", "outputs", "sess-suite.txt");
-    expect(requests[1]).toContain(`is saved at ${saved}`);
+    // The request is JSON: a Windows path's backslashes arrive escaped.
+    expect(requests[1]).toContain(JSON.stringify(`is saved at ${saved}`).slice(1, -1));
     expect(readFileSync(join(ws, saved), "utf8")).toBe(long);
   });
 });

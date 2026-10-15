@@ -47,7 +47,11 @@ describe("transcript health notices", () => {
     sessionId = engine.createSession();
   });
 
-  afterEach(() => rmSync(root, { recursive: true, force: true }));
+  afterEach(() => {
+    // Closed first: Windows will not remove a folder with the database open.
+    engine.close();
+    rmSync(root, { recursive: true, force: true });
+  });
 
   const write = () => {
     try {
