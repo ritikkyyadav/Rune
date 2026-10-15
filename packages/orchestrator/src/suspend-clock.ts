@@ -95,10 +95,24 @@ export class SuspendClock implements SuspendProbe {
   }
 }
 
-let shared: SuspendClock | null = null;
+let shared: SuspendProbe | null = null;
 
-/** The one clock a process shares, started on first use. */
-export function sharedSuspendClock(): SuspendClock {
+/** A probe that never sees a suspension: `RUNE_SUSPEND_CLOCK=off`. */
+const NEVER_SUSPENDED: SuspendProbe = {
+  suspendedSince: () => 0,
+  lastWakeAt: () => null,
+};
+
+/**
+ * The one clock a process shares, started on first use. `RUNE_SUSPEND_CLOCK=off`
+ * turns it off: the test suite sets that, because every test file shares one
+ * process and a test that blocks the event loop for half a minute (Windows CI,
+ * 15 October: two thousand unbatched SQLite inserts) is, to this clock,
+ * indistinguishable from a sleep — and it would excuse the next file's failures.
+ * Tests that exercise the clock pass their own.
+ */
+export function sharedSuspendClock(): SuspendProbe {
+  if (process.env.RUNE_SUSPEND_CLOCK === "off") return NEVER_SUSPENDED;
   shared ??= new SuspendClock();
   return shared;
 }

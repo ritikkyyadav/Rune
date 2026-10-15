@@ -32,7 +32,12 @@ const fresh = () => {
   return d;
 };
 afterAll(() => {
-  for (const d of made) rmSync(d, { recursive: true, force: true });
+  for (const d of made) {
+    // Best-effort: Windows can hold a folder a SQLite file was open in.
+    try {
+      rmSync(d, { recursive: true, force: true });
+    } catch {}
+  }
 });
 
 function binWith(stamps: number[]): string {
@@ -113,7 +118,10 @@ describe("the session database", () => {
     db.run("CREATE TABLE t (id INTEGER PRIMARY KEY, body TEXT)");
     db.run("CREATE INDEX t_body ON t(body)");
     const insert = db.prepare("INSERT INTO t (body) VALUES (?)");
-    for (let i = 0; i < 2000; i++) insert.run(`row ${i} ${"x".repeat(50)}`);
+    // One transaction: two thousand separate commits took 40 s on Windows CI.
+    db.transaction(() => {
+      for (let i = 0; i < 2000; i++) insert.run(`row ${i} ${"x".repeat(50)}`);
+    })();
     db.close();
     // An invalid page type on page 3: the file opens, and quick_check reports it.
     const fd = openSync(path, "r+");

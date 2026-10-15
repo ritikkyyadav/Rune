@@ -40,6 +40,11 @@ plan. Full notes: [`docs/releases/v1.4.8.md`](docs/releases/v1.4.8.md).
   reclaim: on the founder's machine, 62 installs and 5.0 GB. It is a dry run; `--apply` removes
   them. The plain `.backup` that `--rollback` uses is never touched.
 
+- **`RUNE_SUSPEND_CLOCK=off` turns off the sleep check** (1.4.4) for a process. The test suite sets
+  it: every test file shares one process, and on Windows CI a test that blocked the event loop for
+  40 seconds looked like a sleep to the next file's runs, which then re-sent failures free. Tests
+  that exercise the check pass their own clock.
+
 ### Not in this release, and why
 
 - **A versions directory with a `current` symlink.** Rollback now works without one. Changing
