@@ -11,6 +11,12 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+## [1.4.8] - 2026-10-15
+
+**Ship like a product: `rune upgrade` survives a dropped connection and can roll back, and
+`rune doctor` checks the install itself.** A patch on 1.4.7, the seventh phase of the reliability
+plan. Full notes: [`docs/releases/v1.4.8.md`](docs/releases/v1.4.8.md).
+
 ### Added
 
 - **`rune upgrade` survives a dropped connection.** On 15 October it failed twice with ECONNRESET:
@@ -1269,7 +1275,8 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.7...HEAD
+[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.8...HEAD
+[1.4.8]: https://github.com/ritikkyyadav/Rune/compare/v1.4.7...v1.4.8
 [1.4.7]: https://github.com/ritikkyyadav/Rune/compare/v1.4.6...v1.4.7
 [1.4.6]: https://github.com/ritikkyyadav/Rune/compare/v1.4.5...v1.4.6
 [1.4.5]: https://github.com/ritikkyyadav/Rune/compare/v1.4.4...v1.4.5
