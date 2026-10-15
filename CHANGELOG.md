@@ -11,6 +11,38 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+### Added
+
+- **`rune upgrade` survives a dropped connection.** On 15 October it failed twice with ECONNRESET:
+  the Mac's lid was shut, it woke for seconds at a time, and one interrupted fetch ended the whole
+  upgrade. A download now keeps what it received and asks for the rest (`Range`), up to six tries
+  with a growing pause. It starts over only when the server will not resume. The checksum check
+  after it is unchanged, so a bad splice is never installed.
+- **`rune upgrade --rollback`** swaps the installed build with the one kept as `.backup`: renames
+  only, so it is instant and needs no network. Running it again swaps back.
+- **`rune upgrade --to <version>`** installs that release, older or newer, through the same
+  checksum-verified path.
+- **`rune upgrade --channel stable`** installs the newest release that has been out for seven days
+  rather than the newest one.
+- **`rune doctor` checks the install itself.** It now reports:
+  - whether the binaries' code signatures hold (macOS kills a binary whose signature broke, at
+    launch, with no message);
+  - whether there is a build to roll back to;
+  - how much the old builds kept by source installs weigh;
+  - whether the session database passes `quick_check`.
+- **`rune doctor prune-backups`** shows what removing all but the newest three old builds would
+  reclaim: on the founder's machine, 62 installs and 5.0 GB. It is a dry run; `--apply` removes
+  them. The plain `.backup` that `--rollback` uses is never touched.
+
+### Not in this release, and why
+
+- **A versions directory with a `current` symlink.** Rollback now works without one. Changing
+  the install layout on the one machine Rune runs on, with no budget for a second, is a risk this
+  release does not need to take.
+- **The launcher already reads no source tree for a release build.** Its git and find checks run
+  only beside a source build's `rune-compiled.meta`, and `rune upgrade` retires that file.
+- **A minimum-version floor** waits for a release that needs one.
+
 ## [1.4.7] - 2026-10-15
 
 **Long commands keep their work: an install, a test suite or a build that runs past its timeout is

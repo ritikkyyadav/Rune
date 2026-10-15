@@ -29,6 +29,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   CHECK_INTERVAL_MS,
+  DOWNLOAD_ATTEMPTS,
   assetSuffix,
   cachedUpdateNag,
   cliTarget,
@@ -460,5 +461,287 @@ describe("clearImmutable", () => {
   test("a missing file or a non-Darwin host is nothing to clear", () => {
     expect(() => clearImmutable("/nonexistent/rune")).not.toThrow();
     expect(() => clearImmutable("/etc/hosts", "linux")).not.toThrow();
+  });
+});
+
+/**
+ * R7 of docs/program/rune-reliability-plan-20261014.md. On 15 October
+ * `rune upgrade` failed twice with ECONNRESET on a Mac waking for seconds at a
+ * time: one fetch into memory, and a dropped connection ended it.
+ */
+describe("a download that survives a dropped connection", () => {
+  const SUFFIX = "linux-x64";
+  const CLI = "C".repeat(5_000);
+  const TOOLS = "T".repeat(3_000);
+  const sums = `${sha256(CLI)}  rune-${SUFFIX}\n${sha256(TOOLS)}  rune-tools-${SUFFIX}\n`;
+  const release: LatestRelease = {
+    tag_name: "v0.4.0",
+    assets: [
+      { name: `rune-${SUFFIX}`, browser_download_url: "https://x/cli" },
+      { name: `rune-tools-${SUFFIX}`, browser_download_url: "https://x/tools" },
+      { name: "SHA256SUMS", browser_download_url: "https://x/SHA256SUMS" },
+    ],
+  };
+
+  /**
+   * A stream that delivers `upTo` characters, then fails like a dropped
+   * socket on the next read. (Erroring in `start` would discard the queued
+   * chunk — nothing would have arrived.)
+   */
+  const cutAfter = (text: string, upTo: number) => {
+    let pulls = 0;
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (pulls++ === 0) controller.enqueue(new TextEncoder().encode(text.slice(0, upTo)));
+          else
+            controller.error(
+              new Error("ECONNRESET: The socket connection was closed unexpectedly"),
+            );
+        },
+      }),
+      { status: 200 },
+    );
+  };
+
+  function server(cliResponses: Array<(range: string | null) => Response>) {
+    const ranges: Array<string | null> = [];
+    let cliCalls = 0;
+    const fetcher = async (url: string, init?: RequestInit): Promise<Response> => {
+      if (url.includes("api.github.com")) return new Response(JSON.stringify(release));
+      if (url === "https://x/SHA256SUMS") return new Response(sums);
+      if (url === "https://x/tools") return new Response(TOOLS);
+      const range = new Headers(init?.headers).get("Range");
+      ranges.push(range);
+      const next = cliResponses[Math.min(cliCalls++, cliResponses.length - 1)]!;
+      return next(range);
+    };
+    return { fetcher, ranges, calls: () => cliCalls };
+  }
+
+  function upgradeEnv(fetcher: UpgradeEnv["fetch"], lines: string[]) {
+    const dir = tempDir();
+    return {
+      dir,
+      env: env({
+        installDir: join(dir, "bin"),
+        statePath: join(dir, "state.json"),
+        fetch: fetcher,
+        log: (l) => lines.push(l),
+        sleep: async () => {},
+      }),
+    };
+  }
+
+  test("a cut transfer resumes from the bytes it already has", async () => {
+    const s = server([
+      () => cutAfter(CLI, 2_000),
+      (range) => new Response(CLI.slice(Number(range!.match(/bytes=(\d+)-/)![1])), { status: 206 }),
+    ]);
+    const lines: string[] = [];
+    const { dir, env: e } = upgradeEnv(s.fetcher, lines);
+    expect(await runUpgrade([], e)).toBe(0);
+    expect(s.ranges).toEqual([null, "bytes=2000-"]);
+    expect(readFileSync(join(dir, "bin", "rune"), "utf8")).toBe(CLI);
+    expect(lines.join("\n")).toContain("resuming");
+    expect(lines.join("\n")).toContain("checksums verified");
+  });
+
+  test("a server that will not resume sends it again, and that is fine", async () => {
+    const s = server([() => cutAfter(CLI, 1_000), () => new Response(CLI, { status: 200 })]);
+    const { dir, env: e } = upgradeEnv(s.fetcher, []);
+    expect(await runUpgrade([], e)).toBe(0);
+    expect(readFileSync(join(dir, "bin", "rune"), "utf8")).toBe(CLI);
+  });
+
+  test("a missing file is not asked for again", async () => {
+    const s = server([() => new Response("nope", { status: 404 })]);
+    const lines: string[] = [];
+    const { dir, env: e } = upgradeEnv(s.fetcher, lines);
+    expect(await runUpgrade([], e)).toBe(1);
+    expect(s.calls()).toBe(1);
+    expect(existsSync(join(dir, "bin", "rune"))).toBe(false);
+  });
+
+  test("a connection that never holds gives up, and installs nothing", async () => {
+    const s = server([() => cutAfter(CLI, 10)]);
+    const lines: string[] = [];
+    const { dir, env: e } = upgradeEnv(s.fetcher, lines);
+    expect(await runUpgrade([], e)).toBe(1);
+    expect(s.calls()).toBe(DOWNLOAD_ATTEMPTS);
+    expect(lines.join("\n")).toContain("Download failed");
+    expect(existsSync(join(dir, "bin", "rune"))).toBe(false);
+  });
+});
+
+describe("rune upgrade --rollback, --to, --channel", () => {
+  test("--rollback swaps with the backup, and again swaps back", async () => {
+    const dir = tempDir();
+    const bin = join(dir, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "rune"), "new cli");
+    writeFileSync(join(bin, "rune.backup"), "old cli");
+    writeFileSync(join(bin, "rune-tools"), "new tools");
+    writeFileSync(join(bin, "rune-tools.backup"), "old tools");
+    const e = env({ installDir: bin, statePath: join(dir, "s.json") });
+
+    expect(await runUpgrade(["--rollback"], e)).toBe(0);
+    expect(readFileSync(join(bin, "rune"), "utf8")).toBe("old cli");
+    expect(readFileSync(join(bin, "rune-tools"), "utf8")).toBe("old tools");
+    expect(readFileSync(join(bin, "rune.backup"), "utf8")).toBe("new cli");
+
+    expect(await runUpgrade(["--rollback"], e)).toBe(0);
+    expect(readFileSync(join(bin, "rune"), "utf8")).toBe("new cli");
+    expect(readdirSync(bin).some((f) => f.endsWith(".rollback"))).toBe(false);
+  });
+
+  test("--rollback with nothing kept says so", async () => {
+    const dir = tempDir();
+    const bin = join(dir, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "rune"), "cli");
+    const lines: string[] = [];
+    expect(
+      await runUpgrade(
+        ["--rollback"],
+        env({ installDir: bin, statePath: join(dir, "s"), log: (l) => lines.push(l) }),
+      ),
+    ).toBe(1);
+    expect(lines.join("\n")).toContain("Nothing to roll back to");
+  });
+
+  function releases(list: Array<{ tag: string; at: string; prerelease?: boolean }>) {
+    const body = (tag: string, prerelease = false, at = ""): LatestRelease => {
+      const suffix = "linux-x64";
+      const cli = `#!cli ${tag}`;
+      const tools = `#!tools ${tag}`;
+      return {
+        tag_name: tag,
+        prerelease,
+        published_at: at,
+        assets: [
+          { name: `rune-${suffix}`, browser_download_url: `https://x/${tag}/cli` },
+          { name: `rune-tools-${suffix}`, browser_download_url: `https://x/${tag}/tools` },
+          { name: "SHA256SUMS", browser_download_url: `https://x/${tag}/sums` },
+        ],
+      };
+    };
+    const asked: string[] = [];
+    const fetcher = async (url: string): Promise<Response> => {
+      asked.push(url);
+      if (url.endsWith("/releases?per_page=30")) {
+        return new Response(JSON.stringify(list.map((r) => body(r.tag, r.prerelease, r.at))));
+      }
+      const tagged = url.match(/\/releases\/tags\/(.+)$/);
+      if (tagged) {
+        const found = list.find((r) => r.tag === decodeURIComponent(tagged[1]!));
+        return found
+          ? new Response(JSON.stringify(body(found.tag, found.prerelease, found.at)))
+          : new Response("{}", { status: 404 });
+      }
+      const asset = url.match(/^https:\/\/x\/(v[^/]+)\/(cli|tools|sums)$/);
+      if (asset) {
+        const [, tag, kind] = asset;
+        const cli = `#!cli ${tag}`;
+        const tools = `#!tools ${tag}`;
+        if (kind === "cli") return new Response(cli);
+        if (kind === "tools") return new Response(tools);
+        return new Response(
+          `${sha256(cli)}  rune-linux-x64\n${sha256(tools)}  rune-tools-linux-x64\n`,
+        );
+      }
+      return new Response("nope", { status: 404 });
+    };
+    return { fetcher, asked };
+  }
+
+  const DAY = 24 * 60 * 60 * 1000;
+  const NOW = Date.parse("2026-10-15T00:00:00Z");
+  const ago = (days: number) => new Date(NOW - days * DAY).toISOString();
+
+  test("--to installs that release, even an older one", async () => {
+    const dir = tempDir();
+    const r = releases([{ tag: "v0.3.5", at: ago(20) }]);
+    const lines: string[] = [];
+    const code = await runUpgrade(
+      ["--to", "0.3.5"],
+      env({
+        installDir: join(dir, "bin"),
+        statePath: join(dir, "s"),
+        version: "0.4.0",
+        fetch: r.fetcher,
+        log: (l) => lines.push(l),
+      }),
+    );
+    expect(code).toBe(0);
+    expect(readFileSync(join(dir, "bin", "rune"), "utf8")).toBe("#!cli v0.3.5");
+    expect(lines.join("\n")).toContain("older than the v0.4.0 you have");
+  });
+
+  test("--to a release that does not exist says so", async () => {
+    const dir = tempDir();
+    const lines: string[] = [];
+    const code = await runUpgrade(
+      ["--to=9.9.9"],
+      env({
+        installDir: join(dir, "bin"),
+        statePath: join(dir, "s"),
+        fetch: releases([]).fetcher,
+        log: (l) => lines.push(l),
+      }),
+    );
+    expect(code).toBe(1);
+    expect(lines.join("\n")).toContain("No release v9.9.9");
+  });
+
+  test("--channel stable takes the newest release out for a week, never a fresh one", async () => {
+    const dir = tempDir();
+    const r = releases([
+      { tag: "v0.6.0", at: ago(2) },
+      { tag: "v0.5.0", at: ago(9) },
+      { tag: "v0.5.5", at: ago(10), prerelease: true },
+      { tag: "v0.4.5", at: ago(30) },
+    ]);
+    const code = await runUpgrade(
+      ["--channel", "stable"],
+      env({
+        installDir: join(dir, "bin"),
+        statePath: join(dir, "s"),
+        fetch: r.fetcher,
+        now: () => NOW,
+      }),
+    );
+    expect(code).toBe(0);
+    expect(readFileSync(join(dir, "bin", "rune"), "utf8")).toBe("#!cli v0.5.0");
+  });
+
+  test("--channel stable with nothing a week old installs nothing", async () => {
+    const dir = tempDir();
+    const lines: string[] = [];
+    const code = await runUpgrade(
+      ["--channel=stable"],
+      env({
+        installDir: join(dir, "bin"),
+        statePath: join(dir, "s"),
+        fetch: releases([{ tag: "v0.6.0", at: ago(1) }]).fetcher,
+        now: () => NOW,
+        log: (l) => lines.push(l),
+      }),
+    );
+    expect(code).toBe(1);
+    expect(lines.join("\n")).toContain("out for seven days");
+    expect(existsSync(join(dir, "bin", "rune"))).toBe(false);
+  });
+
+  test("an unknown channel is refused", async () => {
+    const dir = tempDir();
+    const lines: string[] = [];
+    expect(
+      await runUpgrade(
+        ["--channel", "nightly"],
+        env({ installDir: join(dir, "bin"), statePath: join(dir, "s"), log: (l) => lines.push(l) }),
+      ),
+    ).toBe(1);
+    expect(lines.join("\n")).toContain("latest or stable");
   });
 });
