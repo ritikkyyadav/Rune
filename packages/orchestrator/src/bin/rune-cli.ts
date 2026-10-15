@@ -1819,6 +1819,11 @@ async function main() {
   // captures the answer alone.
   if (typeof values.print === "string") {
     const { runHeadless, headlessExitCode, headlessEnvelope } = await import("../headless");
+    // Nobody is watching a headless run: every background shell it starts is
+    // stopped after a limit, and all of them are reaped when it exits (R6.2).
+    const { setDefaultShellLifetime, DEFAULT_SHELL_LIFETIME_MS } =
+      await import("@rune/tool-registry");
+    setDefaultShellLifetime(DEFAULT_SHELL_LIFETIME_MS);
     // Nobody is at a keyboard to cancel one turn and keep the session: Ctrl-C
     // on a headless run is the same request SIGTERM is. It had no handler at
     // all here, so it killed the process where it stood.

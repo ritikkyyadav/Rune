@@ -27,6 +27,29 @@ const KILL_GRACE_MS = 2000;
 
 export type ShellStatus = "running" | "completed" | "failed" | "killed";
 
+// ─── Lifetimes (R6 of docs/program/rune-reliability-plan-20261014.md) ───
+//
+// A background shell outlives the call that started it, which is the point,
+// and it must not outlive what anyone meant: a run nobody is watching gets a
+// limit on every shell, and a command Rune backgrounded on its own (below) is
+// always limited. Every shell is still reaped when the process exits.
+
+/** The longest any shell may be given. */
+export const MAX_SHELL_LIFETIME_MS = 2 * 60 * 60_000;
+/** A command Rune moved to the background itself, or a shell in an unattended run. */
+export const DEFAULT_SHELL_LIFETIME_MS = 30 * 60_000;
+
+/** The limit every new shell gets unless it asks for its own; null for none. */
+let processShellLifetimeMs: number | null = null;
+
+/**
+ * Give every shell this process starts from now on a lifetime (an unattended
+ * run, R6.2), capped at `MAX_SHELL_LIFETIME_MS`; null removes the default.
+ */
+export function setDefaultShellLifetime(ms: number | null): void {
+  processShellLifetimeMs = ms === null ? null : Math.min(Math.max(1, ms), MAX_SHELL_LIFETIME_MS);
+}
+
 interface BackgroundShell {
   id: string;
   command: string;
@@ -43,6 +66,12 @@ interface BackgroundShell {
   leaderExited: boolean;
   /** The group was seen empty, or someone else's, once. A number seen free is never ours again. */
   groupGone: boolean;
+  /** Settles when the leader exits — what a foreground wait races. */
+  exited: Promise<void>;
+  /** Stopped because it reached its lifetime, not by anyone's kill_shell. */
+  expired: boolean;
+  /** Whether the command ran inside the OS sandbox. */
+  sandboxed: boolean;
 }
 
 /** Sends `signal` to a pid, or to a process group when `pid` is negative; `0` only probes. */
@@ -67,7 +96,12 @@ export class BackgroundShellManager {
     command: string,
     cwd: string,
     network = false,
-    opts: { unsandboxed?: boolean; denyWrite?: readonly string[] } = {},
+    opts: {
+      unsandboxed?: boolean;
+      denyWrite?: readonly string[];
+      /** Stop it after this long; the process default applies when absent. */
+      maxLifetimeMs?: number;
+    } = {},
   ): { shellId: string; sandboxed: boolean } {
     let program = "bash";
     let args = ["-lc", command];
@@ -127,6 +161,7 @@ export class BackgroundShellManager {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
+    let markExited: () => void = () => {};
     const shell: BackgroundShell = {
       id,
       command,
@@ -139,8 +174,24 @@ export class BackgroundShellManager {
       startedAt: Date.now(),
       leaderExited: false,
       groupGone: false,
+      exited: new Promise<void>((resolve) => (markExited = resolve)),
+      expired: false,
+      sandboxed,
     };
     this.shells.set(id, shell);
+
+    const lifetime =
+      opts.maxLifetimeMs !== undefined
+        ? Math.min(Math.max(1, opts.maxLifetimeMs), MAX_SHELL_LIFETIME_MS)
+        : processShellLifetimeMs;
+    if (lifetime !== null) {
+      const limit = setTimeout(() => {
+        if (shell.status !== "running") return;
+        shell.expired = true;
+        this.kill(id);
+      }, lifetime);
+      (limit as { unref?: () => void }).unref?.();
+    }
 
     const append = (chunk: string) => {
       shell.buffer += chunk;
@@ -162,6 +213,7 @@ export class BackgroundShellManager {
     procEvents.on("error", (error) => {
       append(`Failed to start background command: ${error.message}\n`);
       if (shell.status === "running") shell.status = "failed";
+      markExited();
     });
     procEvents.on("exit", (code) => {
       shell.leaderExited = true;
@@ -170,6 +222,7 @@ export class BackgroundShellManager {
         shell.status = code === 0 ? "completed" : "failed";
       }
       shell.exitCode = code;
+      markExited();
     });
 
     return { shellId: id, sandboxed };
@@ -200,6 +253,7 @@ export class BackgroundShellManager {
     exitCode?: number | null;
     output?: string;
     command?: string;
+    expired?: boolean;
   } {
     const shell = this.shells.get(shellId);
     if (!shell) return { found: false };
@@ -211,7 +265,54 @@ export class BackgroundShellManager {
       exitCode: shell.exitCode,
       output,
       command: shell.command,
+      ...(shell.expired ? { expired: true } : {}),
     };
+  }
+
+  /**
+   * Wait up to `ms` for a shell to exit. True when it did; false when time
+   * ran out or `signal` fired first.
+   */
+  async wait(shellId: string, ms: number, signal?: AbortSignal): Promise<boolean> {
+    const shell = this.shells.get(shellId);
+    if (!shell) return true;
+    if (shell.status !== "running") return true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
+    const done = await Promise.race([
+      shell.exited.then(() => true),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), ms);
+      }),
+      new Promise<boolean>((resolve) => {
+        if (!signal) return;
+        onAbort = () => resolve(false);
+        if (signal.aborted) onAbort();
+        else signal.addEventListener("abort", onAbort, { once: true });
+      }),
+    ]);
+    clearTimeout(timer);
+    if (onAbort) signal?.removeEventListener("abort", onAbort);
+    return done;
+  }
+
+  /** All output a shell kept, from the start, and how much was dropped for space. */
+  drain(shellId: string): { output: string; dropped: number; exitCode: number | null } | null {
+    const shell = this.shells.get(shellId);
+    if (!shell) return null;
+    shell.readOffset = shell.buffer.length;
+    return { output: shell.buffer, dropped: shell.dropped, exitCode: shell.exitCode };
+  }
+
+  /** Whether a shell ran inside the OS sandbox. */
+  sandboxedOf(shellId: string): boolean {
+    return this.shells.get(shellId)?.sandboxed === true;
+  }
+
+  /** Stop tracking a shell that has exited — a finished foreground run leaves no entry. */
+  forget(shellId: string): void {
+    const shell = this.shells.get(shellId);
+    if (shell && shell.status !== "running") this.shells.delete(shellId);
   }
 
   kill(shellId: string): { found: boolean; status?: ShellStatus } {
@@ -381,6 +482,7 @@ export function createBashOutputHandler(manager: BackgroundShellManager): ToolHa
           status: r.status,
           exit_code: r.exitCode,
           output: r.output || "(no new output)",
+          ...(r.expired ? { note: "Stopped: it reached its time limit, not a kill_shell." } : {}),
         }),
         durationMs: 0,
       };
@@ -418,10 +520,174 @@ export function createKillShellHandler(manager: BackgroundShellManager): ToolHan
   };
 }
 
+// ─── Long commands keep their work (R6.1) ───
+//
+// A foreground command that reached its timeout was SIGKILLed, and its work
+// went with it. The record has thirty of them between July and October, and
+// most were the commands whose run time IS the work: `npm install` six times,
+// `bun test` three, a `pip install`, a `playwright install`, an `ollama pull`,
+// a typecheck. Killed at two minutes, an install leaves a half-written
+// `node_modules` and the next attempt starts over.
+//
+// Such a command now starts as a background shell — the same launch decision
+// and sandbox as foreground bash — and the call waits for it as long as the
+// foreground would have. Finished in time, the result is a foreground result.
+// Still running, it is NOT stopped: the result hands over the shell id with
+// the output so far, and the work continues, limited to
+// `DEFAULT_SHELL_LIFETIME_MS`. Every other command keeps the native
+// foreground path untouched.
+
+/** The native foreground default, `DEFAULT_TIMEOUT_MS` in crates/rune-tools/src/bash.rs. */
+const FOREGROUND_TIMEOUT_MS = 120_000;
+/** Output carried in a hand-over result; the rest is read with bash_output. */
+const HANDOVER_TAIL_CHARS = 4_000;
+
+const LONG_PROGRAMS: RegExp[] = [
+  // Package installs and fetches.
+  /^(?:npm|pnpm)\s+(?:install|i|ci|add|update|rebuild)\b/,
+  /^yarn(?:\s+(?:install|add|upgrade))?\s*$|^yarn\s+(?:install|add|upgrade)\b/,
+  /^bun\s+(?:install|i|add|update)\b/,
+  /^(?:pip3?|uv\s+pip)\s+install\b|^python3?\s+-m\s+pip\s+install\b|^uv\s+(?:sync|add)\b/,
+  /^(?:poetry|bundle|composer)\s+install\b|^gem\s+install\b|^brew\s+(?:install|upgrade)\b/,
+  /^cargo\s+(?:build|install|fetch|test|check|clippy|bench)\b/,
+  /^go\s+(?:build|install|test|mod\s+download|generate)\b/,
+  /^(?:npx|bunx|pnpm\s+dlx)\s+(?:--yes\s+|-y\s+)?playwright(?:@\S+)?\s+install\b/,
+  /^ollama\s+pull\b|^docker\s+(?:build|pull|compose\s+(?:build|pull))\b/,
+  // Test suites, builds and checks.
+  /^(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|build|typecheck|lint|check|ci|e2e)(?::\S+)?\b/,
+  /^bun\s+test\b/,
+  /^(?:python3?\s+-m\s+)?pytest\b|^tox\b|^nox\b/,
+  /^(?:npx\s+|bunx\s+)?(?:jest|vitest|playwright\s+test|tsc|mocha)\b/,
+  /^(?:make|cmake|ninja|bazel|gradle|gradlew|mvn|mvnw|xcodebuild|swift\s+(?:build|test))\b/,
+];
+
+/**
+ * Whether a shell command is one whose run time is its work — an install, a
+ * test suite, a build, a download — in any segment, after any `cd …`, env
+ * assignment, `time` or `nohup`. A command that starts with `sleep` is a wait
+ * on purpose and never one.
+ */
+export function isLongCommand(command: string): boolean {
+  if (/^\s*sleep\b/.test(command)) return false;
+  for (const raw of command.split(/&&|\|\||;|\||\n|\(|\)/)) {
+    let seg = raw.trim();
+    // Leading env assignments, `time`, `nohup`, `env`.
+    for (;;) {
+      const next = seg
+        .replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S*)\s+)+/, "")
+        .replace(/^(?:time|nohup|env)\s+/, "");
+      if (next === seg) break;
+      seg = next;
+    }
+    // A program named by its path is the program: `.venv/bin/pip install`.
+    seg = seg.replace(/^[^\s'"]*\/(?=[^\s/]+(?:\s|$))/, "");
+    if (LONG_PROGRAMS.some((re) => re.test(seg))) return true;
+  }
+  return false;
+}
+
+/** The hand-over note, saying what carries over and what does not (R6.3). */
+function handoverNote(command: string, waitedMs: number, shellId: string): string {
+  const secs = Math.round(waitedMs / 1000);
+  const minutes = Math.round(DEFAULT_SHELL_LIFETIME_MS / 60_000);
+  const cd = /(?:^|&&|;|\|\|)\s*cd\s/.test(command)
+    ? " A `cd` inside the command applied to that shell only: your next command starts in the workspace root."
+    : "";
+  return (
+    `Still running after ${secs}s, so it was moved to background shell ${shellId} instead of ` +
+    `being stopped: its work continues. Read its output with bash_output (shell_id ` +
+    `${shellId}); stop it with kill_shell. It is stopped after ${minutes} minutes.${cd}`
+  );
+}
+
+/**
+ * Run a long command as a background shell, waiting as long as the
+ * foreground would have. Null when the shell could not be started here — the
+ * caller falls back to the native foreground path, which says why.
+ */
+async function runLong(
+  input: ToolCallInput,
+  manager: BackgroundShellManager,
+): Promise<ToolCallOutput | null> {
+  const started = performance.now();
+  const command = String(input.args.command ?? "");
+  const waitMs =
+    typeof input.args.timeout_ms === "number" && input.args.timeout_ms > 0
+      ? input.args.timeout_ms
+      : FOREGROUND_TIMEOUT_MS;
+  let shellId: string;
+  let sandboxed: boolean;
+  try {
+    ({ shellId, sandboxed } = manager.start(
+      command,
+      input.workspaceRoot,
+      input.args.network === true,
+      {
+        unsandboxed: input.args.unsandboxed === true,
+        ...(input.denyWrite ? { denyWrite: input.denyWrite } : {}),
+        maxLifetimeMs: DEFAULT_SHELL_LIFETIME_MS,
+      },
+    ));
+  } catch {
+    return null;
+  }
+  const done = await manager.wait(shellId, waitMs, input.signal);
+  const durationMs = Math.round(performance.now() - started);
+  if (input.signal?.aborted) {
+    manager.kill(shellId);
+    return {
+      callId: input.callId,
+      toolName: input.toolName,
+      success: false,
+      result: "",
+      error: "Interrupted by user.",
+      durationMs,
+    };
+  }
+  if (done) {
+    const all = manager.drain(shellId);
+    manager.forget(shellId);
+    return {
+      callId: input.callId,
+      toolName: input.toolName,
+      success: true,
+      // The foreground shape. A shell's two streams arrive as one, in order.
+      result: JSON.stringify({
+        stdout: all?.output ?? "",
+        stderr: "",
+        exit_code: all?.exitCode ?? null,
+        sandboxed,
+        timed_out: false,
+        truncated: (all?.dropped ?? 0) > 0,
+      }),
+      durationMs,
+    };
+  }
+  const sofar = manager.read(shellId).output ?? "";
+  return {
+    callId: input.callId,
+    toolName: input.toolName,
+    success: true,
+    result: JSON.stringify({
+      stdout: sofar.length > HANDOVER_TAIL_CHARS ? sofar.slice(-HANDOVER_TAIL_CHARS) : sofar,
+      stderr: "",
+      exit_code: null,
+      sandboxed,
+      timed_out: true,
+      backgrounded: true,
+      shell_id: shellId,
+      note: handoverNote(command, waitMs, shellId),
+    }),
+    durationMs,
+  };
+}
+
 /**
  * Wrap the (Rust-backed) bash handler: `run_in_background: true` routes to the
- * background manager and returns a shell_id immediately; everything else goes
- * to the sandboxed foreground path unchanged.
+ * background manager and returns a shell_id immediately; a long command (an
+ * install, a test suite, a build) runs as a background shell that the call
+ * waits for and hands over instead of killing (R6.1); everything else goes to
+ * the sandboxed foreground path unchanged.
  */
 export function withBackgroundSupport(
   bashHandler: ToolHandler,
@@ -481,6 +747,12 @@ export function withBackgroundSupport(
           }),
           durationMs: 0,
         };
+      }
+      // Not on Windows: a background shell is `bash -lc` there, and Rune has
+      // no Windows shell contract yet, so the native path keeps its commands.
+      if (process.platform !== "win32" && isLongCommand(String(input.args.command ?? ""))) {
+        const long = await runLong(input, manager);
+        if (long) return long;
       }
       return bashHandler.execute(input);
     },

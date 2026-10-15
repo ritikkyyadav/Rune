@@ -11,6 +11,28 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+### Changed
+
+- **A long command that reaches its timeout keeps its work.** A foreground command that ran past its
+  timeout used to be killed with its whole process group. The record has 30 between July and
+  October, and most were commands whose run time is the work: `npm install` six times, `bun test`
+  three, a `pip install`, a `playwright install`, an `ollama pull`, a typecheck. An install killed
+  at two minutes leaves a half-written `node_modules`, and the next attempt starts over.
+
+  Installs, test suites, builds, type checks and downloads now start as a background shell, with
+  the same launch decision and sandbox as foreground bash, and the call waits for them as long as
+  before. If one finishes in time, the result is the ordinary foreground result. If it is still
+  running, it is not stopped: the result hands over the shell id with the output so far, the
+  model reads the rest with `bash_output`, and the result says when a `cd` inside the command
+  does not carry over to the next one. Every other command runs exactly as before. A command that
+  starts with `sleep` is never handed over. On Windows, long commands still run in the foreground
+  as before: a background shell there is `bash -lc`, and Rune has no Windows shell contract yet.
+
+- **Background shells have lifetimes.** A shell Rune handed over itself is stopped after 30
+  minutes. In a headless run (`rune -P`), where nobody is watching, every background shell is.
+  `bash_output` says when a shell was stopped at its limit rather than by `kill_shell`. Every
+  shell is still reaped when Rune exits.
+
 ## [1.4.6] - 2026-10-15
 
 **State you can get back: `/rewind` puts the files back, long output is saved whole, and a

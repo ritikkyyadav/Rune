@@ -39,6 +39,12 @@ export {
 } from "./sandbox-capability";
 export { createRustToolHandler } from "./tools/rust-bridge";
 export {
+  DEFAULT_SHELL_LIFETIME_MS,
+  isLongCommand,
+  MAX_SHELL_LIFETIME_MS,
+  setDefaultShellLifetime,
+} from "./tools/background";
+export {
   childLedgerPath,
   forgetToolChild,
   recordToolChild,
