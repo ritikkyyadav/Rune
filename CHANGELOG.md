@@ -11,6 +11,12 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+## [1.4.7] - 2026-10-15
+
+**Long commands keep their work: an install, a test suite or a build that runs past its timeout is
+handed over instead of killed.** A patch on 1.4.6, the sixth phase of the reliability plan. Full
+notes: [`docs/releases/v1.4.7.md`](docs/releases/v1.4.7.md).
+
 ### Changed
 
 - **A long command that reaches its timeout keeps its work.** A foreground command that ran past its
@@ -1231,7 +1237,8 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.6...HEAD
+[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.7...HEAD
+[1.4.7]: https://github.com/ritikkyyadav/Rune/compare/v1.4.6...v1.4.7
 [1.4.6]: https://github.com/ritikkyyadav/Rune/compare/v1.4.5...v1.4.6
 [1.4.5]: https://github.com/ritikkyyadav/Rune/compare/v1.4.4...v1.4.5
 [1.4.4]: https://github.com/ritikkyyadav/Rune/compare/v1.4.3...v1.4.4
