@@ -11,6 +11,12 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+## [1.4.6] - 2026-10-15
+
+**State you can get back: `/rewind` puts the files back, long output is saved whole, and a
+session that cannot save says so.** A patch on 1.4.5, the fifth phase of the reliability plan.
+Full notes: [`docs/releases/v1.4.6.md`](docs/releases/v1.4.6.md).
+
 ### Added
 
 - **`/rewind` can put the files back, not only the conversation.** Until now it rolled back the
@@ -1196,7 +1202,8 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.5...HEAD
+[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.6...HEAD
+[1.4.6]: https://github.com/ritikkyyadav/Rune/compare/v1.4.5...v1.4.6
 [1.4.5]: https://github.com/ritikkyyadav/Rune/compare/v1.4.4...v1.4.5
 [1.4.4]: https://github.com/ritikkyyadav/Rune/compare/v1.4.3...v1.4.4
 [1.4.3]: https://github.com/ritikkyyadav/Rune/compare/v1.4.2...v1.4.3
