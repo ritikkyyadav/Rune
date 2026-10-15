@@ -42,6 +42,7 @@ import {
 import { TurnRefunds } from "./turn-refunds";
 import { UNBOUNDED_TURNS } from "./reliability-policy";
 import { sharedSuspendClock, type SuspendProbe } from "./suspend-clock";
+import { spillOutput } from "./output-spill";
 import { doctrineForRequest, jitDoctrineText, type JitDoctrineSection } from "./prompts";
 import type { IncidentContext, IncidentReporter, IncidentSeverity } from "@rune/shared";
 import type { IncidentClass } from "@rune/shared";
@@ -161,6 +162,12 @@ export interface AgentLoopConfig {
    * clock; `false` turns the check off.
    */
   suspendClock?: SuspendProbe | false;
+  /**
+   * Where a tool result over the transcript cap is saved whole (R5.2), so the
+   * model reads the elided middle instead of re-running the command. The
+   * engine sets `<workspace>/.rune/outputs`; unset keeps head and tail only.
+   */
+  outputSpillDir?: string;
   /**
    * Second winds: how many times the turn ceiling may extend itself when the
    * plan is open AND moving (a step completed with evidence since the window
@@ -516,6 +523,11 @@ export const DEFAULT_PROVIDER_DEADLINE_MS = 600_000;
 // enough for its network to be back; and the free re-sends are bounded per
 // wake and per run, so a clock that misreads cannot keep a dead provider's run
 // alive.
+
+/** A refill this many turns after a compaction or sooner counts as thrash (R5.3). */
+const COMPACTION_THRASH_TURNS = 2;
+/** Thrashing refills in a row before auto-compaction stops and the run ends. */
+const COMPACTION_THRASH_LIMIT = 3;
 
 /** Suspension totalling this long or longer is what cut the call. */
 const SLEPT_CUT_MS = 30_000;
@@ -1362,16 +1374,30 @@ function resultKey(tool: string, text: string): string {
   return `${tool}|${text.length}|${h.toString(16)}`;
 }
 
-export function truncateForTranscript(text: string): string {
+/**
+ * Keep a result inside the transcript budget: its head and tail, and a marker
+ * for the middle. With `spill`, the whole output is saved first (R5.2) and the
+ * marker says where, so the middle is read from the file rather than by
+ * running the command again; without it, or when the save fails, the marker
+ * asks for a narrower re-run as before.
+ */
+export function truncateForTranscript(
+  text: string,
+  spill?: (whole: string) => string | null,
+): string {
   if (text.length <= TOOL_RESULT_MAX_CHARS) return text;
   const head = text.slice(0, TOOL_RESULT_HEAD_CHARS);
   const tail = text.slice(-TOOL_RESULT_TAIL_CHARS);
   const omitted = text.length - TOOL_RESULT_HEAD_CHARS - TOOL_RESULT_TAIL_CHARS;
-  return (
-    `${head}\n\n… [${omitted} characters omitted: output exceeded the transcript budget. ` +
-    `Re-run with a narrower pattern, path, offset/limit, or pipe through head/tail if you ` +
-    `need the elided middle] …\n\n${tail}`
-  );
+  const saved = spill?.(text) ?? null;
+  const marker = saved
+    ? `${omitted} characters omitted from the transcript. The whole output (${text.length} ` +
+      `characters) is saved at ${saved}: read the middle with read_file and an offset and ` +
+      `limit, instead of running the command again`
+    : `${omitted} characters omitted: output exceeded the transcript budget. ` +
+      `Re-run with a narrower pattern, path, offset/limit, or pipe through head/tail if you ` +
+      `need the elided middle`;
+  return `${head}\n\n… [${marker}] …\n\n${tail}`;
 }
 
 // ─── Mid-turn interjections (live steering) ───
@@ -2659,6 +2685,13 @@ export class AgentLoop {
     // The request right after a compaction carries a boosted task-state block:
     // that is the moment the verbatim spec just left the transcript.
     let justCompacted = false;
+    // ── Compaction thrash (R5.3) ──
+    // The turn the last auto-compaction ran in, and how many times in a row
+    // the context was back over the threshold within two turns of one. Each
+    // compaction is a summariser call; one that buys two turns at a time is
+    // paying for a loop that cannot finish.
+    let lastCompactionTurn: number | null = null;
+    let compactionThrash = 0;
     // Design and delegation advice must arrive before the first decision.
     // The tool-result path remains a fallback for work discovered mid-run.
     this.routeJitDoctrine(userMessage);
@@ -6467,8 +6500,13 @@ export class AgentLoop {
             isError: true,
           });
         } else {
+          const spillDir = this.config.outputSpillDir;
           let resultContent = truncateForTranscript(
             output.success ? output.result : `Error: ${output.error}`,
+            spillDir
+              ? (whole) =>
+                  spillOutput(workspaceRoot, spillDir, `${sessionId}-${p.tc.callId}`, whole)
+              : undefined,
           );
 
           // ── Batching nudge (deterministic, once per run) ──
@@ -7186,10 +7224,39 @@ export class AgentLoop {
       // After processing the assistant response, compact the working set —
       // but only when context is near budget, not every turn.
       if (this.config.contextEngine && this.config.contextEngine.shouldCompact()) {
+        compactionThrash =
+          lastCompactionTurn !== null && turn - lastCompactionTurn <= COMPACTION_THRASH_TURNS
+            ? compactionThrash + 1
+            : 0;
+        if (compactionThrash >= COMPACTION_THRASH_LIMIT) {
+          // Something each turn adds is bigger than what compaction frees.
+          // Another summary buys two more turns of the same; say what does.
+          this.state = "error";
+          this.report(
+            "context.compaction_thrash",
+            "error",
+            "turn.compact",
+            `context back over the threshold within ${COMPACTION_THRASH_TURNS} turns of a compaction, ${compactionThrash} times running; auto-compaction stopped`,
+          );
+          yield* this.handoffEvents("error");
+          yield {
+            type: "error",
+            error:
+              `The context fills up again within ${COMPACTION_THRASH_TURNS} turns of being compacted ` +
+              `(${compactionThrash} times running), so compacting it again would only buy two more ` +
+              `turns. Something each turn reads or prints is too large: read large files in pages ` +
+              `(offset and limit), narrow searches and command output, or hand the large output to ` +
+              `a sub-agent. Resume from the handoff once the next step reads less.`,
+            recoverable: false,
+          };
+          yield this.terminal("max_tokens", turn);
+          return;
+        }
         const r = await this.config.contextEngine.compactWorkingSet(this.messages, undefined, {
           signal,
         });
         if (r.compacted) {
+          lastCompactionTurn = turn;
           this.messages = r.messages;
           // The boosted task-state budget exists for exactly the request that
           // follows a compaction — the moment the verbatim brief left the

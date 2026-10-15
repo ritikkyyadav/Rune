@@ -168,3 +168,48 @@ describe("deriveSessionTitle", () => {
     expect(t).not.toContain("  ");
   });
 });
+
+/**
+ * R5.4 of docs/program/rune-reliability-plan-20261014.md: every caller
+ * swallows a failed transcript write, so the store keeps the failure until a
+ * write lands — and the run can say that recent messages may not be saved.
+ */
+describe("transcript write health", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rune-session-health-"));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  function store() {
+    const sm = new SessionManager(join(dir, `${Math.random().toString(36).slice(2)}.db`));
+    const id = sm.createSession("/tmp/ws", "m", "anthropic").id;
+    const db = (sm as unknown as { db: Database }).db;
+    const append = () => sm.appendEvent(id, { type: "note", payload: {} } as never);
+    return { sm, db, append };
+  }
+
+  test("a database that refuses writes is remembered until one lands", () => {
+    const { sm, db, append } = store();
+    append();
+    expect(sm.transcriptWriteFailure()).toBeNull();
+
+    db.exec("PRAGMA query_only = ON");
+    expect(append).toThrow();
+    const first = sm.transcriptWriteFailure();
+    expect(first?.code).toBe("SQLITE_READONLY");
+
+    // A second refusal keeps the time the failures began.
+    expect(append).toThrow();
+    expect(sm.transcriptWriteFailure()?.since).toBe(first!.since);
+
+    db.exec("PRAGMA query_only = OFF");
+    append();
+    expect(sm.transcriptWriteFailure()).toBeNull();
+  });
+
+  test("a constraint violation is one bad row, not a sick database", () => {
+    const { sm } = store();
+    expect(() =>
+      sm.appendEvent("no-such-session", { type: "note", payload: {} } as never),
+    ).toThrow();
+    expect(sm.transcriptWriteFailure()).toBeNull();
+  });
+});

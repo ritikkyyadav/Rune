@@ -59,7 +59,8 @@ import {
   SANDBOX_OVERRIDE_CHOICES,
 } from "../../sandbox-command";
 import { runTeamCommand } from "../../team/command";
-import { join } from "node:path";
+import { join, relative } from "node:path";
+import { filesFromTurns, parseRewindArg } from "./rewind";
 import {
   modeInfo,
   sandboxModeBanner,
@@ -154,7 +155,7 @@ export const COMMAND_METHODS = {
       },
       { name: "/diff", desc: "Inspect staged and uncommitted workspace changes", tag: "git" },
       { name: "/undo", desc: "Revert the last Rune auto-commit" },
-      { name: "/rewind", desc: "Roll back the conversation" },
+      { name: "/rewind", desc: "Roll back the conversation, the files, or both" },
       { name: "/cost", desc: "Session cost" },
       { name: "/status", desc: "Session status" },
       { name: "/loop", desc: "Repeat a prompt while this session stays open" },
@@ -790,21 +791,69 @@ export const COMMAND_METHODS = {
           this.print(`  ${muted("Nothing to rewind yet.")}`);
           return true;
         }
-        const n = parseInt(arg, 10);
-        if (!arg || isNaN(n) || n < 1 || n > turns.length) {
-          const rows = turns.map(
-            (t, i) =>
-              `    ${warn(String(i + 1).padStart(2))}  ${muted(t.text.replace(/\s+/g, " ").slice(0, 60))}`,
-          );
+        // R5.1: the files each listed turn wrote (rewind.ts).
+        const written = engine.fileChangesByTurn(this.ctx.sessionId);
+        const parsed = parseRewindArg(arg, turns.length);
+        if (!parsed) {
+          const rows = turns.map((t, i) => {
+            const files = filesFromTurns(turns, written, i).length;
+            return (
+              `    ${warn(String(i + 1).padStart(2))}  ${muted(t.text.replace(/\s+/g, " ").slice(0, 60))}` +
+              (files > 0 ? faint(`  (${files} file${files === 1 ? "" : "s"})`) : "")
+            );
+          });
           this.print(
-            [`  ${bold(text("Rewind"))}`, ...rows, `  ${faint("Run /rewind <n>")}`].join("\n"),
+            [
+              `  ${bold(text("Rewind"))}`,
+              ...rows,
+              `  ${faint("/rewind <n> -- the conversation | /rewind <n> code -- the files | /rewind <n> both")}`,
+            ].join("\n"),
           );
           return true;
         }
-        const removed = engine.rewindTo(this.ctx.sessionId, turns[n - 1]!.seq - 1);
-        this.print(
-          `  ${ok(glyph("verified"))} ${muted(`rewound to turn ${n} (removed ${removed})`)}`,
-        );
+        const { n, mode } = parsed;
+        const seq = turns[n - 1]!.seq;
+        const lines: string[] = [];
+        const rel = (p: string) => relative(this.ctx.workspaceRoot, p) || p;
+        if (mode === "code" || mode === "both") {
+          const r = engine.rewindCode(this.ctx.sessionId, seq);
+          const list = (label: string, paths: string[]) => {
+            if (paths.length === 0) return;
+            const shown = paths.slice(0, 8).map(rel).join(", ");
+            const more = paths.length > 8 ? ` and ${paths.length - 8} more` : "";
+            lines.push(`  ${muted(`${label}: ${shown}${more}`)}`);
+          };
+          const total = r.restored.length + r.deleted.length;
+          lines.push(
+            total === 0 && r.skipped.length === 0
+              ? `  ${muted(`No file changes from turn ${n} on to put back.`)}`
+              : `  ${ok(glyph("verified"))} ${muted(`files put back to how turn ${n} found them`)}`,
+          );
+          list("restored", r.restored);
+          list("removed (created after)", r.deleted);
+          for (const s of r.skipped.slice(0, 8)) {
+            lines.push(`  ${warn(`not restored: ${rel(s.path)} -- ${s.reason}`)}`);
+          }
+          // Said every time, because it is the part a rewind cannot do.
+          lines.push(
+            `  ${faint("Changes made by shell commands are not tracked and were not undone.")}`,
+          );
+        }
+        if (mode === "chat" || mode === "both") {
+          const removed = engine.rewindTo(this.ctx.sessionId, seq - 1);
+          lines.unshift(
+            `  ${ok(glyph("verified"))} ${muted(`rewound the conversation to turn ${n} (removed ${removed})`)}`,
+          );
+          if (
+            mode === "chat" &&
+            filesFromTurns(turns, written, n - 1, turns.length - 1).length > 0
+          ) {
+            lines.push(
+              `  ${faint(`Files are as they are now. /rewind ${n} code puts them back to how turn ${n} found them.`)}`,
+            );
+          }
+        }
+        this.print(lines.join("\n"));
         return true;
       }
       case "interactive": {

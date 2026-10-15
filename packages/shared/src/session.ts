@@ -132,8 +132,26 @@ export function deriveSessionTitle(firstMessage: string, max = 60): string {
 
 // ─── Session Manager ───
 
+/** Why the session database refused a write, while it keeps refusing (R5.4). */
+export interface TranscriptWriteFailure {
+  /** The SQLite result code, e.g. `SQLITE_FULL`. */
+  code: string;
+  /** When the first refused write in the current run of failures happened. */
+  since: string;
+}
+
+/**
+ * Codes that mean the database itself cannot take writes — a full disk, a
+ * read-only file, an I/O error, a damaged or unopenable file, a lock held too
+ * long. A unique-constraint race is not one of them: it loses one row to a
+ * writer that already serialises.
+ */
+const UNHEALTHY_WRITE = /^SQLITE_(FULL|IOERR|READONLY|CANTOPEN|CORRUPT|NOTADB|BUSY)/;
+
 export class SessionManager {
   private db: Database;
+  /** Set while transcript writes fail; cleared by the next write that lands. */
+  private writeFailure: TranscriptWriteFailure | null = null;
 
   constructor(dbPath: string) {
     this.db = new Database(dbPath, { create: true });
@@ -293,7 +311,24 @@ export class SessionManager {
       return seq;
     });
 
-    return insert();
+    // Every caller swallows a throw here — losing a trace row must never fail
+    // a turn — so a full disk used to stop the session saving in silence, and
+    // a resume picked up from wherever the last write landed. The failure is
+    // kept until a write succeeds, so the run can say so (R5.4).
+    try {
+      const seq = insert();
+      this.writeFailure = null;
+      return seq;
+    } catch (err) {
+      const code = String((err as { code?: unknown })?.code ?? "");
+      if (UNHEALTHY_WRITE.test(code)) this.writeFailure ??= { code, since: now };
+      throw err;
+    }
+  }
+
+  /** The write failure the database is in, or null when the last write landed. */
+  transcriptWriteFailure(): TranscriptWriteFailure | null {
+    return this.writeFailure;
   }
 
   /**

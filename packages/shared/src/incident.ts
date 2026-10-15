@@ -151,6 +151,9 @@ export const INCIDENT_CLASSES = [
   "loop.goal_rolled",
   "context.forced_compaction",
   "context.budget_overflow",
+  // The context refilled within two turns of a compaction, three times
+  // running; auto-compaction stopped and the run ended, named (R5.3).
+  "context.compaction_thrash",
   "context.freshness_mismatch",
   "struggle.thrash_reads",
   "struggle.thrash_edits",

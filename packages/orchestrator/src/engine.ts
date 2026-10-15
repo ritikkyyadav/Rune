@@ -88,6 +88,7 @@ import { PassLedger, equivalentCommands, workTreeFingerprint } from "./check-rec
 import {
   setConfigValue,
   SessionManager,
+  type TranscriptWriteFailure,
   hashArgs,
   hashResult,
   SqliteCheckpointStore,
@@ -234,6 +235,7 @@ import { pickFallbackReviewer } from "./reviewer-fallback";
 import { resolveHelperRoute, helperAppliesToSafety } from "./helper-route";
 import type { HelperRoute } from "./helper-route";
 import { applyInheritance, turnBudgetForMessage } from "./turn-budget";
+import { FileHistory, type RestoreResult } from "./file-history";
 import { ShadowArbiter, type ShadowRow } from "./shadow-arbiter";
 import { parseAuthority, type AppliedDecisionRow } from "./arbiter";
 import { createSubagentTool } from "./subagent";
@@ -1056,6 +1058,11 @@ export interface EngineConfig {
   /** `[tools] rateLimit` — the tool pacer's limits (tool-registry/rate-limiter.ts). */
   rateLimit?: RateLimitSettings;
   enableCheckpoints?: boolean;
+  /**
+   * File checkpoints (R5.1): before a turn's first write to a file, keep what
+   * it held, so `/rewind` can put the code back too. Default on.
+   */
+  enableFileHistory?: boolean;
   enableHooks?: boolean;
   /** Discover and load MCP servers from <workspace>/.rune/mcp.json. Default on. */
   enableMcp?: boolean;
@@ -1576,6 +1583,10 @@ export class Engine {
   /** High-confidence prompt-injection findings per session (sticky across runs). */
   private readonly sessionInjectionFindings = new Map<string, number>();
   private checkpointStore: CheckpointStore | null = null;
+  /** What each turn's first write to a file replaced (R5.1); null when off. */
+  private fileHistory: FileHistory | null = null;
+  /** Whether a transcript write failure has been said (R5.4). */
+  private transcriptFailureReported = false;
   private checkpointPolicy: CheckpointPolicy;
   private autoVerifier: ReturnType<typeof createAutoVerifier> | null = null;
   private currentAbort: AbortController | null = null;
@@ -2415,6 +2426,11 @@ export class Engine {
     // The tool pacer — on by default; `[tools] rateLimit` sets its limits.
     if (this.config.enableRateLimiting !== false) {
       this.rateLimiter = new ToolRateLimiter(rateLimitFromConfig(this.config.rateLimit));
+    }
+
+    // File checkpoints — on by default (R5.1).
+    if (this.config.enableFileHistory !== false) {
+      this.fileHistory = new FileHistory(runeHomePath("file-history"));
     }
 
     // Checkpoint store — on by default
@@ -4213,6 +4229,21 @@ export class Engine {
   }
 
   /** User-message turns for a session, chronological — backs the `/rewind` UI. */
+  /** The files each turn of a session wrote, by the turn's seq (R5.1). */
+  fileChangesByTurn(sessionId: string): Map<number, string[]> {
+    return this.fileHistory?.filesByTurn(sessionId) ?? new Map();
+  }
+
+  /**
+   * Put the files the turns from `turnSeq` on wrote back to how that turn
+   * found them (R5.1). Only Rune's own file tools are tracked; a file a shell
+   * command changed is not put back, and the caller says so.
+   */
+  rewindCode(sessionId: string, turnSeq: number): RestoreResult {
+    if (!this.fileHistory) return { restored: [], deleted: [], skipped: [] };
+    return this.fileHistory.restore(sessionId, turnSeq);
+  }
+
   listUserTurns(sessionId: string): { seq: number; text: string }[] {
     return this.sessions
       .getEvents(sessionId, 1)
@@ -4244,6 +4275,9 @@ export class Engine {
   /** Roll a session's history back, removing everything after `afterSeq`. */
   rewindTo(sessionId: string, afterSeq: number): number {
     const deleted = this.sessions.deleteEventsAfter(sessionId, afterSeq);
+    // The rewound turns are gone, and the turns that replace them reuse their
+    // seqs: their file snapshots go with them.
+    this.fileHistory?.forgetFrom(sessionId, afterSeq + 1);
     // Loop definitions are events too. Replay after a rewind so a task created
     // in the truncated tail cannot remain alive in memory.
     this.loopManagers.delete(sessionId);
@@ -6259,11 +6293,23 @@ export class Engine {
       (trusted ? trustedUserMessages : untrustedPrompts).push(content);
     }
     (loopPromptTrusted ? trustedUserMessages : untrustedPrompts).push(userMessage);
-    const permCheck = this.buildPermissionCheck({
+    const allowCheck = this.buildPermissionCheck({
       sessionId,
       userMessages: trustedUserMessages,
       untrustedPrompts,
     });
+    // R5.1: a write that is allowed keeps the file's current contents first —
+    // here, after the decision and before the tool runs — so `/rewind` can put
+    // the code back to how this turn found it.
+    const permCheck: PermissionCheck = async (call) => {
+      const decision = await allowCheck(call);
+      if (decision.allowed && this.fileHistory) {
+        for (const path of filesChangedFrom(call.toolName, call.args)) {
+          this.fileHistory.snapshot(sessionId, runStartSeq, this.config.workspaceRoot, path);
+        }
+      }
+      return decision;
+    };
     let turnCount = 0;
     /** The last checkpoint pointer written, so an unmoved boundary is silent. */
     let lastCheckpointStamp = "";
@@ -6295,6 +6341,9 @@ export class Engine {
         provider: this.config.provider,
         maxTokens: MAX_TOKENS,
         maxTurns: turnBudget.maxTurns,
+        // R5.2: a result over the transcript cap is saved whole, where
+        // `read_file` can reach it and the search tools do not look.
+        outputSpillDir: join(this.config.workspaceRoot, ".rune", "outputs"),
         // Was a hard 8 with no key. Eight concurrent heavy workers is a lot of
         // money at once, and eight worktrees is a lot of disk on a small machine.
         // Cheap independent file tools keep the loop's normal parallelism.
@@ -6583,6 +6632,11 @@ export class Engine {
           }
           persistTaskState();
         }
+        // The session database started refusing writes, or takes them again
+        // (R5.4). Every write is best-effort, so this is the only way a full
+        // disk is heard of before a resume finds the transcript short.
+        const writes = this.transcriptHealthNotice();
+        if (writes) yield writes;
         // Anything the round-trip handlers recorded while the last tool ran:
         // a question asked, a permission answered, a read-back accepted.
         for (const narrative of this.takeNarrativeEvents()) {
@@ -6605,10 +6659,18 @@ export class Engine {
           // the durable row below rather than recomputed at teardown, where
           // the plan and the ledger may already have moved.
           if (event.verdict) this.liveVerdict = event.verdict;
-          this.sessions.appendEvent(sessionId, {
-            type: "checkpoint",
-            payload: { summary: `auto-checkpoint at turn ${turnCount}` },
-          });
+          try {
+            this.sessions.appendEvent(sessionId, {
+              type: "checkpoint",
+              payload: { summary: `auto-checkpoint at turn ${turnCount}` },
+            });
+          } catch {
+            // Best-effort like every other trace write; the health line says so.
+          }
+          // Said again at the end of every turn while saving fails, so the
+          // line stays in view until a write lands.
+          const stillFailing = this.transcriptHealthNotice(true);
+          if (stillFailing) yield stillFailing;
         }
 
         // Track the final todo state for the end-of-run unfinished check —
@@ -8243,6 +8305,23 @@ export class Engine {
     }
   }
 
+  /**
+   * A notice when the session database starts refusing writes, or takes them
+   * again (R5.4); null when nothing changed. `repeat` says the failure again
+   * while it lasts.
+   */
+  private transcriptHealthNotice(repeat = false): { type: "notice"; message: string } | null {
+    const failure = this.sessions.transcriptWriteFailure();
+    if (!failure) {
+      if (!this.transcriptFailureReported) return null;
+      this.transcriptFailureReported = false;
+      return { type: "notice", message: "The session is being saved again." };
+    }
+    if (this.transcriptFailureReported && !repeat) return null;
+    this.transcriptFailureReported = true;
+    return { type: "notice", message: transcriptFailureLine(failure) };
+  }
+
   /** Fold the loop's live counters onto whatever a dead predecessor spent. */
   private syncBudget(): void {
     const progress = this.liveLoop?.getBudgetProgress();
@@ -9449,4 +9528,34 @@ export function classifyToolFailure(
     return { cls: "tool.mcp_error", severity: "error" };
   }
   return { cls: "tool.exec_failure", severity: "error" };
+}
+
+/**
+ * The line a run shows while the session database refuses writes (R5.4):
+ * what was lost, why, and what fixes it.
+ */
+export function transcriptFailureLine(failure: TranscriptWriteFailure): string {
+  const code = failure.code;
+  const why = /FULL/.test(code)
+    ? "the disk is full"
+    : /READONLY/.test(code)
+      ? "the database is read-only"
+      : /IOERR/.test(code)
+        ? "the disk reported an I/O error"
+        : /CANTOPEN/.test(code)
+          ? "the database file cannot be opened"
+          : /CORRUPT|NOTADB/.test(code)
+            ? "the database file is damaged"
+            : /BUSY/.test(code)
+              ? "another process held the database too long"
+              : "it refused the write";
+  const fix = /FULL/.test(code)
+    ? " Free some disk space."
+    : /READONLY/.test(code)
+      ? " Check that ~/.rune is writable."
+      : "";
+  return (
+    `Recent messages may not be saved for resume: the session database refused a write ` +
+    `(${why}, ${code}).${fix} This line repeats until a write succeeds.`
+  );
 }

@@ -11,6 +11,44 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+### Added
+
+- **`/rewind` can put the files back, not only the conversation.** Until now it rolled back the
+  conversation and left every edit of the rewound turns on disk. Before a turn's first write to a
+  file, Rune now keeps what the file held, or that it did not exist. Then:
+  - `/rewind <n> code` puts the files back to how turn n found them: changed files restored, files
+    the later turns created removed;
+  - `/rewind <n> both` does that and rewinds the conversation;
+  - `/rewind <n>` alone still rewinds only the conversation, and says when files changed since;
+  - the turn list shows how many files each turn changed.
+
+  What is tracked is what Rune's own file tools write: `write_file`, `edit_file`, `multi_edit`,
+  `apply_patch`, and a worker's declared files. A file a shell command changed is not, and every
+  code rewind says so. Snapshots are kept for the last 100 turns of a session and for 30 days, under
+  `~/.rune/file-history`; a file over 5 MB is noted, not copied, and a rewind reports it untouched.
+  They survive a resume, and a conversation rewind drops the snapshots of the turns it removed.
+
+- **A long tool output is saved whole.** Output over the transcript's 30,000 characters kept its
+  head and tail, and the model was told to re-run the command to see the middle — four minutes of
+  test suite to read one stack trace. The whole output is now saved under
+  `<workspace>/.rune/outputs/`, and the elision marker names the file, so the model reads the
+  middle with `read_file`. The folder ignores itself in git, the search tools skip it, and only
+  the newest 50 are kept.
+
+### Fixed
+
+- **A full disk no longer stops a session saving in silence.** Every transcript write is
+  best-effort, so a full disk, a read-only database or an I/O error dropped the rows and a resume
+  later found the conversation short. The run now says "Recent messages may not be saved for
+  resume", with the cause and the fix, when writes start failing, again at the end of every turn
+  while they do, and once more when they recover. A turn's own closing write could also throw out
+  of the run on a full disk; it is now best-effort like the rest.
+
+- **Compaction that cannot keep up stops instead of looping.** When the context was over the
+  threshold again within two turns of a compaction, three times running, each compaction was a
+  summariser call buying two more turns. The run now ends with a named error and what to change:
+  read large files in pages, narrow searches and output, or hand the large output to a sub-agent.
+
 ## [1.4.5] - 2026-10-14
 
 **What stops a run: a safety block stops the action, and the turn ceiling is the person's.** A
