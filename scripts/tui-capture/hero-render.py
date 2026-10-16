@@ -1,4 +1,4 @@
-"""Rasterise a captured frame's HTML into a retina PNG.
+"""Rasterise a captured frame's HTML into a retina PNG or JPEG.
 
 `capture-readme-hero.py` writes each frame twice: as text (the layout, checkable
 byte for byte) and as HTML (the same cells, carrying the colours the renderer
@@ -32,7 +32,9 @@ def render(src, out, scale=2):
         page.goto(src.as_uri())
         page.wait_for_timeout(350)
         window = page.locator(".window")
-        window.screenshot(path=str(out), omit_background=True, scale="device")
+        window.screenshot(
+            path=str(out), omit_background=out.suffix.lower() == ".png", scale="device"
+        )
         box = window.bounding_box()
         browser.close()
     print("  png -> %s  (%d x %d css px, %dx)" % (out, box["width"], box["height"], scale))

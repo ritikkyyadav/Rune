@@ -9,7 +9,9 @@
 // Officially documented flows only: no scraping, no unofficial token extraction.
 
 import { createHash, randomBytes } from "crypto";
-import { createServer } from "http";
+import { createServer, type ServerResponse } from "http";
+import { successPage } from "./success-page";
+export { successPage } from "./success-page";
 import { oauthAccount } from "@rune/shared";
 import type { AuthContext, AuthenticationStrategy, ResolvedCredential, AuthMethod } from "./types";
 import { AuthError } from "./types";
@@ -107,60 +109,10 @@ export interface Loopback {
   redirectUri: string;
   /** Resolves with the captured authorization code + state, or rejects on error/abort. */
   waitForCode: Promise<{ code: string; state: string }>;
+  /** Finish a deferred browser response only after credential storage succeeds. */
+  complete(): void;
   /** Tear down the server. */
   close(): void;
-}
-
-/**
- * The page the browser lands on after a successful sign-in.
- *
- * It is the only surface of Rune a person sees outside their terminal, and for
- * a long time it was an unstyled `✓ Authorized`. It now says which product it
- * is, in the product's own mark: the gear, inline SVG so it needs no network on
- * a page served from localhost. Light and dark both, because a browser opened
- * from a dark terminal at midnight should not flashbang the person who just
- * signed in.
- *
- * `__PROVIDER__` is substituted with the connected provider's label, so the
- * page names what you actually connected rather than congratulating you
- * generically.
- */
-const SUCCESS_HTML = [
-  "<!doctype html><meta charset=utf-8><title>Connected — Rune</title>",
-  '<meta name="viewport" content="width=device-width,initial-scale=1">',
-  "<style>",
-  ":root{--bg:#f7f7f5;--ink:#101114;--muted:#6b6f76;--line:#e6e5e1;--brand:#1332e0;--card:#fff}",
-  "@media(prefers-color-scheme:dark){:root{--bg:#0d0f13;--ink:#eceef2;--muted:#8d939c;--line:#232830;--brand:#5b78ff;--card:#141820}}",
-  "*{box-sizing:border-box}",
-  "body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--ink);",
-  "font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}",
-  ".card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:44px 52px;",
-  "text-align:center;max-width:30rem;box-shadow:0 1px 2px rgba(0,0,0,.04),0 18px 40px -28px rgba(0,0,0,.25)}",
-  ".mark{width:76px;height:76px;margin:0 auto 22px;display:block}",
-  "h1{font-size:21px;font-weight:600;letter-spacing:-.01em;margin:0 0 8px}",
-  "p{margin:0;color:var(--muted);font-size:14.5px;line-height:1.6}",
-  ".name{margin-top:26px;padding-top:18px;border-top:1px solid var(--line);",
-  "font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}",
-  "</style>",
-  '<body><main class="card">',
-  // The rune mark, drawn as a path so it scales and needs no asset fetch.
-  '<svg class="mark" viewBox="0 0 100 100" fill="none" aria-hidden="true">',
-  '<path fill="var(--brand)" d="M50 4l7.2.9c1.6.2 2.8 1.5 2.9 3.1l.5 7.4c2.6.8 5.1 1.8 7.4 3.2l5.9-4.5c1.3-1 3.1-.9 4.2.3l5.1 5.1c1.2 1.1 1.3 2.9.3 4.2l-4.5 5.9c1.4 2.3 2.4 4.8 3.2 7.4l7.4.5c1.6.1 2.9 1.3 3.1 2.9l.9 7.2-.9 7.2c-.2 1.6-1.5 2.8-3.1 2.9l-7.4.5c-.8 2.6-1.8 5.1-3.2 7.4l4.5 5.9c1 1.3.9 3.1-.3 4.2l-5.1 5.1c-1.1 1.2-2.9 1.3-4.2.3l-5.9-4.5c-2.3 1.4-4.8 2.4-7.4 3.2l-.5 7.4c-.1 1.6-1.3 2.9-2.9 3.1L50 96l-7.2-.9c-1.6-.2-2.8-1.5-2.9-3.1l-.5-7.4c-2.6-.8-5.1-1.8-7.4-3.2l-5.9 4.5c-1.3 1-3.1.9-4.2-.3l-5.1-5.1c-1.2-1.1-1.3-2.9-.3-4.2l4.5-5.9c-1.4-2.3-2.4-4.8-3.2-7.4l-7.4-.5c-1.6-.1-2.9-1.3-3.1-2.9L4 50l.9-7.2c.2-1.6 1.5-2.8 3.1-2.9l7.4-.5c.8-2.6 1.8-5.1 3.2-7.4l-4.5-5.9c-1-1.3-.9-3.1.3-4.2l5.1-5.1c1.1-1.2 2.9-1.3 4.2-.3l5.9 4.5c2.3-1.4 4.8-2.4 7.4-3.2l.5-7.4c.1-1.6 1.3-2.9 2.9-3.1L50 4zm0 30a16 16 0 100 32 16 16 0 000-32z"/>',
-  "</svg>",
-  "<h1>You’re connected to __PROVIDER__</h1>",
-  "<p>Close this tab and head back to your terminal — Rune is ready.</p>",
-  '<div class="name">Rune</div>',
-  "</main></body>",
-].join("");
-
-/** The success page, naming what was just connected. */
-export function successPage(providerLabel = "your account"): string {
-  // Escaped: the label reaches us from a provider descriptor, and a page served
-  // on localhost is still a page.
-  const safe = providerLabel.replace(/[&<>"]/g, (c) =>
-    c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&quot;",
-  );
-  return SUCCESS_HTML.replace("__PROVIDER__", safe);
 }
 
 /**
@@ -171,7 +123,7 @@ export function successPage(providerLabel = "your account"): string {
  */
 export async function startLoopback(
   signal?: AbortSignal,
-  opts?: { port?: number; path?: string; providerLabel?: string },
+  opts?: { port?: number; path?: string; providerLabel?: string; deferSuccess?: boolean },
 ): Promise<Loopback> {
   const wantPort = opts?.port ?? 0;
   const path = opts?.path ?? "/callback";
@@ -187,6 +139,23 @@ export async function startLoopback(
     // no-op catch keeps an early rejection from being flagged "unhandled"; the
     // original promise still rejects for the real awaiter.
     void waitForCode.catch(() => {});
+
+    let pending: ServerResponse | undefined;
+    let captured = false;
+    const respond = (success: boolean) => {
+      if (!pending || pending.writableEnded) return;
+      pending.writeHead(success ? 200 : 400, {
+        "content-type": success ? "text/html; charset=utf-8" : "text/plain; charset=utf-8",
+        "cache-control": "no-store",
+        "referrer-policy": "no-referrer",
+      });
+      pending.end(
+        success
+          ? successPage(opts?.providerLabel)
+          : "Sign-in could not be completed. Return to your terminal and try again.",
+      );
+      pending = undefined;
+    };
 
     const server = createServer((req, res) => {
       try {
@@ -211,8 +180,14 @@ export async function startLoopback(
           rejectCode(new Error("callback did not include an authorization code"));
           return;
         }
-        res.writeHead(200, { "content-type": "text/html" });
-        res.end(successPage(opts?.providerLabel));
+        if (captured) {
+          res.writeHead(409, { "content-type": "text/plain" });
+          res.end("This sign-in callback has already been received.");
+          return;
+        }
+        captured = true;
+        pending = res;
+        if (!opts?.deferSuccess) respond(true);
         resolveCode({ code, state });
       } catch (e) {
         try {
@@ -236,6 +211,7 @@ export async function startLoopback(
       if (signal) {
         signal.addEventListener("abort", () => {
           rejectCode(new Error("login aborted"));
+          respond(false);
           try {
             server.close();
           } catch {
@@ -246,7 +222,9 @@ export async function startLoopback(
       resolve({
         redirectUri: `http://localhost:${port}${path}`,
         waitForCode,
+        complete: () => respond(true),
         close: () => {
+          respond(false);
           try {
             server.close();
           } catch {
@@ -291,6 +269,7 @@ export class OAuthStrategy implements AuthenticationStrategy {
       // Name what was connected, so the page in the browser confirms the thing
       // the person chose rather than congratulating them generically.
       providerLabel: ctx.preset?.label ?? this.flow.providerId,
+      deferSuccess: true,
     });
     try {
       const url = this.flow.authorizeUrl({
@@ -298,21 +277,28 @@ export class OAuthStrategy implements AuthenticationStrategy {
         codeChallenge: challenge,
         state,
       });
-      await this.openOrPrint(ctx, url);
+      const opening = this.openOrPrint(ctx, url);
       ctx.log?.("Waiting for authorization to complete…");
 
-      const { code, state: returnedState } = await loop.waitForCode;
+      // An injected browser may await the callback response. Capture the code
+      // concurrently so it cannot deadlock the exchange that releases that response.
+      const { code, state: returnedState } = await Promise.race([
+        loop.waitForCode,
+        opening.then(() => loop.waitForCode),
+      ]);
       // Strict for loopback: the provider echoes state in the query, so an empty
       // or mismatched value is a real anomaly (possible CSRF).
       if (this.flow.usesState && returnedState !== state) {
         throw this.stateMismatch(ctx);
       }
-      return this.exchangeAndPersist(ctx, {
+      const credential = await this.exchangeAndPersist(ctx, {
         code,
         verifier,
         redirectUri: loop.redirectUri,
         state: returnedState || state,
       });
+      loop.complete();
+      return credential;
     } finally {
       loop.close();
     }

@@ -80,11 +80,11 @@ describe("loopback capture", () => {
       expect(loop.redirectUri).toMatch(/^http:\/\/localhost:\d+\/callback$/);
       const res = await fetch(`${loop.redirectUri}?code=abc&state=xyz`);
       expect(res.status).toBe(200);
-      // The page names what was connected and carries the Rune mark; it is the
-      // only surface of Rune a person sees outside their terminal.
+      // The completion screen uses the product name, without the old mark.
       const body = await res.text();
       expect(body).toMatch(/connected to/i);
-      expect(body).toContain("<svg");
+      expect(body).toContain("Logged in<span>successfully.</span>");
+      expect(body).not.toContain("<svg");
       expect(await loop.waitForCode).toEqual({ code: "abc", state: "xyz" });
     } finally {
       loop.close();
@@ -96,6 +96,22 @@ describe("loopback capture", () => {
     try {
       await fetch(`${loop.redirectUri}?error=access_denied`);
       await expect(loop.waitForCode).rejects.toThrow(/access_denied/);
+    } finally {
+      loop.close();
+    }
+  });
+
+  it("a deferred response stays pending until completion, and rejects duplicates", async () => {
+    const loop = await startLoopback(undefined, { deferSuccess: true });
+    try {
+      const response = fetch(`${loop.redirectUri}?code=abc&state=xyz`);
+      expect(await loop.waitForCode).toEqual({ code: "abc", state: "xyz" });
+      const duplicate = await fetch(`${loop.redirectUri}?code=second`);
+      expect(duplicate.status).toBe(409);
+      loop.complete();
+      const page = await response;
+      expect(page.status).toBe(200);
+      expect(page.headers.get("cache-control")).toBe("no-store");
     } finally {
       loop.close();
     }
@@ -128,6 +144,102 @@ describe("OAuthStrategy.authenticate (fake IdP, real loopback)", () => {
     const state = stateOverride ?? u.searchParams.get("state") ?? "";
     await fetch(`${cb}?code=the-code&state=${encodeURIComponent(state)}`);
   };
+
+  it("shows browser success only after exchange and credential storage finish", async () => {
+    let beginExchange!: () => void, releaseExchange!: () => void;
+    let beginStore!: () => void, releaseStore!: () => void;
+    const exchanging = new Promise<void>((resolve) => {
+      beginExchange = resolve;
+    });
+    const exchangeGate = new Promise<void>((resolve) => {
+      releaseExchange = resolve;
+    });
+    const storing = new Promise<void>((resolve) => {
+      beginStore = resolve;
+    });
+    const storeGate = new Promise<void>((resolve) => {
+      releaseStore = resolve;
+    });
+    const store = memStore();
+    const save = store.set.bind(store);
+    store.set = async (account, value) => {
+      beginStore();
+      await storeGate;
+      await save(account, value);
+    };
+    let response!: Promise<Response>;
+    let responseArrived = false;
+    const strat = new OAuthStrategy(
+      fakeFlow({
+        exchange: async () => {
+          beginExchange();
+          await exchangeGate;
+          return { secret: "test-credential" };
+        },
+      }),
+    );
+    const signingIn = strat.authenticate(
+      ctx({
+        store,
+        openBrowser: async (url) => {
+          const cb = new URL(url).searchParams.get("callback_url")!;
+          response = fetch(`${cb}?code=the-code`);
+          await response;
+          responseArrived = true;
+        },
+      }),
+    );
+    await exchanging;
+    expect(responseArrived).toBe(false);
+    releaseExchange();
+    await storing;
+    expect(responseArrived).toBe(false);
+    releaseStore();
+    await signingIn;
+    const page = await response;
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain("Logged in<span>successfully.</span>");
+    expect(await store.get(oauthAccount("openrouter"))).not.toBeNull();
+  });
+
+  for (const failure of ["state", "exchange", "storage"] as const) {
+    it(`never claims browser success after a ${failure} failure`, async () => {
+      const store = memStore();
+      if (failure === "storage")
+        store.set = async () => {
+          throw new Error("storage failed");
+        };
+      const strat = new OAuthStrategy(
+        fakeFlow({
+          usesState: true,
+          exchange: async () => {
+            if (failure === "exchange") throw new Error("secret exchange diagnostic");
+            return { secret: "test-credential" };
+          },
+        }),
+      );
+      let response!: Promise<Response>;
+      const signingIn = strat.authenticate(
+        ctx({
+          store,
+          openBrowser: async (url) => {
+            const auth = new URL(url);
+            const cb = auth.searchParams.get("callback_url")!;
+            const state = failure === "state" ? "tampered" : auth.searchParams.get("state")!;
+            response = fetch(`${cb}?code=the-code&state=${encodeURIComponent(state)}`);
+            await response;
+          },
+        }),
+      );
+      await expect(signingIn).rejects.toBeInstanceOf(AuthError);
+      const page = await response;
+      expect(page.status).toBe(400);
+      const body = await page.text();
+      expect(body).toContain("Sign-in could not be completed");
+      expect(body).not.toContain("Logged in");
+      expect(body).not.toContain("secret exchange diagnostic");
+    });
+  }
 
   it("runs the full flow, mints a key, and persists it under the oauth account", async () => {
     const store = memStore();
