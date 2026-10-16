@@ -108,6 +108,24 @@ describe("OAuth metadata parsing", () => {
 // ─── The flow ───
 
 describe("MCP OAuth 2.1 flow", () => {
+  test("the browser gets a failure if the connector token cannot be saved", async () => {
+    store.set = async () => {
+      throw new Error("credential store unavailable");
+    };
+    let response!: Promise<Response>;
+    await expect(
+      oauth().login({
+        openAuthorizationUrl: async (url) => {
+          response = fetch(url, { redirect: "follow" });
+          await response;
+        },
+      }),
+    ).rejects.toThrow("credential store unavailable");
+    const page = await response;
+    expect(page.status).toBe(400);
+    expect(await page.text()).not.toContain("Logged in");
+  });
+
   test("a 401 leads to registration, PKCE, a token, and a working tool call", async () => {
     const events: McpEvent[] = [];
 
