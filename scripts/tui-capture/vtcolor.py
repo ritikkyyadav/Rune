@@ -219,7 +219,10 @@ def html(screen, ground, foreground, title="rune", font_px=15, line_height=1.32,
                 run_attr = attr
             run.append(ch)
         flush()
-        out.append("".join(parts))
+        rendered_row = "".join(parts)
+        # Keep the terminal's blank cells without trailing source whitespace.
+        tail = len(rendered_row) - len(rendered_row.rstrip(" "))
+        out.append(rendered_row.rstrip(" ") + "&#32;" * tail)
 
     body = "\n".join(out)
     light = sum(ground) > 3 * 127
