@@ -1,0 +1,82 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: transparent; }
+  body { padding: 34px 34px 40px; width: max-content; }
+  .window {
+    background: #ffffff;
+    border-radius: 11px;
+    overflow: hidden;
+    border: 1px solid #dedede;
+    box-shadow: none;
+  }
+  .bar {
+    height: 30px;
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    background: #fafafa;
+    border-bottom: 1px solid #e7e7e7;
+  }
+  .dots { display: flex; gap: 8px; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; }
+  .r { background: #ff5f57; } .y { background: #febc2e; } .g { background: #28c840; }
+  .name {
+    flex: 1; text-align: center; margin-left: -46px;
+    font: 12px/1 -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
+    color: #707070; letter-spacing: .01em;
+  }
+  pre {
+    margin: 0;
+    padding: 14px 16px 16px;
+    font-family: Menlo, "SF Mono", Monaco, "DejaVu Sans Mono", monospace;
+    font-size: 15px;
+    line-height: 1.32;
+    color: #2e2e2e;
+    white-space: pre;
+    font-variant-ligatures: none;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: geometricPrecision;
+  }
+  span { white-space: pre; }
+</style>
+<div class="window">
+  <div class="bar">
+    <div class="dots"><i class="dot r"></i><i class="dot y"></i><i class="dot g"></i></div>
+    <div class="name">Rune — ~/code/lantern</div>
+  </div>
+  <pre>                                                                                                                        
+<span style="color:#2e2e2e"> </span><span style="color:#2e2e2e;background:#e6e6e6;font-weight:600"> R U N E </span><span style="color:#2e2e2e">  </span><span style="color:#565656">~/code/lantern</span><span style="color:#2e2e2e">                                                                                       </span><span style="color:#565656">v1.4.7</span> 
+<span style="color:#2e2e2e">  </span><span style="color:#7b7b7b">─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</span> 
+<span style="color:#2e2e2e">  </span><span style="color:#7b7b7b">◇</span><span style="color:#2e2e2e"> </span><span style="color:#2e2e2e;font-weight:600">package.json</span><span style="color:#2e2e2e"> carries the version, so the flag reads it from there.</span>                                                  
+<span style="color:#2e2e2e">  </span><span style="color:#7b7b7b">┌</span><span style="color:#2e2e2e"> edit  src/cli.js </span><span style="color:#7b7b7b">───────────────────────────────────────────────────────────────────────────────────────────────┐</span>   
+<span style="color:#2e2e2e">  </span><span style="color:#7b7b7b">│</span><span style="color:#2e2e2e"> </span><span style="color:#7b7b7b">   2</span><span style="color:#2e2e2e">   </span><span style="color:#008000">// lantern -- a very small task runner.</span><span style="color:#2e2e2e">                                                                  </span><span style="color:#7b7b7b">│</span>   
+<span style="color:#2e2e2e">  </span><span style="color:#7b7b7b">│</span><span style="color:#2e2e2e"> </span><span style="color:#7b7b7b">   3</span><span style="color:#2e2e2e">                                                                                                            </span><span style="color:#7b7b7b">│</span>   
+<span style="color:#2e2e2e">  </span><span style="color:#7b7b7b">│</span><span style="color:#2e2e2e"> </span><span style="color:#7b7b7b">   4</span><span style="color:#2e2e2e">   </span><span style="color:#af00db">function</span><span style="color:#7b7b7b"> </span><span style="color:#795e26">parseArgs</span><span style="color:#7b7b7b">(argv) {</span><span style="color:#2e2e2e">                                                                               </span><span style="color:#7b7b7b">│</span>   
+<span style="color:#2e2e2e">  </span><span style="color:#7b7b7b">│</span><span style="color:#2e2e2e"> </span><span style="color:#000000;background:#f5e2e1">   5</span><span style="color:#2e2e2e;background:#f5e2e1"> </span><span style="color:#000000;background:#f5e2e1">-</span><span style="color:#2e2e2e;background:#f5e2e1"> </span><span style="color:#000000;background:#f5e2e1">  </span><span style="color:#af00db;background:#f5e2e1">const</span><span style="color:#000000;background:#f5e2e1"> args = { command: </span><span style="color:#0000ff;background:#f5e2e1">null</span><span style="color:#000000;background:#f5e2e1">, json: </span><span style="color:#0000ff;background:#f5e2e1">false</span><span style="color:#000000;background:#f5e2e1"> };</span><span style="color:#2e2e2e;background:#f5e2e1">                                                          </span><span style="color:#2e2e2e"> </span><span style="color:#7b7b7b">│</span>   
+<span style="color:#2e2e2e">  </span><span style="color:#7b7b7b">│</span><span style="color:#2e2e2e"> </span><span style="color:#ffffff;background:#1936d7">   5</span><span style="color:#2e2e2e;background:#1936d7"> </span><span style="color:#ffffff;background:#1936d7">+</span><span style="color:#2e2e2e;background:#1936d7"> </span><span style="color:#ffffff;background:#1936d7">  </span><span style="color:#c586c0;background:#1936d7">const</span><span style="color:#ffffff;background:#1936d7"> args = { command: </span><span style="color:#569cd6;background:#1936d7">null</span><span style="color:#ffffff;background:#1936d7">, json: </span><span style="color:#569cd6;background:#1936d7">false</span><span style="color:#ffffff;background:#1936d7">, version: </span><span style="color:#569cd6;background:#1936d7">false</span><span style="color:#ffffff;background:#1936d7"> };</span><span style="color:#2e2e2e;background:#1936d7">                                          </span><span style="color:#2e2e2e"> </span><span style="color:#7b7b7b">│</span>   
+<span style="color:#2e2e2e">  </span><span style="color:#7b7b7b">│</span><span style="color:#2e2e2e">    </span><span style="color:#7b7b7b">… 14 more diff lines · ctrl+o</span><span style="color:#2e2e2e">                                                                                </span><span style="color:#7b7b7b">│</span>   
+<span style="color:#2e2e2e">  </span><span style="color:#7b7b7b">└</span><span style="color:#2e2e2e"> </span><span style="color:#7b7b7b">·</span><span style="color:#2e2e2e"> observed · </span><span style="color:#388459">+7</span><span style="color:#2e2e2e"> </span><span style="color:#b15e58">-2</span><span style="color:#7b7b7b"> | 2 hunks</span><span style="color:#2e2e2e"> </span><span style="color:#7b7b7b">───────────────────────────────────────────────────────────────────────────────────┘</span>   
+                                                                                                                        
+<span style="color:#2e2e2e">  </span><span style="color:#7b7b7b">◇</span><span style="color:#2e2e2e"> Running the suite and the flag itself.</span>                                                                              
+<span style="color:#2e2e2e">  </span><span style="color:#7b7b7b">┌</span><span style="color:#2e2e2e"> run   </span><span style="color:#7b7b7b">node --test test/cli.test.js &amp;&amp; node src/cli.js --version</span><span style="color:#2e2e2e"> </span><span style="color:#7b7b7b">────────────────────────────────────────────────┐</span>   
+<span style="color:#2e2e2e">  </span><span style="color:#7b7b7b">│</span><span style="color:#2e2e2e"> </span><span style="color:#7b7b7b">✔ --version sets the version flag (0.512083ms)</span><span style="color:#2e2e2e">                                                                  </span><span style="color:#7b7b7b">│</span>   
+<span style="color:#2e2e2e">  </span><span style="color:#7b7b7b">│</span><span style="color:#2e2e2e"> </span><span style="color:#7b7b7b">✔ a command without --version is unaffected (0.070084ms)</span><span style="color:#2e2e2e">                                                        </span><span style="color:#7b7b7b">│</span>   
+<span style="color:#2e2e2e">  </span><span style="color:#7b7b7b">│</span><span style="color:#2e2e2e"> </span><span style="color:#7b7b7b">ℹ tests 2</span><span style="color:#2e2e2e">                                                                                                       </span><span style="color:#7b7b7b">│</span>   
+<span style="color:#2e2e2e">  </span><span style="color:#7b7b7b">│</span><span style="color:#2e2e2e"> </span><span style="color:#7b7b7b">ℹ suites 0</span><span style="color:#2e2e2e">                                                                                                      </span><span style="color:#7b7b7b">│</span>   
+<span style="color:#2e2e2e">  </span><span style="color:#7b7b7b">│</span><span style="color:#2e2e2e"> </span><span style="color:#7b7b7b">… 6 more lines</span><span style="color:#2e2e2e">                                                                                                  </span><span style="color:#7b7b7b">│</span>   
+<span style="color:#2e2e2e">  </span><span style="color:#7b7b7b">│</span><span style="color:#2e2e2e"> </span><span style="color:#7b7b7b">0.3.2</span><span style="color:#2e2e2e">                                                                                                           </span><span style="color:#7b7b7b">│</span>   
+<span style="color:#2e2e2e">  </span><span style="color:#7b7b7b">└</span><span style="color:#2e2e2e"> </span><span style="color:#388459">✓</span><span style="color:#2e2e2e"> exit 0 · 234ms </span><span style="color:#7b7b7b">───────────────────────────────────────────────────────────────────────────────────────────────┘</span>   
+                                                                                                                        
+<span style="color:#2e2e2e">  </span><span style="color:#7b7b7b">◇</span><span style="color:#2e2e2e"> </span><span style="color:#2e2e2e;font-weight:600">--version</span><span style="color:#2e2e2e"> and </span><span style="color:#2e2e2e;font-weight:600">-v</span><span style="color:#2e2e2e"> now print the version from </span><span style="color:#2e2e2e;font-weight:600">package.json</span><span style="color:#2e2e2e">, and two tests cover the parser. Both tests pass and the</span>   
+<span style="color:#2e2e2e">    flag prints </span><span style="color:#2e2e2e;font-weight:600">0.3.2</span><span style="color:#2e2e2e">.</span>                                                                                                  
+                                                                                                                        
+<span style="color:#2e2e2e">    </span><span style="color:#7b7b7b">│</span><span style="color:#2e2e2e"> </span><span style="color:#388459">✓</span><span style="color:#2e2e2e"> check  </span><span style="color:#7b7b7b">npm test</span>                                                                                                 
+<span style="color:#2e2e2e">  </span><span style="color:#7b7b7b">▁▁▁▁▁▁▁▁▁▁▁▁</span><span style="color:#2e2e2e"> done</span><span style="color:#7b7b7b"> · 11s</span>                                                                                               
+<span style="color:#2e2e2e">  </span><span style="color:#7b7b7b">────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</span>  
+<span style="color:#2e2e2e">  </span><span style="color:#7b7b7b">›</span><span style="color:#2e2e2e"> </span><span style="color:#ffffff;background:#2e2e2e">d</span><span style="color:#7b7b7b">escribe a change, or / for commands                                                                              </span>  
+<span style="color:#2e2e2e">  </span><span style="color:#7b7b7b">────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</span>  
+<span style="color:#2e2e2e">  </span><span style="color:#565656">››› 3rd gear</span><span style="color:#2e2e2e"> </span><span style="color:#7b7b7b">·</span><span style="color:#2e2e2e"> </span><span style="color:#7b7b7b">edits + sandboxed shell</span><span style="color:#2e2e2e"> </span><span style="color:#7b7b7b">·</span><span style="color:#2e2e2e"> </span><span style="color:#7b7b7b">2 files edited</span><span style="color:#2e2e2e">                            </span><span style="color:#565656">mock-small</span><span style="color:#2e2e2e">   </span><span style="color:#565656">ctrl+o</span><span style="color:#2e2e2e"> </span><span style="color:#7b7b7b">open</span><span style="color:#2e2e2e">  </span><span style="color:#565656">?</span><span style="color:#2e2e2e"> </span><span style="color:#7b7b7b">keys</span>   </pre>
+</div>

@@ -1,0 +1,55 @@
+{
+  "captured_on": "2026-10-16",
+  "product": "Rune",
+  "product_version": "1.4.7",
+  "source_commit": "f2e40a72570c6a73b479fd55849e0972022216cd",
+  "source": "latest public release source; runtime files unchanged",
+  "model": {
+    "provider": "Ollama-compatible local scripted server",
+    "host": "127.0.0.1",
+    "requests_served": 12,
+    "hosted_provider_calls": 0
+  },
+  "appearance": {
+    "terminal_background": "#FFFFFF",
+    "terminal_foreground": "#2E2E2E",
+    "theme": "rune-light",
+    "finish": "matte"
+  },
+  "driver": "scripts/tui-capture/capture-readme-hero.py",
+  "driver_sha256": "a3fa10ea5a6d3f116ca687d7a843a3544f85cc46474db59658858623c2684a48",
+  "frames": [
+    {
+      "cols": 120,
+      "rows": 32,
+      "surface": "real PTY alternate screen",
+      "fixture_reset": true,
+      "fixture_tests": {
+        "passed": 2,
+        "failed": 0
+      },
+      "fixture_version_stdout": "0.3.2",
+      "files": {
+        "rune-session-120x32.html": "a974d270cb7a1bc5add2b8315fb36f5e3d6cae86cb6cf5d8d3d218689c98239a",
+        "rune-session-120x32.txt": "40ecb37ba525b89ebbaa7acb05e17cebf00a5ba1de6a0d7528b445f62dc6d0f9",
+        "rune-session-120x32.jpg": "b848f84803589a39422ccb47f184077e119e5ecc1cdb4d8be32b6fd05ad45ed2"
+      }
+    },
+    {
+      "cols": 80,
+      "rows": 22,
+      "surface": "real PTY alternate screen",
+      "fixture_reset": true,
+      "fixture_tests": {
+        "passed": 2,
+        "failed": 0
+      },
+      "fixture_version_stdout": "0.3.2",
+      "files": {
+        "rune-session-80x22.html": "5b3608b77426b0034e77f8b7fd1bb978c5c8184a7d7fa6f316e05dc4fd049b2b",
+        "rune-session-80x22.txt": "36ca2d8461abeefe1d377a7d77f5ac9a60293477cb1e522e133ad86134744b6e",
+        "rune-session-80x22.jpg": "60d14f46bf18b9c914f920d2667c927c5cf344f909e8fe915ecddc2cf2fd1d3c"
+      }
+    }
+  ]
+}

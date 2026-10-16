@@ -222,6 +222,7 @@ def html(screen, ground, foreground, title="rune", font_px=15, line_height=1.32,
         out.append("".join(parts))
 
     body = "\n".join(out)
+    light = sum(ground) > 3 * 127
     return TEMPLATE % {
         "title": _html.escape(title),
         "ground": _css(ground),
@@ -231,13 +232,19 @@ def html(screen, ground, foreground, title="rune", font_px=15, line_height=1.32,
         "body": body,
         "cols": screen.cols,
         "scale": scale,
+        "scheme": "light" if light else "dark",
+        "border": "#dedede" if light else "rgba(255,255,255,.10)",
+        "bar": "#fafafa" if light else "linear-gradient(#2c2f38, #23262e)",
+        "bar_border": "#e7e7e7" if light else "rgba(0,0,0,.55)",
+        "title_ink": "#707070" if light else "#b9bdc7",
+        "shadow": "none" if light else "0 24px 60px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.4)",
     }
 
 
 TEMPLATE = """<!doctype html>
 <meta charset="utf-8">
 <style>
-  :root { color-scheme: dark; }
+  :root { color-scheme: %(scheme)s; }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: transparent; }
   body { padding: 34px 34px 40px; width: max-content; }
@@ -245,16 +252,16 @@ TEMPLATE = """<!doctype html>
     background: %(ground)s;
     border-radius: 11px;
     overflow: hidden;
-    border: 1px solid rgba(255,255,255,.10);
-    box-shadow: 0 24px 60px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.4);
+    border: 1px solid %(border)s;
+    box-shadow: %(shadow)s;
   }
   .bar {
     height: 30px;
     display: flex;
     align-items: center;
     padding: 0 12px;
-    background: linear-gradient(#2c2f38, #23262e);
-    border-bottom: 1px solid rgba(0,0,0,.55);
+    background: %(bar)s;
+    border-bottom: 1px solid %(bar_border)s;
   }
   .dots { display: flex; gap: 8px; }
   .dot { width: 11px; height: 11px; border-radius: 50%%; }
@@ -262,7 +269,7 @@ TEMPLATE = """<!doctype html>
   .name {
     flex: 1; text-align: center; margin-left: -46px;
     font: 12px/1 -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
-    color: #b9bdc7; letter-spacing: .01em;
+    color: %(title_ink)s; letter-spacing: .01em;
   }
   pre {
     margin: 0;
