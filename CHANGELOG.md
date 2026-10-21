@@ -11,6 +11,24 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+## [1.4.11] - 2026-10-21
+
+**The refreshed Rune presentation, available in the public repository and released CLI.**
+Full notes: [`docs/releases/v1.4.11.md`](docs/releases/v1.4.11.md).
+
+### Changed
+
+- A concise README with current white terminal captures using Rune's Light / Matte theme,
+  direct installation instructions, and a separate historical verification record.
+- A text-only Rune sign-in completion page with a responsive particle field, pointer interaction,
+  motion controls, reduced-motion support, and a white matte surface.
+
+### Fixed
+
+- OAuth completion is displayed only after state validation, token exchange, and credential
+  persistence succeed. Failed exchanges and storage errors cannot show a successful sign-in.
+- The repository's review workflow passes its pull request number explicitly to the review action.
+
 ## [1.4.10] - 2026-10-21
 
 **A background shell started outside the sandbox gets what a foreground command gets, and

@@ -76,6 +76,7 @@ jobs:
 
       - uses: ./action
         with:
+          pr: ${{ github.event.pull_request.number }}
           gear: "3"
           # Empty `version` builds from this checkout — see the note above.
           version: ""
