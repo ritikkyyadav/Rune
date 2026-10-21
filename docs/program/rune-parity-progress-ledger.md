@@ -3048,3 +3048,76 @@ path of the sleep check, and a damaged-page database for the doctor.
   `rune doctor prune-backups` shows them; `--apply` removes them.
 - **The main checkout's `gear/phase-0-stabilize`** is still untouched, and further behind
   `main`.
+
+## The reliability plan, R0: v1.4.9 (tag at `e7d5151`), 2026-10-19 → 21 · **the yardstick drives the real process, found three defects on its first runs, all fixed; every engineering phase has shipped; R8 waits for the founder**
+
+R0 is the last engineering phase. Its contract part shipped with R1 in v1.4.2. What remained was
+the transport and process suites, `bun run reliability` in CI, and `docs/errors.md`.
+
+**What the suites drive.** `tests/reliability/` spawns the real `rune -P` from source against a
+scripted OpenAI-compatible model on a loopback port, with a scratch home and no credentials:
+
+| Suite     | Faults                                                                                                                                            | Tests |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ----: |
+| transport | a cut mid-stream, a stream that goes quiet (45 s), a malformed event, a 529 with `Retry-After`, a refused key, the wall clock set an hour forward |     6 |
+| process   | SIGTERM, SIGINT and SIGKILL while answering, mid-tool, mid-compaction and mid-check, then a resume; SIGKILL with a background shell running       |    13 |
+
+CI runs both on macOS and Linux (the integration job) and the transport half on Windows, in a
+new job that builds `rune-tools` (`reliability-windows`). The process suite skips itself on
+Windows, which has no SIGTERM or SIGINT to send.
+
+**The three defects it found, each fixed with a failing test first:**
+
+- **A stream from an OpenAI-compatible host that ended with no `finish_reason` was a finished
+  answer.** The adapter gave it a synthetic `end_turn`, so a dropped connection ended a run with
+  exit 0 and a truncated reply. It is a retryable 502 now.
+- **The loop kept a half answer when it re-sent a request itself.** The gateway resets before
+  its own three retries; the loop, re-sending after them, sent no reset, and the headless envelope
+  read "An answer cut afteThe answer, sent again." Three sites now reset when the abandoned
+  attempt showed anything. Found only because the clock-jump test needed four cuts to reach the
+  loop's sleep check: with one, the gateway absorbed the cut and the test passed vacuously
+  against 1.4.4's wall-only clock.
+- **A run killed outright left its commands running.** SIGKILL during the end-of-turn check left
+  `npm test` running with no one waiting. The check, hooks, background shells, a worker's check
+  and the parent check's replays run in process groups of their own, and only an exit handler
+  stopped them. Each now runs under a POSIX shell that polls its starter once a second and kills
+  its own group when the starter is gone (`packages/shared/src/parent-watch.ts`), as
+  `rune-tools` has done for tool calls since S-1.
+
+**Mutation-tested.** The loop's reset: 5 mutants, all killed (one per site, the flag, an
+always-reset). The parent watch: 6 mutants (never kills, never stops at exit, never wraps,
+unquoted argv, status dropped, watches its own shell), all killed; the unquoted-argv one first
+only by a timeout, because a failing assertion left the test's helper process holding the pipe,
+and the test now cleans up in `finally`. Through the real process: the verifier and the
+background shells each unwatched, both caught by the process suite. The clock-jump test: the
+wall-only clock caught once the test reached the loop.
+
+**A false alarm, and what it cost.** On 19 October the first run of the 24 spawn-site test files
+showed two tests "hung" for 1,000 s and 225 s. `pmset -g log` shows clamshell sleep from 19:57 to
+20:18 and again from 20:22, exactly those windows. Awake, under `caffeinate -is`, the same 24
+files pass 699 of 699 in 67 s. Two hours of a session went to a closed lid.
+
+**R0.3, the record since v1.4.2** (read-only, `~/.rune/rune.db`, 14 → 17 October): 11 run
+endings in 6 sessions. One is `quota_wall`, the first usage cap named as one. Two are
+`provider_lost`, and neither is transport: a Codex cap on 14 October, before R4, and a retired
+free OpenRouter model on 16 October. No recorded run has ever ended `met`. The sample is too small
+to compare with the 14 October table; R8 is the measurement.
+
+**Gates.** A fresh clone of the release commit: unit 7,964 passed, 19 skipped and 0 failed;
+Rust 142 and 0; typecheck 15 of 15; lint 7 of 7; format clean. In the worktree: integration 488
+and 0, the scripted evaluation 63 of 63, the reliability suites 19 of 19. One unit failure on
+the way was a race of my own making: the version was bumped while the suite ran, and the help
+test read 1.4.9 from the CLI against a 1.4.8 label. CI: 23 of 23 jobs on the release commit `e7d5151` (run 39570329396), macOS, Linux and Windows, the new `reliability-windows` green on its first run; the R0 commit's own run (39569176180) the same.
+
+**Installed here:** v1.4.9 through `rune upgrade` on 21 October. CLI and tools match the
+release's `SHA256SUMS`; doctor (signatures valid, rollback to 1.4.8, database intact),
+tools-smoke and the six edit probes pass. The Codex session's source build that 1.4.8 replaced is
+no longer on disk; its branch `codex/rune-github-redesign` is pushed, so it can be rebuilt.
+
+**Not done, and why:**
+
+- **R8, the live proof, needs the founder's approval** first: pairs, runs, window and stop line,
+  on the Codex subscription only.
+- **A retired model ends a run `provider_lost`.** Its message names the cause and the fix; the
+  label does not. Left for a later card.
+- **D5, pruning the old builds,** is still the founder's call.
