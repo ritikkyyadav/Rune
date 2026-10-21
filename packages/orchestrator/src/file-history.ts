@@ -121,6 +121,37 @@ export class FileHistory {
     return out;
   }
 
+  /**
+   * What each file held before `turn` first wrote it: the turn's before-images,
+   * for a diff of what the turn changed (A3's request check). `before` is null
+   * when the file did not exist. A file too large to keep, or whose kept copy
+   * cannot be read, is named with `unknown` and no contents.
+   */
+  beforeImages(
+    sessionId: string,
+    turn: number,
+  ): Array<{ path: string; before: string | null; unknown?: true }> {
+    const out: Array<{ path: string; before: string | null; unknown?: true }> = [];
+    const seen = new Set<string>();
+    for (const entry of this.entries(sessionId)) {
+      if (entry.turn !== turn || seen.has(entry.path)) continue;
+      seen.add(entry.path);
+      if (entry.tooLarge) {
+        out.push({ path: entry.path, before: null, unknown: true });
+      } else if (entry.blob === null) {
+        out.push({ path: entry.path, before: null });
+      } else {
+        try {
+          const blob = join(this.dir(sessionId), "blobs", entry.blob);
+          out.push({ path: entry.path, before: readFileSync(blob, "utf8") });
+        } catch {
+          out.push({ path: entry.path, before: null, unknown: true });
+        }
+      }
+    }
+    return out;
+  }
+
   /** Files each turn wrote first, by turn. */
   filesByTurn(sessionId: string): Map<number, string[]> {
     const byTurn = new Map<number, string[]>();

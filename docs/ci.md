@@ -51,6 +51,24 @@ nothing (a review, a plan, an answer), for which `partial` is the best verdict t
 is. A conversational `none` exits 0. Older hosts without a verdict retain their
 execution status.
 
+**`done`** (1.4.12) is a finished run whose work stands, short of being shown criterion
+by criterion. It needs all of these:
+
+- the run ended on its own and changed files;
+- the project's own checks passed on the tree it left, with nothing able to change a file
+  run after them (a check red only on failures that predate the run is named, not held
+  against it);
+- no planned step is open, nothing was seen to fail, and every criterion still short is one
+  the run wrote for itself;
+- the **request check** found every ask of the person's request in the change. That check
+  is one call on the session's model, reading the request beside exactly what the run
+  changed (never the person's own uncommitted work). An ask it does not find buys one
+  re-prompt naming it; still missing, it is a gap named `the request`, and the run ends
+  `partial`.
+
+`done` produces `ok: true`. `met` is unchanged: every criterion shown by a check bound to
+it, and no ask of the request found missing.
+
 ### How a run ends
 
 The envelope's `stopReason` is the loop's own word for it, and `subtype` is the

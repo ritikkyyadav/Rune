@@ -74,8 +74,8 @@ import type {
   SkillSearchHit,
   ToolCallOutput,
 } from "@rune/tool-registry";
-import { existsSync, readdirSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, readFileSync as readTextFile, readdirSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import { createHash } from "node:crypto";
 
 import {
@@ -236,6 +236,12 @@ import { resolveHelperRoute, helperAppliesToSafety } from "./helper-route";
 import type { HelperRoute } from "./helper-route";
 import { applyInheritance, turnBudgetForMessage } from "./turn-budget";
 import { FileHistory, type RestoreResult } from "./file-history";
+import {
+  filesChangedSince,
+  runRequestCheck,
+  type ChangedFile,
+  type RequestCheckResult,
+} from "./request-check";
 import { ShadowArbiter, type ShadowRow } from "./shadow-arbiter";
 import { parseAuthority, type AppliedDecisionRow } from "./arbiter";
 import { createSubagentTool } from "./subagent";
@@ -6456,6 +6462,10 @@ export class Engine {
         // The independent oracle, at the finish gate. Absent in effect for
         // every run with no `--acceptance`: the gate returns immediately.
         acceptanceGate: (signal) => this.runAcceptanceGate(sessionId, signal),
+        // A3: the change read against the person's request, once, at a finish
+        // whose project checks passed. What `done` rests on beside them.
+        requestCheck: (signal) =>
+          this.checkAgainstRequest(sessionId, runStartSeq, Date.parse(runStartedAt), signal),
         // The evaluator criteria that FAILED, for the one bounded re-prompt
         // (M4's `acceptance_mismatch`). Derived, never stored: `criterionStatus`
         // reads the runtime's own records at the revision the verdict is taken
@@ -7850,6 +7860,74 @@ export class Engine {
    * failed acceptance criterion reaches the verdict as a named gap and the
    * turn ends exactly as it would have. The one bounded re-prompt is M3's.
    */
+  /**
+   * A3's request check: the person's request beside what this run changed,
+   * read once by the session's model (`request-check.ts`).
+   *
+   * The change is built from the file history's before-images of this run —
+   * every file Rune's own tools wrote, from what it held before the run to
+   * what it holds now — so the person's uncommitted work from before the run
+   * is never shown as the run's. Files a shell command changed are named.
+   */
+  private async checkAgainstRequest(
+    sessionId: string,
+    runStartSeq: number,
+    runStartedMs: number,
+    signal?: AbortSignal,
+  ): Promise<RequestCheckResult> {
+    const root = this.config.workspaceRoot;
+    const files: ChangedFile[] = [];
+    const otherChanged: string[] = [];
+    const shown = new Set<string>();
+    for (const image of this.fileHistory?.beforeImages(sessionId, runStartSeq) ?? []) {
+      const path = relative(root, image.path) || image.path;
+      shown.add(path);
+      if (image.unknown) {
+        otherChanged.push(path);
+        continue;
+      }
+      let after: string | null;
+      try {
+        after = existsSync(image.path) ? readTextFile(image.path, "utf8") : null;
+      } catch {
+        otherChanged.push(path);
+        continue;
+      }
+      if (after === image.before) continue; // written, then put back: no change
+      files.push({ path, before: image.before, after });
+    }
+    otherChanged.push(...filesChangedSince(root, runStartedMs, shown));
+    // The checks the runtime watched pass this session: the end-of-turn
+    // check's own runs and the model's, read off the check log — never a
+    // command that measured nothing.
+    const passedChecks = [
+      ...new Set(
+        this.checkLog.all
+          .filter((r) => r.passed && (r.kind ?? "check") === "check" && !r.measuredNothing)
+          .map((r) => r.command),
+      ),
+    ];
+    return runRequestCheck({
+      request: this.contract?.intent ?? "",
+      files,
+      otherChanged,
+      passedChecks,
+      ask: async (system, user) => {
+        const resp = await this.gateway.infer({
+          messages: [{ role: "user", content: [{ type: "text", text: user }] }],
+          system,
+          model: this.config.model,
+          provider: this.config.provider,
+          maxTokens: 2_000,
+          stream: false,
+          role: "request_check",
+          ...(signal ? { signal } : {}),
+        });
+        return resp.content.map((block) => (block.type === "text" ? block.text : "")).join("");
+      },
+    });
+  }
+
   private async runAcceptanceGate(sessionId: string, signal?: AbortSignal): Promise<void> {
     const ledger = this.ledger;
     if (!ledger) return;

@@ -128,6 +128,11 @@ export const INCIDENT_CLASSES = [
   // M4: a stated acceptance criterion failed at the finish, and the controller
   // bought exactly one repair turn for it.
   "loop.acceptance_repair",
+  // A3: the finish's request check read the change against the person's
+  // request (or said why it could not), and an ask it did not find bought
+  // the one re-prompt.
+  "loop.request_check",
+  "loop.request_repair",
   "loop.browser_preflight",
   "loop.batch_nudge",
   "loop.wrapup_reserve",

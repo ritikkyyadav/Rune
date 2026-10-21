@@ -797,6 +797,7 @@ export function inheritedRepairTurns(
     REPAIR_TRANSPORT: ["transport", "working", "attempts", false],
     REPAIR_CHECK: ["check_failed", "repairing", "repairTurns", true],
     REPAIR_ACCEPTANCE: ["acceptance", "repairing", "repromptsUsed", true],
+    REPAIR_REQUEST: ["request", "repairing", "repromptsUsed", true],
     REPAIR_PROGRESS: ["no_progress", "working", "nudges", true],
   };
   const out: Record<string, number> = {};

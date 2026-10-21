@@ -28,6 +28,65 @@ import type { ContentBlock, InferenceRequest } from "../../../packages/llm-gatew
 import type { LlmGateway } from "../../../packages/llm-gateway/src/gateway";
 import { Engine } from "../../../packages/orchestrator/src/engine";
 import { UsageProvider } from "../../helpers/usage-provider";
+import { homedir } from "node:os";
+import type { InferenceResponse } from "../../../packages/llm-gateway/src/types";
+import { parseRequestCheck } from "../../../packages/orchestrator/src/request-check";
+
+/**
+ * `--request-check-live`: the request check (A3) answered by a real model,
+ * one child process per call (`tests/eval/request-check/ask-live.ts`), while
+ * every other call stays scripted. The child is given the founder's sign-ins
+ * only through the credential paths, in an environment built here and not
+ * inherited — the parity rig's rule — and a scratch Rune home of its own.
+ */
+const ASK_LIVE = join(dirname(new URL(import.meta.url).pathname), "../request-check/ask-live.ts");
+
+function liveChecker(profile: string): (system: string, user: string) => string {
+  const real = join(homedir(), ".rune");
+  const env: Record<string, string> = {
+    HOME: homedir(),
+    PATH: process.env.PATH ?? "/usr/bin:/bin",
+    LANG: process.env.LANG ?? "en_US.UTF-8",
+    TMPDIR: process.env.TMPDIR ?? "/tmp",
+    RUNE_HOME: profile,
+    RUNE_DB_PATH: join(profile, "rune.db"),
+    RUNE_CREDENTIALS_PATH: join(real, "credentials.json"),
+    RUNE_CREDENTIAL_INDEX_PATH: join(real, "credentials.index.json"),
+    RUNE_SECRETS_PATH: join(real, "secrets.json"),
+  };
+  return (system, user) => {
+    const child = spawnSync("bun", [ASK_LIVE], {
+      input: JSON.stringify({ system, user }),
+      env,
+      encoding: "utf8",
+      timeout: 240_000,
+    });
+    return child.status === 0 ? child.stdout : "";
+  };
+}
+
+/** The scripted model, with the request check answered by `checker` when one is given. */
+class CorpusProvider extends UsageProvider {
+  readonly requestChecks: Array<{ sent: string; answer: string }> = [];
+  constructor(private readonly checker?: (system: string, user: string) => string) {
+    super();
+  }
+  override async infer(request: Parameters<UsageProvider["infer"]>[0]): Promise<InferenceResponse> {
+    if (request.role !== "request_check" || !this.checker) return super.infer(request);
+    const sent = request.messages
+      .map((m) => m.content.map((b) => (b.type === "text" ? b.text : "")).join(""))
+      .join("\n");
+    const answer = this.checker(request.system ?? "", sent);
+    this.requestChecks.push({ sent, answer });
+    return {
+      id: "request-check",
+      model: request.model,
+      content: [{ type: "text", text: answer }],
+      stopReason: "end_turn",
+      usage: this.usage,
+    };
+  }
+}
 
 import {
   SCENARIOS,
@@ -154,6 +213,8 @@ interface Row {
   family: string;
   scenario: ScenarioName;
   note: string;
+  /** What each request check (A3) answered: the asks, and the ones it called missing. */
+  requestChecks?: Array<{ asks: number; missing: string[] } | { unreadable: true }>;
   classification: Classification;
   skippedReason?: string;
   verdict?: string;
@@ -180,6 +241,7 @@ async function runRow(
   name: ScenarioName,
   verify = false,
   withAcceptance = true,
+  checker?: (system: string, user: string) => string,
 ): Promise<Row> {
   const scenario = loadScenario(task, name);
   const base: Row = {
@@ -237,7 +299,7 @@ async function runRow(
         : {}),
     } as ConstructorParameters<typeof Engine>[0]);
 
-    const provider = new UsageProvider();
+    const provider = new CorpusProvider(checker);
     (engine as unknown as { gateway: LlmGateway }).gateway.registerProvider(provider);
     // What the RUNTIME put in front of the model: the first request in full
     // (nothing the model wrote is in it yet) and every system prompt. Later
@@ -286,6 +348,16 @@ async function runRow(
         .filter((criterion) => criterion.source === "evaluator" && criterion.status !== "satisfied")
         .map((criterion) => `${criterion.text} → ${criterion.status}`),
       harnessRePrompts: harnessRePrompts(provider.requests),
+      ...(provider.requestChecks.length > 0
+        ? {
+            requestChecks: provider.requestChecks.map(({ answer }) => {
+              const outcome = parseRequestCheck(answer);
+              return outcome
+                ? { asks: outcome.asks, missing: outcome.missing.map((m) => m.ask) }
+                : { unreadable: true as const };
+            }),
+          }
+        : {}),
       completions: completions.length,
       providerTurns: provider.requests.length,
       wallMs: Date.now() - started,
@@ -341,7 +413,13 @@ export async function runOffline(options: {
   verify?: boolean;
   /** False: no `--acceptance` criteria, as a person's own run has none. */
   acceptance?: boolean;
+  /** The request check answered by a live model (Codex, the founder's subscription). */
+  requestCheckLive?: boolean;
 }) {
+  const liveProfile = options.requestCheckLive
+    ? mkdtempSync(join(tmpdir(), "rune-request-check-live-"))
+    : undefined;
+  const checker = liveProfile ? liveChecker(liveProfile) : undefined;
   const ids = TASK_IDS.filter((id) => !options.tasks || options.tasks.includes(id));
   const tasks = ids.map(loadTask);
   // The arms a run actually drives: the pinned five for every task, plus the
@@ -356,7 +434,13 @@ export async function runOffline(options: {
   for (const task of tasks) {
     const id = task.id;
     for (const name of armsOf(task)) {
-      const row = await runRow(task, name, options.verify === true, options.acceptance !== false);
+      const row = await runRow(
+        task,
+        name,
+        options.verify === true,
+        options.acceptance !== false,
+        checker,
+      );
       rows.push(row);
       const detail =
         row.classification === "skipped"
@@ -400,6 +484,9 @@ export async function runOffline(options: {
         : "checkpoints, security, rate limiting, hooks, MCP, skills, verification, repo map, playbook and memory off — the same configuration M1's acceptance integration tests use, so the rows are comparable to those.",
       verification: options.verify === true,
       acceptance: options.acceptance !== false,
+      requestCheck: options.requestCheckLive
+        ? `live: codex ${process.env.RUNE_REQUEST_CHECK_MODEL ?? "gpt-6-sol"}`
+        : "scripted (answers nothing the check can read)",
       classification: {
         "false completion":
           "an omission / wrong / silent / stopped run whose verdict is `met` or `done`",
@@ -419,6 +506,7 @@ export async function runOffline(options: {
     rows,
   };
 
+  if (liveProfile) rmSync(liveProfile, { recursive: true, force: true });
   mkdirSync(dirname(options.out), { recursive: true });
   writeFileSync(options.out, JSON.stringify(report, null, 2) + "\n");
   console.log(
@@ -450,5 +538,6 @@ if (import.meta.main) {
     ...(get("scenarios") ? { scenarios: get("scenarios")!.split(",") as ScenarioName[] } : {}),
     ...(args.includes("--verify") ? { verify: true } : {}),
     ...(args.includes("--no-acceptance") ? { acceptance: false } : {}),
+    ...(args.includes("--request-check-live") ? { requestCheckLive: true } : {}),
   });
 }

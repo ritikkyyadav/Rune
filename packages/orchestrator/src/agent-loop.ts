@@ -64,11 +64,13 @@ import {
   type ContractRecord,
   type FinalProjectChecks,
 } from "./contract";
+import { requestRepromptBody, type RequestCheckResult } from "./request-check";
 import {
   abandoned,
   complete as completedTransition,
   decide,
   makeShadowEvent,
+  requestRepair,
   APPLIED_DECISION_ROW_VERSION,
   type AppliedDecisionRow,
   type GuardId,
@@ -226,6 +228,13 @@ export interface AgentLoopConfig {
    * is every caller by default.
    */
   acceptanceGate?: (signal?: AbortSignal) => Promise<void>;
+  /**
+   * A3's request check: whether the change does everything the person's
+   * request asked, read once by the session's model at a finish where the
+   * project's checks passed on the tree the run leaves. Wired by the engine;
+   * absent, no run ends `done`.
+   */
+  requestCheck?: (signal?: AbortSignal) => Promise<RequestCheckResult>;
   /**
    * The evaluator criteria that FAILED at this finish, each with the tail of
    * its own output (M4, the `acceptance_mismatch` class).
@@ -669,6 +678,15 @@ function failureOwnership(attribution: VerifyResult["attribution"]): string {
 
 /** One acceptance re-prompt per run, then `partial` whatever happens (M3's second branch). */
 const MAX_ACCEPTANCE_REPROMPTS = 1;
+
+/** One request re-prompt per run, then `partial` with the asks named (A3). */
+const MAX_REQUEST_REPROMPTS = 1;
+
+const REQUEST_TRANSITIONS: readonly Transition[] = [
+  "working",
+  "repairing",
+  completedTransition("partial"),
+];
 
 /** How much of a failing check's output a bounded repair turn carries. The
  *  TAIL: the end is where the failure is, the start is the banner. */
@@ -2607,6 +2625,8 @@ export class AgentLoop {
     let impactedChecks: string[] = [];
     /** Acceptance re-prompts spent (M4, `acceptance`). One per run, then partial. */
     let acceptanceReprompts = this.inheritedRepair("acceptance");
+    /** Request re-prompts spent (A3, `request`). One per run, then partial. */
+    let requestReprompts = this.inheritedRepair("request");
     /** Phase 5 F4: one replan per run for a step failing on an upstream interface. */
     let interfaceReplans = 0;
     let greenfieldNudges = 0;
@@ -5075,6 +5095,85 @@ export class AgentLoop {
             };
             this.state = "observing";
             continue;
+          }
+        }
+        // ── The request check (A3) ──
+        //
+        // A finish whose project checks passed on the tree it leaves is read
+        // once against the person's request: every ask, found in the change or
+        // not. All found, and the verdict may say `done`. An ask not found
+        // buys one re-prompt — the rule is `requestRepair` in arbiter.ts, read
+        // here when the controller does not own `request` — and is otherwise a
+        // named gap. A check that cannot say (no answer, a change too large)
+        // leaves the verdict as it would have been, and the run ends.
+        if (
+          this.finalProjectChecks &&
+          !this.finalProjectChecks.request &&
+          this.config.requestCheck &&
+          stopReason === "end_turn" &&
+          !signal?.aborted
+        ) {
+          let checked: RequestCheckResult;
+          try {
+            checked = await this.config.requestCheck(signal);
+          } catch (error) {
+            checked = { skipped: `the check threw: ${String(error).slice(0, 160)}` };
+          }
+          if ("skipped" in checked) {
+            this.report("loop.request_check", "debug", "requestCheck", `skipped: ${checked.skipped}`);
+          } else {
+            const { outcome } = checked;
+            this.finalProjectChecks = { ...this.finalProjectChecks, request: outcome };
+            const found = outcome.asks - outcome.missing.length;
+            this.report(
+              "loop.request_check",
+              outcome.missing.length > 0 ? "warn" : "debug",
+              "requestCheck",
+              `${found} of ${outcome.asks} asks of the request found in the change`,
+            );
+            if (outcome.missing.length > 0) {
+              const inputs = {
+                missing: true,
+                repromptsUsed: requestReprompts,
+                maxReprompts: MAX_REQUEST_REPROMPTS,
+                turnsLeft: Math.max(0, this.config.maxTurns - turn),
+              };
+              const repair = this.decideWithAuthority(
+                "request",
+                "REPAIR_REQUEST",
+                inputs,
+                REQUEST_TRANSITIONS,
+                () => {
+                  const t = requestRepair(inputs).transition;
+                  return REQUEST_TRANSITIONS.includes(t) ? t : "working";
+                },
+                () => shadowState("repairing"),
+              );
+              if (repair === "repairing") {
+                requestReprompts++;
+                latchEffort("the request check found asks not done");
+                const n = outcome.missing.length;
+                this.report(
+                  "loop.request_repair",
+                  "warn",
+                  "requestCheck",
+                  `${n} ask${n === 1 ? "" : "s"} of the request not done — one repair turn`,
+                );
+                this.appendMessage(
+                  {
+                    role: "user",
+                    content: [{ type: "text", text: requestRepromptBody(outcome.missing) }],
+                  },
+                  "gate:request-check",
+                );
+                yield {
+                  type: "notice",
+                  message: `The request check found ${n} part${n === 1 ? "" : "s"} of the request not done — asking once to finish ${n === 1 ? "it" : "them"}.`,
+                };
+                this.state = "observing";
+                continue;
+              }
+            }
           }
         }
         const verdict = this.verdictFor(stopReason);

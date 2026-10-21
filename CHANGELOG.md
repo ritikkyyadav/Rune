@@ -11,6 +11,27 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+### Added
+
+- **`done`: finished work says so (A3).** A run ends `done` when it finished on its own, changed
+  files, left no planned step open, saw nothing fail, the project's own checks passed on the tree
+  it left, and the **request check** found every ask of your request in the change. Until now
+  every finished run ended `unmet` ("no criteria stated") or `partial` ("no check bound"), so a
+  correct run read as unfinished — all fourteen live runs of 21 October did. `done` produces
+  `ok: true`; `met` is unchanged and still needs every criterion shown by a check bound to it.
+- **The request check.** At a finish whose project checks passed, one call on the session's model
+  reads your request beside exactly what the run changed — each file Rune's tools wrote, from what
+  it held before the run to what it holds now, never your own uncommitted work — with the checks
+  Rune watched pass, and lists every ask, found or not. An ask it does not find buys one
+  re-prompt naming it; still missing, it is a gap named `the request` and the run ends `partial`.
+  A check that cannot answer (a change over 120,000 characters of diff, an unreadable reply)
+  leaves the verdict as it would have been. Its cost is filed as Rune's own (`request_check`).
+- **Measured live** on the offline corpus with no outside acceptance (Codex, `gpt-6-sol`): wrong
+  or half-done code runs called `done` 0 of 19, where the project's checks alone called all 19
+  finished; correct code runs `done` 6 of 8. The other two were held for asks the change really
+  misses (`+2` not read as a signed number; tests the request asked for and the change lacks).
+- The corpus runner gains `--verify`, `--no-acceptance` and `--request-check-live`.
+
 ## [1.4.11] - 2026-10-21
 
 **The refreshed Rune presentation, available in the public repository and released CLI.**

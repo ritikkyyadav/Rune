@@ -21,7 +21,7 @@ import type {
   UserPermissionDecision,
 } from "@rune/protocol";
 import { assertNeverSoft } from "@rune/protocol";
-import { CHECKS_GAP, PLAN_GAP, verdictLine } from "./contract";
+import { CHECKS_GAP, PLAN_GAP, REQUEST_GAP, verdictLine } from "./contract";
 
 export interface HeadlessOptions {
   /** Emit a JSON envelope instead of plain text — for machine consumers. */
@@ -474,7 +474,9 @@ export function verdictShortfall(
   const seenToFail =
     verdict.criteria.some((c) => c.status === "failed") ||
     (verdict.kind === "partial" &&
-      verdict.gaps.some((g) => g.criterion === PLAN_GAP || g.criterion === CHECKS_GAP));
+      verdict.gaps.some(
+        (g) => g.criterion === PLAN_GAP || g.criterion === CHECKS_GAP || g.criterion === REQUEST_GAP,
+      ));
   if (seenToFail) return "observed_failure";
   const outside = verdict.criteria.some(
     (c) =>

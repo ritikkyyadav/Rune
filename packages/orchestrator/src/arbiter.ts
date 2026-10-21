@@ -118,6 +118,8 @@ export type GuardId =
   | "REPAIR_TRANSPORT"
   | "REPAIR_CHECK"
   | "REPAIR_ACCEPTANCE"
+  // A3: the request check found asks the change does not do.
+  | "REPAIR_REQUEST"
   | "REPAIR_DEPENDENCY"
   | "REPAIR_DENIED"
   | "REPAIR_PROGRESS";
@@ -157,6 +159,7 @@ export const GUARD_CLASS: Readonly<Record<GuardId, DecisionClass>> = {
   REPAIR_DEPENDENCY: 3,
   REPAIR_CHECK: 4,
   REPAIR_ACCEPTANCE: 4,
+  REPAIR_REQUEST: 4,
   REPAIR_PROGRESS: 5,
 };
 
@@ -384,6 +387,45 @@ function missing(...keys: string[]): Proposal {
   return {
     transition: "unknown",
     reason: `missing input: ${keys.join(", ")}`,
+  };
+}
+
+/**
+ * REPAIR_REQUEST (A3): the request check found asks the change does not do.
+ *
+ * One re-prompt naming them, then the finish is `partial` with each one named
+ * as a gap. Pure, and the only copy of the rule: `propose` reads it when the
+ * controller owns `request`, and the loop reads it when nothing does, so the
+ * re-prompt is the default without a second rule living in the loop.
+ */
+export function requestRepair(inputs: GuardInputs): Proposal {
+  const missingAsks = bool(inputs, "missing");
+  const used = num(inputs, "repromptsUsed");
+  const max = num(inputs, "maxReprompts");
+  const turnsLeft = num(inputs, "turnsLeft");
+  if (
+    missingAsks === undefined ||
+    used === undefined ||
+    max === undefined ||
+    turnsLeft === undefined
+  ) {
+    return missing("missing", "repromptsUsed", "maxReprompts", "turnsLeft");
+  }
+  if (!missingAsks) {
+    return { transition: "working", reason: "every ask of the request is in the change" };
+  }
+  if (used < max && turnsLeft > 0) {
+    return {
+      transition: "repairing",
+      reason: "one re-prompt naming the asks of the request the change does not do",
+    };
+  }
+  return {
+    transition: complete("partial"),
+    reason:
+      turnsLeft > 0
+        ? "the one request re-prompt is spent; the finish is partial with the asks named"
+        : "no turn is left for a re-prompt; the finish is partial with the asks named",
   };
 }
 
@@ -796,6 +838,8 @@ function propose(state: RunState | undefined, event: ShadowEvent): Proposal {
             : "no turn is left for a re-prompt; the finish is partial with the gap named",
       };
     }
+    case "REPAIR_REQUEST":
+      return requestRepair(i);
     case "REPAIR_DEPENDENCY": {
       const missingRunner = bool(i, "missingRunner");
       if (missingRunner === undefined) return missing("missingRunner");

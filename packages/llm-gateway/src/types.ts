@@ -281,6 +281,11 @@ export type CallRole =
   /** Research synthesis. */
   | "research"
   /**
+   * A3's request check: whether a finished change does everything the
+   * person's request asked, read once at the finish by the session's model.
+   */
+  | "request_check"
+  /**
    * Nobody said. Written ONLY by `CostTracker.record`'s runtime guard, when a
    * caller reached it with no attribution at all — which the type forbids, so
    * in practice an untyped caller or an old compiled build.
@@ -304,6 +309,7 @@ export const GOVERNANCE_ROLES: readonly CallRole[] = [
   "intent",
   "memory",
   "repair",
+  "request_check",
 ];
 
 export function isGovernanceRole(role: CallRole | undefined): boolean {

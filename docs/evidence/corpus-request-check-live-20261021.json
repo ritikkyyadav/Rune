@@ -1,0 +1,2362 @@
+{
+  "schema": 1,
+  "kind": "corpus-offline",
+  "generatedAt": "2026-10-21T15:21:28.163Z",
+  "measures": "the harness's ability to tell a finished task from an unfinished one. The provider is a fixed script: nothing here measures a model.",
+  "modelCalls": 0,
+  "spendUsd": 0,
+  "provenance": {
+    "head": "a5d5c89d94ca3493ff3b49d543017011274c54f5",
+    "dirty": true,
+    "dirtyPatchSha256": "e18555819751b0acbee8a398f2f0ec61c736670b84a64f53358e68b65cd387b9",
+    "toolsBinary": "/Users/ritikyadav890/Project/Alan/.claude/worktrees/reliability-r1-20261014/target/release/rune-tools",
+    "toolsBinarySha256": "bb404788767c67249a6d51ea6cd6b8d1b03977e653f2c5287bac0b01f416401c",
+    "bun": "1.3.14",
+    "node": "24.3.0",
+    "platform": "darwin-arm64",
+    "playwright": {
+      "available": false,
+      "module": null
+    }
+  },
+  "protocol": {
+    "tasks": [
+      "csv-state-machine",
+      "off-by-one-window",
+      "queue-race",
+      "health-endpoint-and-changelog",
+      "note-field-and-exporter",
+      "dependent-migration",
+      "three-module-dependent",
+      "responsive-project-board",
+      "signup-form-states",
+      "explain-quote-handling",
+      "cache-plan",
+      "working-tree-integration"
+    ],
+    "scenarios": ["correct", "omission", "wrong", "silent", "stopped", "wrong-v6"],
+    "complete": true,
+    "engine": "checkpoints, security, rate limiting, hooks, MCP, skills, repo map, playbook and memory off; the end-of-turn check ON (`--verify`), so a run can end `done`.",
+    "verification": true,
+    "acceptance": false,
+    "requestCheck": "live: codex gpt-6-sol",
+    "classification": {
+      "false completion": "an omission / wrong / silent / stopped run whose verdict is `met` or `done`",
+      "false negative": "a correct run whose verdict is neither `met` nor `done`",
+      "cut off": "a stopped run that did not report `met`",
+      "detected": "the verdict matched what the arm actually was",
+      "skipped": "the acceptance could not run here; excluded from every denominator"
+    }
+  },
+  "totals": {
+    "rows": 64,
+    "attempted": 54,
+    "skipped": 10,
+    "falseCompletions": 0,
+    "falseCompletionDenominator": 44,
+    "falseCompletionRate": 0,
+    "falseNegatives": 4,
+    "correctAttempted": 10,
+    "falseNegativeRate": 0.4,
+    "underClaimed": 0,
+    "underClaimRate": 0,
+    "cutOff": 10,
+    "detected": 40
+  },
+  "families": {
+    "dirty-worktree": {
+      "rows": 5,
+      "attempted": 5,
+      "skipped": 0,
+      "falseCompletions": 0,
+      "falseCompletionDenominator": 4,
+      "falseCompletionRate": 0,
+      "falseNegatives": 0,
+      "correctAttempted": 1,
+      "falseNegativeRate": 0,
+      "underClaimed": 0,
+      "underClaimRate": 0,
+      "cutOff": 1,
+      "detected": 4
+    },
+    "fix": {
+      "rows": 16,
+      "attempted": 16,
+      "skipped": 0,
+      "falseCompletions": 0,
+      "falseCompletionDenominator": 13,
+      "falseCompletionRate": 0,
+      "falseNegatives": 0,
+      "correctAttempted": 3,
+      "falseNegativeRate": 0,
+      "underClaimed": 0,
+      "underClaimRate": 0,
+      "cutOff": 3,
+      "detected": 13
+    },
+    "frontend": {
+      "rows": 10,
+      "attempted": 0,
+      "skipped": 10,
+      "falseCompletions": 0,
+      "falseCompletionDenominator": 0,
+      "falseCompletionRate": null,
+      "falseNegatives": 0,
+      "correctAttempted": 0,
+      "falseNegativeRate": null,
+      "underClaimed": 0,
+      "underClaimRate": null,
+      "cutOff": 0,
+      "detected": 0
+    },
+    "migration": {
+      "rows": 11,
+      "attempted": 11,
+      "skipped": 0,
+      "falseCompletions": 0,
+      "falseCompletionDenominator": 9,
+      "falseCompletionRate": 0,
+      "falseNegatives": 2,
+      "correctAttempted": 2,
+      "falseNegativeRate": 1,
+      "underClaimed": 0,
+      "underClaimRate": 0,
+      "cutOff": 2,
+      "detected": 7
+    },
+    "omission-prone-feature": {
+      "rows": 11,
+      "attempted": 11,
+      "skipped": 0,
+      "falseCompletions": 0,
+      "falseCompletionDenominator": 9,
+      "falseCompletionRate": 0,
+      "falseNegatives": 0,
+      "correctAttempted": 2,
+      "falseNegativeRate": 0,
+      "underClaimed": 0,
+      "underClaimRate": 0,
+      "cutOff": 2,
+      "detected": 9
+    },
+    "research": {
+      "rows": 11,
+      "attempted": 11,
+      "skipped": 0,
+      "falseCompletions": 0,
+      "falseCompletionDenominator": 9,
+      "falseCompletionRate": 0,
+      "falseNegatives": 2,
+      "correctAttempted": 2,
+      "falseNegativeRate": 1,
+      "underClaimed": 0,
+      "underClaimRate": 0,
+      "cutOff": 2,
+      "detected": 7
+    }
+  },
+  "scenarios": {
+    "correct": {
+      "rows": 12,
+      "attempted": 10,
+      "skipped": 2,
+      "falseCompletions": 0,
+      "falseCompletionDenominator": 0,
+      "falseCompletionRate": null,
+      "falseNegatives": 4,
+      "correctAttempted": 10,
+      "falseNegativeRate": 0.4,
+      "underClaimed": 0,
+      "underClaimRate": 0,
+      "cutOff": 0,
+      "detected": 6
+    },
+    "omission": {
+      "rows": 12,
+      "attempted": 10,
+      "skipped": 2,
+      "falseCompletions": 0,
+      "falseCompletionDenominator": 10,
+      "falseCompletionRate": 0,
+      "falseNegatives": 0,
+      "correctAttempted": 0,
+      "falseNegativeRate": null,
+      "underClaimed": 0,
+      "underClaimRate": null,
+      "cutOff": 0,
+      "detected": 10
+    },
+    "wrong": {
+      "rows": 12,
+      "attempted": 10,
+      "skipped": 2,
+      "falseCompletions": 0,
+      "falseCompletionDenominator": 10,
+      "falseCompletionRate": 0,
+      "falseNegatives": 0,
+      "correctAttempted": 0,
+      "falseNegativeRate": null,
+      "underClaimed": 0,
+      "underClaimRate": null,
+      "cutOff": 0,
+      "detected": 10
+    },
+    "silent": {
+      "rows": 12,
+      "attempted": 10,
+      "skipped": 2,
+      "falseCompletions": 0,
+      "falseCompletionDenominator": 10,
+      "falseCompletionRate": 0,
+      "falseNegatives": 0,
+      "correctAttempted": 0,
+      "falseNegativeRate": null,
+      "underClaimed": 0,
+      "underClaimRate": null,
+      "cutOff": 0,
+      "detected": 10
+    },
+    "stopped": {
+      "rows": 12,
+      "attempted": 10,
+      "skipped": 2,
+      "falseCompletions": 0,
+      "falseCompletionDenominator": 10,
+      "falseCompletionRate": 0,
+      "falseNegatives": 0,
+      "correctAttempted": 0,
+      "falseNegativeRate": null,
+      "underClaimed": 0,
+      "underClaimRate": null,
+      "cutOff": 10,
+      "detected": 0
+    },
+    "wrong-v6": {
+      "rows": 4,
+      "attempted": 4,
+      "skipped": 0,
+      "falseCompletions": 0,
+      "falseCompletionDenominator": 4,
+      "falseCompletionRate": 0,
+      "falseNegatives": 0,
+      "correctAttempted": 0,
+      "falseNegativeRate": null,
+      "underClaimed": 0,
+      "underClaimRate": null,
+      "cutOff": 0,
+      "detected": 4
+    }
+  },
+  "rows": [
+    {
+      "task": "csv-state-machine",
+      "family": "fix",
+      "scenario": "correct",
+      "note": "A full state machine, with the model's own tests written and run.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "done",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the parser handles quoting and record terminators",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 5,
+      "requestChecks": [
+        {
+          "asks": 18,
+          "missing": []
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 18763
+    },
+    {
+      "task": "csv-state-machine",
+      "family": "fix",
+      "scenario": "omission",
+      "note": "Everything but the unterminated-quote error; the model's own tests never ask for it.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the parser handles quoting and record terminators",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the parser handles quoting and record terminators",
+          "why": "needs_review: ok — this run wrote `csv.test.ts` — a check the run authored cannot settle a criterion; cite a check that existed before this run, or a project-wide one Replay on the tree the run started from: the pre-task tree could not be laid out: the environment changed during the run (.rune-acceptance/check.mjs)."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Throw on an unterminated quoted field — csv.ts closes a pending field at end of input without checking whether quoted is still true."
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 6,
+      "requestChecks": [
+        {
+          "asks": 18,
+          "missing": ["Throw on an unterminated quoted field"]
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 8,
+      "wallMs": 20806
+    },
+    {
+      "task": "csv-state-machine",
+      "family": "fix",
+      "scenario": "wrong",
+      "note": "A split-based parser: plausible, green on its own test, wrong on doubled quotes and the BOM.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the parser handles quoting and record terminators",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the parser handles quoting and record terminators",
+          "why": "needs_review: ok — this run wrote `csv.test.ts` — a check the run authored cannot settle a criterion; cite a check that existed before this run, or a project-wide one Replay on the tree the run started from: the pre-task tree could not be laid out: the environment changed during the run (.rune-acceptance/check.mjs)."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Repair parseCsv in csv.ts — csv.ts was changed, but the parser still misses several requested behaviors."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Handle doubled quotes — csv.ts discards both quote characters rather than producing a literal quote."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Handle embedded LF inside quotes — csv.ts splits the input into lines before parsing quotes."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Handle embedded CRLF inside quotes — csv.ts splits the input into lines before parsing quotes."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Handle an optional leading UTF-8 BOM — csv.ts does not remove a leading BOM."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Throw on an unterminated quoted field — csv.ts never checks whether quoted remains true or throws."
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 6,
+      "requestChecks": [
+        {
+          "asks": 18,
+          "missing": [
+            "Repair parseCsv in csv.ts",
+            "Handle doubled quotes",
+            "Handle embedded LF inside quotes",
+            "Handle embedded CRLF inside quotes",
+            "Handle an optional leading UTF-8 BOM",
+            "Throw on an unterminated quoted field"
+          ]
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 8,
+      "wallMs": 21092
+    },
+    {
+      "task": "csv-state-machine",
+      "family": "fix",
+      "scenario": "silent",
+      "note": "A half-finished edit and an empty completion: no read_back, no claim, no text.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 6,
+      "wallMs": 397
+    },
+    {
+      "task": "csv-state-machine",
+      "family": "fix",
+      "scenario": "stopped",
+      "note": "The turn ceiling closes the run before the parser is finished.",
+      "classification": "cut off",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "max_turns",
+        "status": "max_turns"
+      },
+      "criteria": [
+        {
+          "text": "the parser handles quoting and record terminators",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 2,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 318
+    },
+    {
+      "task": "csv-state-machine",
+      "family": "fix",
+      "scenario": "wrong-v6",
+      "note": "V6's own attack: a state machine that trims unquoted fields and strips a BOM anywhere. Green on its own test, wrong on two rules the prompt states in words.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the parser handles quoting and record terminators",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the parser handles quoting and record terminators",
+          "why": "needs_review: ok — this run wrote `csv.test.ts` — a check the run authored cannot settle a criterion; cite a check that existed before this run, or a project-wide one Replay on the tree the run started from: the pre-task tree could not be laid out: the environment changed during the run (.rune-acceptance/check.mjs)."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Repair parseCsv in csv.ts — csv.ts still changes cell contents by trimming unquoted fields and removing BOM characters throughout the input."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Keep whitespace inside cells exactly — csv.ts trims unquoted fields and removes BOM characters even inside cells."
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 6,
+      "requestChecks": [
+        {
+          "asks": 18,
+          "missing": ["Repair parseCsv in csv.ts", "Keep whitespace inside cells exactly"]
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 8,
+      "wallMs": 27070
+    },
+    {
+      "task": "off-by-one-window",
+      "family": "fix",
+      "scenario": "correct",
+      "note": "The loop bound is corrected and the supplied test is left alone.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "done",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the failing window test passes without the test being edited",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 5,
+      "requestChecks": [
+        {
+          "asks": 9,
+          "missing": []
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 13093
+    },
+    {
+      "task": "off-by-one-window",
+      "family": "fix",
+      "scenario": "omission",
+      "note": "The bound is fixed; the positive-integer guard is dropped along the way.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the failing window test passes without the test being edited",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the failing window test passes without the test being edited",
+          "why": "needs_review: ok — this run wrote `mine.test.ts` — a check the run authored cannot settle a criterion; cite a check that existed before this run, or a project-wide one Replay on the tree the run started from: the pre-task tree could not be laid out: the environment changed during the run (.rune-acceptance/check.mjs)."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Keep rejecting a size that is not a positive integer — window.ts removes the validation that rejected invalid sizes."
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 6,
+      "requestChecks": [
+        {
+          "asks": 8,
+          "missing": ["Keep rejecting a size that is not a positive integer"]
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 8,
+      "wallMs": 16766
+    },
+    {
+      "task": "off-by-one-window",
+      "family": "fix",
+      "scenario": "wrong",
+      "note": "The inner loop is off by one and the supplied test is rewritten to agree with it.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the failing window test passes without the test being edited",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the failing window test passes without the test being edited",
+          "why": "needs_review: ok — this run wrote `window.test.ts` — a check the run authored cannot settle a criterion; cite a check that existed before this run, or a project-wide one Replay on the tree the run started from: the pre-task tree could not be laid out: the environment changed during the run (.rune-acceptance/check.mjs)."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Fix window.ts so the supplied test passes — window.ts now excludes the last element of each window when finding its maximum. The original test expects [3, 5, 5], but the changed function returns [3, 3, 5]."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Do not edit or weaken window.test.ts — window.test.ts was edited to expect [3, 3, 5] instead of [3, 5, 5]."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Add your own focused tests — No tests were added; the supplied test was changed instead."
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 6,
+      "requestChecks": [
+        {
+          "asks": 9,
+          "missing": [
+            "Fix window.ts so the supplied test passes",
+            "Do not edit or weaken window.test.ts",
+            "Add your own focused tests"
+          ]
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 8,
+      "wallMs": 18576
+    },
+    {
+      "task": "off-by-one-window",
+      "family": "fix",
+      "scenario": "silent",
+      "note": "A comment where the fix should be, then an empty completion.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 6,
+      "wallMs": 463
+    },
+    {
+      "task": "off-by-one-window",
+      "family": "fix",
+      "scenario": "stopped",
+      "note": "The turn ceiling closes the run with the fix still not applied.",
+      "classification": "cut off",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "max_turns",
+        "status": "max_turns"
+      },
+      "criteria": [
+        {
+          "text": "the failing window test passes without the test being edited",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 2,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 308
+    },
+    {
+      "task": "queue-race",
+      "family": "fix",
+      "scenario": "correct",
+      "note": "The index is claimed synchronously and the pool is capped.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "done",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "each item runs once and the limit is respected",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 5,
+      "requestChecks": [
+        {
+          "asks": 7,
+          "missing": []
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 25791
+    },
+    {
+      "task": "queue-race",
+      "family": "fix",
+      "scenario": "omission",
+      "note": "The double-processing is fixed by running everything at once: the limit is gone.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "each item runs once and the limit is respected",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "each item runs once and the limit is respected",
+          "why": "needs_review: ok — this run wrote `mine.test.ts` — a check the run authored cannot settle a criterion; cite a check that existed before this run, or a project-wide one Replay on the tree the run started from: the pre-task tree could not be laid out: the environment changed during the run (.rune-acceptance/check.mjs)."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: no more than `limit` workers are in flight at a time — queue.ts starts a worker for every item immediately; it does not enforce limit."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Add focused tests — mine.test.ts tests processing each item once and preserving order, but adds no test for the requested worker limit."
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 6,
+      "requestChecks": [
+        {
+          "asks": 8,
+          "missing": ["no more than `limit` workers are in flight at a time", "Add focused tests"]
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 8,
+      "wallMs": 15200
+    },
+    {
+      "task": "queue-race",
+      "family": "fix",
+      "scenario": "wrong",
+      "note": "The race is fixed, but results are pushed in completion order.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "each item runs once and the limit is respected",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "each item runs once and the limit is respected",
+          "why": "needs_review: ok — this run wrote `mine.test.ts` — a check the run authored cannot settle a criterion; cite a check that existed before this run, or a project-wide one Replay on the tree the run started from: the pre-task tree could not be laid out: the environment changed during the run (.rune-acceptance/check.mjs)."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: the returned array keeps the input order — queue.ts pushes results as workers finish, so slower earlier items can appear after later items."
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 6,
+      "requestChecks": [
+        {
+          "asks": 7,
+          "missing": ["the returned array keeps the input order"]
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 8,
+      "wallMs": 21749
+    },
+    {
+      "task": "queue-race",
+      "family": "fix",
+      "scenario": "silent",
+      "note": "A TODO where the claim should be, then an empty completion.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 6,
+      "wallMs": 474
+    },
+    {
+      "task": "queue-race",
+      "family": "fix",
+      "scenario": "stopped",
+      "note": "The turn ceiling closes the run with the race still in place.",
+      "classification": "cut off",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "max_turns",
+        "status": "max_turns"
+      },
+      "criteria": [
+        {
+          "text": "each item runs once and the limit is respected",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 2,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 328
+    },
+    {
+      "task": "health-endpoint-and-changelog",
+      "family": "omission-prone-feature",
+      "scenario": "correct",
+      "note": "Both halves: the JSON route and the Unreleased entry.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "done",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the new route answers and the release note is written",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 5,
+      "requestChecks": [
+        {
+          "asks": 11,
+          "missing": []
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 13423
+    },
+    {
+      "task": "health-endpoint-and-changelog",
+      "family": "omission-prone-feature",
+      "scenario": "omission",
+      "note": "The route lands; the changelog is forgotten. The model's own tests are green.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the new route answers and the release note is written",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the new route answers and the release note is written",
+          "why": "needs_review: ok — this run wrote `mine.test.ts` — a check the run authored cannot settle a criterion; cite a check that existed before this run, or a project-wide one Replay on the tree the run started from: the pre-task tree could not be laid out: the environment changed during the run (.rune-acceptance/check.mjs)."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: record the new route under the '## Unreleased' heading in CHANGELOG.md — The change does not modify CHANGELOG.md."
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 5,
+      "requestChecks": [
+        {
+          "asks": 11,
+          "missing": ["record the new route under the '## Unreleased' heading in CHANGELOG.md"]
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 20145
+    },
+    {
+      "task": "health-endpoint-and-changelog",
+      "family": "omission-prone-feature",
+      "scenario": "wrong",
+      "note": "The route answers plain text instead of JSON; the changelog is written anyway.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the new route answers and the release note is written",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the new route answers and the release note is written",
+          "why": "needs_review: ok — this run wrote `mine.test.ts` — a check the run authored cannot settle a criterion; cite a check that existed before this run, or a project-wide one Replay on the tree the run started from: the pre-task tree could not be laid out: the environment changed during the run (.rune-acceptance/check.mjs)."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: JSON body with ok true — server.ts returns the plain text body \"ok\", not JSON with an ok field."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: uptimeMs in milliseconds since startedAt — server.ts does not calculate or return uptimeMs."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: a JSON content type — server.ts sets the /health content type to text/plain."
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 6,
+      "requestChecks": [
+        {
+          "asks": 11,
+          "missing": [
+            "JSON body with ok true",
+            "uptimeMs in milliseconds since startedAt",
+            "a JSON content type"
+          ]
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 8,
+      "wallMs": 17486
+    },
+    {
+      "task": "health-endpoint-and-changelog",
+      "family": "omission-prone-feature",
+      "scenario": "silent",
+      "note": "A TODO where the route should be, then an empty completion.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 6,
+      "wallMs": 434
+    },
+    {
+      "task": "health-endpoint-and-changelog",
+      "family": "omission-prone-feature",
+      "scenario": "stopped",
+      "note": "The turn ceiling closes the run with neither half finished.",
+      "classification": "cut off",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "max_turns",
+        "status": "max_turns"
+      },
+      "criteria": [
+        {
+          "text": "the new route answers and the release note is written",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 2,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 355
+    },
+    {
+      "task": "health-endpoint-and-changelog",
+      "family": "omission-prone-feature",
+      "scenario": "wrong-v6",
+      "note": "V6's own attack: uptimeMs is the wall clock, and the changelog entry says the word health while recording that no route changed.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the new route answers and the release note is written",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the new route answers and the release note is written",
+          "why": "needs_review: ok — this run wrote `mine.test.ts` — a check the run authored cannot settle a criterion; cite a check that existed before this run, or a project-wide one Replay on the tree the run started from: the pre-task tree could not be laid out: the environment changed during the run (.rune-acceptance/check.mjs)."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: uptimeMs: milliseconds since startedAt — server.ts uses Date.now() for uptimeMs instead of subtracting startedAt."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: record the new route under the '## Unreleased' heading in CHANGELOG.md — CHANGELOG.md instead says no routes were added or changed."
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 6,
+      "requestChecks": [
+        {
+          "asks": 11,
+          "missing": [
+            "uptimeMs: milliseconds since startedAt",
+            "record the new route under the '## Unreleased' heading in CHANGELOG.md"
+          ]
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 8,
+      "wallMs": 16236
+    },
+    {
+      "task": "note-field-and-exporter",
+      "family": "omission-prone-feature",
+      "scenario": "correct",
+      "note": "Both halves, with RFC 4180 quoting in the exporter.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "done",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "notes carry tags and the export carries them too",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 5,
+      "requestChecks": [
+        {
+          "asks": 8,
+          "missing": []
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 14170
+    },
+    {
+      "task": "note-field-and-exporter",
+      "family": "omission-prone-feature",
+      "scenario": "omission",
+      "note": "The type gains tags; the exporter is never touched.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "notes carry tags and the export carries them too",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "notes carry tags and the export carries them too",
+          "why": "needs_review: ok — this run wrote `mine.test.ts` — a check the run authored cannot settle a criterion; cite a check that existed before this run, or a project-wide one Replay on the tree the run started from: the pre-task tree could not be laid out: the environment changed during the run (.rune-acceptance/check.mjs)."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Update toCsv in export-csv.ts so the export gains a third column — export-csv.ts is unchanged."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Make the header id,text,tags — export-csv.ts is unchanged."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Join a note's tags with a semicolon — export-csv.ts is unchanged."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Quote any field containing a comma, quote or newline the RFC 4180 way — export-csv.ts is unchanged; no field quoting or quote-doubling was added."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Add focused tests — mine.test.ts tests createNote tags, but adds no tests for the requested CSV behaviour."
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 5,
+      "requestChecks": [
+        {
+          "asks": 10,
+          "missing": [
+            "Update toCsv in export-csv.ts so the export gains a third column",
+            "Make the header id,text,tags",
+            "Join a note's tags with a semicolon",
+            "Quote any field containing a comma, quote or newline the RFC 4180 way",
+            "Add focused tests"
+          ]
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 14240
+    },
+    {
+      "task": "note-field-and-exporter",
+      "family": "omission-prone-feature",
+      "scenario": "wrong",
+      "note": "The column arrives joined with a comma and never quoted.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "notes carry tags and the export carries them too",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "notes carry tags and the export carries them too",
+          "why": "needs_review: ok — this run wrote `mine.test.ts` — a check the run authored cannot settle a criterion; cite a check that existed before this run, or a project-wide one Replay on the tree the run started from: the pre-task tree could not be laid out: the environment changed during the run (.rune-acceptance/check.mjs)."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: a note's tags are joined with a semicolon — export-csv.ts joins tags with a comma."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Quote any field containing a comma, a quote or a newline the RFC 4180 way — export-csv.ts interpolates fields without wrapping them or doubling quotes."
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 6,
+      "requestChecks": [
+        {
+          "asks": 8,
+          "missing": [
+            "a note's tags are joined with a semicolon",
+            "Quote any field containing a comma, a quote or a newline the RFC 4180 way"
+          ]
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 8,
+      "wallMs": 13696
+    },
+    {
+      "task": "note-field-and-exporter",
+      "family": "omission-prone-feature",
+      "scenario": "silent",
+      "note": "The type changes; the exporter does not; nothing is said.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 6,
+      "wallMs": 427
+    },
+    {
+      "task": "note-field-and-exporter",
+      "family": "omission-prone-feature",
+      "scenario": "stopped",
+      "note": "The turn ceiling closes the run after the type change only.",
+      "classification": "cut off",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "max_turns",
+        "status": "max_turns"
+      },
+      "criteria": [
+        {
+          "text": "notes carry tags and the export carries them too",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 2,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 325
+    },
+    {
+      "task": "dependent-migration",
+      "family": "migration",
+      "scenario": "correct",
+      "note": "Migration, pure upsert and an atomic save, with the CLI still working.",
+      "classification": "false negative",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the store loads, upserts and saves as specified",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the store loads, upserts and saves as specified",
+          "why": "needs_review: ok — this run wrote `mine.test.ts` — a check the run authored cannot settle a criterion; cite a check that existed before this run, or a project-wide one Replay on the tree the run started from: none — the command names no test file."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Invalid shape must throw — store.ts accepts v2 notes with missing or null tags and converts non-string tag elements to strings."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: CLI 'bun cli.ts <path> <id> <text>' upserts a note with empty tags and saves it — The change contains no cli.ts changes or other evidence implementing this command."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Add tests for migration — mine.test.ts names migration but never creates or loads a v1 store."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Add tests for CLI integration — mine.test.ts does not invoke the CLI."
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 5,
+      "requestChecks": [
+        {
+          "asks": 25,
+          "missing": [
+            "Invalid shape must throw",
+            "CLI 'bun cli.ts <path> <id> <text>' upserts a note with empty tags and saves it",
+            "Add tests for migration",
+            "Add tests for CLI integration"
+          ]
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 29457
+    },
+    {
+      "task": "dependent-migration",
+      "family": "migration",
+      "scenario": "omission",
+      "note": "Everything but the v1 migration; the model's tests never load a v1 file.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the store loads, upserts and saves as specified",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the store loads, upserts and saves as specified",
+          "why": "needs_review: ok — this run wrote `mine.test.ts` — a check the run authored cannot settle a criterion; cite a check that existed before this run, or a project-wide one Replay on the tree the run started from: the pre-task tree could not be laid out: the environment changed during the run (.rune-acceptance/check.mjs)."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Read legacy v1 {version:1,items:[{key,body}]} into v2 without losing values — store.ts rejects every version other than 2; it does not migrate items, key, or body."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Invalid shape must throw — store.ts accepts notes with missing tags and converts non-string tags to strings."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: The CLI 'bun cli.ts <path> <id> <text>' upserts a note with empty tags and saves it — The change contains no cli.ts implementation or change establishing this behavior."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Add tests for migration — mine.test.ts names migration but never creates or loads a v1 store."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Add tests for CLI integration — No added test invokes the CLI."
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 5,
+      "requestChecks": [
+        {
+          "asks": 21,
+          "missing": [
+            "Read legacy v1 {version:1,items:[{key,body}]} into v2 without losing values",
+            "Invalid shape must throw",
+            "The CLI 'bun cli.ts <path> <id> <text>' upserts a note with empty tags and saves it",
+            "Add tests for migration",
+            "Add tests for CLI integration"
+          ]
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 21265
+    },
+    {
+      "task": "dependent-migration",
+      "family": "migration",
+      "scenario": "wrong",
+      "note": "upsert mutates its input and moves a replaced id to the end.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the store loads, upserts and saves as specified",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the store loads, upserts and saves as specified",
+          "why": "needs_review: ok — this run wrote `mine.test.ts` — a check the run authored cannot settle a criterion; cite a check that existed before this run, or a project-wide one Replay on the tree the run started from: the pre-task tree could not be laid out: the environment changed during the run (.rune-acceptance/check.mjs)."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Invalid shape must throw — store.ts accepts v2 notes with missing or null tags and converts non-string tags to strings."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: upsert returns a new store — store.ts returns the input store."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: upsert does not move an existing id — store.ts removes the matching note and pushes its replacement to the end."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: upsert must not mutate inputs — store.ts splices and pushes onto the input store's notes array."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: The CLI 'bun cli.ts <path> <id> <text>' upserts a note with empty tags and saves it — The change does not implement this behavior in cli.ts."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Add tests for migration — mine.test.ts only tests replacement by upsert."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Add tests for API integration — mine.test.ts tests upsert alone, without integrating load or save."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Add tests for CLI integration — No CLI integration test was added."
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 5,
+      "requestChecks": [
+        {
+          "asks": 22,
+          "missing": [
+            "Invalid shape must throw",
+            "upsert returns a new store",
+            "upsert does not move an existing id",
+            "upsert must not mutate inputs",
+            "The CLI 'bun cli.ts <path> <id> <text>' upserts a note with empty tags and saves it",
+            "Add tests for migration",
+            "Add tests for API integration",
+            "Add tests for CLI integration"
+          ]
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 31114
+    },
+    {
+      "task": "dependent-migration",
+      "family": "migration",
+      "scenario": "silent",
+      "note": "load and save land; upsert is left returning its input; nothing is said.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 6,
+      "wallMs": 418
+    },
+    {
+      "task": "dependent-migration",
+      "family": "migration",
+      "scenario": "stopped",
+      "note": "The turn ceiling closes the run with upsert unimplemented.",
+      "classification": "cut off",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "max_turns",
+        "status": "max_turns"
+      },
+      "criteria": [
+        {
+          "text": "the store loads, upserts and saves as specified",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 2,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 331
+    },
+    {
+      "task": "dependent-migration",
+      "family": "migration",
+      "scenario": "wrong-v6",
+      "note": "V6's own attack: save() writes in place instead of renaming a temporary file, and load() accepts an unknown version as a v2 store.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the store loads, upserts and saves as specified",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the store loads, upserts and saves as specified",
+          "why": "needs_review: ok — this run wrote `mine.test.ts` — a check the run authored cannot settle a criterion; cite a check that existed before this run, or a project-wide one Replay on the tree the run started from: the pre-task tree could not be laid out: the environment changed during the run (.rune-acceptance/check.mjs)."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Store v2 is {version:2,notes:[{id:string,text:string,tags:string[]}]} — store.ts accepts v2 notes without checking their fields or types."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Invalid shape must throw — store.ts accepts invalid versions with a notes array and does not validate note fields or v1 item fields."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Save atomically using a temporary file in the destination directory — store.ts writes directly to the destination path."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: The CLI 'bun cli.ts <path> <id> <text>' upserts a note with empty tags and saves it — The change does not modify cli.ts or show this command behavior."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Add tests for migration — mine.test.ts tests only upsert replacement."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Add API integration tests — mine.test.ts has an upsert unit test, but no API integration test."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Add CLI integration tests — No CLI integration test was added."
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 5,
+      "requestChecks": [
+        {
+          "asks": 21,
+          "missing": [
+            "Store v2 is {version:2,notes:[{id:string,text:string,tags:string[]}]}",
+            "Invalid shape must throw",
+            "Save atomically using a temporary file in the destination directory",
+            "The CLI 'bun cli.ts <path> <id> <text>' upserts a note with empty tags and saves it",
+            "Add tests for migration",
+            "Add API integration tests",
+            "Add CLI integration tests"
+          ]
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 30354
+    },
+    {
+      "task": "three-module-dependent",
+      "family": "migration",
+      "scenario": "correct",
+      "note": "All three steps, in order, with the interface each later step assumed.",
+      "classification": "false negative",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "all three modules move to the new token shape",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "all three modules move to the new token shape",
+          "why": "needs_review: ok — this run wrote `mine.test.ts` — a check the run authored cannot settle a criterion; cite a check that existed before this run, or a project-wide one Replay on the tree the run started from: the pre-task tree could not be laid out: the environment changed during the run (.rune-acceptance/check.mjs)."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: classifying a token as a number when it matches an optionally signed integer or decimal — tokens.ts uses /^-?\\d+(?:\\.\\d+)?$/, which does not classify numbers with an optional plus sign, such as +2, as numbers."
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 7,
+      "requestChecks": [
+        {
+          "asks": 10,
+          "missing": [
+            "classifying a token as a number when it matches an optionally signed integer or decimal"
+          ]
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 9,
+      "wallMs": 19521
+    },
+    {
+      "task": "three-module-dependent",
+      "family": "migration",
+      "scenario": "omission",
+      "note": "Steps 1 and 2 land; step 3 is left calling the builder with raw strings.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "all three modules move to the new token shape",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "all three modules move to the new token shape",
+          "why": "needs_review: ok — this run wrote `mine.test.ts` — a check the run authored cannot settle a criterion; cite a check that existed before this run, or a project-wide one Replay on the tree the run started from: the pre-task tree could not be laid out: the environment changed during the run (.rune-acceptance/check.mjs)."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: classifying a token as a number when it matches an optionally signed integer or decimal — tokens.ts accepts a leading minus sign but not a leading plus sign, so +1 is classified as a word."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: report in report.ts must keep producing \"<name>: <sum> over <count>\" through the migrated pipeline — report.ts passes plain strings to buildRecord instead of calling tokenize. Those strings have no kind, so report produces an empty name and no values."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Add tests covering each step — mine.test.ts tests tokenize and buildRecord, but adds no test for report."
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 7,
+      "requestChecks": [
+        {
+          "asks": 10,
+          "missing": [
+            "classifying a token as a number when it matches an optionally signed integer or decimal",
+            "report in report.ts must keep producing \"<name>: <sum> over <count>\" through the migrated pipeline",
+            "Add tests covering each step"
+          ]
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 9,
+      "wallMs": 19867
+    },
+    {
+      "task": "three-module-dependent",
+      "family": "migration",
+      "scenario": "wrong",
+      "note": "Every token is labelled `word`; the builder re-tests the text, so only step 1's stated interface is violated and the end of the pipeline is green.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "all three modules move to the new token shape",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "all three modules move to the new token shape",
+          "why": "needs_review: ok — this run wrote `mine.test.ts` — a check the run authored cannot settle a criterion; cite a check that existed before this run, or a project-wide one Replay on the tree the run started from: the pre-task tree could not be laid out: the environment changed during the run (.rune-acceptance/check.mjs)."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: classifying a token as a number when it matches an optionally signed integer or decimal — tokens.ts gives every token kind \"word\"."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: decide by kind, not by re-testing the text — build.ts tests token.value against NUMERIC instead of using token.kind."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: the record's name is the first word token's value — build.ts chooses the first value that fails its numeric regex, regardless of kind."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: its values are the number tokens in order — build.ts selects values by regex rather than selecting number tokens."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: report in report.ts must keep producing \"<name>: <sum> over <count>\" through the migrated pipeline — mine.test.ts confirms that format for one input, but tokens.ts does not classify numbers and build.ts does not use kinds, so the requested migrated pipeline is not in place."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Add tests covering each step — mine.test.ts adds a report test, but no tests for tokenize or buildRecord."
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 7,
+      "requestChecks": [
+        {
+          "asks": 11,
+          "missing": [
+            "classifying a token as a number when it matches an optionally signed integer or decimal",
+            "decide by kind, not by re-testing the text",
+            "the record's name is the first word token's value",
+            "its values are the number tokens in order",
+            "report in report.ts must keep producing \"<name>: <sum> over <count>\" through the migrated pipeline",
+            "Add tests covering each step"
+          ]
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 9,
+      "wallMs": 20645
+    },
+    {
+      "task": "three-module-dependent",
+      "family": "migration",
+      "scenario": "silent",
+      "note": "Step 1 only, which breaks step 2, and nothing is said about it.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 6,
+      "wallMs": 421
+    },
+    {
+      "task": "three-module-dependent",
+      "family": "migration",
+      "scenario": "stopped",
+      "note": "The turn ceiling closes the run after step 1.",
+      "classification": "cut off",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "max_turns",
+        "status": "max_turns"
+      },
+      "criteria": [
+        {
+          "text": "all three modules move to the new token shape",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 2,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 330
+    },
+    {
+      "task": "responsive-project-board",
+      "family": "frontend",
+      "scenario": "correct",
+      "note": "The full board: grid, combined filtering, persisted favorites, empty state.",
+      "classification": "skipped",
+      "modelCalls": 0,
+      "skippedReason": "no RUNE_BENCH_PLAYWRIGHT: the browser acceptance cannot run here"
+    },
+    {
+      "task": "responsive-project-board",
+      "family": "frontend",
+      "scenario": "omission",
+      "note": "Everything but persistence: favorites toggle and are forgotten on reload.",
+      "classification": "skipped",
+      "modelCalls": 0,
+      "skippedReason": "no RUNE_BENCH_PLAYWRIGHT: the browser acceptance cannot run here"
+    },
+    {
+      "task": "responsive-project-board",
+      "family": "frontend",
+      "scenario": "wrong",
+      "note": "A search overrides the status filter instead of combining with it, so the empty state never appears.",
+      "classification": "skipped",
+      "modelCalls": 0,
+      "skippedReason": "no RUNE_BENCH_PLAYWRIGHT: the browser acceptance cannot run here"
+    },
+    {
+      "task": "responsive-project-board",
+      "family": "frontend",
+      "scenario": "silent",
+      "note": "A heading and a TODO, then an empty completion.",
+      "classification": "skipped",
+      "modelCalls": 0,
+      "skippedReason": "no RUNE_BENCH_PLAYWRIGHT: the browser acceptance cannot run here"
+    },
+    {
+      "task": "responsive-project-board",
+      "family": "frontend",
+      "scenario": "stopped",
+      "note": "The turn ceiling closes the run with the board still a placeholder.",
+      "classification": "skipped",
+      "modelCalls": 0,
+      "skippedReason": "no RUNE_BENCH_PLAYWRIGHT: the browser acceptance cannot run here"
+    },
+    {
+      "task": "signup-form-states",
+      "family": "frontend",
+      "scenario": "correct",
+      "note": "Validation, announced errors, keyboard order and a status confirmation.",
+      "classification": "skipped",
+      "modelCalls": 0,
+      "skippedReason": "no RUNE_BENCH_PLAYWRIGHT: the browser acceptance cannot run here"
+    },
+    {
+      "task": "signup-form-states",
+      "family": "frontend",
+      "scenario": "omission",
+      "note": "Every rule is enforced and no message is ever surfaced.",
+      "classification": "skipped",
+      "modelCalls": 0,
+      "skippedReason": "no RUNE_BENCH_PLAYWRIGHT: the browser acceptance cannot run here"
+    },
+    {
+      "task": "signup-form-states",
+      "family": "frontend",
+      "scenario": "wrong",
+      "note": "The confirmation is never compared, so a mismatch submits happily.",
+      "classification": "skipped",
+      "modelCalls": 0,
+      "skippedReason": "no RUNE_BENCH_PLAYWRIGHT: the browser acceptance cannot run here"
+    },
+    {
+      "task": "signup-form-states",
+      "family": "frontend",
+      "scenario": "silent",
+      "note": "Two fields, no validation, no confirmation, and nothing said.",
+      "classification": "skipped",
+      "modelCalls": 0,
+      "skippedReason": "no RUNE_BENCH_PLAYWRIGHT: the browser acceptance cannot run here"
+    },
+    {
+      "task": "signup-form-states",
+      "family": "frontend",
+      "scenario": "stopped",
+      "note": "The turn ceiling closes the run with the form half built.",
+      "classification": "skipped",
+      "modelCalls": 0,
+      "skippedReason": "no RUNE_BENCH_PLAYWRIGHT: the browser acceptance cannot run here"
+    },
+    {
+      "task": "explain-quote-handling",
+      "family": "research",
+      "scenario": "correct",
+      "note": "All three subjects plus the limits, and not one line of code touched.",
+      "classification": "false negative",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the explanation covers every asked-for subject",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the explanation covers every asked-for subject",
+          "why": "needs_review: ok — execution receipt only — ran, exit 0, not a recognised check; not replayed on the parent"
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 3,
+      "completions": 1,
+      "providerTurns": 5,
+      "wallMs": 354
+    },
+    {
+      "task": "explain-quote-handling",
+      "family": "research",
+      "scenario": "omission",
+      "note": "The doubled quote and the CRLF are explained; the BOM is never mentioned.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the explanation covers every asked-for subject",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the explanation covers every asked-for subject",
+          "why": "needs_review: ok — execution receipt only — ran, exit 0, not a recognised check; not replayed on the parent"
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 3,
+      "completions": 1,
+      "providerTurns": 5,
+      "wallMs": 346
+    },
+    {
+      "task": "explain-quote-handling",
+      "family": "research",
+      "scenario": "wrong",
+      "note": "Every subject named and each one described backwards — and csv.ts edited on the way past.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the explanation covers every asked-for subject",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 4,
+      "completions": 1,
+      "providerTurns": 6,
+      "wallMs": 355
+    },
+    {
+      "task": "explain-quote-handling",
+      "family": "research",
+      "scenario": "silent",
+      "note": "One sentence in ANSWER.md and an empty completion.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 2,
+      "completions": 1,
+      "providerTurns": 3,
+      "wallMs": 308
+    },
+    {
+      "task": "explain-quote-handling",
+      "family": "research",
+      "scenario": "stopped",
+      "note": "The turn ceiling closes the run with the answer a stub.",
+      "classification": "cut off",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "max_turns",
+        "status": "max_turns"
+      },
+      "criteria": [
+        {
+          "text": "the explanation covers every asked-for subject",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 2,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 241
+    },
+    {
+      "task": "cache-plan",
+      "family": "research",
+      "scenario": "correct",
+      "note": "Three steps, each naming a file and a verification, plus the risks.",
+      "classification": "false negative",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the plan names its steps, files and checks",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the plan names its steps, files and checks",
+          "why": "needs_review: ok — execution receipt only — ran, exit 0, not a recognised check; not replayed on the parent"
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 3,
+      "completions": 1,
+      "providerTurns": 5,
+      "wallMs": 362
+    },
+    {
+      "task": "cache-plan",
+      "family": "research",
+      "scenario": "omission",
+      "note": "Two steps; expiry and single-flight are never planned.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the plan names its steps, files and checks",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the plan names its steps, files and checks",
+          "why": "needs_review: ok — execution receipt only — ran, exit 0, not a recognised check; not replayed on the parent"
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 3,
+      "completions": 1,
+      "providerTurns": 5,
+      "wallMs": 356
+    },
+    {
+      "task": "cache-plan",
+      "family": "research",
+      "scenario": "wrong",
+      "note": "Three headings with nothing in them, and the code changed anyway.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the plan names its steps, files and checks",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the plan names its steps, files and checks",
+          "why": "needs_review: ok — execution receipt only — ran, exit 0, not a recognised check; not replayed on the parent"
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 4,
+      "completions": 1,
+      "providerTurns": 6,
+      "wallMs": 347
+    },
+    {
+      "task": "cache-plan",
+      "family": "research",
+      "scenario": "silent",
+      "note": "A two-line PLAN.md and an empty completion.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 2,
+      "completions": 1,
+      "providerTurns": 3,
+      "wallMs": 305
+    },
+    {
+      "task": "cache-plan",
+      "family": "research",
+      "scenario": "stopped",
+      "note": "The turn ceiling closes the run with the plan a stub.",
+      "classification": "cut off",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "max_turns",
+        "status": "max_turns"
+      },
+      "criteria": [
+        {
+          "text": "the plan names its steps, files and checks",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 2,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 246
+    },
+    {
+      "task": "cache-plan",
+      "family": "research",
+      "scenario": "wrong-v6",
+      "note": "V6's own attack: the omission arm's omission padded to three well-shaped steps — no expiry, no single-flight, no risks.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "the plan names its steps, files and checks",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "the plan names its steps, files and checks",
+          "why": "needs_review: ok — execution receipt only — ran, exit 0, not a recognised check; not replayed on the parent"
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 3,
+      "completions": 1,
+      "providerTurns": 5,
+      "wallMs": 354
+    },
+    {
+      "task": "working-tree-integration",
+      "family": "dirty-worktree",
+      "scenario": "correct",
+      "note": "Refunds skipped, currencies validated, totals in minor units, money.ts untouched.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "done",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "orders are summarized in minor units without touching the money API",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 4,
+      "requestChecks": [
+        {
+          "asks": 11,
+          "missing": []
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 6,
+      "wallMs": 15630
+    },
+    {
+      "task": "working-tree-integration",
+      "family": "dirty-worktree",
+      "scenario": "omission",
+      "note": "The currency code is never validated.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "orders are summarized in minor units without touching the money API",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "orders are summarized in minor units without touching the money API",
+          "why": "needs_review: ok — this run wrote `mine.test.ts` — a check the run authored cannot settle a criterion; cite a check that existed before this run, or a project-wide one Replay on the tree the run started from: the pre-task tree could not be laid out: the environment changed during the run (.rune-acceptance/check.mjs)."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Currency codes must match /^[A-Z]{3}$/; throw for invalid currencies — orders.ts never validates row.currency or throws for an invalid code."
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 5,
+      "requestChecks": [
+        {
+          "asks": 15,
+          "missing": ["Currency codes must match /^[A-Z]{3}$/; throw for invalid currencies"]
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 7,
+      "wallMs": 18150
+    },
+    {
+      "task": "working-tree-integration",
+      "family": "dirty-worktree",
+      "scenario": "wrong",
+      "note": "The protected working-tree API is loosened so a three-decimal amount parses.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "partial",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [
+        {
+          "text": "orders are summarized in minor units without touching the money API",
+          "status": "needs_review",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [
+        {
+          "criterion": "orders are summarized in minor units without touching the money API",
+          "why": "needs_review: ok — this run wrote `mine.test.ts` — a check the run authored cannot settle a criterion; cite a check that existed before this run, or a project-wide one Replay on the tree the run started from: the pre-task tree could not be laid out: the environment changed during the run (.rune-acceptance/check.mjs)."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: Do not change money.ts — The diff changes money.ts to accept three decimal places and discard the third digit."
+        },
+        {
+          "criterion": "the request",
+          "why": "not done: validate each retained amount using the existing parser — orders.ts calls parseMinor for retained rows, but the change alters that parser, so it no longer applies the existing validation rules."
+        }
+      ],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 6,
+      "requestChecks": [
+        {
+          "asks": 16,
+          "missing": [
+            "Do not change money.ts",
+            "validate each retained amount using the existing parser"
+          ]
+        }
+      ],
+      "completions": 1,
+      "providerTurns": 8,
+      "wallMs": 19284
+    },
+    {
+      "task": "working-tree-integration",
+      "family": "dirty-worktree",
+      "scenario": "silent",
+      "note": "A stub with a TODO, then an empty completion.",
+      "classification": "detected",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      },
+      "criteria": [],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 5,
+      "completions": 1,
+      "providerTurns": 6,
+      "wallMs": 426
+    },
+    {
+      "task": "working-tree-integration",
+      "family": "dirty-worktree",
+      "scenario": "stopped",
+      "note": "The turn ceiling closes the run with the summary unimplemented.",
+      "classification": "cut off",
+      "modelCalls": 0,
+      "verdict": "unmet",
+      "execution": {
+        "stopReason": "max_turns",
+        "status": "max_turns"
+      },
+      "criteria": [
+        {
+          "text": "orders are summarized in minor units without touching the money API",
+          "status": "unassessed",
+          "source": "inferred",
+          "required": true
+        }
+      ],
+      "gaps": [],
+      "evaluatorFailed": [],
+      "harnessRePrompts": 2,
+      "completions": 1,
+      "providerTurns": 4,
+      "wallMs": 453
+    }
+  ]
+}

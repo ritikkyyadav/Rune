@@ -1,9 +1,13 @@
 /**
- * `done` (A3): a run that finished, broke nothing it was held to and left the
- * project's own checks green says so — short of `met`, which still needs every
- * criterion shown. Measured 2026-10-21 on fourteen live runs: every one that
- * did its work ended `unmet` ("no criteria stated") or `partial` ("no check
- * bound"), and the project's checks had passed on the final tree in thirteen.
+ * `done` (A3): a run that finished, broke nothing it was held to, left the
+ * project's own checks green, and did every ask of the person's request — the
+ * request check read the change against it and found each one — says so,
+ * short of `met`, which still needs every criterion shown.
+ *
+ * Measured 2026-10-21: on fourteen live runs every one that did its work ended
+ * `unmet` or `partial`. A `done` resting on the checks alone then called 19 of
+ * 44 wrong or half-done corpus runs finished; the request check is the answer
+ * the founder chose.
  *
  * Every line of the rule has a test that breaks if the line goes, and every
  * refusal has one that breaks if `done` starts reaching it.
@@ -13,6 +17,7 @@ import { describe, expect, mock, test } from "bun:test";
 import type { Criterion } from "../../../packages/protocol/src/index";
 import type { CheckRun } from "../../../packages/orchestrator/src/brief";
 import {
+  REQUEST_GAP,
   computeVerdict,
   verdictLine,
   type FinalProjectChecks,
@@ -20,15 +25,18 @@ import {
 import { unfinishedVerdict, verdictShortfall } from "../../../packages/orchestrator/src/headless";
 import { AgentLoop } from "../../../packages/orchestrator/src/agent-loop";
 import type { AgentTurnEvent } from "../../../packages/orchestrator/src/agent-loop";
+import type { RequestCheckResult } from "../../../packages/orchestrator/src/request-check";
 import { TaskStateStore } from "../../../packages/orchestrator/src/task-state";
 import type { VerifyResult } from "../../../packages/orchestrator/src/verifier";
 
 const HEAD = "4a91c2ee0000000000000000000000000000beef";
 const DIGEST = "d16e57a10c9b2f40";
 const NOW = { head: HEAD, dirty: false, digest: DIGEST };
+const ALL_FOUND = { asks: 3, missing: [] };
 const GREEN: FinalProjectChecks = {
   commands: ["bun run typecheck", "bun run test"],
   preexisting: [],
+  request: ALL_FOUND,
 };
 
 function verdictOf(
@@ -85,16 +93,21 @@ const ownTest = (text: string) =>
     },
   });
 const red = (command: string): CheckRun => ({ command, passed: false, at: 1, kind: "check" });
+const missingOne = {
+  asks: 3,
+  missing: [{ ask: "update the changelog", why: "CHANGELOG.md is not in the change" }],
+};
 
-describe("done: the run finished and the project's checks passed on the tree it left", () => {
+describe("done: finished, checks green, every ask of the request found", () => {
   test("no criteria stated: done, where it was `unmet`", () => {
     const v = verdictOf([]);
     expect(v.kind).toBe("done");
     if (v.kind !== "done") return;
     expect(v.checks).toEqual(["bun run typecheck", "bun run test"]);
     expect(v.unshown).toEqual([]);
+    expect(v.requestAsks).toBe(3);
     expect(verdictLine(v)).toBe(
-      "[verdict] done — the project's checks passed on the final tree (`bun run typecheck`, `bun run test`); no criteria stated",
+      "[verdict] done — the project's checks passed on the final tree (`bun run typecheck`, `bun run test`); all 3 asks of the request found in the change; no criteria stated",
     );
   });
 
@@ -120,13 +133,14 @@ describe("done: the run finished and the project's checks passed on the tree it 
       projectChecks: {
         commands: ["bun run typecheck", "bun run test"],
         preexisting: ["bun run test"],
+        request: { asks: 1, missing: [] },
       },
     });
     expect(v.kind).toBe("done");
     if (v.kind !== "done") return;
     expect(v.preexisting).toEqual(["bun run test"]);
     expect(verdictLine(v)).toBe(
-      "[verdict] done — the project's checks found nothing this run broke (`bun run typecheck`, `bun run test`); already failing before the run: `bun run test`; no criteria stated",
+      "[verdict] done — the project's checks found nothing this run broke (`bun run typecheck`, `bun run test`); all 1 ask of the request found in the change; already failing before the run: `bun run test`; no criteria stated",
     );
   });
 
@@ -138,10 +152,54 @@ describe("done: the run finished and the project's checks passed on the tree it 
   });
 });
 
+describe("the request check decides between done and a named gap", () => {
+  test("not run: no done — the checks alone are not enough", () => {
+    const { request: _request, ...checksOnly } = GREEN;
+    expect(verdictOf([], { projectChecks: checksOnly }).kind).toBe("unmet");
+    expect(verdictOf([own("a")], { projectChecks: checksOnly }).kind).not.toBe("done");
+  });
+
+  test("it found no asks at all: no done", () => {
+    expect(
+      verdictOf([], { projectChecks: { ...GREEN, request: { asks: 0, missing: [] } } }).kind,
+    ).not.toBe("done");
+  });
+
+  test("an ask not found: partial, with the ask named — no criteria stated", () => {
+    const v = verdictOf([], { projectChecks: { ...GREEN, request: missingOne } });
+    expect(v.kind).toBe("partial");
+    if (v.kind !== "partial") return;
+    expect(v.gaps).toEqual([
+      {
+        criterion: REQUEST_GAP,
+        why: "not done: update the changelog — CHANGELOG.md is not in the change",
+      },
+    ]);
+    expect(verdictShortfall(v)).toBe(undefined); // no criteria: nothing promised (headless rule)
+  });
+
+  test("an ask not found beside the run's own criteria: partial, gap named, seen to fall short", () => {
+    const v = verdictOf([own("a")], { projectChecks: { ...GREEN, request: missingOne } });
+    expect(v.kind).toBe("partial");
+    if (v.kind !== "partial") return;
+    expect(v.gaps.some((g) => g.criterion === REQUEST_GAP)).toBe(true);
+    expect(verdictShortfall(v)).toBe("observed_failure");
+  });
+
+  test("an ask not found stops even `met`: every criterion shown is not every ask done", () => {
+    const v = verdictOf([shown("a")], { projectChecks: { ...GREEN, request: missingOne } });
+    expect(v.kind).toBe("partial");
+  });
+});
+
 describe("done is refused: the verdict stays what it was", () => {
   const cases: Array<[string, Criterion[], Parameters<typeof verdictOf>[1]]> = [
     ["the end-of-turn check did not pass on the final tree", [], { projectChecks: null }],
-    ["it passed on no command at all", [], { projectChecks: { commands: [], preexisting: [] } }],
+    [
+      "it passed on no command at all",
+      [],
+      { projectChecks: { commands: [], preexisting: [], request: ALL_FOUND } },
+    ],
     ["the run did not end on its own", [], { stopReason: "max_turns" }],
     ["the run wrote nothing", [], { wrote: false, shape: "fix" }],
     ["a planned step is open", [own("a")], { openSteps: 1 }],
@@ -151,7 +209,11 @@ describe("done is refused: the verdict stays what it was", () => {
       [],
       {
         checks: [red("bun run lint")],
-        projectChecks: { commands: ["bun run test"], preexisting: ["bun run test"] },
+        projectChecks: {
+          commands: ["bun run test"],
+          preexisting: ["bun run test"],
+          request: ALL_FOUND,
+        },
       },
     ],
     ["a criterion is the person's", [{ text: "export every row", rung: null, source: "user" }], {}],
@@ -214,7 +276,7 @@ describe("done is refused: the verdict stays what it was", () => {
   });
 });
 
-// ─── The loop: what the end-of-turn check leaves the verdict ───
+// ─── The loop: the end-of-turn check, then the request check ───
 
 type Step = { tool?: string; args?: Record<string, unknown>; text?: string };
 
@@ -281,9 +343,26 @@ const PASSED: VerifyResult = {
   report: "$ bun run test  (ok)",
   runs: [{ command: "bun run test", exitCode: 0, durationMs: 5, passed: true }],
 };
+const FOUND: RequestCheckResult = { outcome: { asks: 2, missing: [] } };
+const MISSING: RequestCheckResult = {
+  outcome: { asks: 2, missing: [{ ask: "update the changelog", why: "not in the change" }] },
+};
 
-async function finalVerdict(turns: Step[], results: VerifyResult[], checks: CheckRun[] = []) {
-  let call = 0;
+async function runLoop(
+  turns: Step[],
+  opts: {
+    results?: VerifyResult[];
+    checks?: CheckRun[];
+    requestAnswers?: RequestCheckResult[];
+  } = {},
+) {
+  let verifyCall = 0;
+  let requestCall = 0;
+  const results = opts.results ?? [PASSED];
+  const requestAnswers = opts.requestAnswers ?? [FOUND];
+  const requestCheck = mock(
+    async () => requestAnswers[Math.min(requestCall++, requestAnswers.length - 1)]!,
+  );
   const loop = new AgentLoop(
     {
       model: "m",
@@ -292,8 +371,11 @@ async function finalVerdict(turns: Step[], results: VerifyResult[], checks: Chec
       maxTurns: 20,
       systemPrompt: "s",
       taskState: new TaskStateStore(),
-      verifier: { verify: mock(async () => results[Math.min(call++, results.length - 1)]!) },
-      contractRecord: () => ({ criteria: [], checks, wrote: true }),
+      verifier: {
+        verify: mock(async () => results[Math.min(verifyCall++, results.length - 1)]!),
+      },
+      contractRecord: () => ({ criteria: [], checks: opts.checks ?? [], wrote: true }),
+      requestCheck,
     } as any,
     makeGateway(turns),
     makeRegistry(),
@@ -301,16 +383,57 @@ async function finalVerdict(turns: Step[], results: VerifyResult[], checks: Chec
   const events: AgentTurnEvent[] = [];
   for await (const event of loop.run("add the handler", "s1", "/tmp")) events.push(event);
   const complete = events.filter((e) => e.type === "turn_complete").at(-1) as
-    { verdict?: { kind: string } } | undefined;
-  return complete?.verdict?.kind;
+    { verdict?: { kind: string; gaps?: Array<{ criterion: string; why: string }> } } | undefined;
+  const notices = events
+    .filter((e) => e.type === "notice")
+    .map((e) => (e as { message: string }).message);
+  return { verdict: complete?.verdict, notices, requestCalls: requestCheck.mock.calls.length };
 }
 
-describe("the loop hands the verdict the end-of-turn check", () => {
-  test("a write, then the checks pass: done", async () => {
-    expect(await finalVerdict([WRITE, { text: "done" }], [PASSED])).toBe("done");
+describe("the loop: the end-of-turn check, then the request check", () => {
+  test("a write, the checks pass, every ask found: done", async () => {
+    const r = await runLoop([WRITE, { text: "done" }]);
+    expect(r.verdict?.kind).toBe("done");
+    expect(r.requestCalls).toBe(1);
   });
 
-  test("the checks go red on the run's own failure: not done", async () => {
+  test("an ask not found: one re-prompt naming it; finished on the second try: done", async () => {
+    const r = await runLoop([WRITE, { text: "done" }, WRITE, { text: "done" }], {
+      requestAnswers: [MISSING, FOUND],
+    });
+    expect(r.notices).toContain(
+      "The request check found 1 part of the request not done — asking once to finish it.",
+    );
+    expect(r.requestCalls).toBe(2);
+    expect(r.verdict?.kind).toBe("done");
+  });
+
+  test("still not found after the one re-prompt: partial, the ask named", async () => {
+    const r = await runLoop([WRITE, { text: "done" }, WRITE, { text: "done" }, { text: "done" }], {
+      requestAnswers: [MISSING, MISSING],
+    });
+    expect(r.notices.filter((n) => n.startsWith("The request check found"))).toHaveLength(1);
+    expect(r.verdict?.kind).toBe("partial");
+    expect(r.verdict?.gaps?.[0]?.criterion).toBe(REQUEST_GAP);
+  });
+
+  test("the model answers without changing anything: the gap stands, no second check", async () => {
+    const r = await runLoop([WRITE, { text: "done" }, { text: "it is out of scope" }], {
+      requestAnswers: [MISSING, FOUND],
+    });
+    expect(r.requestCalls).toBe(1);
+    expect(r.verdict?.kind).toBe("partial");
+  });
+
+  test("the check could not say: not done, and no re-prompt", async () => {
+    const r = await runLoop([WRITE, { text: "done" }], {
+      requestAnswers: [{ skipped: "the checker's answer was not the JSON asked for" }],
+    });
+    expect(r.verdict?.kind).not.toBe("done");
+    expect(r.notices.some((n) => n.startsWith("The request check found"))).toBe(false);
+  });
+
+  test("the project's checks went red: the request check is not asked", async () => {
     const RED: VerifyResult = {
       status: "failed",
       passed: false,
@@ -318,13 +441,12 @@ describe("the loop hands the verdict the end-of-turn check", () => {
       report: "$ bun run test  (exit 1)",
       runs: [{ command: "bun run test", exitCode: 1, durationMs: 5, passed: false }],
     };
-    expect(await finalVerdict([WRITE, { text: "done" }, { text: "done" }], [RED])).not.toBe("done");
+    const r = await runLoop([WRITE, { text: "done" }, { text: "done" }], { results: [RED] });
+    expect(r.requestCalls).toBe(0);
+    expect(r.verdict?.kind).not.toBe("done");
   });
 
-  test("red only on failures that were there before the run: done", async () => {
-    // The end-of-turn check writes its red run into the check log, as the
-    // engine's verifier does; the loop's reading of the attribution is what
-    // lets the verdict set it aside.
+  test("red only on failures that were there before the run: checked, and done", async () => {
     const before = (introduced: string[]): VerifyResult => ({
       status: "failed",
       passed: false,
@@ -337,18 +459,22 @@ describe("the loop hands the verdict the end-of-turn check", () => {
       attribution: { known: true, existing: ["brand > a build exists"], introduced },
     });
     const log = [red("bun run test")];
-    expect(await finalVerdict([WRITE, { text: "done" }], [before([])], log)).toBe("done");
     expect(
-      await finalVerdict(
-        [WRITE, { text: "done" }, { text: "done" }],
-        [before(["handler > adds"])],
-        log,
-      ),
+      (await runLoop([WRITE, { text: "done" }], { results: [before([])], checks: log })).verdict
+        ?.kind,
+    ).toBe("done");
+    expect(
+      (
+        await runLoop([WRITE, { text: "done" }, { text: "done" }], {
+          results: [before(["handler > adds"])],
+          checks: log,
+        })
+      ).verdict?.kind,
     ).not.toBe("done");
   });
 
   test("the checks could not finish: not done", async () => {
-    const SLOW: VerifyResult = {
+    const SLOW = {
       status: "inconclusive",
       reason: "timeout",
       passed: false,
@@ -364,26 +490,15 @@ describe("the loop hands the verdict the end-of-turn check", () => {
         },
       ],
     } as VerifyResult;
-    expect(await finalVerdict([WRITE, { text: "done" }, { text: "done" }], [SLOW])).not.toBe(
-      "done",
-    );
+    const r = await runLoop([WRITE, { text: "done" }, { text: "done" }], { results: [SLOW] });
+    expect(r.verdict?.kind).not.toBe("done");
   });
 
   test("a shell command after the checks passed: not done — it may have changed a file", async () => {
-    // The checks pass on the first finish; the second finish comes after a
-    // shell command the verdict cannot see into.
     const plan = (status: string): Step => ({
       tool: "todo_write",
       args: { items: [{ content: "add the handler", status }] },
     });
-    const turns: Step[] = [
-      plan("in_progress"),
-      WRITE,
-      { text: "done" },
-      { tool: "bash", args: { command: "node scripts/gen.mjs" } },
-      plan("completed"),
-      { text: "done" },
-    ];
     const without: Step[] = [
       plan("in_progress"),
       WRITE,
@@ -391,7 +506,15 @@ describe("the loop hands the verdict the end-of-turn check", () => {
       plan("completed"),
       { text: "done" },
     ];
-    expect(await finalVerdict(without, [PASSED])).toBe("done");
-    expect(await finalVerdict(turns, [PASSED])).not.toBe("done");
+    const withShell: Step[] = [
+      plan("in_progress"),
+      WRITE,
+      { text: "done" },
+      { tool: "bash", args: { command: "node scripts/gen.mjs" } },
+      plan("completed"),
+      { text: "done" },
+    ];
+    expect((await runLoop(without)).verdict?.kind).toBe("done");
+    expect((await runLoop(withShell)).verdict?.kind).not.toBe("done");
   });
 });

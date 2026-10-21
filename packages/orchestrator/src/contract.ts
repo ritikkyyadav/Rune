@@ -47,6 +47,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
 import type { CheckRun } from "./brief";
+import type { RequestCheckOutcome } from "./request-check";
 import { statusFromStopReason, treeMovedUnder, type StampedRevision } from "./lifecycle";
 import { couldNotRunOnParent } from "./parent-check";
 import { GOAL_CAP } from "./task-state";
@@ -1489,6 +1490,12 @@ export interface FinalProjectChecks {
    * the run — every failing test named, matched and unchanged (A4).
    */
   preexisting: readonly string[];
+  /**
+   * What the request check found, on this same tree: every ask of the
+   * person's request, found in the change or not. Absent until it has run;
+   * `done` needs it, with every ask found.
+   */
+  request?: RequestCheckOutcome;
 }
 
 /**
@@ -1735,6 +1742,8 @@ function outcomeOf(
  */
 export const PLAN_GAP = "the plan";
 export const CHECKS_GAP = "the checks";
+/** An ask of the person's request that the request check did not find (A3). */
+export const REQUEST_GAP = "the request";
 
 /** Why a criterion that is not accepted is not accepted, in one clause. */
 function gapWhy(criterion: Criterion, status: CriterionStatus): string {
@@ -1761,6 +1770,7 @@ function gapWhy(criterion: Criterion, status: CriterionStatus): string {
  *
  *   it ended on its own (`end_turn`) and wrote something;
  *   the project's own checks ran to completion on the tree it left;
+ *   the request check found every ask of the person's request in the change;
  *   no planned step is open;
  *   no check is red, except one whose every failure predates the run;
  *   no criterion FAILED or went stale — nothing was seen to fall short;
@@ -1783,6 +1793,11 @@ function doneVerdict(
 ): CompletionVerdict | null {
   const checks = input.projectChecks;
   if (!checks || checks.commands.length === 0) return null;
+  // The request check read the change against the request and found every
+  // ask. Without it a green suite is all `done` would rest on, and on the
+  // offline corpus that called 19 of 44 wrong or half-done runs finished.
+  const request = checks.request;
+  if (!request || request.asks === 0 || request.missing.length > 0) return null;
   if (input.stopReason !== "end_turn" || !input.wrote) return null;
   if (input.openSteps > 0) return null;
   const before = new Set(checks.preexisting.map(normalizeCommand));
@@ -1797,6 +1812,7 @@ function doneVerdict(
     criteria,
     checks: [...checks.commands],
     unshown: short.map(({ criterion }) => criterion.text),
+    requestAsks: request.asks,
     ...(red.length > 0 ? { preexisting: [...red] } : {}),
     ...base,
   };
@@ -1851,6 +1867,14 @@ export function computeVerdict(input: VerdictInputs): CompletionVerdict {
     status: statusFromStopReason(input.stopReason),
   };
 
+  // What the request check found missing, on the tree the run left. Each is
+  // a gap whatever the criteria say: an ask the change does not do is a
+  // shortfall even when every criterion the run wrote for itself is shown.
+  const requestGaps: DeclaredGap[] = (input.projectChecks?.request?.missing ?? []).map((m) => ({
+    criterion: REQUEST_GAP,
+    why: `not done: ${m.ask}${m.why ? ` — ${m.why}` : ""}`,
+  }));
+
   // Nothing was ever stated to be true. The audit's silent case: tests green,
   // typecheck green, and no statement anywhere of what the work was for.
   if (criteria.length === 0) {
@@ -1862,6 +1886,9 @@ export function computeVerdict(input: VerdictInputs): CompletionVerdict {
       ...evaluators,
     });
     if (done) return done;
+    if (requestGaps.length > 0) {
+      return { kind: "partial", criteria, gaps: requestGaps, execution, ...evaluators };
+    }
     return { kind: "unmet", criteria, missing: ["no criteria stated"], execution, ...evaluators };
   }
 
@@ -1876,7 +1903,7 @@ export function computeVerdict(input: VerdictInputs): CompletionVerdict {
   // The rung is not consulted: a criterion settled by a bound, fresh, passing
   // check is accepted whether or not anything failed on the parent commit,
   // and the attribution rides the outcome for the reader instead of gating it.
-  if (short.length === 0 && !stepsOpen && red.length === 0) {
+  if (short.length === 0 && !stepsOpen && red.length === 0 && requestGaps.length === 0) {
     return { kind: "met", criteria, execution, ...evaluators };
   }
 
@@ -1886,7 +1913,7 @@ export function computeVerdict(input: VerdictInputs): CompletionVerdict {
   // Not one criterion was ever assessed, and nothing else is open to declare:
   // there is nothing to name a gap AGAINST.
   const assessed = criteria.filter((c) => c.status !== "unassessed");
-  if (assessed.length === 0 && !stepsOpen && red.length === 0) {
+  if (assessed.length === 0 && !stepsOpen && red.length === 0 && requestGaps.length === 0) {
     return {
       kind: "unmet",
       criteria,
@@ -1909,6 +1936,7 @@ export function computeVerdict(input: VerdictInputs): CompletionVerdict {
   for (const command of red) {
     gaps.push({ criterion: CHECKS_GAP, why: `\`${command}\` last failed` });
   }
+  gaps.push(...requestGaps);
   return { kind: "partial", criteria, gaps, execution, ...evaluators };
 }
 
@@ -1970,7 +1998,8 @@ export function verdictLine(verdict: CompletionVerdict): string {
         : verdict.unshown.length > 0
           ? `; ${verdict.unshown.length} of ${total} criteria not shown one by one`
           : "";
-    return `[verdict] done — ${head}${before}${unshown}${oracle}`;
+    const asks = `; all ${verdict.requestAsks} ask${verdict.requestAsks === 1 ? "" : "s"} of the request found in the change`;
+    return `[verdict] done — ${head}${asks}${before}${unshown}${oracle}`;
   }
   if (verdict.kind === "met") return `[verdict] met — ${count}${attributed}${oracle}`;
   if (verdict.kind === "partial") {

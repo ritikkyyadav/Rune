@@ -328,6 +328,8 @@ export type CompletionVerdict =
       checks: string[];
       /** Criteria the run wrote for itself and did not show one by one. */
       unshown: string[];
+      /** How many asks of the person's request the request check found in the change: all of them. */
+      requestAsks: number;
       /**
        * Checks that went red only on failures already there before the run,
        * named and matched test by test (A4). Absent when every check passed.

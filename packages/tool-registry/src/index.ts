@@ -38,6 +38,7 @@ export {
   type SandboxCapability,
 } from "./sandbox-capability";
 export { createRustToolHandler } from "./tools/rust-bridge";
+export { unifiedDiff } from "./tools/unified-diff";
 export {
   DEFAULT_SHELL_LIFETIME_MS,
   isLongCommand,
