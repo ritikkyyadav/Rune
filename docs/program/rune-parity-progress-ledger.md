@@ -3122,7 +3122,7 @@ no longer on disk; its branch `codex/rune-github-redesign` is pushed, so it can 
   label does not. Left for a later card.
 - **D5, pruning the old builds,** is still the founder's call.
 
-## The reliability plan, R8: the live proof, 2026-10-21 · **twelve runs on the founder's word; on 1.4.10, no transport failure, no re-send, no harness ending, nothing run twice, no loose edit; the sleep test waits for the founder**
+## The reliability plan, R8: the live proof, 2026-10-21 · **twelve runs on the founder's word; on 1.4.10, no transport failure, no re-send, no harness ending, nothing run twice, no loose edit; a run slept nine minutes and finished, but its record calls the sleep a stall**
 
 The founder: "well then its an green light from my side i would suggest you to proceed with
 the work !! the chat gpt has quota for now !!". The Codex subscription only, `gpt-6-sol`,
@@ -3198,7 +3198,29 @@ Every run was clean: no regression, nothing out of scope, no false completion.
   runs; 667 bytes is what the test wrote in the 14 October reproduction. It very likely holds
   test entries; the real sign-ins are in the keychain. Not opened; the founder's to look at.
 
+**The sleep test** (`sleep-test.ts`: one hard task on 1.4.10, launched as the rig launches an
+arm, graded from outside), with the founder at the lid.
+
+- **The first attempt did not test a sleep, and that was my error.** It ran under
+  `caffeinate -is`; on power, `-s` keeps the system up with the lid shut. `pmset -g log`: lid
+  closed 16:46:35 into a DarkWake, the run finished 16:49:49, the Mac slept at 16:49:51. Kept as
+  `sleep-attempt1-caffeinated/`: 15 of 15, exit 0.
+- **The second ran without it.** The lid closed at 16:59:35 and the Mac slept, with a 10-second
+  maintenance wake at 17:05:35, until the lid opened at 17:08:23: 8 min 48 s asleep. **The run
+  finished: 15 of 15 hidden tests, exit 0, its check passed, 16 min 19 s in all.**
+- **What its record says.** In the 10-second wake the stream's watchdog fired, "stream stalled
+  — no data for 120s", because the sleep counted against its timer. The gateway's first retry
+  met `ECONNRESET` (no network yet), and its second waited two seconds, slept through the rest,
+  and succeeded on waking. Both are `provider.terminal` incidents; there is no
+  `provider.slept`. The loop's sleep check (R2) is asked only once the gateway's three retries
+  are spent, and here two were enough. **So the run survived the sleep, and its record calls
+  the sleep a stall and a reset.** One more dark wake and the gateway would have spent its
+  retries before the network came back; that is where R2's check takes over (12 October), and
+  it was not reached.
+- The window: five-hour 74%, weekly 12% after all fourteen runs. The founder's credential files
+  unchanged after all fourteen.
+
 **Not shown.** Every run, both builds, still ends "incomplete": A3. One run per task and build
 on the small tasks, two on the hard ones; a ±40% swing between runs of one task has been
-measured before. **The sleep test** (one long run, lid closed five minutes) needs the founder
-at the lid, and has not run.
+measured before. The gateway's retries do not ask whether the machine slept: a deferred R2.1
+item (the single retry ladder), which this run makes concrete.
