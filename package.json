@@ -19,6 +19,7 @@
     "bench": "bun --preload ./tests/scratch-home.ts tests/eval/runner.ts --real --tasks long_horizon",
     "bench:mock": "bun --preload ./tests/scratch-home.ts tests/eval/runner.ts --tasks long_horizon",
     "test:integration": "bun test tests/integration/",
+    "reliability": "bun test tests/reliability/ tests/unit/tool-registry/file-contract.test.ts tests/integration/file-contract.test.ts",
     "test:packages": "turbo test"
   },
   "devDependencies": {

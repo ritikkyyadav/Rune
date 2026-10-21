@@ -416,15 +416,29 @@ export class OpenAIProvider implements LlmProvider {
         }
       }
 
+      // A stream that ended with no finish_reason was cut — every host Rune
+      // lists sends one — and what it carried is half an answer. It used to
+      // get a synthetic end_turn, so a dropped connection ended a run
+      // "finished" with a truncated reply and exit 0 (found by the transport
+      // suite, tests/reliability/, on 15 October). It is a retryable failure
+      // now: the gateway discards the partial response and sends the request
+      // again.
+      if (pendingStop === null) {
+        throw Object.assign(
+          new Error(
+            "the response ended before the provider finished it (no finish_reason): the connection was cut",
+          ),
+          { status: 502 },
+        );
+      }
       // message_stop is emitted once the stream is fully drained so the
-      // trailing usage chunk (when present) is included; a stream that died
-      // without a finish reason still gets a synthetic end_turn.
+      // trailing usage chunk (when present) is included.
       if (contentStarted) {
         yield { type: "content_stop", contentIndex: 0 };
       }
       yield {
         type: "message_stop",
-        stopReason: pendingStop ?? "end_turn",
+        stopReason: pendingStop,
         usage: finalUsage,
       };
     } catch (err) {

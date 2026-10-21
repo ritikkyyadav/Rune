@@ -11,6 +11,39 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+### Added
+
+- **`bun run reliability`, the yardstick (R0 of the reliability plan).** `tests/reliability/`
+  drives the real `rune -P` from source against a scripted model on a loopback port, with a scratch
+  home and no credentials:
+  - **transport:** a response cut mid-stream, a stream that goes quiet, a malformed event, a 529
+    with `Retry-After`, a refused key, and the wall clock set an hour forward;
+  - **process:** SIGTERM, SIGINT and SIGKILL while the model answers, while a tool runs, while a
+    compaction summarises and while the end-of-turn check runs, plus a SIGKILL while a background
+    shell runs. A resume has to finish every one.
+
+  CI runs it on macOS and Linux, and its transport half on Windows in a job of its own.
+
+- **[`docs/errors.md`](docs/errors.md)**: what Rune says when something fails, what it does on its
+  own, what is left for you, and the test that pins each row.
+
+### Fixed
+
+- **A run killed outright no longer leaves its commands running.** The end-of-turn check, hooks,
+  background shells, a worker's check and the parent check's replays each run in a process group
+  of their own, stopped by an exit handler that a `kill -9`, a crash or a power cut never runs.
+  Killed during its end-of-turn check, a run left `npm test` running. Each now runs under a shell
+  that checks once a second that the process which started it is alive, and stops its own group
+  when it is not, as `rune-tools` already did for tool calls. `RUNE_PARENT_WATCH=off` turns it
+  off. POSIX only.
+- **A half answer is no longer kept when Rune sends a request again itself.** Once the gateway's
+  three retries were spent and the run sent the request again, no reset was sent. The failed
+  attempt's text stayed on screen and in the headless envelope, and the new answer was appended
+  to it.
+- **A stream from an OpenAI-compatible host that ends with no `finish_reason` counts as a cut.** It
+  used to get a synthetic end of turn, so a dropped connection ended a run with exit 0 and a
+  truncated reply. It is now a retryable failure.
+
 ## [1.4.8] - 2026-10-15
 
 **Ship like a product: `rune upgrade` survives a dropped connection and can roll back, and

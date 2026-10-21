@@ -43,7 +43,7 @@ function answer(text: string) {
  * A gateway whose first `failures` calls fail — thrown, or as a retryable
  * error event — and whose later calls answer. Records when each call began.
  */
-function gateway(failures: number, how: "throw" | "event" = "throw") {
+function gateway(failures: number, how: "throw" | "event" = "throw", partial = "") {
   const gw = {
     calls: 0,
     startedAt: [] as number[],
@@ -51,6 +51,13 @@ function gateway(failures: number, how: "throw" | "event" = "throw") {
       gw.calls++;
       gw.startedAt.push(Date.now());
       if (gw.calls <= failures) {
+        if (partial) {
+          yield {
+            type: "content_delta",
+            contentIndex: 0,
+            delta: { type: "text_delta", text: partial },
+          };
+        }
         if (how === "throw") throw new Error("Unable to connect. Is the computer online?");
         yield { type: "error", error: "socket connection was closed", retryable: true };
         return;
@@ -125,6 +132,18 @@ describe("a call the machine slept through", () => {
     expect(events.some((e) => e.type === "error")).toBe(false);
     expect(ending(events).stopReason).toBe("end_turn");
   });
+
+  for (const how of ["throw", "event"] as const) {
+    test(`what the call showed before it died is taken back (${how})`, async () => {
+      const gw = gateway(1, how, "HALF-ANSWER-");
+      const events = await collect(loop(gw, probe(10 * MIN)).run("hello", "s1", "/tmp"));
+      const shown = events.reduce(
+        (acc, e) => (e.type === "text_delta" ? acc + e.text : e.type === "stream_reset" ? "" : acc),
+        "",
+      );
+      expect(shown).toBe("Here is the answer.");
+    });
+  }
 
   test("the same for a failure the stream reports instead of throwing", async () => {
     const gw = gateway(1, "event");

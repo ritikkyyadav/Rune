@@ -192,6 +192,16 @@ jobs:
         # restarted. It spends nothing — the child's environment is BUILT, not
         # inherited, so no credential ever reaches it — and it needs no network.
         run: bun test tests/integration/
+      - name: Reliability suites (the real process, faults at the wire and signals)
+        # R0 of docs/program/rune-reliability-plan-20261014.md: `rune -P` from
+        # source against a scripted loopback model that cuts, stalls, sends a
+        # malformed event, answers 529 or refuses the key, a clock that jumps,
+        # and SIGTERM/SIGINT/SIGKILL at four points followed by a resume. The
+        # contract suite runs above, in the unit and integration steps.
+        env:
+          RUNE_TOOLS_BIN: ${{ github.workspace }}/target/release/rune-tools
+          RUNE_TOOLS_BINARY: ${{ github.workspace }}/target/release/rune-tools
+        run: bun test tests/reliability/
 
   # ── Stage 4b: Windows unit suite + the Windows installer's only compiler ──
   # Until P10.2 this job typechecked and stopped, because the unit suite carried
@@ -259,6 +269,29 @@ jobs:
           ./scripts/install.ps1 -Uninstall -InstallDir "$env:RUNNER_TEMP/rune-bin"
 
   # ── Stage 4c: Packaged-binary E2E — the artifact users actually download ──
+  # ── Stage 4c: the reliability suites on Windows ──
+  # The transport suite drives a real `rune -P` and needs the native tools
+  # binary, which ts-windows does not build. The process suite skips itself
+  # here: Windows has no SIGTERM or SIGINT to send a process.
+  reliability-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: Swatinem/rust-cache@v2
+      - name: Install
+        run: bun install --frozen-lockfile
+      - name: Build rune-tools (release)
+        run: cargo build --release -p rune-tools
+      - name: Reliability suites
+        env:
+          RUNE_TOOLS_BIN: ${{ github.workspace }}\target\release\rune-tools.exe
+          RUNE_TOOLS_BINARY: ${{ github.workspace }}\target\release\rune-tools.exe
+        run: bun test tests/reliability/ --timeout 300000
+
   packaged-e2e:
     strategy:
       fail-fast: false

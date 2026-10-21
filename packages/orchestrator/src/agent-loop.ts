@@ -3422,6 +3422,12 @@ export class AgentLoop {
       const contentBlocks: ContentBlock[] = [];
       let stopReason = "end_turn";
       let streamErrored = false;
+      // Whether this attempt has put text or a tool call in front of the
+      // person. An attempt the loop gives up on and sends again must take it
+      // back with a `stream_reset`, as the gateway does before its own
+      // retries; without one the half answer stayed, and the re-sent answer
+      // was appended to it (the transport suite, 19 October).
+      let shownThisAttempt = false;
       // The model that actually served this request. A mid-request gateway
       // fallback swaps providers/models under us; usage must be recorded
       // against the model that produced it, or the context engine tracks the
@@ -3485,7 +3491,11 @@ export class AgentLoop {
           else if (!GATEWAY_OWN_EVENTS.has(event.type)) answered();
           if (event.type === "fallback") activeRequestModel = event.to.model;
           const result = this.processStreamEvent(event, contentBlocks, pendingToolCalls);
-          if (result.event) yield result.event;
+          if (result.event) {
+            yield result.event;
+            if (result.event.type === "stream_reset") shownThisAttempt = false;
+            else if (result.event.type !== "notice") shownThisAttempt = true;
+          }
           if (result.reset) {
             // Everything accumulated for this assistant message was discarded;
             // the gateway is re-streaming it from scratch.
@@ -3841,6 +3851,7 @@ export class AgentLoop {
           );
           yield { type: "notice", message: sleptNotice(slept) };
           await untilAwake(suspendProbe, signal);
+          if (shownThisAttempt) yield { type: "stream_reset" };
           continue;
         }
         unanswered();
@@ -3867,6 +3878,7 @@ export class AgentLoop {
           );
           return;
         }
+        if (shownThisAttempt) yield { type: "stream_reset" };
         continue;
       } finally {
         // Every way out of the call: the timer and the listener go with it.
@@ -3884,6 +3896,7 @@ export class AgentLoop {
       // silently completing as end_turn with no tool calls. Bounded by
       // maxConsecutiveErrors (checked above) and maxTurns.
       if (streamErrored) {
+        if (shownThisAttempt) yield { type: "stream_reset" };
         continue;
       }
 

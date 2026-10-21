@@ -26,7 +26,7 @@
 import { join } from "node:path";
 import { createLogger } from "@rune/shared";
 const hookLog = createLogger("hooks");
-import { workspaceConfigPath } from "@rune/shared";
+import { watchedArgv, workspaceConfigPath } from "@rune/shared";
 
 // ─── Types ───
 
@@ -383,7 +383,8 @@ export class HookRunner {
 
     let proc: ReturnType<typeof Bun.spawn>;
     try {
-      proc = Bun.spawn(["/bin/sh", "-c", hook.command], {
+      // Watched: a run killed outright takes its hook with it (`watchedArgv`).
+      proc = Bun.spawn(watchedArgv(["/bin/sh", "-c", hook.command]), {
         cwd: this.workspaceRoot,
         // Inherit the parent env, then layer the hook-specific vars on top.
         env: { ...process.env, ...extraEnv },

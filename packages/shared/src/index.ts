@@ -235,6 +235,7 @@ export {
 export { type UiLayout, DEFAULT_UI_LAYOUT, parseUiLayout, resolveUiLayout } from "./ui-layout.js";
 export { type UiFinish, DEFAULT_UI_FINISH, parseUiFinish, resolveUiFinish } from "./ui-finish.js";
 export { CALLSIGN_MAX, cleanCallsign, getCallsign, setCallsign } from "./ui-callsign.js";
+export { WATCHED_ARGV0, watchedArgv } from "./parent-watch.js";
 export * from "./session.js";
 export {
   type RunState,

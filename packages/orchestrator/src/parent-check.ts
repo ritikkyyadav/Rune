@@ -22,6 +22,7 @@
 // comes back INCONCLUSIVE, and inconclusive never yields `verified`.
 
 import { spawn, spawnSync } from "node:child_process";
+import { watchedArgv } from "@rune/shared";
 import { createHash } from "node:crypto";
 import {
   copyFileSync,
@@ -515,7 +516,9 @@ function runWitness(
     let output = "";
     let timedOut = false;
     let aborted = false;
-    const child = spawn(argv[0]!, argv.slice(1), {
+    // Watched: a run killed outright takes the replay with it (`watchedArgv`).
+    const [program, ...args] = watchedArgv(argv);
+    const child = spawn(program!, args, {
       cwd,
       env,
       detached: true,

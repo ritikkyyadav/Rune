@@ -299,9 +299,12 @@ describe("a check the verifier starts", () => {
     // the tree the run started from (which no unit test here reaches).
     expect(calls).toHaveLength(3);
     for (const call of calls) expect(call).toContain("this.checkEnv(");
-    // And there is no other way in: the spawn takes what it is given.
+    // And there is no other way in: the spawn takes what it is given. (It
+    // runs under the parent watch, which adds nothing to the environment.)
     expect(source).not.toMatch(/env:\s*\{\s*\.\.\.process\.env,\s*\.\.\.extraEnv/);
-    expect(source).toMatch(/Bun\.spawn\(\["bash", "-c", command\], \{[\s\S]{0,400}?\n {4}env,\n/);
+    expect(source).toMatch(
+      /Bun\.spawn\(watchedArgv\(\["bash", "-c", command\]\), \{[\s\S]{0,400}?\n {4}env,\n/,
+    );
   });
 });
 

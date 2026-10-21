@@ -51,6 +51,7 @@ import {
   materialiseBaseline,
   type TaskBaseline,
 } from "./baseline";
+import { watchedArgv } from "@rune/shared";
 import { envFingerprint } from "./brief";
 import { checkEnvironment } from "./check-env";
 import {
@@ -1035,7 +1036,8 @@ async function runCommand(
   env: Record<string, string | undefined>,
 ): Promise<{ exitCode: number; output: string; timedOut: boolean; durationMs: number }> {
   const started = Date.now();
-  const proc = Bun.spawn(["bash", "-c", command], {
+  // Watched: a run killed outright takes its check with it (`watchedArgv`).
+  const proc = Bun.spawn(watchedArgv(["bash", "-c", command]), {
     cwd,
     // A verifier has no interactive user. Inheriting a terminal lets test
     // runners or subprocesses wait for input until the entire check expires.

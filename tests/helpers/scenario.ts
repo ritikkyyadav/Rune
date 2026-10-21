@@ -32,7 +32,8 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
+import { delimiter, dirname, join } from "node:path";
 
 import { Database } from "bun:sqlite";
 
@@ -361,11 +362,31 @@ export const CREDENTIAL_VARS = [
  * are rather than from the developer's whole shell environment.
  */
 function curatedPath(): string {
-  const needed = ["bun", "node", "git"]
-    .map((exe) => spawnSync("which", [exe], { encoding: "utf8" }).stdout.trim())
+  const needed = ["bun", "node", "git", "npm"]
+    .map((exe) => Bun.which(exe) ?? "")
     .filter(Boolean)
     .map((p) => dirname(p));
-  return [...new Set([...needed, "/usr/bin", "/bin", "/usr/sbin", "/sbin"])].join(":");
+  const system =
+    process.platform === "win32"
+      ? [join(process.env.SystemRoot ?? "C:\\Windows", "System32")]
+      : ["/usr/bin", "/bin", "/usr/sbin", "/sbin"];
+  return [...new Set([...needed, ...system])].join(delimiter);
+}
+
+/**
+ * What a Windows child cannot start without: no `SystemRoot` and it cannot
+ * open a socket; no `PATHEXT` and `npm` is not found; no `TEMP` and it has no
+ * temporary folder. `USERPROFILE` is Windows' home, so it is the scratch one.
+ * None carries a secret.
+ */
+function windowsBasics(home: ScratchHome): Record<string, string> {
+  if (process.platform !== "win32") return {};
+  const out: Record<string, string> = { USERPROFILE: home.osHome };
+  for (const name of ["SystemRoot", "windir", "ComSpec", "PATHEXT", "SystemDrive", "TEMP", "TMP"]) {
+    const value = process.env[name];
+    if (value) out[name] = value;
+  }
+  return out;
 }
 
 /**
@@ -386,7 +407,7 @@ export function curatedEnv(
   const env: Record<string, string> = {
     PATH: curatedPath(),
     HOME: home.osHome,
-    TMPDIR: process.env.TMPDIR ?? "/tmp",
+    TMPDIR: process.env.TMPDIR ?? tmpdir(),
     LANG: "en_US.UTF-8",
     TERM: "dumb",
     NO_COLOR: "1",
@@ -406,6 +427,7 @@ export function curatedEnv(
     // reason. `tests/integration/*-sandbox.test.ts` is where containment is graded.
     RUNE_SANDBOX_MODE: "off",
     RUNE_ROUNDTRIP_TIMEOUT_MS: "120000",
+    ...windowsBasics(home),
     ...extra,
   };
   return env;
@@ -439,6 +461,11 @@ export interface RunOptions {
   /** Extra CLI arguments. Never a provider or a model — see the class comment. */
   args?: string[];
   env?: Record<string, string>;
+  /**
+   * Modules `bun --preload` loads into the child before the CLI: a fault
+   * injected inside the process, such as a clock that jumps. Source runs only.
+   */
+  preload?: string[];
   /**
    * Run a COMPILED binary instead of `bun rune-cli.ts` — the installed
    * `~/.rune/bin/rune`, say. Defaults to `RUNE_SCENARIO_CLI`, then to source.
@@ -695,7 +722,11 @@ export function spawnRun(opts: RunOptions): Run {
   // the same scratch home whose only route is the loopback mock, and
   // `assertNoLiveCredentials` before the process starts.
   const cli = resolveScenarioCli(opts.cli);
-  const argv = cli ? [cli, ...args] : ["bun", RUNE_CLI, ...args];
+  const preload = (opts.preload ?? []).flatMap((p) => ["--preload", p]);
+  if (cli && preload.length > 0) {
+    throw new Error("RunOptions.preload works on the source CLI only, not a compiled binary");
+  }
+  const argv = cli ? [cli, ...args] : ["bun", ...preload, RUNE_CLI, ...args];
   const proc = Bun.spawn(argv, {
     cwd: opts.fixture.root,
     env,
