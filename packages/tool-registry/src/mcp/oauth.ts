@@ -454,6 +454,7 @@ export class McpOAuth {
     const loop = await startLoopback(opts.signal, {
       port: this.callbackPort,
       providerLabel: this.serverName,
+      deferSuccess: true,
     });
     try {
       let clientId = this.configuredClientId ?? (await this.load())?.clientId;
@@ -488,8 +489,11 @@ export class McpOAuth {
       const resourceId = resource?.resource ?? this.serverUrl;
       authorizeUrl.searchParams.set("resource", resourceId);
 
-      await opts.openAuthorizationUrl(authorizeUrl.toString());
-      const captured = await loop.waitForCode;
+      const opening = opts.openAuthorizationUrl(authorizeUrl.toString());
+      const captured = await Promise.race([
+        loop.waitForCode,
+        Promise.resolve(opening).then(() => loop.waitForCode),
+      ]);
       if (captured.state && captured.state !== state) {
         throw new McpAuthRequiredError(this.serverName, "authorization state mismatch");
       }
@@ -512,6 +516,7 @@ export class McpOAuth {
         scope: scope || undefined,
       });
       await this.save(tokens);
+      loop.complete();
       this.logger.info(`connected "${this.serverName}" via OAuth`);
       return tokens;
     } finally {

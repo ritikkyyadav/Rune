@@ -35,7 +35,9 @@ makes and for the same reasons:
 import json
 import os
 import re
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -49,9 +51,10 @@ from vtcolor import ColorScreen, ColorStream, html as to_html  # noqa: E402
 
 CR = rig.CR
 
-# The terminal this frame is photographed in: a dark ground and a soft ink.
-GROUND = (0x0E, 0x10, 0x16)
-INK = (0xD6, 0xDA, 0xE3)
+# White terminal, Rune Light / Matte. These are the resolved light/matte
+# terminal tokens from packages/shared/src/design-tokens.ts.
+GROUND = (0xFF, 0xFF, 0xFF)
+INK = (0x2E, 0x2E, 0x2E)
 GROUND_HEX = "#%02x%02x%02x" % GROUND
 INK_HEX = "#%02x%02x%02x" % INK
 
@@ -288,6 +291,7 @@ def scratch_project(port):
     with open(os.path.join(rig.PROFILE, "config.toml"), "w") as fh:
         fh.write(
             "[update]\ncheck = false\n\n"
+            '[ui]\ntheme = "rune-light"\nfinish = "matte"\n\n'
             '[llm]\ndefaultProvider = "ollama"\n\n'
             "[llm.ollama]\n"
             'baseUrl = "http://127.0.0.1:%d"\n'
@@ -312,16 +316,17 @@ def scratch_project(port):
 
 
 def colour_session(rows, cols):
-    # The terminal's own colours, declared rather than probed: a pty answers no
-    # OSC 11 query, and without an answer the product assumes a light terminal
-    # and paints its light palette -- which is not what the founder's terminal
-    # (or this picture) is. GROUND/INK are the exact colours `vtcolor.html`
-    # paints the page in, so the frame and its picture agree.
+    # Pin both axes: inherited host preferences must not turn a public capture
+    # dark or crisp. GROUND/INK agree with the terminal and HTML wrapper.
     s = rig.Session(
         rows=rows,
         cols=cols,
         COLORTERM="truecolor",
+        NO_COLOR="",
+        FORCE_COLOR="3",
         HOME=os.path.realpath(rig.SCRATCH),
+        RUNE_THEME="rune-light",
+        RUNE_FINISH="matte",
         RUNE_TERMINAL_BACKGROUND=GROUND_HEX,
         RUNE_TERMINAL_FOREGROUND=INK_HEX,
     )
@@ -334,6 +339,7 @@ def colour_session(rows, cols):
 def save(s, outdir, name, title):
     s.snapshot(outdir, name)
     page = to_html(s.screen, ground=GROUND, foreground=INK, title=title)
+    assert '<span style="' in page, "capture must retain the actual renderer's colors"
     Path(outdir, name + ".html").write_text(page)
     print("  html  -> %s" % Path(outdir, name + ".html"))
 
@@ -359,14 +365,19 @@ def run(outdir, rows, cols, tag, title):
                     wanted.remove(w)
                     marks.append(("%s-during-%s" % (tag, w), s.screen.text()))
                     save(s, outdir, "%s-during-%s" % (tag, w), title)
-            if "0.3.2" in screen and "--version" in screen:
+            if "both tests pass" in screen and re.search(r"\bdone\b", screen):
                 break
+        else:
+            save(s, outdir, "%s-incomplete" % tag, title)
+            raise AssertionError("the scripted task did not complete:\n" + s.screen.text())
         s.pump(2.0)
         save(s, outdir, "%s-final" % tag, title)
         # And once more after the turn has fully settled: the same run with the
         # closing verdict on it rather than the pulse.
         s.pump(12.0)
         save(s, outdir, "%s-settled" % tag, title)
+        version = json.loads(Path(rig.REPO, "packages/orchestrator/package.json").read_text())["version"]
+        assert "v" + version in s.screen.text(), "capture must show the current product version"
     finally:
         s.close()
     return marks
@@ -376,15 +387,29 @@ def main(outdir):
     os.makedirs(outdir, exist_ok=True)
     mock = MockOllama()
     try:
-        scratch_project(mock.port)
-        run(outdir, 40, 120, "hero-120x40", "rune — ~/code/lantern")
-        run(outdir, 24, 80, "hero-80x24", "rune — ~/code/lantern")
-        edited = Path(rig.WORK, "src", "cli.js").read_text()
-        wrote = Path(rig.WORK, "test", "cli.test.js")
-        print("\n--- what actually happened on disk ---")
-        print("  src/cli.js contains --version:", "--version" in edited)
-        print("  test/cli.test.js written:     ", wrote.exists())
-        print("  model requests served:        ", len(mock.requests))
+        with tempfile.TemporaryDirectory(prefix="rune-readme-") as scratch:
+            rig.SCRATCH = scratch
+            rig.PROFILE = os.path.join(scratch, "profile")
+            for rows, cols in ((32, 120), (22, 80)):
+                # Each size gets a fresh task, so the second run cannot inherit
+                # the first run's edits and fail its scripted replacements.
+                scratch_project(mock.port)
+                tag = "hero-%dx%d" % (cols, rows)
+                run(outdir, rows, cols, tag, "Rune — ~/code/lantern")
+                edited = Path(rig.WORK, "src", "cli.js").read_text()
+                assert "--version" in edited
+                assert Path(rig.WORK, "test", "cli.test.js").is_file()
+                check = subprocess.run(
+                    ["node", "--test", "test/cli.test.js"],
+                    cwd=rig.WORK, env=rig.child_env(), capture_output=True, text=True, check=True,
+                )
+                flag = subprocess.run(
+                    ["node", "src/cli.js", "--version"],
+                    cwd=rig.WORK, env=rig.child_env(), capture_output=True, text=True, check=True,
+                )
+                assert flag.stdout.strip() == "0.3.2"
+                Path(outdir, tag + "-checks.txt").write_text(check.stdout + flag.stdout)
+            print("  both fixture runs verified; model requests served:", len(mock.requests))
     finally:
         mock.stop()
 
