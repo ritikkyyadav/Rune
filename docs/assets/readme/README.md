@@ -1,7 +1,7 @@
 # README terminal captures
 
-These frames show Rune **v1.4.7**, captured from the release source at `f2e40a7` on
-2026-10-16. They use a white terminal, `rune-light`, and the `matte` finish at 120×32
+These frames show Rune **v1.4.11**, captured from release candidate source at `205ed7e` on
+2026-10-21. They use a white terminal, `rune-light`, and the `matte` finish at 120×32
 and 80×22. Both sizes are independent runs against fresh copies of the same fixture.
 
 The CLI, file changes, native tools, diffs, shell commands, and checks are real. The model is a

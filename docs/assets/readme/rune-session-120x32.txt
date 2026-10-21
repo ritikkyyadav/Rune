@@ -3,7 +3,7 @@
 # ------------------------------------------------------------
 #0.........1.........2.........3.........4.........5.........6.........7.........8.........9.........0.........1.........
  1|
- 2|  R U N E   ~/code/lantern                                                                                       v1.4.7
+ 2|  R U N E   ~/code/lantern                                                                                      v1.4.11
  3|  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  4|  ◇ package.json carries the version, so the flag reads it from there.
  5|  ┌ edit  src/cli.js ───────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -17,13 +17,13 @@
 13|
 14|  ◇ Running the suite and the flag itself.
 15|  ┌ run   node --test test/cli.test.js && node src/cli.js --version ────────────────────────────────────────────────┐
-16|  │ ✔ --version sets the version flag (0.512083ms)                                                                  │
-17|  │ ✔ a command without --version is unaffected (0.070084ms)                                                        │
+16|  │ ✔ --version sets the version flag (0.594625ms)                                                                  │
+17|  │ ✔ a command without --version is unaffected (0.078875ms)                                                        │
 18|  │ ℹ tests 2                                                                                                       │
 19|  │ ℹ suites 0                                                                                                      │
 20|  │ … 6 more lines                                                                                                  │
 21|  │ 0.3.2                                                                                                           │
-22|  └ ✓ exit 0 · 234ms ───────────────────────────────────────────────────────────────────────────────────────────────┘
+22|  └ ✓ exit 0 · 238ms ───────────────────────────────────────────────────────────────────────────────────────────────┘
 23|
 24|  ◇ --version and -v now print the version from package.json, and two tests cover the parser. Both tests pass and the
 25|    flag prints 0.3.2.

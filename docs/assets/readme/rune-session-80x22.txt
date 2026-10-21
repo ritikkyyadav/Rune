@@ -3,17 +3,17 @@
 # ------------------------------------------------------------
 #0.........1.........2.........3.........4.........5.........6.........7.........
  1|
- 2|  R U N E   ~/code/lantern                                               v1.4.7
+ 2|  R U N E   ~/code/lantern                                              v1.4.11
  3|  ─────────────────────────────────────────────────────────────────────────────
  4|  ◇ Running the suite and the flag itself.
  5|  ┌ run   node --test test/cli.test.js && node src/cli.js --version ────────┐
- 6|  │ ✔ --version sets the version flag (0.500458ms)                          │
- 7|  │ ✔ a command without --version is unaffected (0.0505ms)                  │
+ 6|  │ ✔ --version sets the version flag (0.578458ms)                          │
+ 7|  │ ✔ a command without --version is unaffected (0.057541ms)                │
  8|  │ ℹ tests 2                                                               │
  9|  │ ℹ suites 0                                                              │
 10|  │ … 6 more lines                                                          │
 11|  │ 0.3.2                                                                   │
-12|  └ ✓ exit 0 · 231ms ───────────────────────────────────────────────────────┘
+12|  └ ✓ exit 0 · 223ms ───────────────────────────────────────────────────────┘
 13|
 14|  ◇ --version and -v now print the version from package.json, and two tests
 15|    cover the parser. Both tests pass and the flag prints 0.3.2.

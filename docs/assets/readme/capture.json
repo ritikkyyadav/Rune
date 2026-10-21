@@ -1,9 +1,9 @@
 {
-  "captured_on": "2026-10-16",
+  "captured_on": "2026-10-21",
   "product": "Rune",
-  "product_version": "1.4.7",
-  "source_commit": "f2e40a72570c6a73b479fd55849e0972022216cd",
-  "source": "latest public release source; runtime files unchanged",
+  "product_version": "1.4.11",
+  "source_commit": "205ed7e2920b95da19c1ecab33a14d3ca063081c",
+  "source": "release candidate based on v1.4.10, including the presentation and OAuth completion changes",
   "model": {
     "provider": "Ollama-compatible local scripted server",
     "host": "127.0.0.1",
@@ -30,9 +30,9 @@
       },
       "fixture_version_stdout": "0.3.2",
       "files": {
-        "rune-session-120x32.html": "4c3557729e45f502e65c37f4734144604f19fb7781898fefc225c71c5c235233",
-        "rune-session-120x32.txt": "40ecb37ba525b89ebbaa7acb05e17cebf00a5ba1de6a0d7528b445f62dc6d0f9",
-        "rune-session-120x32.jpg": "b848f84803589a39422ccb47f184077e119e5ecc1cdb4d8be32b6fd05ad45ed2"
+        "rune-session-120x32.html": "ec26e370f8ce5af7ab35494a65776b8e59ecc0eb7c60036ef028fbeb2bb637e1",
+        "rune-session-120x32.txt": "5c0fd765b80d5325b7bc06190ba9a13c04cf7ec6a779a9a7336269bedc6d05b7",
+        "rune-session-120x32.jpg": "0cf4135854ae638dae76e2fef4bb6516fad75231e94977638076f602d18b9d82"
       }
     },
     {
@@ -46,9 +46,9 @@
       },
       "fixture_version_stdout": "0.3.2",
       "files": {
-        "rune-session-80x22.html": "c28fd5015a86c4ecc46113e02f4da4a6ee8b56a4c976a93729c9bf94662d3df8",
-        "rune-session-80x22.txt": "36ca2d8461abeefe1d377a7d77f5ac9a60293477cb1e522e133ad86134744b6e",
-        "rune-session-80x22.jpg": "60d14f46bf18b9c914f920d2667c927c5cf344f909e8fe915ecddc2cf2fd1d3c"
+        "rune-session-80x22.html": "348ac5593b380c05093f63d768e91043d5db9b5340f0f8c8a85a3c805ce034e8",
+        "rune-session-80x22.txt": "8ca2b7ebb351b164096f0477a22c47248daa0c4d54d3bd3d978382a121a039d2",
+        "rune-session-80x22.jpg": "ec1840546803b31f504086fc41f7d18667f001c8c535ce9ad2febeecc16f6c0b"
       }
     }
   ]
