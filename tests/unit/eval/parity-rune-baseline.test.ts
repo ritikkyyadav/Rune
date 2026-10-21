@@ -61,3 +61,11 @@ describe("rune against rune-baseline", () => {
     expect(jobs.map((job) => job.order[0])).toEqual(["rune", "rune-baseline"]);
   });
 });
+
+describe("the budget watches both Rune arms", () => {
+  test("rune-baseline reports the meter, so a series of two Rune builds needs no --bounded", async () => {
+    const { METERED_ARMS } = await import("../../../tests/eval/parity/series-budget");
+    expect(METERED_ARMS.has("rune")).toBe(true);
+    expect(METERED_ARMS.has("rune-baseline")).toBe(true);
+  });
+});

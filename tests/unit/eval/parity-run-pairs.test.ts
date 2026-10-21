@@ -452,7 +452,7 @@ describe("what a series may use: the budget, checked before every run", () => {
       "its window was not read before the series",
     ]);
     expect(unwatched(budgetOf(), "codex")).toHaveLength(3);
-    expect([...METERED_ARMS]).toEqual(["rune"]);
+    expect([...METERED_ARMS]).toEqual(["rune", "rune-baseline"]);
   });
 
   test("limits that are not limits, and a plan larger than its own limit", () => {

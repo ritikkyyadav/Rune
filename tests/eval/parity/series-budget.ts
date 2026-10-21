@@ -62,7 +62,10 @@ export interface SeriesBudget {
  * Rune alone, and only when its provider sends a meter (rune.ts); no
  * comparator reports one.
  */
-export const METERED_ARMS: ReadonlySet<ParityArm> = new Set<ParityArm>(["rune"]);
+// Both Rune arms record the provider's meter on their own rows: a
+// `rune-baseline` build carries the gateway change that put it there (fae16ab,
+// 30 September) from v1.3.2 on.
+export const METERED_ARMS: ReadonlySet<ParityArm> = new Set<ParityArm>(["rune", "rune-baseline"]);
 
 /** What the gates know when a run is about to start. */
 export interface BudgetState {
