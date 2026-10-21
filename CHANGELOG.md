@@ -11,6 +11,23 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+### Fixed
+
+- **A background shell started outside the sandbox no longer inherits Rune's whole
+  environment.** Every foreground command gets a short list from `rune-tools` (`PATH`, `HOME`,
+  `TMPDIR`, `USER`, `LANG`, `TERM`, `SHELL`), sandboxed or not, and so did a contained background
+  shell. One started with `unsandboxed: true`, with the sandbox off, or for an excluded command
+  got everything: the provider keys the launcher loads from `~/.rune/.env`, and the variables
+  naming the session's database and the person's saved sign-ins. A project whose tests write to
+  the credential store those variables name would write into the real one. It now gets the
+  foreground's list, pinned to the Rust one by a test. Found before the reliability plan's live
+  runs, which point those variables at the founder's own files.
+
+### Added
+
+- **`rune-baseline`, a second Rune arm for the parity runner**, so one series can pair two Rune
+  builds: the same launch, the same shipped defaults, each from its own `--<arm>-bin`.
+
 ## [1.4.9] - 2026-10-21
 
 **The yardstick: a suite drives the real `rune -P` through faults at the wire and signals at
