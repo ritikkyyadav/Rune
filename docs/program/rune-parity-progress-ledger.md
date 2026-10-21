@@ -3121,3 +3121,84 @@ no longer on disk; its branch `codex/rune-github-redesign` is pushed, so it can 
 - **A retired model ends a run `provider_lost`.** Its message names the cause and the fix; the
   label does not. Left for a later card.
 - **D5, pruning the old builds,** is still the founder's call.
+
+## The reliability plan, R8: the live proof, 2026-10-21 · **twelve runs on the founder's word; on 1.4.10, no transport failure, no re-send, no harness ending, nothing run twice, no loose edit; the sleep test waits for the founder**
+
+The founder: "well then its an green light from my side i would suggest you to proceed with
+the work !! the chat gpt has quota for now !!". The Codex subscription only, `gpt-6-sol`,
+product mode, each build on its shipped defaults, `RUNE_EVAL_QUOTA_PCT=85`, the five-hour
+window read at 0% (and the weekly at 0%) by one probe request before the first run. Evidence
+machine-local under `~/rune-evidence/r8-20261021/`; the measures are read from each run's own
+stream and incident log by `r8-metrics.py` there.
+
+**What changed from the approved plan, and why.**
+
+- **There is no v1.4.1.** The line went from v1.3.4 (8 October) to v1.4.2, so the build before
+  the plan is v1.3.4. The proposal named v1.4.1; that was my error.
+- **The hard tasks were not run on v1.3.4.** Its end-of-turn check hands the project the
+  session's credential paths, and these tasks are copies of Rune's own repository, whose tests
+  write to the store those paths name: on 14 October that wrote into a scratch copy of the
+  founder's `credentials.json`. Their "before" is the recorded 1.3.3 runs of 7 October, the same
+  tasks and model; 1.4.10 ran twice on each.
+- **A credential leak was found and shipped as v1.4.10 before any live run.** A background shell
+  started outside the sandbox inherited Rune's whole environment, provider keys and sign-in
+  paths included. The founder's record has 266 background shells since July, five of them
+  asked to run outside the sandbox.
+- **The rig gained `rune-baseline`,** a second Rune arm, and counts it as metered.
+
+**The runs.**
+
+| Task                     | Build  | Hidden | Exit |  Wall | Calls | List cost | End-of-turn check  | Ended      |
+| ------------------------ | ------ | -----: | ---: | ----: | ----: | --------: | ------------------ | ---------- |
+| note-field-and-exporter  | 1.4.10 |    3/3 |    0 |  43 s |     7 |     $0.07 | passed             | incomplete |
+|                          | 1.3.4  |    3/3 |    0 |  39 s |     6 |     $0.06 | passed             | incomplete |
+| three-module-dependent   | 1.3.4  |    3/3 |    1 | 410 s |    16 |     $0.13 | passed             | incomplete |
+|                          | 1.4.10 |    3/3 |    0 |  95 s |    16 |     $0.12 | passed             | incomplete |
+| working-tree-integration | 1.4.10 |    3/3 |    0 |  40 s |     4 |     $0.05 | passed             | incomplete |
+|                          | 1.3.4  |    3/3 |    0 |  47 s |     9 |     $0.11 | passed             | incomplete |
+| model-catalog-cache      | 1.4.10 |  17/17 |    0 | 314 s |    13 |     $0.24 | passed             | incomplete |
+|                          | 1.4.10 |  17/17 |    0 | 200 s |    10 |     $0.18 | failed, not blamed | incomplete |
+| header-version-session   | 1.4.10 |    4/4 |    0 | 690 s |    58 |     $1.65 | passed             | incomplete |
+|                          | 1.4.10 |    4/4 |    0 | 743 s |    76 |     $2.14 | passed             | incomplete |
+| startup-selection        | 1.4.10 |  14/15 |    0 | 492 s |    29 |     $0.68 | passed             | incomplete |
+|                          | 1.4.10 |  15/15 |    0 | 534 s |    40 |     $1.03 | passed             | incomplete |
+
+Every run was clean: no regression, nothing out of scope, no false completion.
+
+**The plan's measures.**
+
+| Measure                                         | 1.4.10, 9 runs | 1.3.4, 3 runs |
+| ----------------------------------------------- | -------------: | ------------: |
+| Transport failures (each backed by an incident) |              0 |    1 (backed) |
+| Re-sends per call                               |              0 | 1 in 31 calls |
+| Runs the harness ended                          |              0 |             0 |
+| Tool calls executed twice                       |              0 |             0 |
+| Edits matched loosely                           |              0 |             0 |
+| Exit code agrees with the hidden tests          |         8 of 9 |        2 of 3 |
+
+- **The 1.3.4 transport failure:** a Codex stream silent for 300 s, then retried. Five of that
+  run's seven minutes. 1.4.10 met no stall in nine runs; one run each is not a fix shown.
+- **The exit codes.** 1.3.4 exited 1 on a run whose hidden tests all passed, because its
+  verdict was `unmet`. The one 1.4.10 disagreement is exit 0 with 14 of 15: since R4 the exit
+  code says how the run ended and the verdict, `partial` here, says whether the work is done;
+  `--strict-verdict` keeps the old meaning. Neither build claimed `met`.
+- **The checks finish now.** On 7 October the checks on these hard tasks were cut at 120 s with
+  nothing measured. Here eleven of twelve ran to the end and passed. The twelfth failed on a test
+  that needs a built web app the fresh tree does not have; it was not blamed on the work.
+- **Against 7 October (1.3.3):** `model-catalog-cache` 449 s, 23 calls, $0.45 then; 314 s and
+  200 s, 13 and 10 calls, $0.24 and $0.18 now. `startup-selection` 422 s, 27 calls, $0.66 then;
+  492 s and 534 s, 29 and 40 calls, $0.68 and $1.03 now. `header-version-session` 511 s, 39
+  calls, $1.03 then; 690 s and 743 s, 58 and 76 calls, $1.65 and $2.14 now: 33 reads and 19
+  searches in one run, and the incident log's "struggle" notes. That is the model's exploring,
+  not the transport or the harness.
+- **The window:** five-hour 0% before, 63% after the twelve runs.
+- **The founder's credential files** (`~/.rune/credentials.json`, its index, `secrets.json`,
+  `.env`): size and modification time unchanged across all twelve runs. Read as metadata only.
+  `credentials.json` is 667 bytes, last written 8 October 19:23, during that evening's recorded
+  runs; 667 bytes is what the test wrote in the 14 October reproduction. It very likely holds
+  test entries; the real sign-ins are in the keychain. Not opened; the founder's to look at.
+
+**Not shown.** Every run, both builds, still ends "incomplete": A3. One run per task and build
+on the small tasks, two on the hard ones; a ±40% swing between runs of one task has been
+measured before. **The sleep test** (one long run, lid closed five minutes) needs the founder
+at the lid, and has not run.
