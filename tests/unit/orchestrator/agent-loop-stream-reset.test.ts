@@ -116,6 +116,73 @@ describe("AgentLoop — stream_reset discards the partial message", () => {
   });
 });
 
+describe("AgentLoop — an attempt the loop sends again takes back what it showed", () => {
+  // The gateway resets before its own retries. Once those are spent the loop
+  // sends the request again itself, and found by the transport suite on 19
+  // October, it sent no reset: the half answer stayed on the screen and in
+  // the headless envelope, and the re-sent answer was appended to it.
+  /** What a consumer is left holding: text, cleared on every reset. */
+  const shown = (events: AgentTurnEvent[]) =>
+    events.reduce(
+      (acc, e) => (e.type === "text_delta" ? acc + e.text : e.type === "stream_reset" ? "" : acc),
+      "",
+    );
+
+  test("a stream that fails after some text", async () => {
+    let call = 0;
+    const gateway = {
+      inferStream: async function* () {
+        call++;
+        if (call === 1) {
+          yield textDelta("HALF-ANSWER-");
+          yield { type: "error", error: "upstream connect error" };
+          return;
+        }
+        yield textDelta("Final clean answer.");
+        yield stopEvent();
+      },
+    } as any;
+    const events = await collect(loopWith(gateway).run("go", "s1", "/ws"));
+    expect(call).toBe(2);
+    expect(shown(events)).toBe("Final clean answer.");
+  });
+
+  test("a stream that throws after some text", async () => {
+    let call = 0;
+    const gateway = {
+      inferStream: async function* () {
+        call++;
+        if (call === 1) {
+          yield textDelta("HALF-ANSWER-");
+          throw Object.assign(new Error("socket hang up"), { status: 502 });
+        }
+        yield textDelta("Final clean answer.");
+        yield stopEvent();
+      },
+    } as any;
+    const events = await collect(loopWith(gateway).run("go", "s1", "/ws"));
+    expect(call).toBe(2);
+    expect(shown(events)).toBe("Final clean answer.");
+  });
+
+  test("an attempt that showed nothing sends no reset", async () => {
+    let call = 0;
+    const gateway = {
+      inferStream: async function* () {
+        call++;
+        if (call === 1) {
+          yield { type: "error", error: "upstream connect error" };
+          return;
+        }
+        yield textDelta("Final clean answer.");
+        yield stopEvent();
+      },
+    } as any;
+    const events = await collect(loopWith(gateway).run("go", "s1", "/ws"));
+    expect(events.some((e) => e.type === "stream_reset")).toBe(false);
+  });
+});
+
 describe("AgentLoop — context-overflow recovery", () => {
   test("isContextOverflowError matches real provider wordings", () => {
     expect(isContextOverflowError("prompt is too long: 250134 tokens > 200000 maximum")).toBe(true);

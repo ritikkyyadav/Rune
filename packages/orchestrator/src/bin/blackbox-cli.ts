@@ -21,6 +21,15 @@ import { formatAutoSafetyMetrics, readAutoSafetyMetrics } from "../auto-metrics"
 import { providerRouteLines, readProviderRouteReport } from "../provider-health-report";
 import { glyph } from "./ui/glyphs";
 import { probeBrowserRuntime } from "../visual-verification";
+import {
+  applyBuildPrune,
+  listOldBuilds,
+  planBuildPrune,
+  sessionDbCheck,
+  verifySignature,
+} from "../install-health";
+import { backupInfo, cliTarget } from "./upgrade-cli";
+import { PRODUCT_VERSION } from "./ui/brand";
 
 const HOME = () => getRuneHome();
 const DB = () => join(HOME(), "blackbox.db");
@@ -164,6 +173,7 @@ export function runDoctor(): void {
   doctorProviderRoutes();
 
   doctorToolchain();
+  doctorInstall();
   doctorBrowser();
   doctorMcp();
 
@@ -180,6 +190,108 @@ export function runDoctor(): void {
     `\n  ${dim("browse:")} ${info("rune incidents")} ${dim("·")} ${info("rune incidents top")} ${dim("·")} ${info("rune incidents show <id>")}\n`,
   );
   store?.close();
+}
+
+// ─── the install itself (R7.6) ───
+
+const KEEP_OLD_BUILDS = 3;
+
+function doctorInstall(): void {
+  const bin = join(HOME(), "bin");
+  const cli = cliTarget(bin);
+  // Signatures: a broken one is killed at launch, silently.
+  const checks = [cli, join(bin, "rune-tools")]
+    .filter((p) => existsSync(p))
+    .map((p) => ({ p, v: verifySignature(p) }));
+  if (checks.some((c) => c.v !== null)) {
+    const broken = checks.filter((c) => c.v && !c.v.ok);
+    if (broken.length === 0) {
+      console.log(
+        `  ${ok("✓")} signatures: valid ${dim(`(${checks.map((c) => c.p.split("/").pop()).join(", ")})`)}`,
+      );
+    } else {
+      for (const b of broken) {
+        console.log(
+          `  ${danger(glyph("failure"))} signature: ${b.p} ${faint(b.v!.detail)} ${dim("— reinstall it:")} ${info("rune upgrade --to " + PRODUCT_VERSION)}`,
+        );
+      }
+    }
+  }
+  // Rollback.
+  const backup = backupInfo(bin);
+  console.log(
+    backup
+      ? `  ${ok("✓")} rollback: ${info("rune upgrade --rollback")} ${dim(`goes back to the build of ${new Date(backup.mtimeMs).toISOString().slice(0, 16).replace("T", " ")}`)}`
+      : `  ${dim("·")} rollback: no .backup kept beside this build`,
+  );
+  // Old builds kept by source installs.
+  const builds = listOldBuilds(bin);
+  if (builds.length > KEEP_OLD_BUILDS) {
+    const plan = planBuildPrune(builds, KEEP_OLD_BUILDS);
+    console.log(
+      `  ${warn("!")} old builds: ${builds.length} kept in ${faint(bin)}, ${fmtBytes(builds.reduce((n, b) => n + b.bytes, 0))} ` +
+        `${dim("— reclaimable:")} ${fmtBytes(plan.bytes)} ${dim("·")} ${info("rune doctor prune-backups")} ${dim("(dry run; --apply removes all but the newest " + KEEP_OLD_BUILDS + ")")}`,
+    );
+  } else if (builds.length > 0) {
+    console.log(`  ${ok("✓")} old builds: ${builds.length} kept`);
+  }
+  // The session database.
+  const db = SESSION_DB();
+  if (existsSync(db)) {
+    const check = sessionDbCheck(db);
+    console.log(
+      check === "ok"
+        ? `  ${ok("✓")} session database: intact ${dim("(quick_check)")}`
+        : `  ${danger(glyph("failure"))} session database: ${check} ${faint(db)}`,
+    );
+  }
+}
+
+/**
+ * `rune doctor prune-backups [--keep N] [--apply]`
+ *
+ * DRY RUN by default: these are the founder's own builds (decision D5 in
+ * the reliability plan), and a report must never be able to delete them by
+ * accident. Removes whole installs' timestamped builds beyond the newest
+ * `--keep` (default 3); never the plain `.backup` that `--rollback` uses.
+ */
+export function runBuildPrune(args: string[]): number {
+  const apply = args.includes("--apply");
+  const keepAt = args.indexOf("--keep");
+  const keep = keepAt >= 0 ? Number(args[keepAt + 1]) : KEEP_OLD_BUILDS;
+  if (!Number.isInteger(keep) || keep < 0) {
+    console.error(`  ${danger(glyph("failure"))} --keep must be a whole number`);
+    return 1;
+  }
+  const bin = join(HOME(), "bin");
+  const builds = listOldBuilds(bin);
+  const plan = planBuildPrune(builds, keep);
+  console.log(`\n  ${dim("§ OLD BUILDS")} ${faint(bin)}\n`);
+  console.log(
+    `  ${builds.length} install${builds.length === 1 ? "" : "s"} kept, ${fmtBytes(builds.reduce((n, b) => n + b.bytes, 0))}; ` +
+      `the newest ${Math.min(keep, builds.length)} stay${dim(", and so does every plain .backup")}\n`,
+  );
+  if (plan.remove.length === 0) {
+    console.log(`  ${ok("✓")} nothing to prune\n`);
+    return 0;
+  }
+  if (!apply) {
+    const oldest = plan.remove[plan.remove.length - 1]!;
+    console.log(
+      `  ${warn("!")} would remove ${plan.remove.length} install${plan.remove.length === 1 ? "" : "s"} ` +
+        `(${plan.remove.reduce((n, b) => n + b.files.length, 0)} files), ${fmtBytes(plan.bytes)}, ` +
+        `the oldest from ${new Date(Number(oldest.stamp) * 1000).toISOString().slice(0, 10)} ` +
+        `${dim("— nothing was deleted.")} ${info("rune doctor prune-backups --apply")}\n`,
+    );
+    return 0;
+  }
+  const failed = applyBuildPrune(plan.remove);
+  console.log(
+    failed.length === 0
+      ? `  ${ok("✓")} removed ${plan.remove.length} install${plan.remove.length === 1 ? "" : "s"}, ${fmtBytes(plan.bytes)} reclaimed\n`
+      : `  ${warn("!")} removed all but ${failed.length} file${failed.length === 1 ? "" : "s"}: ${faint(failed.slice(0, 3).join(", "))}\n`,
+  );
+  return failed.length === 0 ? 0 : 1;
 }
 
 // ─── checkpoints ───

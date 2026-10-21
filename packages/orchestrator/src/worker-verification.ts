@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { watchedArgv } from "@rune/shared";
 
 /** The same native profile as the worker shell, with a bounded output and process lifetime. */
 export async function runContainedCheck(
@@ -33,7 +34,9 @@ export async function runContainedCheck(
   }
   if (signal?.aborted) return { passed: false, detail: "cancelled before execution" };
   return new Promise((resolve) => {
-    const child = spawn(shell.program, shell.args, {
+    // Watched: a run killed outright takes the check with it (`watchedArgv`).
+    const [program, ...args] = watchedArgv([shell.program, ...shell.args]);
+    const child = spawn(program!, args, {
       cwd,
       env: { ...shell.env, ...env, RUNE_WORKER_CHECK: "1" },
       detached: true,

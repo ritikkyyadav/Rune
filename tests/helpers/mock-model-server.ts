@@ -84,8 +84,23 @@ export type MockAction =
   | { kind: "tools"; calls: MockToolCall[]; text?: string; usage?: MockUsage; delayMs?: number }
   /** A completion with no content at all — the "empty final" case of §5.5. */
   | { kind: "empty"; usage?: MockUsage; delayMs?: number }
-  /** An HTTP failure. `status: 500` on a `stream:false` request is §3.4's summarizer failure. */
-  | { kind: "status"; status: number; message?: string; delayMs?: number }
+  /**
+   * An HTTP failure. `status: 500` on a `stream:false` request is §3.4's summarizer failure.
+   * `retryAfterSec` sends a `Retry-After` header, as an overloaded host (529) does.
+   */
+  | { kind: "status"; status: number; message?: string; delayMs?: number; retryAfterSec?: number }
+  /**
+   * The first part of a text reply, then the connection drops mid-stream — a
+   * proxy timeout, a reset socket (R0.1 of the reliability plan).
+   */
+  | { kind: "cut"; text: string }
+  /** A data line that is not JSON, then an ordinary text reply. */
+  | { kind: "malformed"; text: string }
+  /**
+   * The first part of a text reply, then silence with the connection held
+   * open: a wedged proxy. Only the client's idle watchdog can end it.
+   */
+  | { kind: "stall"; text: string }
   /** A context-length rejection, in the shape OpenAI-compatible hosts send (§3.5). */
   | { kind: "context_length"; limit?: number; message?: string; delayMs?: number }
   /**
@@ -611,8 +626,68 @@ export class MockModelServer {
     if (chosen.kind === "status") {
       return Response.json(
         { error: { message: chosen.message ?? `mock failure ${chosen.status}`, type: "mock" } },
-        { status: chosen.status },
+        {
+          status: chosen.status,
+          ...(chosen.retryAfterSec !== undefined
+            ? { headers: { "retry-after": String(chosen.retryAfterSec) } }
+            : {}),
+        },
       );
+    }
+    if (chosen.kind === "cut" && record.stream) {
+      const encoder = new TextEncoder();
+      const opening =
+        frame(this.model, { role: "assistant" }, null) +
+        frame(
+          this.model,
+          { content: chosen.text.slice(0, Math.ceil(chosen.text.length / 2)) },
+          null,
+        );
+      let pulls = 0;
+      // Deliver the opening, then fail the next read: the bytes arrive, then
+      // the connection is gone.
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (pulls++ === 0) controller.enqueue(encoder.encode(opening));
+          else controller.error(new Error("mock: connection reset mid-stream"));
+        },
+      });
+      return new Response(body, { headers: { "content-type": "text/event-stream" } });
+    }
+    if (chosen.kind === "stall" && record.stream) {
+      const encoder = new TextEncoder();
+      const opening =
+        frame(this.model, { role: "assistant" }, null) +
+        frame(
+          this.model,
+          { content: chosen.text.slice(0, Math.ceil(chosen.text.length / 2)) },
+          null,
+        );
+      const held = this.held;
+      let pulls = 0;
+      // Deliver the opening, then never another byte: the next read waits
+      // until the client gives up (cancel) or the server stops.
+      const body = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          if (pulls++ === 0) {
+            controller.enqueue(encoder.encode(opening));
+            return;
+          }
+          await held;
+          controller.close();
+        },
+      });
+      return new Response(body, { headers: { "content-type": "text/event-stream" } });
+    }
+    if (chosen.kind === "malformed" && record.stream) {
+      const body =
+        frame(this.model, { role: "assistant" }, null) +
+        "data: {this is not json\n\n" +
+        frame(this.model, { content: chosen.text }, null) +
+        frame(this.model, {}, "stop") +
+        usageFrame(this.model, usage) +
+        "data: [DONE]\n\n";
+      return new Response(body, { headers: { "content-type": "text/event-stream" } });
     }
     if (chosen.kind === "context_length") {
       // The shape OpenAI-compatible hosts reject an overlong prompt with. 400

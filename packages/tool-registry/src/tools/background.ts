@@ -11,7 +11,9 @@
 // A server can request network access while keeping filesystem isolation.
 
 import { spawn, type ChildProcess } from "node:child_process";
+import { watchedArgv } from "@rune/shared";
 import { resolveSandboxLaunch, sandboxPathsFor } from "../sandbox-mode";
+import { curatedShellEnv } from "../shell-env";
 import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../types";
 
 /** Cap the retained output per shell — a chatty server must not eat memory. */
@@ -149,12 +151,18 @@ export class BackgroundShellManager {
         );
       }
       ({ program, args, env, sandboxed } = parsed.result);
+    } else {
+      // Uncontained, it still gets only what a foreground command gets: never
+      // the session's keys or the paths to the person's saved sign-ins.
+      env = curatedShellEnv(cwd);
     }
     const id = `shell_${this.nextId++}`;
     // detached → the shell leads its own process group, so kill() can take
     // down the ENTIRE tree (bash + the dev server it spawned), not just bash —
     // a leader-only kill leaves grandchildren running and holding ports.
-    const proc: ChildProcess = spawn(program, args, {
+    // Watched: a run killed outright takes its shells with it (`watchedArgv`).
+    const [watchedProgram, ...watchedArgs] = watchedArgv([program, ...args]);
+    const proc: ChildProcess = spawn(watchedProgram!, watchedArgs, {
       cwd,
       ...(env ? { env } : {}),
       detached: true,

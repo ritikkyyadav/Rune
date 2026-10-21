@@ -58,6 +58,9 @@ export interface ReleaseAsset {
 export interface LatestRelease {
   tag_name: string;
   prerelease?: boolean;
+  draft?: boolean;
+  /** ISO time GitHub published it — what the `stable` channel ages by. */
+  published_at?: string;
   assets: ReleaseAsset[];
 }
 
@@ -82,6 +85,8 @@ export interface UpgradeEnv {
    * a person, always works.
    */
   checkEnabled: boolean;
+  /** Waits between download attempts; injected so tests do not sleep. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export function defaultEnv(overrides: Partial<UpgradeEnv> = {}): UpgradeEnv {
@@ -178,6 +183,78 @@ function writeState(path: string, state: CheckState): void {
   }
 }
 
+/** How long a release must have been out before the `stable` channel takes it. */
+export const STABLE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** One release by its tag (`v1.4.4` or `1.4.4`), or null when there is none. */
+export async function fetchRelease(
+  env: UpgradeEnv,
+  version: string,
+): Promise<LatestRelease | null> {
+  const tag = version.startsWith("v") ? version : `v${version}`;
+  const url = `https://api.github.com/repos/${env.repo}/releases/tags/${encodeURIComponent(tag)}`;
+  const res = await env.fetch(url, {
+    headers: { Accept: "application/vnd.github+json", "User-Agent": `rune/${env.version}` },
+  });
+  if (!res.ok) return null;
+  const body = (await res.json()) as LatestRelease;
+  return body && typeof body.tag_name === "string" ? body : null;
+}
+
+/**
+ * The `stable` channel: the newest published release that has been out for
+ * `STABLE_AGE_MS` — long enough for a regression to have been found.
+ */
+export async function fetchStable(env: UpgradeEnv): Promise<LatestRelease | null> {
+  const url = `https://api.github.com/repos/${env.repo}/releases?per_page=30`;
+  const res = await env.fetch(url, {
+    headers: { Accept: "application/vnd.github+json", "User-Agent": `rune/${env.version}` },
+  });
+  if (!res.ok) return null;
+  const all = (await res.json()) as LatestRelease[];
+  if (!Array.isArray(all)) return null;
+  const cutoff = env.now() - STABLE_AGE_MS;
+  const settled = all.filter(
+    (r) =>
+      typeof r.tag_name === "string" &&
+      !r.draft &&
+      !r.prerelease &&
+      typeof r.published_at === "string" &&
+      Date.parse(r.published_at) <= cutoff,
+  );
+  settled.sort((a, b) => compareVersions(b.tag_name, a.tag_name));
+  return settled[0] ?? null;
+}
+
+/**
+ * `rune upgrade --rollback`: swap the installed build with the one kept
+ * beside it as `.backup`. Renames only, so it takes no time and needs no
+ * network; running it again swaps back. False when there is nothing to swap.
+ */
+export function rollBack(installDir: string): boolean {
+  const targets = [cliTarget(installDir), join(installDir, "rune-tools")];
+  const swappable = targets.filter((t) => existsSync(t) && existsSync(`${t}.backup`));
+  if (!swappable.some((t) => t === targets[0])) return false;
+  for (const target of swappable) {
+    const backup = `${target}.backup`;
+    const aside = `${target}.rollback`;
+    clearImmutable(target);
+    clearImmutable(backup);
+    renameSync(target, aside);
+    renameSync(backup, target);
+    renameSync(aside, backup);
+  }
+  return true;
+}
+
+/** The value after `--name` or in `--name=value`, or undefined. */
+function flagValue(argv: string[], name: string): string | undefined {
+  const at = argv.indexOf(name);
+  if (at >= 0) return argv[at + 1];
+  const inline = argv.find((a) => a.startsWith(`${name}=`));
+  return inline ? inline.slice(name.length + 1) : undefined;
+}
+
 export async function fetchLatest(env: UpgradeEnv): Promise<LatestRelease | null> {
   const url = `https://api.github.com/repos/${env.repo}/releases/latest`;
   const res = await env.fetch(url, {
@@ -265,12 +342,90 @@ export function parseChecksums(body: string): Record<string, string> {
   return out;
 }
 
+// ─── Downloads that survive a dropped connection (R7) ───
+//
+// One `fetch` into memory, and a laptop that slept mid-transfer ended the
+// upgrade: on 15 October `rune upgrade` failed twice with ECONNRESET, a Mac
+// with its lid shut waking for seconds at a time while 77 MB came down. A
+// download now keeps what it received and asks for the rest (`Range`),
+// starting over only when the server will not resume. The checksum check
+// after it is unchanged, so a bad splice can never be installed.
+
+/** Tries per file before the upgrade gives up. */
+export const DOWNLOAD_ATTEMPTS = 6;
+
+function concatBytes(parts: Uint8Array[], length: number): Uint8Array {
+  const out = new Uint8Array(length);
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.length;
+  }
+  return out;
+}
+
 async function download(env: UpgradeEnv, url: string): Promise<Uint8Array> {
-  const res = await env.fetch(url, {
-    headers: { Accept: "application/octet-stream", "User-Agent": `rune/${env.version}` },
-  });
-  if (!res.ok) throw new Error(`download failed (${res.status}) for ${url}`);
-  return new Uint8Array(await res.arrayBuffer());
+  const pause = env.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const parts: Uint8Array[] = [];
+  let received = 0;
+  let lastError = new Error(`download failed for ${url}`);
+  for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt++) {
+    if (attempt > 1) await pause(Math.min(15_000, 1_000 * 2 ** (attempt - 2)));
+    const headers: Record<string, string> = {
+      Accept: "application/octet-stream",
+      "User-Agent": `rune/${env.version}`,
+    };
+    if (received > 0) headers.Range = `bytes=${received}-`;
+    let res: Response;
+    try {
+      res = await env.fetch(url, { headers });
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      continue;
+    }
+    // Everything had arrived; only the close was lost. The checksum decides.
+    if (res.status === 416 && received > 0) return concatBytes(parts, received);
+    if (!res.ok) {
+      const failure = new Error(`download failed (${res.status}) for ${url}`);
+      // A missing or forbidden file does not come back by asking again.
+      if (res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429) {
+        throw failure;
+      }
+      lastError = failure;
+      continue;
+    }
+    if (received > 0 && res.status !== 206) {
+      // The server sent the whole file again rather than the rest.
+      parts.length = 0;
+      received = 0;
+    }
+    try {
+      if (!res.body) {
+        const all = new Uint8Array(await res.arrayBuffer());
+        parts.push(all);
+        received += all.length;
+      } else {
+        const reader = res.body.getReader();
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) {
+            parts.push(value);
+            received += value.length;
+          }
+        }
+      }
+      return concatBytes(parts, received);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (attempt < DOWNLOAD_ATTEMPTS) {
+        env.log(
+          `  the download was cut after ${(received / 1_048_576).toFixed(1)} MB; resuming (attempt ${attempt + 1} of ${DOWNLOAD_ATTEMPTS})`,
+        );
+      }
+    }
+  }
+  throw lastError;
 }
 
 /**
@@ -366,6 +521,28 @@ export async function runUpgrade(
   const checkOnly = argv.includes("--check");
   const { log } = env;
 
+  // ── Back to the build kept beside this one (R7) ──
+  if (argv.includes("--rollback")) {
+    try {
+      if (!rollBack(env.installDir)) {
+        log(`  Nothing to roll back to: there is no .backup beside ${cliTarget(env.installDir)}.`);
+        return 1;
+      }
+    } catch (err) {
+      log(`  Rollback failed: ${err instanceof Error ? err.message : String(err)}`);
+      return 1;
+    }
+    log(`  Rolled back to the build that was kept as .backup. \`rune --version\` says which.`);
+    log(`  The one it replaced is now the .backup: \`rune upgrade --rollback\` again undoes this.`);
+    return 0;
+  }
+  const pinned = flagValue(argv, "--to");
+  const channel = flagValue(argv, "--channel") ?? "latest";
+  if (channel !== "latest" && channel !== "stable") {
+    log(`  --channel is latest or stable, not "${channel}".`);
+    return 1;
+  }
+
   const suffix = assetSuffix(env.platform, env.arch);
   if (!suffix) {
     log(`  rune upgrade does not have a release build for ${env.platform}/${env.arch}.`);
@@ -375,24 +552,40 @@ export async function runUpgrade(
 
   let latest: LatestRelease | null;
   try {
-    latest = await fetchLatest(env);
+    latest = pinned
+      ? await fetchRelease(env, pinned)
+      : channel === "stable"
+        ? await fetchStable(env)
+        : await fetchLatest(env);
   } catch (err) {
     log(`  Could not reach GitHub: ${err instanceof Error ? err.message : String(err)}`);
     return 1;
   }
   if (!latest) {
-    log(`  No published release found for ${env.repo}.`);
+    log(
+      pinned
+        ? `  No release v${pinned.replace(/^v/, "")} found for ${env.repo}.`
+        : channel === "stable"
+          ? `  No release of ${env.repo} has been out for seven days yet.`
+          : `  No published release found for ${env.repo}.`,
+    );
     return 1;
   }
 
   const version = latest.tag_name.replace(/^v/, "");
   const cmp = compareVersions(version, env.version);
-  if (cmp <= 0) {
-    log(`  up to date — Rune v${env.version} (latest release: v${version})`);
+  if (cmp === 0 || (cmp < 0 && !pinned)) {
+    log(
+      `  up to date — Rune v${env.version} (${pinned ? "asked for" : channel === "stable" ? "stable release" : "latest release"}: v${version})`,
+    );
     return 0;
   }
 
-  log(`  Rune v${version} is available. You have v${env.version}.`);
+  log(
+    cmp > 0
+      ? `  Rune v${version} is available. You have v${env.version}.`
+      : `  Rune v${version} is older than the v${env.version} you have; installing it as asked.`,
+  );
   if (checkOnly) {
     log(`  Run \`rune upgrade\` to install it.`);
     return 0;

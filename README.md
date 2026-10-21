@@ -8,10 +8,10 @@ checks, and resumable sessions into one workspace.
 [Get started](#install) · [Documentation](#documentation) · [Releases](https://github.com/ritikkyyadav/Rune/releases) · [Report an issue](https://github.com/ritikkyyadav/Rune/issues)
 
 <p>
-  <a href="docs/assets/readme/rune-session-120x32.jpg"><picture><source media="(max-width: 640px)" srcset="docs/assets/readme/rune-session-80x22.jpg"><img src="docs/assets/readme/rune-session-120x32.jpg" alt="Rune v1.4.7 in the white terminal and matte light theme, editing a CLI and running its tests" width="100%"></picture></a>
+  <a href="docs/assets/readme/rune-session-120x32.jpg"><picture><source media="(max-width: 640px)" srcset="docs/assets/readme/rune-session-80x22.jpg"><img src="docs/assets/readme/rune-session-120x32.jpg" alt="Rune v1.4.11 in the white terminal and matte light theme, editing a CLI and running its tests" width="100%"></picture></a>
 </p>
 
-<sub>Rune v1.4.7 · Light / Matte · Real terminal capture with a local scripted model.
+<sub>Rune v1.4.11 · Light / Matte · Real terminal capture with a local scripted model.
 <a href="docs/assets/readme/README.md">Capture details</a></sub>
 
 ## Install
@@ -77,10 +77,10 @@ Session data is stored locally. Telemetry is off by default.
 
 ## Latest release
 
-[**v1.4.7**](https://github.com/ritikkyyadav/Rune/releases/tag/v1.4.7) adds background handoff
-for supported long-running installs, builds, and checks on macOS and Linux. Commands that
-outlive the foreground wait can keep running while Rune reads their output.
-[Release notes and validation](docs/releases/v1.4.7.md) · [Changelog](CHANGELOG.md)
+[**v1.4.11**](https://github.com/ritikkyyadav/Rune/releases/tag/v1.4.11) refreshes Rune's
+GitHub presentation and sign-in completion page. A responsive particle field follows your
+pointer, and sign-in succeeds only after Rune has securely saved the connection.
+[Release notes and validation](docs/releases/v1.4.11.md) · [Changelog](CHANGELOG.md)
 
 ## Documentation
 

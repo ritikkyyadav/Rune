@@ -11,6 +11,129 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+## [1.4.11] - 2026-10-21
+
+**The refreshed Rune presentation, available in the public repository and released CLI.**
+Full notes: [`docs/releases/v1.4.11.md`](docs/releases/v1.4.11.md).
+
+### Changed
+
+- A concise README with current white terminal captures using Rune's Light / Matte theme,
+  direct installation instructions, and a separate historical verification record.
+- A text-only Rune sign-in completion page with a responsive particle field, pointer interaction,
+  motion controls, reduced-motion support, and a white matte surface.
+
+### Fixed
+
+- OAuth completion is displayed only after state validation, token exchange, and credential
+  persistence succeed. Failed exchanges and storage errors cannot show a successful sign-in.
+- The repository's review workflow passes its pull request number explicitly to the review action.
+
+## [1.4.10] - 2026-10-21
+
+**A background shell started outside the sandbox gets what a foreground command gets, and
+nothing else.** A patch on 1.4.9, found while preparing the reliability plan's live runs. Full
+notes: [`docs/releases/v1.4.10.md`](docs/releases/v1.4.10.md).
+
+### Fixed
+
+- **A background shell started outside the sandbox no longer inherits Rune's whole
+  environment.** Every foreground command gets a short list from `rune-tools` (`PATH`, `HOME`,
+  `TMPDIR`, `USER`, `LANG`, `TERM`, `SHELL`), sandboxed or not, and so did a contained background
+  shell. One started with `unsandboxed: true`, with the sandbox off, or for an excluded command
+  got everything: the provider keys the launcher loads from `~/.rune/.env`, and the variables
+  naming the session's database and the person's saved sign-ins. A project whose tests write to
+  the credential store those variables name would write into the real one. It now gets the
+  foreground's list, pinned to the Rust one by a test. Found before the reliability plan's live
+  runs, which point those variables at the founder's own files.
+
+### Added
+
+- **`rune-baseline`, a second Rune arm for the parity runner**, so one series can pair two Rune
+  builds: the same launch, the same shipped defaults, each from its own `--<arm>-bin`.
+
+## [1.4.9] - 2026-10-21
+
+**The yardstick: a suite drives the real `rune -P` through faults at the wire and signals at
+four points, and the three defects it found are fixed.** A patch on 1.4.8, the last engineering
+phase of the reliability plan (R0). Full notes: [`docs/releases/v1.4.9.md`](docs/releases/v1.4.9.md).
+
+### Added
+
+- **`bun run reliability`, the yardstick (R0 of the reliability plan).** `tests/reliability/`
+  drives the real `rune -P` from source against a scripted model on a loopback port, with a scratch
+  home and no credentials:
+  - **transport:** a response cut mid-stream, a stream that goes quiet, a malformed event, a 529
+    with `Retry-After`, a refused key, and the wall clock set an hour forward;
+  - **process:** SIGTERM, SIGINT and SIGKILL while the model answers, while a tool runs, while a
+    compaction summarises and while the end-of-turn check runs, plus a SIGKILL while a background
+    shell runs. A resume has to finish every one.
+
+  CI runs it on macOS and Linux, and its transport half on Windows in a job of its own.
+
+- **[`docs/errors.md`](docs/errors.md)**: what Rune says when something fails, what it does on its
+  own, what is left for you, and the test that pins each row.
+
+### Fixed
+
+- **A run killed outright no longer leaves its commands running.** The end-of-turn check, hooks,
+  background shells, a worker's check and the parent check's replays each run in a process group
+  of their own, stopped by an exit handler that a `kill -9`, a crash or a power cut never runs.
+  Killed during its end-of-turn check, a run left `npm test` running. Each now runs under a shell
+  that checks once a second that the process which started it is alive, and stops its own group
+  when it is not, as `rune-tools` already did for tool calls. `RUNE_PARENT_WATCH=off` turns it
+  off. POSIX only.
+- **A half answer is no longer kept when Rune sends a request again itself.** Once the gateway's
+  three retries were spent and the run sent the request again, no reset was sent. The failed
+  attempt's text stayed on screen and in the headless envelope, and the new answer was appended
+  to it.
+- **A stream from an OpenAI-compatible host that ends with no `finish_reason` counts as a cut.** It
+  used to get a synthetic end of turn, so a dropped connection ended a run with exit 0 and a
+  truncated reply. It is now a retryable failure.
+
+## [1.4.8] - 2026-10-15
+
+**Ship like a product: `rune upgrade` survives a dropped connection and can roll back, and
+`rune doctor` checks the install itself.** A patch on 1.4.7, the seventh phase of the reliability
+plan. Full notes: [`docs/releases/v1.4.8.md`](docs/releases/v1.4.8.md).
+
+### Added
+
+- **`rune upgrade` survives a dropped connection.** On 15 October it failed twice with ECONNRESET:
+  the Mac's lid was shut, it woke for seconds at a time, and one interrupted fetch ended the whole
+  upgrade. A download now keeps what it received and asks for the rest (`Range`), up to six tries
+  with a growing pause. It starts over only when the server will not resume. The checksum check
+  after it is unchanged, so a bad splice is never installed.
+- **`rune upgrade --rollback`** swaps the installed build with the one kept as `.backup`: renames
+  only, so it is instant and needs no network. Running it again swaps back.
+- **`rune upgrade --to <version>`** installs that release, older or newer, through the same
+  checksum-verified path.
+- **`rune upgrade --channel stable`** installs the newest release that has been out for seven days
+  rather than the newest one.
+- **`rune doctor` checks the install itself.** It now reports:
+  - whether the binaries' code signatures hold (macOS kills a binary whose signature broke, at
+    launch, with no message);
+  - whether there is a build to roll back to;
+  - how much the old builds kept by source installs weigh;
+  - whether the session database passes `quick_check`.
+- **`rune doctor prune-backups`** shows what removing all but the newest three old builds would
+  reclaim: on the founder's machine, 62 installs and 5.0 GB. It is a dry run; `--apply` removes
+  them. The plain `.backup` that `--rollback` uses is never touched.
+
+- **`RUNE_SUSPEND_CLOCK=off` turns off the sleep check** (1.4.4) for a process. The test suite sets
+  it: every test file shares one process, and on Windows CI a test that blocked the event loop for
+  40 seconds looked like a sleep to the next file's runs, which then re-sent failures free. Tests
+  that exercise the check pass their own clock.
+
+### Not in this release, and why
+
+- **A versions directory with a `current` symlink.** Rollback now works without one. Changing
+  the install layout on the one machine Rune runs on, with no budget for a second, is a risk this
+  release does not need to take.
+- **The launcher already reads no source tree for a release build.** Its git and find checks run
+  only beside a source build's `rune-compiled.meta`, and `rune upgrade` retires that file.
+- **A minimum-version floor** waits for a release that needs one.
+
 ## [1.4.7] - 2026-10-15
 
 **Long commands keep their work: an install, a test suite or a build that runs past its timeout is
@@ -1237,7 +1360,10 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.7...HEAD
+[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.10...HEAD
+[1.4.10]: https://github.com/ritikkyyadav/Rune/compare/v1.4.9...v1.4.10
+[1.4.9]: https://github.com/ritikkyyadav/Rune/compare/v1.4.8...v1.4.9
+[1.4.8]: https://github.com/ritikkyyadav/Rune/compare/v1.4.7...v1.4.8
 [1.4.7]: https://github.com/ritikkyyadav/Rune/compare/v1.4.6...v1.4.7
 [1.4.6]: https://github.com/ritikkyyadav/Rune/compare/v1.4.5...v1.4.6
 [1.4.5]: https://github.com/ritikkyyadav/Rune/compare/v1.4.4...v1.4.5

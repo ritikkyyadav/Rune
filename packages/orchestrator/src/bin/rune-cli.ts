@@ -335,6 +335,9 @@ if (values.help) {
         `    rune models [provider]        List a provider's models (live discovery, static fallback)\n` +
         `    rune doctor                   Health: incidents, crash sentinel, provider routes + quota windows, rune-tools, build freshness\n` +
         `    rune upgrade [--check]        Install the latest release (checksum-verified); --check only reports\n` +
+        `      --channel stable            The newest release that has been out seven days\n` +
+        `      --to <version>              Install that release, older or newer\n` +
+        `      --rollback                  Swap back to the build kept as .backup (again to undo)\n` +
         `    rune tools-smoke              Verify the native tool executor end to end (write/read/edit/bash)\n` +
         `    rune incidents [sub]          Browse recorded failures — list | show <id> | top [--by-version] | export\n` +
         `    rune audit [session|last]     One page on a session: plan with evidence, log, safety decisions, held steps, cost\n` +
@@ -391,7 +394,11 @@ if (values.help) {
 // ─── Black-box surfaces: no Engine, no provider validation — instant ───
 
 if (command === "doctor") {
-  const { runDoctor, runCheckpointPrune } = await import("./blackbox-cli");
+  const { runDoctor, runCheckpointPrune, runBuildPrune } = await import("./blackbox-cli");
+  // `rune doctor prune-backups [--keep N] [--apply]` — dry run by default (D5).
+  if (process.argv[3] === "prune-backups") {
+    process.exit(runBuildPrune(process.argv.slice(4)));
+  }
   // `rune doctor prune-checkpoints [--apply] [--keep N]` — dry run by default.
   // The report above says what is reclaimable; this is the one that removes it,
   // and it will not do so without the flag.

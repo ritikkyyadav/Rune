@@ -17,6 +17,12 @@
 // its own profile and re-execs a child keeps working.
 
 import { mkdtempSync, rmSync } from "node:fs";
+
+// The process-wide sleep clock (suspend-clock.ts) is shared state across every
+// test file in this process: one file that blocks the event loop long enough
+// looks like a sleep to the next file's runs. Tests that exercise the clock
+// pass their own instance; everything else runs without it.
+process.env.RUNE_SUSPEND_CLOCK ??= "off";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
