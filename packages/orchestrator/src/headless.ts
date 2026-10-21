@@ -475,7 +475,8 @@ export function verdictShortfall(
     verdict.criteria.some((c) => c.status === "failed") ||
     (verdict.kind === "partial" &&
       verdict.gaps.some(
-        (g) => g.criterion === PLAN_GAP || g.criterion === CHECKS_GAP || g.criterion === REQUEST_GAP,
+        (g) =>
+          g.criterion === PLAN_GAP || g.criterion === CHECKS_GAP || g.criterion === REQUEST_GAP,
       ));
   if (seenToFail) return "observed_failure";
   const outside = verdict.criteria.some(

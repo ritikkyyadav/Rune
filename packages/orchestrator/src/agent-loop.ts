@@ -5120,7 +5120,12 @@ export class AgentLoop {
             checked = { skipped: `the check threw: ${String(error).slice(0, 160)}` };
           }
           if ("skipped" in checked) {
-            this.report("loop.request_check", "debug", "requestCheck", `skipped: ${checked.skipped}`);
+            this.report(
+              "loop.request_check",
+              "debug",
+              "requestCheck",
+              `skipped: ${checked.skipped}`,
+            );
           } else {
             const { outcome } = checked;
             this.finalProjectChecks = { ...this.finalProjectChecks, request: outcome };
