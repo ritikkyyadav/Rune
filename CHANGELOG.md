@@ -11,6 +11,12 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+## [1.4.9] - 2026-10-21
+
+**The yardstick: a suite drives the real `rune -P` through faults at the wire and signals at
+four points, and the three defects it found are fixed.** A patch on 1.4.8, the last engineering
+phase of the reliability plan (R0). Full notes: [`docs/releases/v1.4.9.md`](docs/releases/v1.4.9.md).
+
 ### Added
 
 - **`bun run reliability`, the yardstick (R0 of the reliability plan).** `tests/reliability/`
@@ -1313,7 +1319,8 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.8...HEAD
+[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.9...HEAD
+[1.4.9]: https://github.com/ritikkyyadav/Rune/compare/v1.4.8...v1.4.9
 [1.4.8]: https://github.com/ritikkyyadav/Rune/compare/v1.4.7...v1.4.8
 [1.4.7]: https://github.com/ritikkyyadav/Rune/compare/v1.4.6...v1.4.7
 [1.4.6]: https://github.com/ritikkyyadav/Rune/compare/v1.4.5...v1.4.6
