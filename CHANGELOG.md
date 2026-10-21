@@ -11,6 +11,12 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+## [1.4.12] - 2026-10-21
+
+**Finished work says so: a run that did what you asked ends `done`, after the change is read
+against your request.** A patch on 1.4.11 (A3). Full notes:
+[`docs/releases/v1.4.12.md`](docs/releases/v1.4.12.md).
+
 ### Added
 
 - **`done`: finished work says so (A3).** A run ends `done` when it finished on its own, changed
@@ -1381,7 +1387,9 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.10...HEAD
+[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.12...HEAD
+[1.4.12]: https://github.com/ritikkyyadav/Rune/compare/v1.4.11...v1.4.12
+[1.4.11]: https://github.com/ritikkyyadav/Rune/compare/v1.4.10...v1.4.11
 [1.4.10]: https://github.com/ritikkyyadav/Rune/compare/v1.4.9...v1.4.10
 [1.4.9]: https://github.com/ritikkyyadav/Rune/compare/v1.4.8...v1.4.9
 [1.4.8]: https://github.com/ritikkyyadav/Rune/compare/v1.4.7...v1.4.8

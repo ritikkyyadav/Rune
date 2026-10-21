@@ -77,10 +77,10 @@ Session data is stored locally. Telemetry is off by default.
 
 ## Latest release
 
-[**v1.4.11**](https://github.com/ritikkyyadav/Rune/releases/tag/v1.4.11) refreshes Rune's
-GitHub presentation and sign-in completion page. A responsive particle field follows your
-pointer, and sign-in succeeds only after Rune has securely saved the connection.
-[Release notes and validation](docs/releases/v1.4.11.md) · [Changelog](CHANGELOG.md)
+[**v1.4.12**](https://github.com/ritikkyyadav/Rune/releases/tag/v1.4.12) lets finished work say
+so. A run whose project checks pass is read once against your request: every ask found, and it
+ends `done`; anything missing is named, and Rune finishes it before it stops.
+[Release notes and validation](docs/releases/v1.4.12.md) · [Changelog](CHANGELOG.md)
 
 ## Documentation
 
