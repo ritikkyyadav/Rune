@@ -53,7 +53,7 @@ export const CORPUS_FAMILY: Readonly<Record<string, Family>> = {
   "dirty-worktree": "F6",
 };
 
-export type ParityArm = "rune" | "claude-code" | "opencode" | "codex";
+export type ParityArm = "rune" | "rune-baseline" | "claude-code" | "opencode" | "codex";
 
 /**
  * `product`: each tool on its best model on the founder's own accounts — the

@@ -325,86 +325,92 @@ export function buildFingerprint(command: readonly string[]): string {
   return binarySha256Of(command) ?? sourceDigest();
 }
 
-export const runeArm: ComparatorArm = {
-  name: "rune",
-  version: (limits) => probeVersion(limits ? commandOf(limits) : [...RUNE_SOURCE_COMMAND]),
-  roster: (spec) => runeRoster(spec.provider ?? RUNE_DEFAULT_PROVIDER, spec.model),
-  plan(task, dir, limits): ArmPlan {
-    const planned = harnessPlan(task, dir, limits);
-    return {
-      arm: "rune",
-      command: planned.command,
-      cwd: workspaceOf(dir),
-      env: planned.env,
-      artifacts: { profile: join(dir, "profile") },
-      parityGaps: RUNE_PARITY_GAPS,
-      ...(limits.model ? {} : { refusal: RUNE_NEEDS_MODEL }),
-    };
-  },
-  parse: (capture) => parseRuneOutput(capture, EMPTY_LEDGER),
-  async runArm(task, dir, limits): Promise<ArmResult> {
-    const plan = this.plan(task, dir, limits);
-    if (plan.refusal) throw new Error(plan.refusal);
-    materialiseHarness(harnessPlan(task, dir, limits));
-    const command = commandOf(limits);
-    // Before the spawn a failure to fingerprint throws: nothing has run, and
-    // the paired runner re-runs an arm that produced no row.
-    const before = buildFingerprint(command);
-    const stdoutPath = join(dir, "events.jsonl");
-    const stderrPath = join(dir, "stderr.log");
-    const process_ = await runProcess({
-      command: plan.command,
-      cwd: plan.cwd,
-      env: plan.env,
-      timeoutMs: limits.timeoutMs,
-      stdoutPath,
-      stderrPath,
-    });
-    // After it, the tool has already spent: a build that can no longer be
-    // fingerprinted is a build nobody can vouch for, which is what
-    // `source_changed` means — not a reason to throw the run away and pay again.
-    let after: string;
-    try {
-      after = buildFingerprint(command);
-    } catch (error) {
-      after = `unreadable: ${String(error)}`;
-    }
-    const read = (path: string) => (existsSync(path) ? readFileSync(path, "utf8") : "");
-    let ledger: RuneLedger;
-    let costError: string | undefined;
-    try {
-      ledger = runeCost(join(dir, "profile"));
-    } catch (error) {
-      ledger = EMPTY_LEDGER;
-      costError = String(error);
-    }
-    const parsed = parseRuneOutput(
-      {
-        stdout: read(stdoutPath),
-        stderr: read(stderrPath),
+/** A Rune arm under `name`: `rune`, or `rune-baseline` for a second build. */
+function makeRuneArm(name: "rune" | "rune-baseline"): ComparatorArm {
+  return {
+    name,
+    version: (limits) => probeVersion(limits ? commandOf(limits) : [...RUNE_SOURCE_COMMAND]),
+    roster: (spec) => runeRoster(spec.provider ?? RUNE_DEFAULT_PROVIDER, spec.model),
+    plan(task, dir, limits): ArmPlan {
+      const planned = harnessPlan(task, dir, limits);
+      return {
+        arm: name,
+        command: planned.command,
+        cwd: workspaceOf(dir),
+        env: planned.env,
+        artifacts: { profile: join(dir, "profile") },
+        parityGaps: RUNE_PARITY_GAPS,
+        ...(limits.model ? {} : { refusal: RUNE_NEEDS_MODEL }),
+      };
+    },
+    parse: (capture) => parseRuneOutput(capture, EMPTY_LEDGER),
+    async runArm(task, dir, limits): Promise<ArmResult> {
+      const plan = this.plan(task, dir, limits);
+      if (plan.refusal) throw new Error(plan.refusal);
+      materialiseHarness(harnessPlan(task, dir, limits));
+      const command = commandOf(limits);
+      // Before the spawn a failure to fingerprint throws: nothing has run, and
+      // the paired runner re-runs an arm that produced no row.
+      const before = buildFingerprint(command);
+      const stdoutPath = join(dir, "events.jsonl");
+      const stderrPath = join(dir, "stderr.log");
+      const process_ = await runProcess({
+        command: plan.command,
+        cwd: plan.cwd,
+        env: plan.env,
+        timeoutMs: limits.timeoutMs,
+        stdoutPath,
+        stderrPath,
+      });
+      // After it, the tool has already spent: a build that can no longer be
+      // fingerprinted is a build nobody can vouch for, which is what
+      // `source_changed` means — not a reason to throw the run away and pay again.
+      let after: string;
+      try {
+        after = buildFingerprint(command);
+      } catch (error) {
+        after = `unreadable: ${String(error)}`;
+      }
+      const read = (path: string) => (existsSync(path) ? readFileSync(path, "utf8") : "");
+      let ledger: RuneLedger;
+      let costError: string | undefined;
+      try {
+        ledger = runeCost(join(dir, "profile"));
+      } catch (error) {
+        ledger = EMPTY_LEDGER;
+        costError = String(error);
+      }
+      const parsed = parseRuneOutput(
+        {
+          stdout: read(stdoutPath),
+          stderr: read(stderrPath),
+          exitCode: process_.exitCode,
+          durationMs: process_.durationMs,
+          ...(process_.stopped ? { stopped: process_.stopped } : {}),
+        },
+        ledger,
+        { sourceChanged: before !== after },
+      );
+      const binarySha256 = binarySha256Of(command);
+      return {
+        ...parsed,
+        ...(costError ? { detail: costError } : {}),
+        arm: name,
+        version: this.version(limits),
+        ...(binarySha256 ? { binarySha256 } : {}),
+        command: plan.command,
+        cwd: plan.cwd,
         exitCode: process_.exitCode,
         durationMs: process_.durationMs,
         ...(process_.stopped ? { stopped: process_.stopped } : {}),
-      },
-      ledger,
-      { sourceChanged: before !== after },
-    );
-    const binarySha256 = binarySha256Of(command);
-    return {
-      ...parsed,
-      ...(costError ? { detail: costError } : {}),
-      arm: "rune",
-      version: this.version(limits),
-      ...(binarySha256 ? { binarySha256 } : {}),
-      command: plan.command,
-      cwd: plan.cwd,
-      exitCode: process_.exitCode,
-      durationMs: process_.durationMs,
-      ...(process_.stopped ? { stopped: process_.stopped } : {}),
-      listUsd: ledger.listUsd,
-      estimated: ledger.estimated,
-      entries: ledger.entries,
-      parityGaps: plan.parityGaps,
-    };
-  },
-};
+        listUsd: ledger.listUsd,
+        estimated: ledger.estimated,
+        entries: ledger.entries,
+        parityGaps: plan.parityGaps,
+      };
+    },
+  };
+}
+
+export const runeArm: ComparatorArm = makeRuneArm("rune");
+export const runeBaselineArm: ComparatorArm = makeRuneArm("rune-baseline");

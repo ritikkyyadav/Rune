@@ -32,7 +32,13 @@ import type { ParityMode, Terminal, UnscoredReason } from "../../parity/types";
 
 export type { UnscoredReason } from "../../parity/types";
 
-export type ArmName = "rune" | "opencode" | "claude-code" | "codex";
+/**
+ * `rune-baseline` is a second Rune build in the same series: the reliability
+ * plan's live proof (R8) pairs the build before a change with the build after
+ * it. It launches exactly as `rune` does; only its name, and so its rows,
+ * differ.
+ */
+export type ArmName = "rune" | "rune-baseline" | "opencode" | "claude-code" | "codex";
 
 /** The part of a comparison task an arm needs. `ComparisonTask` satisfies it. */
 export interface ArmTask {

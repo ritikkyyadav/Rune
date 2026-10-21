@@ -83,6 +83,7 @@ import {
   RUNE_SOURCE_COMMAND,
   buildFingerprint,
   runeArm,
+  runeBaselineArm,
 } from "../comparison/arms/rune";
 import {
   type ArmLimits,
@@ -138,6 +139,7 @@ import {
 
 export const ARMS: Readonly<Record<ParityArm, ComparatorArm>> = {
   rune: runeArm,
+  "rune-baseline": runeBaselineArm,
   "claude-code": claudeCodeArm,
   opencode: opencodeArm,
   codex: codexArm,
@@ -146,8 +148,12 @@ export const ARMS: Readonly<Record<ParityArm, ComparatorArm>> = {
 /** The route an arm takes when the series names none, recorded on its rows. */
 const DEFAULT_PROVIDER: Partial<Record<ParityArm, string>> = {
   rune: RUNE_DEFAULT_PROVIDER,
+  "rune-baseline": RUNE_DEFAULT_PROVIDER,
   opencode: OPENCODE_PROVIDER,
 };
+
+/** Both Rune arms: one build each, on the shipped defaults, on the metered account. */
+const isRune = (arm: ParityArm): boolean => arm === "rune" || arm === "rune-baseline";
 
 // ─── The authorisation ───
 
@@ -940,7 +946,7 @@ function limitsFor(options: PairSeriesOptions, arm: ParityArm, task: ParityTask)
 
 /** The Rune build is the one pinned for a series; a comparator's is its version. */
 const defaultFingerprint = (arm: ParityArm, limits: ArmLimits): string | null =>
-  arm === "rune" ? buildFingerprint(limits.command ?? [...RUNE_SOURCE_COMMAND]) : null;
+  isRune(arm) ? buildFingerprint(limits.command ?? [...RUNE_SOURCE_COMMAND]) : null;
 
 /**
  * Where one arm run's evidence goes. A retry after an unscored row, and a
@@ -1050,7 +1056,7 @@ function accountsOf(
     const given = options.accounts?.[arm];
     out[arm] = {
       usedPct: given?.usedPct ?? null,
-      stopAtPct: given?.stopAtPct ?? (arm === "rune" ? quotaPct : null),
+      stopAtPct: given?.stopAtPct ?? (isRune(arm) ? quotaPct : null),
     };
   }
   return out;
@@ -1812,7 +1818,7 @@ export function parseCli(argv: string[]): PairSeriesOptions | undefined {
   for (const arm of arms as ParityArm[]) {
     const model = get(`${arm}-model`) ?? get("model");
     const provider = get(`${arm}-provider`);
-    const effort = arm === "rune" ? undefined : (get(`${arm}-effort`) ?? get("effort"));
+    const effort = isRune(arm) ? undefined : (get(`${arm}-effort`) ?? get("effort"));
     const bin = get(`${arm}-bin`);
     specs[arm] = {
       model: model ?? "",

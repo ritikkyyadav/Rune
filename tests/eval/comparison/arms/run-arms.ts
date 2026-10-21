@@ -37,7 +37,7 @@ import type { ComparisonTask } from "../tasks";
 import { claudeCodeArm } from "./claude-code";
 import { codexArm } from "./codex";
 import { opencodeArm } from "./opencode";
-import { runeArm } from "./rune";
+import { runeArm, runeBaselineArm } from "./rune";
 import type { ArmLimits, ArmName, ArmPlan, ArmTask, ComparatorArm } from "./types";
 import { credentialShaped, tooManyUnscored, workspaceOf } from "./types";
 
@@ -51,6 +51,7 @@ import { credentialShaped, tooManyUnscored, workspaceOf } from "./types";
  */
 export const ARMS: Record<ArmName, ComparatorArm> = {
   rune: runeArm,
+  "rune-baseline": runeBaselineArm,
   opencode: opencodeArm,
   "claude-code": claudeCodeArm,
   codex: codexArm,
