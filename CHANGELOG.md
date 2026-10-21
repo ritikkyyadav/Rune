@@ -11,6 +11,12 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+## [1.4.10] - 2026-10-21
+
+**A background shell started outside the sandbox gets what a foreground command gets, and
+nothing else.** A patch on 1.4.9, found while preparing the reliability plan's live runs. Full
+notes: [`docs/releases/v1.4.10.md`](docs/releases/v1.4.10.md).
+
 ### Fixed
 
 - **A background shell started outside the sandbox no longer inherits Rune's whole
@@ -1336,7 +1342,8 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.9...HEAD
+[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.10...HEAD
+[1.4.10]: https://github.com/ritikkyyadav/Rune/compare/v1.4.9...v1.4.10
 [1.4.9]: https://github.com/ritikkyyadav/Rune/compare/v1.4.8...v1.4.9
 [1.4.8]: https://github.com/ritikkyyadav/Rune/compare/v1.4.7...v1.4.8
 [1.4.7]: https://github.com/ritikkyyadav/Rune/compare/v1.4.6...v1.4.7
