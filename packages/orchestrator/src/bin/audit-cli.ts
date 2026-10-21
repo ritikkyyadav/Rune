@@ -499,8 +499,10 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
     if (verdict) {
       // `none` is neither a success nor a shortfall — there was nothing to
       // verify — so it is painted like the fact it is, not like a failure.
+      // `done` is finished work on the project's own checks, short only of
+      // being shown criterion by criterion: a success, painted as one.
       const paint =
-        verdict.kind === "met"
+        verdict.kind === "met" || verdict.kind === "done"
           ? ok
           : verdict.kind === "partial"
             ? warn
@@ -523,6 +525,9 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
       } else if (verdict.kind === "unmet") {
         for (const m of verdict.missing.slice(0, 6))
           say(`    ${danger("missing")}${dim(":")} ${m.slice(0, 100)}`);
+      } else if (verdict.kind === "done") {
+        for (const u of verdict.unshown.slice(0, 6))
+          say(`    ${dim("not shown one by one:")} ${u.slice(0, 90)}`);
       }
     }
 

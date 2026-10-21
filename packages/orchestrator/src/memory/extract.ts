@@ -40,7 +40,7 @@ export interface RunMemoryInput {
   userMessages: readonly string[];
   outcome: {
     /** The contract verdict this run wrote, when it wrote one. */
-    verdictKind?: "none" | "met" | "unmet" | "partial";
+    verdictKind?: "none" | "done" | "met" | "unmet" | "partial";
     runError?: boolean;
     aborted?: boolean;
     /** `halted`, `provider_lost`, … — anything but a clean finish blocks lessons. */
@@ -190,7 +190,9 @@ export function extractUserPreferences(
 /**
  * A run that did not succeed teaches nothing positive. `met` and nothing else —
  * a `partial` run is exactly the shape of "the model claimed success and one
- * criterion says otherwise", which is the failure the founder named.
+ * criterion says otherwise", which is the failure the founder named. A `done`
+ * run finished with the project's checks green, but its own criteria were not
+ * each shown; a lesson is a stronger claim than that, so it teaches nothing yet.
  */
 export function outcomeAllowsPositiveLessons(outcome: RunMemoryInput["outcome"]): boolean {
   if (outcome.runError || outcome.aborted) return false;

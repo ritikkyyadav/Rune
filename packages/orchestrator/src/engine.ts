@@ -4701,7 +4701,7 @@ export class Engine {
   private captureMemory(
     sessionId: string,
     outcome: {
-      verdictKind?: "none" | "met" | "unmet" | "partial";
+      verdictKind?: "none" | "done" | "met" | "unmet" | "partial";
       runError?: boolean;
       aborted?: boolean;
       stopReason?: string;
@@ -7132,7 +7132,7 @@ export class Engine {
       // out here because the verdict is computed inside a try that must not
       // leak, and a memory that guesses the outcome is a memory that learns
       // from a run it could not see the end of.
-      let runVerdictKind: "none" | "met" | "unmet" | "partial" | undefined;
+      let runVerdictKind: "none" | "done" | "met" | "unmet" | "partial" | undefined;
       if (this.contract) {
         try {
           const counts = taskState.todoCounts();

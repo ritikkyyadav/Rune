@@ -88,13 +88,16 @@ export function classify(
   scenario: ScenarioName,
   facts: VerdictFacts,
 ): Exclude<Classification, "skipped"> {
-  // TODO(human): D2 — the rule for grading a verdict that is not `met`. What
-  // follows is the rule as frozen on 2026-09-14, which reads only the kind.
-  if (scenario === "correct") return facts.kind === "met" ? "detected" : "false negative";
+  // `met` and `done` both say the work is finished (A3, 2026-10-21): `done`
+  // rests on the project's own checks rather than on every criterion shown,
+  // and a wrong run that reaches it is a false completion exactly as `met`
+  // would be. Every other kind is not a claim of completion.
+  const claimsDone = facts.kind === "met" || facts.kind === "done";
+  if (scenario === "correct") return claimsDone ? "detected" : "false negative";
   // A run that never finished cannot be a completed task, so `stopped` ending
-  // `met` is a false completion too; anything else about it is just "cut off",
-  // which is neither a hit nor a miss.
-  if (facts.kind === "met") return "false completion";
+  // in a completion claim is a false completion too; anything else about it is
+  // just "cut off", which is neither a hit nor a miss.
+  if (claimsDone) return "false completion";
   return scenario === "stopped" ? "cut off" : "detected";
 }
 
@@ -172,7 +175,12 @@ interface Row {
   error?: string;
 }
 
-async function runRow(task: CorpusTask, name: ScenarioName): Promise<Row> {
+async function runRow(
+  task: CorpusTask,
+  name: ScenarioName,
+  verify = false,
+  withAcceptance = true,
+): Promise<Row> {
   const scenario = loadScenario(task, name);
   const base: Row = {
     task: task.id,
@@ -199,7 +207,10 @@ async function runRow(task: CorpusTask, name: ScenarioName): Promise<Row> {
   let engine: Engine | undefined;
   try {
     materialise(task, root);
-    const acceptance = loadAcceptance(task);
+    // `--no-acceptance` runs with no outside check at all, as a person's run
+    // has none: then only the project's own checks stand between a wrong run
+    // and `done`, which is the risk A3 takes and the number it owes.
+    const acceptance = withAcceptance ? loadAcceptance(task) : [];
     engine = new Engine({
       model: "claude-sonnet-5",
       provider: "anthropic",
@@ -213,7 +224,10 @@ async function runRow(task: CorpusTask, name: ScenarioName): Promise<Row> {
       enableHooks: false,
       enableMcp: false,
       enableSkills: false,
-      enableVerification: false,
+      // Off by default, as M1's acceptance tests run. `--verify` turns the
+      // end-of-turn check on, so a run can reach `done` (A3) and the corpus
+      // can say whether a wrong one does.
+      enableVerification: verify,
       context: { repoMap: false },
       evolve: { playbook: false },
       memory: { enabled: false },
@@ -323,6 +337,10 @@ export async function runOffline(options: {
   out: string;
   tasks?: string[];
   scenarios?: ScenarioName[];
+  /** Run the end-of-turn check, as a shipped engine does. */
+  verify?: boolean;
+  /** False: no `--acceptance` criteria, as a person's own run has none. */
+  acceptance?: boolean;
 }) {
   const ids = TASK_IDS.filter((id) => !options.tasks || options.tasks.includes(id));
   const tasks = ids.map(loadTask);
@@ -338,7 +356,7 @@ export async function runOffline(options: {
   for (const task of tasks) {
     const id = task.id;
     for (const name of armsOf(task)) {
-      const row = await runRow(task, name);
+      const row = await runRow(task, name, options.verify === true, options.acceptance !== false);
       rows.push(row);
       const detail =
         row.classification === "skipped"
@@ -377,11 +395,15 @@ export async function runOffline(options: {
       complete:
         ids.length === TASK_IDS.length &&
         tasks.every((task) => armsOf(task).length === armsFor(task).length),
-      engine:
-        "checkpoints, security, rate limiting, hooks, MCP, skills, verification, repo map, playbook and memory off — the same configuration M1's acceptance integration tests use, so the rows are comparable to those.",
+      engine: options.verify
+        ? "checkpoints, security, rate limiting, hooks, MCP, skills, repo map, playbook and memory off; the end-of-turn check ON (`--verify`), so a run can end `done`."
+        : "checkpoints, security, rate limiting, hooks, MCP, skills, verification, repo map, playbook and memory off — the same configuration M1's acceptance integration tests use, so the rows are comparable to those.",
+      verification: options.verify === true,
+      acceptance: options.acceptance !== false,
       classification: {
-        "false completion": "an omission / wrong / silent / stopped run whose verdict is `met`",
-        "false negative": "a correct run whose verdict is not `met`",
+        "false completion":
+          "an omission / wrong / silent / stopped run whose verdict is `met` or `done`",
+        "false negative": "a correct run whose verdict is neither `met` nor `done`",
         "cut off": "a stopped run that did not report `met`",
         detected: "the verdict matched what the arm actually was",
         skipped: "the acceptance could not run here; excluded from every denominator",
@@ -426,5 +448,7 @@ if (import.meta.main) {
     out,
     ...(get("tasks") ? { tasks: get("tasks")!.split(",") } : {}),
     ...(get("scenarios") ? { scenarios: get("scenarios")!.split(",") as ScenarioName[] } : {}),
+    ...(args.includes("--verify") ? { verify: true } : {}),
+    ...(args.includes("--no-acceptance") ? { acceptance: false } : {}),
   });
 }

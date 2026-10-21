@@ -1471,6 +1471,24 @@ export interface VerdictInputs {
    * called stale on a measurement that was not taken.
    */
   revision?: StampedRevision | null;
+  /**
+   * The project's own checks at the end of the run, from the loop that ran
+   * them. Present only when the end-of-turn check ran to completion on the
+   * tree the run left: nothing that can change a file ran after it. The one
+   * input `done` needs; absent, every verdict is what it always was.
+   */
+  projectChecks?: FinalProjectChecks;
+}
+
+/** The end-of-turn check, as the verdict reads it (A3). */
+export interface FinalProjectChecks {
+  /** Every check the last verification ran to completion or reused. */
+  commands: readonly string[];
+  /**
+   * Of those, the ones that went red only on failures already there before
+   * the run — every failing test named, matched and unchanged (A4).
+   */
+  preexisting: readonly string[];
 }
 
 /**
@@ -1738,6 +1756,53 @@ function gapWhy(criterion: Criterion, status: CriterionStatus): string {
 }
 
 /**
+ * `done` (A3): the run finished and its work stands, short of being shown
+ * criterion by criterion. Null unless every line holds:
+ *
+ *   it ended on its own (`end_turn`) and wrote something;
+ *   the project's own checks ran to completion on the tree it left;
+ *   no planned step is open;
+ *   no check is red, except one whose every failure predates the run;
+ *   no criterion FAILED or went stale — nothing was seen to fall short;
+ *   every criterion still short is one the run wrote for itself, unassessed
+ *   or awaiting review only because the run's evidence was its own: never the
+ *   person's, never an `--acceptance` check, never one only a person settles.
+ *
+ * Measured 2026-10-21 on fourteen live runs: eight of the ones that did the
+ * work stated no criteria and ended `unmet`; the rest bound no check to the
+ * criteria they wrote and ended `partial`. The project's checks had passed on
+ * the final tree in thirteen of them. `met` is untouched: it still needs every
+ * criterion shown.
+ */
+function doneVerdict(
+  input: VerdictInputs,
+  criteria: CriterionOutcome[],
+  short: ReadonlyArray<{ criterion: Criterion; status: CriterionStatus }>,
+  red: readonly string[],
+  base: Pick<CompletionVerdict, "execution" | "evaluators">,
+): CompletionVerdict | null {
+  const checks = input.projectChecks;
+  if (!checks || checks.commands.length === 0) return null;
+  if (input.stopReason !== "end_turn" || !input.wrote) return null;
+  if (input.openSteps > 0) return null;
+  const before = new Set(checks.preexisting.map(normalizeCommand));
+  if (red.some((command) => !before.has(command))) return null;
+  for (const { criterion, status } of short) {
+    if ((criterion.source ?? "inferred") !== "inferred") return null;
+    if (criterion.method?.kind === "review") return null;
+    if (status !== "unassessed" && status !== "needs_review") return null;
+  }
+  return {
+    kind: "done",
+    criteria,
+    checks: [...checks.commands],
+    unshown: short.map(({ criterion }) => criterion.text),
+    ...(red.length > 0 ? { preexisting: [...red] } : {}),
+    ...base,
+  };
+}
+
+/**
  * The verdict, from the runtime's own record and nothing else.
  *
  * `met` needs every criterion at `verified` AND a plan with nothing open: a
@@ -1792,6 +1857,11 @@ export function computeVerdict(input: VerdictInputs): CompletionVerdict {
     const asked = NO_DELIVERABLE_REASON[input.shape ?? "unknown"];
     if (asked && !input.wrote)
       return { kind: "none", criteria, reason: asked, execution, ...evaluators };
+    const done = doneVerdict(input, criteria, [], failingChecks(input.checks), {
+      execution,
+      ...evaluators,
+    });
+    if (done) return done;
     return { kind: "unmet", criteria, missing: ["no criteria stated"], execution, ...evaluators };
   }
 
@@ -1809,6 +1879,9 @@ export function computeVerdict(input: VerdictInputs): CompletionVerdict {
   if (short.length === 0 && !stepsOpen && red.length === 0) {
     return { kind: "met", criteria, execution, ...evaluators };
   }
+
+  const done = doneVerdict(input, criteria, short, red, { execution, ...evaluators });
+  if (done) return done;
 
   // Not one criterion was ever assessed, and nothing else is open to declare:
   // there is nothing to name a gap AGAINST.
@@ -1883,6 +1956,22 @@ export function verdictLine(verdict: CompletionVerdict): string {
       ? `; evaluator ${verdict.evaluators.satisfied} of ${verdict.evaluators.total} satisfied`
       : "";
   if (verdict.kind === "none") return `[verdict] none — ${verdict.reason}${oracle}`;
+  if (verdict.kind === "done") {
+    const ran = verdict.checks.map((c) => `\`${c}\``).join(", ");
+    const before = verdict.preexisting?.length
+      ? `; already failing before the run: ${verdict.preexisting.map((c) => `\`${c}\``).join(", ")}`
+      : "";
+    const head = verdict.preexisting?.length
+      ? `the project's checks found nothing this run broke (${ran})`
+      : `the project's checks passed on the final tree (${ran})`;
+    const unshown =
+      total === 0
+        ? "; no criteria stated"
+        : verdict.unshown.length > 0
+          ? `; ${verdict.unshown.length} of ${total} criteria not shown one by one`
+          : "";
+    return `[verdict] done — ${head}${before}${unshown}${oracle}`;
+  }
   if (verdict.kind === "met") return `[verdict] met — ${count}${attributed}${oracle}`;
   if (verdict.kind === "partial") {
     const first = verdict.gaps[0];

@@ -58,7 +58,12 @@ import type { HandoffReason, TaskStateStore, TodoItem } from "./task-state";
 import { evidenceWeight, TASK_STATE_BLOCK_BUDGET_AFTER_COMPACTION } from "./task-state";
 import type { ArtifactKind } from "@rune/protocol";
 import { bashCheckVerdict, isVerificationCommand } from "./brief";
-import { computeVerdict, type CompletionVerdict, type ContractRecord } from "./contract";
+import {
+  computeVerdict,
+  type CompletionVerdict,
+  type ContractRecord,
+  type FinalProjectChecks,
+} from "./contract";
 import {
   abandoned,
   complete as completedTransition,
@@ -1870,6 +1875,13 @@ export class AgentLoop {
   // interjections but are NOT user words: no interjection marker, so the
   // persistence filter skips them, exactly like the loop's own nudges.
   private harnessNotes: Array<{ text: string; replanReason?: string }> = [];
+  /**
+   * The project's own checks as the end-of-turn check left them, for the
+   * verdict's `done` (A3): set when that check passed, or went red only on
+   * failures that predate the run; cleared by anything after it that can
+   * change a file — a write, a worker, any shell command. Null otherwise.
+   */
+  private finalProjectChecks: FinalProjectChecks | null = null;
   /** Turn refunds for the current run (turn-refunds.ts); applied in `report`. */
   private refunds: TurnRefunds | null = null;
   /** The turn the loop is on, for the refund's once-per-turn rule. */
@@ -1923,6 +1935,7 @@ export class AgentLoop {
       // The revision the verdict is taken AT, so evidence proven against a
       // tree that has since moved derives `stale` rather than `satisfied`.
       revision: record.revision ?? null,
+      ...(this.finalProjectChecks ? { projectChecks: this.finalProjectChecks } : {}),
     });
   }
 
@@ -2573,6 +2586,7 @@ export class AgentLoop {
     };
     let verifyAttempts = 0;
     let editsSinceVerify = false;
+    this.finalProjectChecks = null;
     /** Whether the verifier has been told the run is about to change the tree. */
     let changesAnnounced = false;
     /**
@@ -4275,6 +4289,21 @@ export class AgentLoop {
               this.config.taskState?.logEvent("check", removedNote(result.removed));
             }
             editsSinceVerify = false;
+            // What the verdict may rest on (A3): the checks that ran to
+            // completion, when they passed or went red only on failures that
+            // were there before the run. Anything else leaves nothing.
+            const completed = (result.runs ?? []).filter(
+              (r) => !r.skipped && !r.timedOut && !r.cancelled && !r.notStarted,
+            );
+            this.finalProjectChecks =
+              completed.length > 0 && (outcome.status === "passed" || preexistingOnly)
+                ? {
+                    commands: completed.map((r) => r.command),
+                    preexisting: preexistingOnly
+                      ? completed.filter((r) => !r.passed).map((r) => r.command)
+                      : [],
+                  }
+                : null;
             this.config.taskState?.noteVerification(
               outcome,
               result.report,
@@ -6743,6 +6772,13 @@ export class AgentLoop {
             // A successful call of ANY tool means the run is making contact
             // with the world — that is not an orbit, so the streak resets.
             sameShapeFailure = { key: "", tool: "", count: 0, noted: false };
+          }
+          // After the end-of-turn check, anything that can change a file
+          // leaves the verdict nothing to rest on (A3): a write, a worker, or
+          // any shell command, which may write without saying so. Failed calls
+          // too — a command can change a file and still exit non-zero.
+          if (p.isWrite || p.tc.toolName === "worker" || p.tc.toolName === "bash") {
+            this.finalProjectChecks = null;
           }
           if (output.success && p.isWrite) {
             editsSinceVerify = true;

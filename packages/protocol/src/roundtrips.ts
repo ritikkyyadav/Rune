@@ -312,8 +312,30 @@ export interface DeclaredGap {
  *   either; there was nothing to verify. Without it the most common verdict
  *   on a conversational turn was `unmet`, which teaches the reader to ignore
  *   the word — the one failure this vocabulary cannot afford.
+ * `done` — the run finished, nothing was seen to fail, no step is open, and
+ *   the project's own checks passed on the tree it left; but the criteria the
+ *   run wrote for itself were not each shown by a check bound to them. What
+ *   Claude Code and Codex call a finished task, said with what it rests on.
+ *   Every one of the fourteen live runs of 2026-10-21 that did its work ended
+ *   `unmet` ("no criteria stated") or `partial` ("no check bound") until
+ *   this existed (A3). `met` still means what it meant.
  */
 export type CompletionVerdict =
+  | {
+      kind: "done";
+      criteria: CriterionOutcome[];
+      /** The project's own checks that passed on the tree the run left. */
+      checks: string[];
+      /** Criteria the run wrote for itself and did not show one by one. */
+      unshown: string[];
+      /**
+       * Checks that went red only on failures already there before the run,
+       * named and matched test by test (A4). Absent when every check passed.
+       */
+      preexisting?: string[];
+      execution?: VerdictExecution;
+      evaluators?: VerdictEvaluators;
+    }
   | {
       kind: "met";
       criteria: CriterionOutcome[];

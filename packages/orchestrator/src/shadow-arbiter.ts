@@ -143,7 +143,7 @@ export interface ShadowObserver {
  * happens to be short. A key not listed here can never carry a string.
  */
 const ENUM_INPUTS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
-  ["verdictKind", new Set(["met", "partial", "unmet", "none"])],
+  ["verdictKind", new Set(["met", "done", "partial", "unmet", "none"])],
   [
     "stopReason",
     new Set([
