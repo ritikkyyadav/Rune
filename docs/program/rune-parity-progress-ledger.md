@@ -3502,3 +3502,23 @@ The founder chose "Live re-run now", then "Re-run on power". Same task, same unt
     end instead of timing out.
 
 **Not shown.** `done` on Rune's own source, live: owed after `f978488` ships. One run per build.
+
+## v1.4.14, 2026-10-22 · **a small change to a long file is a small diff, so the request check reads edits to Rune's largest files; CI green on three systems; installed through `rune upgrade`**
+
+The founder chose "Ship 1.4.14, then re-run". The release carries `f978488` (the diff fix the
+re-run on 1.4.13 found) and the ledger entries since 1.4.13.
+
+- **Gates, run with nothing else on the machine:** unit 8,090/0, integration 495/0, reliability
+  62/62, eval 63/63, typecheck and lint 22/22. Fresh clone at `3d8d201`: typecheck 15/15, lint
+  7/7, format, `cargo` 142/0, unit 8,075/0. The integration suite left Gradle output in
+  `tests/fixtures/verifier/gradle-app/` (`.gradle/`, `build/`), and prettier flags its HTML
+  report; it was removed before the release commit and is not in it.
+- **Release.** CI run 39777884829 on `lane/release-1.4.14`: 23 of 23 green, first attempt.
+  `main` fast-forwarded `c3f2ea9` → `3d8d201` (four commits); annotated tag `v1.4.14`. Release
+  run 39780020607: 13 of 13 green; Latest is v1.4.14 with eleven files.
+- **Installed** with `rune upgrade`, 1.4.13 → 1.4.14: the installed `rune-compiled` and
+  `rune-tools` match the release's `SHA256SUMS`; `rune doctor` healthy (signatures valid,
+  rollback to the 1.4.13 build available); `rune tools-smoke` round-trips; the edit probes fail 0
+  of 6.
+
+**Not shown yet.** `done` live on Rune's own source: the re-run on 1.4.14 is next, on AC power.
