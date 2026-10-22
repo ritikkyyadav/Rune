@@ -1,6 +1,6 @@
 {
   "name": "@rune/eval",
-  "version": "1.4.12",
+  "version": "1.4.13",
   "private": true,
   "main": "runner.ts",
   "scripts": {

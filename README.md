@@ -77,10 +77,11 @@ Session data is stored locally. Telemetry is off by default.
 
 ## Latest release
 
-[**v1.4.12**](https://github.com/ritikkyyadav/Rune/releases/tag/v1.4.12) lets finished work say
-so. A run whose project checks pass is read once against your request: every ask found, and it
-ends `done`; anything missing is named, and Rune finishes it before it stops.
-[Release notes and validation](docs/releases/v1.4.12.md) · [Changelog](CHANGELOG.md)
+[**v1.4.13**](https://github.com/ritikkyyadav/Rune/releases/tag/v1.4.13) lets `done` come on
+projects whose tests run long, found by Rune working on its own source. A headless run waits up
+to five minutes per check; when a suite still cannot finish, the tests your change touched stand
+in for it, and the verdict says so.
+[Release notes and validation](docs/releases/v1.4.13.md) · [Changelog](CHANGELOG.md)
 
 ## Documentation
 

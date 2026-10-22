@@ -11,6 +11,37 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+## [1.4.13] - 2026-10-22
+
+**`done` on a project whose tests take longer than the check's limit — found by Rune working on
+its own source.** A patch on 1.4.12. Full notes:
+[`docs/releases/v1.4.13.md`](docs/releases/v1.4.13.md).
+
+### Fixed
+
+- **`done` could never come on a project whose test suite outlasts the end-of-turn check.** In
+  the dogfood test of 22 October, Rune and Codex CLI made the same correct change to Rune's own
+  source; Rune's suite takes about 222 s, the check stopped it at 120 s ("nothing was measured"),
+  and the run ended `unmet — no criteria stated`. Now:
+  - a headless run (`rune -P`) gives each check five minutes; an interactive session keeps two,
+    since a person waits at the end of every turn that wrote. `[verify] timeoutSecs` still wins;
+  - when the suite still does not finish, the test files the change touched — run on their own,
+    as before — may stand in for it, and `done` says so: "`bun run test` did not finish, and the
+    test files the change touched passed in its place". The request check is still asked;
+  - the checks after an unfinished one still run. Lint is ordered after the tests, so behind a
+    slow suite it never ran at all; a red one there is now a red check.
+- **A running background shell is waited on, not treated as a loop.** Polling a long test run
+  with `bash_output` ("running, no new output") tripped both loop guards, and the agent killed a
+  run that was only long. `bash_output` also takes `wait_seconds` (up to 300) to wait for a shell
+  to finish in one call instead of polling in many.
+- **The project's format check runs at the end of a turn.** Both agents of the dogfood test left
+  a docs table that CI's format gate refused. A `format:check` script (or a same-named variant)
+  that runs `prettier --check` is now a check, run last. A red one is read file by file: files
+  the run did not change were not unformatted by it, so formatting you were already carrying
+  buys no repair turn.
+- The intent reader no longer labels a code change `research` because it says "source" (as in
+  "Rune's own source").
+
 ## [1.4.12] - 2026-10-21
 
 **Finished work says so: a run that did what you asked ends `done`, after the change is read
@@ -1387,7 +1418,8 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.12...HEAD
+[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.13...HEAD
+[1.4.13]: https://github.com/ritikkyyadav/Rune/compare/v1.4.12...v1.4.13
 [1.4.12]: https://github.com/ritikkyyadav/Rune/compare/v1.4.11...v1.4.12
 [1.4.11]: https://github.com/ritikkyyadav/Rune/compare/v1.4.10...v1.4.11
 [1.4.10]: https://github.com/ritikkyyadav/Rune/compare/v1.4.9...v1.4.10

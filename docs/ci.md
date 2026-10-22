@@ -69,6 +69,16 @@ by criterion. It needs all of these:
 `done` produces `ok: true`. `met` is unchanged: every criterion shown by a check bound to
 it, and no ask of the request found missing.
 
+**A suite that takes longer than the check's limit** (1.4.13). A headless run gives each
+end-of-turn check five minutes; an interactive session gives two. `[verify] timeoutSecs`
+sets both. When the test suite still does not finish, the test files the change touched
+are run on their own, and if they pass they may stand in for it: the run can end `done`,
+and the verdict says which suite did not finish —
+`` `bun run test` did not finish, and the test files the change touched passed in its place ``.
+The checks after an unfinished one still run, and the envelope's `verdict.standIns` lists
+each suite with what stood in for it. A change that touched no test file has nothing to
+stand in, and does not end `done` on a suite that did not finish.
+
 ### How a run ends
 
 The envelope's `stopReason` is the loop's own word for it, and `subtype` is the
