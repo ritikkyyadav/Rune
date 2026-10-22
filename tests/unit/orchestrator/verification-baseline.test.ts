@@ -980,11 +980,27 @@ const ONLY_OLD: FailureAttribution = { known: true, existing: [OLD], introduced:
 const MIXED: FailureAttribution = { known: true, existing: [OLD], introduced: [OK] };
 const ALL_NEW: FailureAttribution = { known: true, existing: [], introduced: [OK] };
 const UNKNOWN: FailureAttribution = { known: false, why: "dependencies changed during the run" };
+/** A format check's report: files, not tests (2026-10-22). */
+const OLD_FILES: FailureAttribution = {
+  known: true,
+  existing: ["docs/old.md", "README.md"],
+  introduced: [],
+  of: "files",
+};
 
 describe.each([
   ["authority empty", [] as string[]],
   ["authority enabled", ["check_failed", "missing_dependency"]],
 ])("the loop — failures the run was handed (%s)", (_label, authority) => {
+  test("files a format check named, all from before the run: no repair turn, and called files", async () => {
+    const out = await runLoop({ script: WRITE_RUN_FINISH, authority, results: [red(OLD_FILES)] });
+    expect(out.repairs).toEqual([]);
+    const notice = out.notices.find((n) => n.includes("already failing before it began"))!;
+    expect(notice).toContain("2 files were already failing before it began");
+    expect(notice).not.toContain("tests were");
+    expect(notice).toContain("docs/old.md");
+  });
+
   test("all pre-existing: no repair turn, no effort escalation, and the run ends", async () => {
     const out = await runLoop({ script: WRITE_RUN_FINISH, authority, results: [red(ONLY_OLD)] });
     expect(out.repairs).toEqual([]);

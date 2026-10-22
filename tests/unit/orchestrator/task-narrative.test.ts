@@ -423,6 +423,28 @@ describe("the Intent Interpreter", () => {
     }
   });
 
+  test("'source' as in source code is not research; sources asked for as sources are", () => {
+    // The dogfood task of 2026-10-22, word for word: it was labelled
+    // research because it ends "it is Rune's own source".
+    const dogfood =
+      "Give it its own ending: stopReason `model_unavailable`, envelope subtype " +
+      "`error_model_unavailable`, `ok: false`, and exit code 5. Update the table of endings " +
+      "in docs/ci.md, and add tests for the new ending. Work in this repository (it is " +
+      "Rune's own source). Make the change, run the relevant tests, and keep the existing " +
+      "tests passing. Do not commit.";
+    const cases: Array<[string, string]> = [
+      [dogfood, "build"],
+      ["fix the parser in the source tree", "build"],
+      ["add an open source license header to every file", "build"],
+      ["find credible sources on the history of TLS 1.3", "research"],
+      ["summarise the debate with sources for each claim", "research"],
+      ["what do primary sources say about the outage?", "research"],
+    ];
+    for (const [message, kind] of cases) {
+      expect(readIntent(message).kind, message).toBe(kind as never);
+    }
+  });
+
   test("nothing to go on is not confidence", () => {
     const reading = readIntent("the thing from yesterday");
     expect(reading.confident).toBe(false);

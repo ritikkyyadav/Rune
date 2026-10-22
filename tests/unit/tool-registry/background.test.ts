@@ -9,10 +9,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   BackgroundShellManager,
+  BASH_OUTPUT_SCHEMA,
   createBashOutputHandler,
   createKillShellHandler,
   DEFAULT_SHELL_LIFETIME_MS,
   isLongCommand,
+  MAX_OUTPUT_WAIT_SECS,
   setDefaultShellLifetime,
   withBackgroundSupport,
 } from "../../../packages/tool-registry/src/tools/background";
@@ -199,6 +201,100 @@ describe.skipIf(!POSIX_SHELL)("tool handlers", () => {
     const out = await killer.execute(makeInput("kill_shell", { shell_id: shellId }));
     expect(out.success).toBe(true);
     expect(JSON.parse(out.result).status).toBe("killed");
+  });
+});
+
+/**
+ * 2026-10-22: the dogfood run polled a long test run with bash_output four
+ * times, each answer "running, (no new output)", until the loop guards read it
+ * as a rut and the agent killed the run. A read can now wait for the shell.
+ */
+describe.skipIf(!POSIX_SHELL)("bash_output can wait for a shell to finish", () => {
+  test("a shell that finishes while it waits: one read, completed, with its output", async () => {
+    const m = new BackgroundShellManager();
+    const { shellId } = m.start("sleep 1; echo finished-after-a-wait", "/tmp");
+    const reader = createBashOutputHandler(m);
+    const t0 = Date.now();
+    const out = await reader.execute(
+      makeInput("bash_output", { shell_id: shellId, wait_seconds: 20 }),
+    );
+    const took = Date.now() - t0;
+    const parsed = JSON.parse(out.result);
+    expect(parsed.status).toBe("completed");
+    expect(parsed.output).toContain("finished-after-a-wait");
+    expect(parsed.note).toBeUndefined();
+    // It returned when the shell did, not when the wait ran out.
+    expect(took).toBeLessThan(15_000);
+  });
+
+  test("the wait runs out first: still running, said so, and how to wait longer", async () => {
+    const m = new BackgroundShellManager();
+    const { shellId } = m.start("sleep 30", "/tmp");
+    const reader = createBashOutputHandler(m);
+    const t0 = Date.now();
+    const out = await reader.execute(
+      makeInput("bash_output", { shell_id: shellId, wait_seconds: 1 }),
+    );
+    const took = Date.now() - t0;
+    m.kill(shellId);
+    const parsed = JSON.parse(out.result);
+    expect(parsed.status).toBe("running");
+    expect(parsed.note).toContain("wait_seconds");
+    expect(took).toBeGreaterThanOrEqual(900);
+    expect(took).toBeLessThan(10_000);
+  });
+
+  test("a cancelled turn ends the wait", async () => {
+    const m = new BackgroundShellManager();
+    const { shellId } = m.start("sleep 30", "/tmp");
+    const reader = createBashOutputHandler(m);
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(), 150);
+    const t0 = Date.now();
+    const out = await reader.execute({
+      ...makeInput("bash_output", { shell_id: shellId, wait_seconds: 60 }),
+      signal: ac.signal,
+    });
+    const took = Date.now() - t0;
+    m.kill(shellId);
+    expect(JSON.parse(out.result).status).toBe("running");
+    expect(took).toBeLessThan(5_000);
+  });
+
+  test("no wait asked for: it reads at once, as it always did", async () => {
+    const m = new BackgroundShellManager();
+    const { shellId } = m.start("sleep 30", "/tmp");
+    const reader = createBashOutputHandler(m);
+    const t0 = Date.now();
+    const out = await reader.execute(makeInput("bash_output", { shell_id: shellId }));
+    m.kill(shellId);
+    expect(JSON.parse(out.result).status).toBe("running");
+    expect(Date.now() - t0).toBeLessThan(500);
+  });
+
+  test("a wait asked for beyond five minutes is held to five minutes", async () => {
+    const m = new BackgroundShellManager();
+    const asked: number[] = [];
+    m.wait = async (_id: string, ms: number) => {
+      asked.push(ms);
+      return false;
+    };
+    m.read = () => ({ found: true, status: "running", exitCode: null, output: "" });
+    const reader = createBashOutputHandler(m);
+    await reader.execute(makeInput("bash_output", { shell_id: "shell_1", wait_seconds: 10_000 }));
+    await reader.execute(makeInput("bash_output", { shell_id: "shell_1", wait_seconds: 2 }));
+    expect(asked).toEqual([MAX_OUTPUT_WAIT_SECS * 1000, 2000]);
+  });
+
+  test("a wait that is not a number of seconds is refused; the longest is five minutes", () => {
+    const reader = createBashOutputHandler(new BackgroundShellManager());
+    expect(reader.validate({ shell_id: "shell_1" }).valid).toBe(true);
+    expect(reader.validate({ shell_id: "shell_1", wait_seconds: 0 }).valid).toBe(true);
+    expect(reader.validate({ shell_id: "shell_1", wait_seconds: 120 }).valid).toBe(true);
+    expect(reader.validate({ shell_id: "shell_1", wait_seconds: -1 }).valid).toBe(false);
+    expect(reader.validate({ shell_id: "shell_1", wait_seconds: "60" }).valid).toBe(false);
+    expect(MAX_OUTPUT_WAIT_SECS).toBe(300);
+    expect(JSON.stringify(BASH_OUTPUT_SCHEMA.inputSchema)).toContain("wait_seconds");
   });
 });
 

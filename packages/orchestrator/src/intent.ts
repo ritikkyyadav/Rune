@@ -71,10 +71,13 @@ const PATTERNS: Array<{ kind: TaskKind; re: RegExp }> = [
     kind: "investigate",
     re: /\b(why|root[- ]cause|diagnos\w*|debug|troubleshoot|investigate|figure out why|what(?:'s| is) (?:wrong|causing|going on)|regress\w*|broke\w*|failing|crash\w*|leak\w*|flaky|hang\w*|slow(?:er|ed|ness)?)\b/i,
   },
-  // Research goes OUTSIDE the workspace for an answer, with sources.
+  // Research goes OUTSIDE the workspace for an answer, with sources. "Source"
+  // alone is not that: "Rune's own source" is the code (the dogfood run of
+  // 2026-10-22 was labelled research by it). Sources count when asked for as
+  // sources: found, cited, credible, or sources for something.
   {
     kind: "research",
-    re: /\b(research|deep[- ]?dive|survey the|state of the art|literature|competitor|market|cite[ds]?|sources?|prior art|benchmark(?:s|ing)? (?:against|of)|compare (?:vendors|providers|tools|libraries))\b/i,
+    re: /\b(research|deep[- ]?dive|survey the|state of the art|literature|competitor|market|cite[ds]?|(?:with|cite|citing|list|find|gather|credible|reliable|primary|reputable) sources|sources (?:for|on|about)|prior art|benchmark(?:s|ing)? (?:against|of)|compare (?:vendors|providers|tools|libraries))\b/i,
   },
   // Analysis reads data that already exists and reports what it says.
   {

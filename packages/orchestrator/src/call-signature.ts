@@ -113,6 +113,28 @@ const DURATION_RE = /\b\d+(?:\.\d+)?\s?(?:ms|s|sec|secs|seconds?|m|min|mins|minu
  * volatile tokens) plus durations, then a short hash: "3 failed" and
  * "2 failed" stay distinct, "(1.2s)" and "(1.4s)" do not.
  */
+/**
+ * A `bash_output` read that found its shell still running: a WAIT, not a rut.
+ *
+ * Its answer is the same each time ("running", "(no new output)") because
+ * nothing has happened yet, not because nothing will. Both loop guards read it
+ * as a repeat: the batch guard skipped the poll and the result guard nudged
+ * the agent off a test run that was only long. On the dogfood run of
+ * 2026-10-22 the agent then killed it. The shell's own lifetime bounds the
+ * wait, and the turn ceiling bounds the run.
+ */
+export function pollOfRunningShell(
+  toolName: string,
+  output: { success: boolean; result?: string } | undefined,
+): boolean {
+  if (toolName !== "bash_output" || !output?.success || !output.result) return false;
+  try {
+    return (JSON.parse(output.result) as { status?: unknown }).status === "running";
+  } catch {
+    return false;
+  }
+}
+
 export function resultSignature(text: string): string {
   const normalized = normalizeText(text, false).replace(DURATION_RE, "«dur»");
   return createHash("sha1").update(normalized).digest("hex").slice(0, 16);

@@ -18,6 +18,12 @@ import type { ToolCallInput, ToolCallOutput, ToolHandler, ToolSchema } from "../
 
 /** Cap the retained output per shell — a chatty server must not eat memory. */
 const MAX_BUFFER_CHARS = 200_000;
+/**
+ * The longest `bash_output` waits for a shell to finish before reading. A
+ * long test run is waited for in a few calls rather than polled in many: each
+ * poll is a model call carrying the whole conversation (2026-10-22).
+ */
+export const MAX_OUTPUT_WAIT_SECS = 300;
 
 /**
  * How long a stopped shell gets to exit on SIGTERM before its group is killed.
@@ -431,11 +437,15 @@ export const BASH_OUTPUT_SCHEMA: ToolSchema = {
   name: "bash_output",
   version: "0.1.0",
   description:
-    "Read NEW output from a background shell started with bash's run_in_background. Returns output since your last read plus the shell's status (running/completed/failed/killed). Poll this to monitor servers, builds, or long test runs.",
+    "Read NEW output from a background shell started with bash's run_in_background. Returns output since your last read plus the shell's status (running/completed/failed/killed). Use it to monitor servers, builds, or long test runs; to wait for a long run to finish, pass wait_seconds rather than polling.",
   inputSchema: {
     type: "object",
     properties: {
       shell_id: { type: "string", description: "The shell_id returned when the command started" },
+      wait_seconds: {
+        type: "number",
+        description: `Wait up to this many seconds (at most ${MAX_OUTPUT_WAIT_SECS}) for the shell to finish before reading. 0, the default, reads at once.`,
+      },
     },
     required: ["shell_id"],
   },
@@ -461,12 +471,23 @@ export const KILL_SHELL_SCHEMA: ToolSchema = {
 export function createBashOutputHandler(manager: BackgroundShellManager): ToolHandler {
   return {
     schema: BASH_OUTPUT_SCHEMA,
-    validate: (args) =>
-      typeof args.shell_id === "string" && args.shell_id.length > 0
-        ? { valid: true }
-        : { valid: false, error: "shell_id is required" },
+    validate: (args) => {
+      if (typeof args.shell_id !== "string" || args.shell_id.length === 0) {
+        return { valid: false, error: "shell_id is required" };
+      }
+      const wait = args.wait_seconds;
+      if (wait !== undefined && (typeof wait !== "number" || !Number.isFinite(wait) || wait < 0)) {
+        return { valid: false, error: "wait_seconds must be a number of seconds, 0 or more" };
+      }
+      return { valid: true };
+    },
     execute: async (input: ToolCallInput): Promise<ToolCallOutput> => {
-      const r = manager.read(String(input.args.shell_id));
+      const id = String(input.args.shell_id);
+      const waitSecs = Math.min(Number(input.args.wait_seconds ?? 0) || 0, MAX_OUTPUT_WAIT_SECS);
+      // A wait ends when the shell does, when the time runs out, or when the
+      // turn is cancelled; the read below then reports whichever it was.
+      if (waitSecs > 0) await manager.wait(id, waitSecs * 1000, input.signal);
+      const r = manager.read(id);
       if (!r.found) {
         return {
           callId: input.callId,
@@ -491,6 +512,11 @@ export function createBashOutputHandler(manager: BackgroundShellManager): ToolHa
           exit_code: r.exitCode,
           output: r.output || "(no new output)",
           ...(r.expired ? { note: "Stopped: it reached its time limit, not a kill_shell." } : {}),
+          ...(r.status === "running"
+            ? {
+                note: `Still running. To wait for it to finish, call bash_output with wait_seconds (up to ${MAX_OUTPUT_WAIT_SECS}) instead of polling.`,
+              }
+            : {}),
         }),
         durationMs: 0,
       };

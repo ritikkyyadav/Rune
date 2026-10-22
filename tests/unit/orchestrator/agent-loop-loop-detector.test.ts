@@ -11,6 +11,7 @@
 
 import { describe, expect, mock, test } from "bun:test";
 import { AgentLoop, type AgentTurnEvent } from "../../../packages/orchestrator/src/agent-loop";
+import { pollOfRunningShell } from "../../../packages/orchestrator/src/call-signature";
 
 function ev(type: string, extra: Record<string, unknown> = {}) {
   return { type, ...extra };
@@ -165,5 +166,59 @@ describe("loop detector keyed on results", () => {
     expect(notes.some((t) => /identical|not changing/i.test(t))).toBe(true);
     const last = events[events.length - 1] as any;
     expect(last.stopReason).toBe("end_turn");
+  });
+});
+
+/**
+ * 2026-10-22, the dogfood run: Rune polled its own long test run with
+ * bash_output, each answer "running, (no new output)". The batch guard skipped
+ * the third poll, the result guard nudged, and the agent killed a run that was
+ * only long. A read of a shell still running is a wait.
+ */
+const RUNNING = JSON.stringify({
+  status: "running",
+  exit_code: null,
+  output: "(no new output)",
+  note: "Still running. To wait for it to finish, call bash_output with wait_seconds (up to 300) instead of polling.",
+});
+const FINISHED = JSON.stringify({ status: "completed", exit_code: 0, output: "(no new output)" });
+
+describe("a background shell still running is waited on, not a rut", () => {
+  test("five identical polls of a running shell: no skip, no nudge, no bail", async () => {
+    const poll = { tool: "bash_output", args: { shell_id: "shell_7" } };
+    const incidents: string[] = [];
+    const loop = makeLoop(
+      makeGateway([poll, poll, poll, poll, poll, "text"]),
+      makeRegistry(() => RUNNING),
+      { onIncident: (i: any) => incidents.push(i.class) },
+    );
+    const events = await collect(loop.run("wait for the tests", "s1", "/tmp"));
+    expect(incidents).not.toContain("loop.stuck_nudge");
+    expect(incidents).not.toContain("loop.infinite_loop");
+    expect(incidents).not.toContain("loop.result_loop");
+    const last = events[events.length - 1] as any;
+    expect(last.stopReason).toBe("end_turn");
+    expect(last.totalTurns).toBe(6);
+  });
+
+  test("the same shell read again and again after it finished is still a rut", async () => {
+    const poll = { tool: "bash_output", args: { shell_id: "shell_7" } };
+    const incidents: string[] = [];
+    const loop = makeLoop(
+      makeGateway([poll, poll, poll, poll, poll, poll, "text"]),
+      makeRegistry(() => FINISHED),
+      { onIncident: (i: any) => incidents.push(i.class) },
+    );
+    await collect(loop.run("wait for the tests", "s1", "/tmp"));
+    expect(incidents).toContain("loop.stuck_nudge");
+  });
+
+  test("what counts as a wait: bash_output, succeeded, status running — nothing else", () => {
+    expect(pollOfRunningShell("bash_output", { success: true, result: RUNNING })).toBe(true);
+    expect(pollOfRunningShell("bash_output", { success: true, result: FINISHED })).toBe(false);
+    expect(pollOfRunningShell("bash_output", { success: false, result: RUNNING })).toBe(false);
+    expect(pollOfRunningShell("bash", { success: true, result: RUNNING })).toBe(false);
+    expect(pollOfRunningShell("bash_output", { success: true, result: "running" })).toBe(false);
+    expect(pollOfRunningShell("bash_output", undefined)).toBe(false);
   });
 });

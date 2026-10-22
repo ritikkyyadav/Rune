@@ -37,6 +37,7 @@ import {
   batchSignature,
   breakerSignature,
   failureShapeSignature,
+  pollOfRunningShell,
   resultSignature,
 } from "./call-signature";
 import { TurnRefunds } from "./turn-refunds";
@@ -2850,7 +2851,13 @@ export class AgentLoop {
     // Each remembered call carries the write count at the moment it was issued.
     // Repetition only means "stuck" when nothing changed between the tries —
     // see the duplicate check below.
-    const recentToolSignatures: Array<{ sig: string; writes: number; resultSig?: string }> = [];
+    const recentToolSignatures: Array<{
+      sig: string;
+      writes: number;
+      resultSig?: string;
+      /** Every call in the batch read a background shell that was still running. */
+      waiting?: boolean;
+    }> = [];
     // ── Result recurrence ──
     // The detector above judges repeated CALLS. This one judges repeated
     // ANSWERS: the same substantive successful result coming back again and
@@ -4462,18 +4469,20 @@ export class AgentLoop {
               const names = attribution.existing;
               const shown = names.slice(0, 5).join("; ");
               const more = names.length > 5 ? ` (+${names.length - 5} more)` : "";
+              // Tests, or the files a format check named (2026-10-22).
+              const noun = attribution.of === "files" ? "file" : "test";
               this.report(
                 "loop.verification_preexisting",
                 "warn",
                 "verify.preexisting",
-                `${names.length} failing test${names.length === 1 ? "" : "s"} predate this run — ` +
+                `${names.length} failing ${noun}${names.length === 1 ? "" : "s"} predate this run — ` +
                   "none are new, and no repair turn was bought",
               );
               yield {
                 type: "notice",
                 message:
                   `The project's checks are red, but not because of this run: ${names.length} ` +
-                  `test${names.length === 1 ? " was" : "s were"} already failing before it began ` +
+                  `${noun}${names.length === 1 ? " was" : "s were"} already failing before it began ` +
                   `and still ${names.length === 1 ? "is" : "are"} — ${shown}${more}. ` +
                   "Nothing new failed. They were left as found.",
               };
@@ -5332,7 +5341,7 @@ export class AgentLoop {
       // signatures are compared: two earlier identical calls with identical
       // answers make this third one a rut; a changing answer is progress.
       const signature = batchSignature(pendingToolCalls);
-      const thisEntry: { sig: string; writes: number; resultSig?: string } = {
+      const thisEntry: { sig: string; writes: number; resultSig?: string; waiting?: boolean } = {
         sig: signature,
         writes: writeCount,
       };
@@ -5342,8 +5351,11 @@ export class AgentLoop {
       const priorSame = recentToolSignatures.filter(
         (s) => s !== thisEntry && s.sig === signature && s.writes === writeCount,
       );
+      // Unless every earlier try found a background shell still running: then
+      // the same answer means not yet, and this try is a wait (pollOfRunningShell).
       const answersUnchanged =
         priorSame.length >= 2 &&
+        !priorSame.every((s) => s.waiting === true) &&
         priorSame.every((s) => s.resultSig !== undefined && s.resultSig === priorSame[0].resultSig);
       const duplicateCount = answersUnchanged ? priorSame.length + 1 : 1;
       if (duplicateCount >= 3) {
@@ -7049,8 +7061,12 @@ export class AgentLoop {
           .map((p) => (p.output?.success ? p.output.result : `ERR:${p.output?.error ?? ""}`))
           .join("\0"),
       );
+      thisEntry.waiting =
+        planned.length > 0 && planned.every((p) => pollOfRunningShell(p.tc.toolName, p.output));
       const batchSigs = new Set<string>();
       for (const p of planned) {
+        // A read of a shell still running is a wait, not an answer that recurs.
+        if (pollOfRunningShell(p.tc.toolName, p.output)) continue;
         // Denied calls carry their refusal as the output. A repeated FAILURE
         // is the strongest loop signal there is: five identical "Unknown
         // tool" refusals in a row went unseen while this read allowed,

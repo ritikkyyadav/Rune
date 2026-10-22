@@ -256,7 +256,14 @@ export interface VerifyResult {
  * treats the failure exactly as it always did.
  */
 export type FailureAttribution =
-  { known: true; existing: string[]; introduced: string[] } | { known: false; why: string };
+  | {
+      known: true;
+      existing: string[];
+      introduced: string[];
+      /** What the names are: tests (the default), or files a format check named. */
+      of?: "files";
+    }
+  | { known: false; why: string };
 
 /**
  * How a verification's check set was chosen.
@@ -636,8 +643,28 @@ function jsChecks(dir: string, isMonorepoRoot: boolean): Array<[CheckKind, strin
   // 4. Build as a compile-at-least fallback when nothing else was detected.
   if (out.length === 0 && scripts.build) out.push(["build", `${pm} run build`]);
 
+  // 5. The project's own format check, when it declares one that runs
+  // prettier (2026-10-22: both agents of the dogfood run left a docs table
+  // that CI's format gate refused). After the build fallback, so it never
+  // stands in for one; lint-kind, so it runs last. A red one is read file by
+  // file (`attributeUnformatted`): formatting that predates the run is never
+  // the run's to repair.
+  const format = FORMAT_CHECK_SCRIPTS.find((name) => PRETTIER_CHECK.test(scripts[name] ?? ""));
+  if (format) out.push(["lint", `${pm} run ${format}`]);
+
   return out;
 }
+
+/** The script names a project's format check goes by, in the order they are looked for. */
+const FORMAT_CHECK_SCRIPTS = [
+  "format:check",
+  "check:format",
+  "fmt:check",
+  "format-check",
+  "prettier:check",
+];
+/** A script body that runs prettier in check mode. */
+const PRETTIER_CHECK = /\bprettier\b[^&|;]*\s(?:--check|-c)\b/;
 
 // ─── Go ───
 
@@ -1539,6 +1566,42 @@ const CLOCK_SLACK_MS = 2_000;
 const DEPENDENCY_FILE =
   /(?:^|\/)(?:package\.json|package-lock\.json|npm-shrinkwrap\.json|bun\.lockb?|pnpm-lock\.yaml|yarn\.lock|bunfig\.toml|tsconfig(?:\.[\w.-]+)?\.json|jsconfig\.json|\.npmrc)$/;
 
+/** A formatter's own setup: if the run changed it, every file's verdict may have moved. */
+const FORMATTER_CONFIG =
+  /(?:^|\/)(?:\.prettierrc(?:\.\w+)?|prettier\.config\.[cm]?[jt]s|\.prettierignore|\.editorconfig)$/;
+
+/**
+ * The files a `prettier --check` report names as not formatted, or null when
+ * the output is not such a report: no "Checking formatting..." line, or an
+ * `[error]` line (a file prettier could not parse is not a style verdict).
+ */
+export function prettierUnformatted(output: string): string[] | null {
+  if (!/^Checking formatting\.\.\./m.test(output)) return null;
+  if (/^\[error\]/m.test(output)) return null;
+  const files = [...output.matchAll(/^\[warn\] (.+)$/gm)]
+    .map((m) => m[1]!.trim())
+    .filter((f) => !/^Code style issues /.test(f));
+  return files.length > 0 ? files : null;
+}
+
+/**
+ * A red format check, file by file. A file the run did not change was not
+ * unformatted by it, so a report naming only such files predates the run.
+ * `changedHere` is relative to the check's project, as prettier's paths are.
+ */
+export function attributeUnformatted(
+  files: readonly string[],
+  changedHere: ReadonlySet<string>,
+): FailureAttribution {
+  const norm = (f: string) => f.replace(/\\/g, "/").replace(/^\.\//, "");
+  return {
+    known: true,
+    existing: files.filter((f) => !changedHere.has(norm(f))),
+    introduced: files.filter((f) => changedHere.has(norm(f))),
+    of: "files",
+  };
+}
+
 const NO_FAILURES: ParsedTestRun = { failing: [], pass: 0, fail: 0, errors: 0 };
 
 /** A directory under both of its names: as given, and as the kernel knows it. */
@@ -1935,6 +1998,31 @@ export class CommandVerifier implements Verifier {
     const baseline = this.baseline;
     if (!baseline)
       return unknown("no snapshot of the tree was taken before the run's first change");
+
+    // A format check names files, not tests (2026-10-22). The same tree
+    // comparison, read file by file.
+    const unformatted = prettierUnformatted(failed.output);
+    if (unformatted) {
+      const current = baselineIsCurrent(baseline);
+      if (!current.ok) return unknown(current.why);
+      const changed = changedSinceBaseline(baseline);
+      if (changed === null) {
+        return unknown("the working tree could not be compared with where the run began");
+      }
+      const setup = changed.find((p) => FORMATTER_CONFIG.test(p) || DEPENDENCY_FILE.test(p));
+      if (setup) return unknown(`the formatter's setup changed during the run (${setup})`);
+      const where = [baseline.prefix, failed.check.project].filter(Boolean).join("/");
+      return attributeUnformatted(
+        unformatted,
+        new Set(
+          where === ""
+            ? changed
+            : changed
+                .filter((p) => p.startsWith(`${where}/`))
+                .map((p) => p.slice(where.length + 1)),
+        ),
+      );
+    }
 
     const now = parseBunTestRun(failed.output, bothNames(this.config.workspaceRoot));
     if (!now) return unknown("the check's output is not a test report this can read");
