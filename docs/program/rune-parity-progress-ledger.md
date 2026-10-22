@@ -3407,3 +3407,61 @@ Evidence: `docs/evidence/dogfood-20261022/`. It holds the task, the hidden grade
 placed at `tests/reliability/model-gone.hidden.test.ts` to run), the scripts, both patches, the
 summaries, Rune's finish record and the stuck request's timeline. The scripts ran against
 `~/rune-evidence/dogfood-20261021/`, which keeps the full trees.
+
+## v1.4.13, 2026-10-22 · **`done` on a project whose tests outlast the check — the dogfood test's main finding — and its three smaller ones; CI green on three systems; installed through `rune upgrade`**
+
+The founder chose "Wait, then fall back (Recommended)" for the dogfood test's main finding, to
+ship as v1.4.13 with the three smaller fixes alongside.
+
+**What was built** (`lane/done-long-suites`):
+
+- **`6b4c53a`, the long-suite `done`.**
+  - A headless run's end-of-turn checks get five minutes each (`checkTimeoutOverride`); an
+    interactive session keeps the verifier's 120 s; `[verify] timeoutSecs` wins in both.
+  - The verifier marks the touched-tests run `inPlaceOf` the suite it stood in for, and keeps
+    running the checks after an unfinished one. Lint is ordered after the tests, so behind
+    Rune's own suite it had never run.
+  - The loop lets `done` rest on stand-ins when every unfinished suite has a green one and
+    nothing else is red, finding a stand-in by its mark rather than by position. The request
+    check is still asked.
+  - The verdict line names the suite ("`bun run test` did not finish, and the test files the
+    change touched passed in its place"), and the envelope carries `verdict.standIns`.
+- **`4305cef`, the three smaller fixes.**
+  - A `bash_output` read that finds its shell still running is a wait for both loop guards
+    (`pollOfRunningShell`), and `bash_output` takes `wait_seconds` (up to 300).
+  - A `format:check` script (or a same-named variant) that runs `prettier --check` is an
+    end-of-turn check, last and after the build fallback, attributed file by file: files the run
+    did not change predate it. A changed prettier setup or a parse error leaves it unknown.
+  - "Source" alone is no longer research.
+- **`c3f2ea9`:** "release: Rune is 1.4.13".
+
+**My call within the founder's choice.** The five-minute wait is for headless runs only. An
+interactive turn on Rune's own source would otherwise wait about four minutes after every turn
+that wrote, undoing the cost-and-latency lane's work. The verdict there is back-office, and the
+stand-in still covers a suite that outlasts the two minutes.
+
+**Checked.**
+
+- 29 mutants, all killed: 12 for the long-suite `done`, 17 for the rest. One survived at first:
+  a prettier report mixing an old unformatted file with a parse error, read as a plain list,
+  would have filed the run's syntax error as inherited formatting. A test now pins it.
+- End-to-end through the real Engine and verifier
+  (`tests/integration/done-long-suite-e2e.test.ts`): stood in and green, `done`; no test file
+  touched, not `done`; stand-in red, not `done`.
+- Lane: unit 8,084/0 (one first failed because the version was bumped while the suite ran; it
+  passes on the stable tree), integration 495/0, reliability 62/62, eval 63/63, typecheck 15/15,
+  lint 7/7.
+- Fresh clone at `c3f2ea9`: typecheck 15/15, lint 7/7, format, `cargo` 142/0, unit 8,069/0.
+- CI run 39748026987 on `lane/release-1.4.13`: 23 of 23 green, first attempt.
+
+**Release.** `main` fast-forwarded `688f1e7` → `c3f2ea9` (five commits), and the annotated tag `v1.4.13`
+was pushed at 08:44 UTC; auto mode did not stop it this time. Release run 39749934278: 13 of 13
+green, and Latest is v1.4.13 with eleven files. Installed with `rune upgrade`, 1.4.12 → 1.4.13:
+the installed `rune-compiled` and `rune-tools` match the release's `SHA256SUMS`; `rune doctor`
+is healthy (signatures valid, rollback to the 1.4.12 build available); `rune tools-smoke`
+round-trips; the edit probes fail 0 of 6.
+
+**Not shown.** Live. The fix is measured through the real engine with a scripted model; the
+dogfood task re-run on 1.4.13 is owed (the founder's word first: one Rune run, about 17 points
+of the five-hour window). The dogfood test's cost finding (2.4 times Codex's quota, the fixed
+prefix of doctrine and tool schemas) is not addressed here.
