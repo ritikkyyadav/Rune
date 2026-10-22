@@ -79,6 +79,13 @@ The checks after an unfinished one still run, and the envelope's `verdict.standI
 each suite with what stood in for it. A change that touched no test file has nothing to
 stand in, and does not end `done` on a suite that did not finish.
 
+**What counts as a failure the run saw** (1.4.15). `done` refuses while a check the run
+saw fail is still red, counting only real failures. The shell's own `test` and `[` are not
+checks. A `bun test` run against a copy of the project (outside the workspace, or in a folder
+git tracks nothing in, mirroring the project's paths) is not the project's check. A red run of
+a test file is covered when a `bun test` suite that passed on the final tree also ran it; the
+envelope's `verdict.superseded` lists those runs, and the verdict line names the first.
+
 ### How a run ends
 
 The envelope's `stopReason` is the loop's own word for it, and `subtype` is the

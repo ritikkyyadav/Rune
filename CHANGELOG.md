@@ -11,6 +11,26 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+## [1.4.15] - 2026-10-22
+
+**`done` counts only real failures — found by Rune's live run on its own source.** A patch on
+1.4.14. Full notes: [`docs/releases/v1.4.15.md`](docs/releases/v1.4.15.md).
+
+### Fixed
+
+- **A careful run could not end `done`.** On the live re-run of the dogfood task on 1.4.14, every
+  end-of-turn check passed on Rune's own source and the request check found 13 of 13 asks, and
+  `done` was still refused by what the agent saw while investigating a test that failed only
+  inside its sandbox. `done` now counts only real failures:
+  - the shell's own `test` and `[` (does this file exist?) are not checks; a script named `test`
+    still is;
+  - a `bun test` run against a copy of the project (files outside the workspace, or in a folder
+    git tracks nothing in, mirroring the project's own paths) is not the project's check;
+  - a red run of a test file is covered when a suite that passed on the final tree also ran it,
+    and the verdict says so: "an earlier red test run is covered by the suite that passed".
+
+  Anything else red still refuses `done`.
+
 ## [1.4.14] - 2026-10-22
 
 **A small change to a long file is a small diff — found by Rune's live re-run on its own source.**
@@ -1436,7 +1456,8 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.14...HEAD
+[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.15...HEAD
+[1.4.15]: https://github.com/ritikkyyadav/Rune/compare/v1.4.14...v1.4.15
 [1.4.14]: https://github.com/ritikkyyadav/Rune/compare/v1.4.13...v1.4.14
 [1.4.13]: https://github.com/ritikkyyadav/Rune/compare/v1.4.12...v1.4.13
 [1.4.12]: https://github.com/ritikkyyadav/Rune/compare/v1.4.11...v1.4.12
