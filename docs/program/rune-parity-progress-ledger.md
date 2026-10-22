@@ -3224,3 +3224,99 @@ arm, graded from outside), with the founder at the lid.
 on the small tasks, two on the hard ones; a ±40% swing between runs of one task has been
 measured before. The gateway's retries do not ask whether the machine slept: a deferred R2.1
 item (the single retry ladder), which this run makes concrete.
+
+## A3, `done`: v1.4.12, 2026-10-21 · **a finished run now says so, after one call reads the change against the request; wrong or half-done code said `done` 0 of 19 times, correct code 6 of 8; CI green on three systems; installed through `rune upgrade`**
+
+The founder chose "Done + request check" for A3. The alternative was a `done` that rests on
+the project's checks alone.
+
+**Why the check.** All fourteen live runs of R8 ended `unmet` or `partial`, even the correct
+ones, so every benchmark read Rune as unfinished. A `done` resting on the project's checks
+alone was built first and measured on the offline corpus, with the end-of-turn check on and
+no outside acceptance. It called every one of 19 wrong or half-done code runs finished.
+
+**What was built.** These are on `lane/a3-done-verdict`:
+
+- **`f74efc9`:** the request check and the `done` verdict.
+- **`ee072e1`:** two files formatted for lint.
+- **`688f1e7`:** "release: Rune is 1.4.12".
+
+How it works:
+
+- **When `done` is given.** All of these must hold:
+  - the run finished on its own and wrote files;
+  - the project's checks passed on the final tree, with any red already failing before the
+    run;
+  - no planned step is open;
+  - every short criterion is inferred and unassessed;
+  - the request check found every ask.
+
+  `done` reads as `ok: true`. `met` is unchanged, except that it now also needs no request
+  gap.
+
+- **The request check.** One `gateway.infer` call on the session's model, role
+  `request_check`, filed as Rune's own cost. It is given:
+  - the request;
+  - a unified diff from FileHistory's before-images, from the run's first sequence number,
+    so the person's earlier uncommitted work is never shown as the run's;
+  - files a shell changed, named from `git status` and filtered to those modified after the
+    run started;
+  - the checks Rune watched pass.
+
+  It answers `{asks:[{ask,done,evidence}]}`.
+
+- **A missing ask.** It buys one re-prompt through the arbiter's `REPAIR_REQUEST`. If it is
+  still missing, it becomes a gap named `the request` and the run ends `partial`.
+- **When the check is skipped.** It leaves the verdict as it was when there is no request,
+  when the diff is over 120,000 characters, when nothing changed, when the call fails, or
+  when the answer is not the JSON asked for.
+
+**Measured live.** Codex, `gpt-6-sol`, through `tests/eval/corpus/run-offline.ts
+--request-check-live`. Evidence: `docs/evidence/corpus-request-check-live-20261021.json`.
+
+|                                          | Checks alone | With the request check |
+| ---------------------------------------- | -----------: | ---------------------: |
+| Wrong or half-done code runs said `done` |     19 of 19 |                0 of 19 |
+| Correct code runs said `done`            |       8 of 8 |                 6 of 8 |
+
+- **The first live series failed six of eight correct runs.** The checker saw only the
+  diff, so "add tests and run them" read as not done. It is now given the passed checks and
+  told not to judge how many tests there are.
+- **The two correct runs held back** miss asks that the hidden tests do not cover. One reads
+  `+2` as a word, although the request says "optionally signed". The other has no tests for
+  a migration and a CLI that the request asked to be tested. In a live run each would cost
+  one repair turn.
+
+**Mutation testing.** 18 mutants, all killed. Two survived at first:
+
+- checking part of a diff as the whole;
+- a file written by a shell left unnamed.
+
+Each got the test that catches it. The engine path is in
+`tests/integration/request-check-e2e.test.ts`.
+
+**Gates.**
+
+- **Lane:** unit 8,046/0; integration 492/0; reliability 19/19; eval 63/63; typecheck 15/15;
+  lint 7/7 after `ee072e1`.
+- **Fresh clone at `688f1e7`:** typecheck 15/15, lint 7/7, format, `cargo` 142/0, unit
+  8,031/0.
+
+**Release.**
+
+- **CI on the release commit** (run 39627437862, `lane/release-1.4.12`): 23 of 23 green on the
+  third attempt. On the first two, `rust-test (macos-latest)` was cancelled because GitHub
+  had no macOS arm64 runner to give ("The job was not acquired by Runner of type hosted even
+  after multiple attempts", with a capacity notice), so the build, integration and eval jobs
+  after it were skipped. No step failed in any attempt; `gh run rerun --failed` twice.
+- **Published on the founder's word**, 2026-10-22. Auto mode's classifier stopped the first
+  push of `main` and the tag as a public release, and the founder answered "Publish and
+  install". `main` fast-forwarded `59feaea` → `688f1e7` (eight commits); annotated tag
+  `v1.4.12`. Release run 39728668395 green: macOS signing and notarisation, Authenticode,
+  checksums, smoke, publish, and the fresh-machine install on three systems. Latest is
+  v1.4.12 with eleven files.
+- **Installed** with `rune upgrade`, 1.4.10 → 1.4.12. The installed `rune-compiled` and
+  `rune-tools` match the release's `SHA256SUMS`. `rune doctor`: signatures valid, rollback to
+  the 2026-10-21 build available, one informational line (no `rune-compiled.meta` beside the
+  binary); the 66 old builds (5.3 GB) are still the founder's call (D5). `rune tools-smoke`
+  round-trips; the edit probes fail 0 of 6.
