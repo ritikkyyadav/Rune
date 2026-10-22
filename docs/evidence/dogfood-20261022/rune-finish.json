@@ -1,0 +1,54 @@
+[
+  {
+    "type": "task_kind",
+    "kind": "research",
+    "source": "harness"
+  },
+  {
+    "type": "step_check",
+    "step": "Implement the distinct model-unavailable ending, regression tests, and CI documentation.",
+    "ran": true,
+    "passed": true,
+    "report": "$ bun run typecheck  (ok)"
+  },
+  {
+    "type": "notice",
+    "message": "Detected a repeating tool call — nudging the agent to change approach."
+  },
+  {
+    "type": "notice",
+    "message": "The same result keeps coming back — nudged the agent to change approach."
+  },
+  {
+    "type": "verification_started",
+    "attempt": 1
+  },
+  {
+    "type": "verification_completed",
+    "attempt": 1,
+    "status": "inconclusive",
+    "reason": "timeout",
+    "ran": false,
+    "passed": false,
+    "report": "$ bun run typecheck  (ok — this run already ran it 3 minutes ago in 87ms, and nothing has changed since; not run again)\n\n$ bun run test\n[timed out after 120000ms — nothing was measured]\n\nThe test files this change touched, run in its place:\n$ bun test './tests/unit/orchestrator/headless.test.ts' './tests/unit/gateway/gateway-remembers-dead-models.test.ts' './tests/unit/gateway/gateway-fallback.test.ts' './tests/unit/orchestrator/model-unavailable.test.ts' './tests/integration/headless-model-unavailable.test.ts' './tests/unit/orchestrator/resume-loop.test.ts'  (ok)\n[those files pass; the suite as a whole was not measured]",
+    "removed": ["scripts/tui-capture/__pycache__/"]
+  },
+  {
+    "type": "notice",
+    "message": "A project check hit its time limit before finishing. Nothing was measured — the work is unverified by that check, not failed by it. The test files this change touched were run in its place, and pass."
+  },
+  {
+    "type": "turn_complete",
+    "stopReason": "end_turn",
+    "totalTurns": 47,
+    "verdict": {
+      "kind": "unmet",
+      "criteria": [],
+      "missing": ["no criteria stated"],
+      "execution": {
+        "stopReason": "end_turn",
+        "status": "end_turn"
+      }
+    }
+  }
+]

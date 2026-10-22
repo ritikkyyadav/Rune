@@ -3320,3 +3320,90 @@ Each got the test that catches it. The engine path is in
   the 2026-10-21 build available, one informational line (no `rune-compiled.meta` beside the
   binary); the 66 old builds (5.3 GB) are still the founder's call (D5). `rune tools-smoke`
   round-trips; the edit probes fail 0 of 6.
+
+## The dogfood test, 2026-10-22 · **Rune 1.4.12 and Codex CLI on one task in Rune's own source, both on GPT-6.1 Sol: both correct and complete, nearly the same code; Rune still ends `unmet` on its own repository, and used 2.4 times the quota**
+
+The founder asked whether Rune is mature enough to work on its own source "the way claude
+does ? or codex does ?" with a frontier model, approved one dogfood comparison after A3
+("yes start !!"), and on 2026-10-22 chose "Yes, on GPT-6.1 Sol".
+
+**The task.** A real gap in today's code: a model the provider says is gone (HTTP 404 or 410)
+ended a headless run `provider_lost` / `error_provider`, the same as an outage. Both agents got
+the same words (`task.md`): give it its own ending (`model_unavailable`,
+`error_model_unavailable`, `ok: false`, exit 5, no retry), leave every other provider failure
+as it is, update the table of endings in `docs/ci.md`, add tests, do not commit.
+
+**The setup.**
+
+- **Fixture:** a clone of the v1.4.12 commit (`688f1e7`) with `bun install` done and
+  `rune-tools` built from that commit; each tool in its own identical copy.
+- **Launch:** the parity rig's arms, on shipped defaults.
+  - Rune: the released 1.4.12 binary (checksum matched), `--gear auto --auto-approve
+--pristine`, a fresh profile.
+  - Codex CLI 0.160.1: `exec --sandbox workspace-write` with the network off and
+    `--ignore-user-config`, effort pinned to "high", which is what Rune sends on Codex
+    unless told otherwise.
+  - `gpt-6.1-sol` on both; a 60-minute cap.
+- **Grade, from outside:** a hidden test neither tool saw (the real `rune -P` against a
+  scripted model answering 404, 410 and 401), then CI's own checks: format, lint, typecheck,
+  reliability, unit, integration. An untouched copy was graded first.
+- **Fairness checks:** no instructions file applied to either tool (the founder's
+  `~/.codex/AGENTS.md` is empty, and the repository has none at its root). Neither tool read
+  the grader or the grading folders. Codex's only commands outside its workspace looked for
+  `AGENTS.md` files in the folders above it.
+
+**Results.**
+
+|                              | Untouched copy | Codex CLI                | Rune 1.4.12                          |
+| ---------------------------- | -------------- | ------------------------ | ------------------------------------ |
+| Hidden test (404, 410, 401)  | 1 of 3         | **3 of 3**               | **3 of 3**                           |
+| Unit                         | 8,046 / 0 fail | 8,062 / 0                | 8,058 / 0                            |
+| Integration                  | 492 / 0        | 492 / 0                  | 494 / 0                              |
+| Reliability                  | 62 / 0         | 62 / 0                   | 62 / 0                               |
+| Typecheck, lint              | pass           | pass                     | pass                                 |
+| Format                       | pass           | fails on `docs/ci.md`    | fails on `docs/ci.md`                |
+| Docs table, tests, no commit | —              | yes, yes, yes            | yes, yes, yes                        |
+| Change                       | —              | 13 files, +33 −6         | 15 files, +35 −6                     |
+| The tool's own ending        | —              | exit 0, says it finished | exit 0, `unmet — no criteria stated` |
+| Wall time                    | —              | 32.6 min                 | 12.6 min                             |
+| Five-hour Codex window used  | —              | 7 points                 | 17 points                            |
+
+**The code.** Both put a `model_unavailable` code on the gateway's two existing "model is gone"
+errors and ended the loop on it: the same lines in the same places. Rune also carried the
+reason into the handoff record and added a test that spawns the real `rune -P`. Codex also
+mapped the code in the Codex provider's stream-status table. Both left the new row of the docs
+table wider than its column, because neither ran prettier on the markdown.
+
+**What this shows about Rune.**
+
+1. **`done` cannot happen on Rune's own repository.** The end-of-turn check ran `bun run test`
+   under its 120-second limit. The suite takes about 222 seconds here, so it timed out with
+   "nothing was measured". The test files the change touched ran in its place and passed, but
+   the check was called inconclusive, and `done` needs a passed check, so it never came up and
+   the request check never ran. A3 was measured on small fixtures whose checks finish in
+   seconds.
+2. **Quota: 2.4 times Codex's** for the same change. Rune's lead read 5.4 million input tokens
+   over 47 calls, against Codex's 1.76 million over 25 turns. Its first call was 57,336 tokens,
+   51,376 of them doctrine and tool schemas, and that prefix rides on every call. On top came
+   11 safety-supervisor calls (two of them on GPT-6 Astra) and a sub-agent on GPT-6 Luna.
+3. **One stuck request decided the wall clock.** Codex CLI waited 27 minutes on one model
+   request (sent 06:23:44, answered 06:50:44, nothing printed). Its other 24 turns took about
+   5½ minutes. Rune had no retry and no stall (median call 8 s). On working time, Codex was
+   about twice as fast.
+4. **Smaller findings:**
+   - The intent reader labels the task `research`, because "Rune's own source" matches its
+     `sources?` pattern. It is a label only: the decision record and the title.
+   - The loop detector nudged Rune twice while it polled a long background test run, and Rune
+     then stopped that run.
+   - Codex's sandbox could not run the tests that start a local server ("Failed to start
+     server. Is port 0 in use?"), so Codex never ran the full suite. Rune's sandbox could.
+
+**Not shown.** One run per tool on one task. A ±40% swing between runs of one task has been
+measured before, and one stuck request moved Codex's time by a factor of five. GPT-6.1 Sol has
+no price in Rune's table, so cost is quota, not dollars. Opus 5.5 and Claude Code were not run
+(benchmarks use the Codex subscription only).
+
+Evidence: `docs/evidence/dogfood-20261022/`. It holds the task, the hidden grader (as `.ts.txt`,
+placed at `tests/reliability/model-gone.hidden.test.ts` to run), the scripts, both patches, the
+summaries, Rune's finish record and the stuck request's timeline. The scripts ran against
+`~/rune-evidence/dogfood-20261021/`, which keeps the full trees.

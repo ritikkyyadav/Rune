@@ -1,0 +1,71 @@
+{
+  "source": "the Codex CLI session log of the run (rollout …01a16243-e9ee-76b3-a9a8-5f53ae215f04), records 136–146",
+  "records": [
+    {
+      "timestamp": "2026-10-22T06:23:35.609Z",
+      "record": "item_completed"
+    },
+    {
+      "timestamp": "2026-10-22T06:23:35.609Z",
+      "record": "reasoning",
+      "encrypted_content_bytes": 1784
+    },
+    {
+      "timestamp": "2026-10-22T06:23:39.261Z",
+      "record": "custom_tool_call",
+      "input_head": "const results=await Promise.allSettled([\ntools.write_stdin({session_id:43481,chars:\"\",\"max_output_tokens\":4000,\"yield_time_ms\":1000}),\ntools.write_stdin({sessio"
+    },
+    {
+      "timestamp": "2026-10-22T06:23:39.317Z",
+      "record": "token_usage_record"
+    },
+    {
+      "timestamp": "2026-10-22T06:23:39.483Z",
+      "record": "item_completed"
+    },
+    {
+      "timestamp": "2026-10-22T06:23:44.272Z",
+      "record": "custom_tool_call_output"
+    },
+    {
+      "timestamp": "2026-10-22T06:23:44.273Z",
+      "record": "token_count",
+      "last_token_usage": {
+        "input_tokens": 88094,
+        "cached_input_tokens": 84736,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 203,
+        "reasoning_output_tokens": 21,
+        "total_tokens": 88297
+      },
+      "five_hour_used_percent": 4.0
+    },
+    {
+      "timestamp": "2026-10-22T06:33:50.745Z",
+      "record": "token_count",
+      "last_token_usage": {
+        "input_tokens": 88094,
+        "cached_input_tokens": 84736,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 203,
+        "reasoning_output_tokens": 21,
+        "total_tokens": 88297
+      },
+      "five_hour_used_percent": 5.0
+    },
+    {
+      "timestamp": "2026-10-22T06:50:44.814Z",
+      "record": "item_completed"
+    },
+    {
+      "timestamp": "2026-10-22T06:50:44.816Z",
+      "record": "reasoning",
+      "encrypted_content_bytes": 2808
+    },
+    {
+      "timestamp": "2026-10-22T06:50:46.321Z",
+      "record": "custom_tool_call",
+      "input_head": "text(await tools.exec_command({cmd:\"sed -n '705,785p' packages/llm-gateway/src/providers/codex.ts; rg -n 'Record<ApiErrorCode|ApiErrorCode' packages/llm-gateway"
+    }
+  ]
+}

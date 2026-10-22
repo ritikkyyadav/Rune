@@ -1,0 +1,56 @@
+{
+  "resultText": "I’ll trace the retired-model signal through the gateway and headless ending, add a distinct ending without changing other provider failures, and run the relevant tests.\nThe gateway already stops retrying retired models, but it sends the loop only `retryable: false`; the loop therefore records `provider_lost`. I’ll add a structured model-unavailable code to both live and cached-retirement errors and carry it through the terminal event, lifecycle, and headless envelope.\nThe new ending is wired through. I’ll test HTTP 404 and 410 through the real gateway-to-headless path, check that other provider failures retain their endings, and add a spawned `rune -P` test for the JSON envelope and exit code.\nThe spawned CLI tests pass for both 404 and 410. The remaining checks caught a missing method in my test stand-in and a type issue from extending the provider error-code union; I’ll fix the stand-in and keep the new code at the gateway stream boundary, where it’s needed.\nThe new pipeline tests now pass: 404/410 stop after one request with the requested envelope and exit code, and the tested auth, billing, throttle, quota, and outage cases retain their existing endings. Typechecking also passes; I’ll check resume classification, formatting, and the broader affected test suites next.\nThe focused regression run passed all 776 tests, including gateway, headless, quota, outage, resume, and spawned CLI coverage. Formatting is clean; I’m checking the broader lifecycle coverage before closing out.\nThe engine lifecycle projection tests passed, but the task-contract suite stopped because this checkout has no native `rune-tools` binary. I’ll build that prerequisite and rerun those tests; no source fix is needed for the missing-binary errors.\nAfter building `rune-tools`, all 21 lifecycle/task-contract tests passed, bringing the completed focused runs to 797 passing tests. I stopped the broader all-orchestrator run because it wasn’t completing; I’ll note that limit and confirm the final diff contains only the intended files, with no commit.\nImplemented the distinct retired-model ending:\n\n- `stopReason: \"model_unavailable\"`\n- `subtype: \"error_model_unavailable\"`\n- `ok: false`\n- Exit code **5**\n- No request retry\n\nThe gateway now supplies a structured signal for both live and cached retirement errors. Other provider-failure handling is unchanged. Updated `docs/ci.md` and added unit plus real `rune -P` integration coverage for HTTP 404/410.\n\nVerification:\n- **797 tests passed** across the focused gateway, headless, retry/quota/outage, resume, and lifecycle suites.\n- Workspace typecheck, changed TypeScript formatting, and `git diff --check` passed.\n- The broader all-orchestrator run was stopped without completing; it is not counted as passing.\n\nNo commit was made.\n[verdict] unmet — no criteria stated",
+  "turns": 47,
+  "calls": 66,
+  "reportedCostUsd": null,
+  "usage": {
+    "inputTokens": 181065,
+    "outputTokens": 12376,
+    "reasoningTokens": 0,
+    "cacheReadTokens": 5222144,
+    "cacheWriteTokens": 0
+  },
+  "models": ["codex/gpt-6.1-sol", "codex/gpt-6-luna", "codex/gpt-6-astra"],
+  "quotaPct": 23,
+  "detail": "completion_unmet",
+  "scored": true,
+  "failure": "unfinished",
+  "outcome": "scored",
+  "signals": {
+    "exitCode": 0,
+    "claimedSuccess": false,
+    "reachedModel": true,
+    "selfStopped": "completion_unmet"
+  },
+  "claimedSuccess": false,
+  "arm": "rune",
+  "version": "Rune v1.4.12",
+  "binarySha256": "cb4f5ed61ed7d180ceb8d99b72b27b631eb64090e2ae10384e8d52a9c191169f",
+  "command": [
+    "/Users/ritikyadav890/rune-evidence/dogfood-20261021/bin-1.4.12/rune",
+    "-P",
+    "When the model provider reports that the model no longer exists — HTTP 404 or 410; Rune's gateway already says \"… is gone … The model was retired or renamed: pick a current one with /model.\" — a headless run (`rune -P`) currently ends with stopReason `provider_lost` and envelope subtype `error_provider`, exactly like a provider that stopped answering, so a script or CI job cannot tell \"this model was retired\" from \"the provider is down\".\n\nGive it its own ending: stopReason `model_unavailable`, envelope subtype `error_model_unavailable`, `ok: false`, and exit code 5 (the provider cannot go on — unchanged). The request must not be retried. Every other provider failure (a refused key, credits, rate limits, outages) must end exactly as it does now. Update the table of endings in docs/ci.md, and add tests for the new ending.\n\nWork in this repository (it is Rune's own source). Make the change, run the relevant tests, and keep the existing tests passing. Do not commit.",
+    "--workspace",
+    "/Users/ritikyadav890/rune-evidence/dogfood-20261021/rune/workspace",
+    "--provider",
+    "codex",
+    "--model",
+    "gpt-6.1-sol",
+    "--gear",
+    "auto",
+    "--auto-approve",
+    "--pristine",
+    "--stream-json"
+  ],
+  "cwd": "/Users/ritikyadav890/rune-evidence/dogfood-20261021/rune/workspace",
+  "exitCode": 0,
+  "durationMs": 755581,
+  "listUsd": null,
+  "estimated": false,
+  "entries": 66,
+  "parityGaps": [
+    "shipped defaults: Rune runs with no config override — its own turn ceiling and second winds, its own effort, its OS sandbox on. The pilot profile's 24-turn cap is gone, because the comparator it now faces has no cap either.",
+    "isolation: a fresh RUNE_HOME, database and config per run and --pristine (no learned tactics), with the founder's saved sign-ins read through the credential paths, never copied.",
+    "quota: quotaPct is the fullest subscription window (five-hour or weekly) any of the run's cost rows reported, from the provider's meter (Codex sends one on every response since fae16ab). A capped request writes no row, so the reading is the last successful response's; a provider that sends no meter leaves quotaPct null, and a series authorised by RUNE_EVAL_QUOTA_PCT alone then stops rather than run unmetered."
+  ]
+}

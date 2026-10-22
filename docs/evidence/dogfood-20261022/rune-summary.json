@@ -1,0 +1,152 @@
+{
+  "mode": "rune",
+  "model": "gpt-6.1-sol",
+  "effort": "high",
+  "startedAt": "2026-10-22T07:02:47.396Z",
+  "completedAt": "2026-10-22T07:15:23.242Z",
+  "agent": {
+    "exitCode": 0,
+    "durationMs": 755581,
+    "stopped": null,
+    "terminal": "incomplete",
+    "claimedSuccess": false,
+    "turns": 47,
+    "calls": 66,
+    "listUsd": null,
+    "reportedCostUsd": null,
+    "usage": {
+      "inputTokens": 181065,
+      "outputTokens": 12376,
+      "reasoningTokens": 0,
+      "cacheReadTokens": 5222144,
+      "cacheWriteTokens": 0
+    },
+    "models": ["codex/gpt-6.1-sol", "codex/gpt-6-luna", "codex/gpt-6-astra"],
+    "version": "Rune v1.4.12"
+  },
+  "change": {
+    "commits": [],
+    "tracked": [
+      {
+        "file": "docs/ci.md",
+        "added": 2,
+        "deleted": 1
+      },
+      {
+        "file": "packages/llm-gateway/src/gateway.ts",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "file": "packages/llm-gateway/src/types.ts",
+        "added": 1,
+        "deleted": 1
+      },
+      {
+        "file": "packages/orchestrator/src/agent-loop.ts",
+        "added": 6,
+        "deleted": 3
+      },
+      {
+        "file": "packages/orchestrator/src/headless.ts",
+        "added": 6,
+        "deleted": 0
+      },
+      {
+        "file": "packages/orchestrator/src/lifecycle.ts",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "file": "packages/orchestrator/src/subagent-result.ts",
+        "added": 1,
+        "deleted": 0
+      },
+      {
+        "file": "packages/protocol/src/events.ts",
+        "added": 1,
+        "deleted": 0
+      },
+      {
+        "file": "packages/protocol/src/task.ts",
+        "added": 1,
+        "deleted": 0
+      },
+      {
+        "file": "tests/unit/gateway/gateway-fallback.test.ts",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "file": "tests/unit/gateway/gateway-remembers-dead-models.test.ts",
+        "added": 6,
+        "deleted": 1
+      },
+      {
+        "file": "tests/unit/orchestrator/headless.test.ts",
+        "added": 2,
+        "deleted": 0
+      },
+      {
+        "file": "tests/unit/orchestrator/resume-loop.test.ts",
+        "added": 3,
+        "deleted": 0
+      }
+    ],
+    "untracked": [
+      "tests/integration/headless-model-unavailable.test.ts",
+      "tests/unit/orchestrator/model-unavailable.test.ts"
+    ]
+  },
+  "grade": {
+    "format": {
+      "exit": 1,
+      "seconds": 11,
+      "pass": null,
+      "fail": null,
+      "skip": null
+    },
+    "lint": {
+      "exit": 0,
+      "seconds": 3,
+      "pass": null,
+      "fail": null,
+      "skip": null
+    },
+    "typecheck": {
+      "exit": 0,
+      "seconds": 4,
+      "pass": null,
+      "fail": null,
+      "skip": null
+    },
+    "reliability": {
+      "exit": 0,
+      "seconds": 177,
+      "pass": 62,
+      "fail": 0,
+      "skip": null
+    },
+    "hidden": {
+      "exit": 0,
+      "seconds": 13,
+      "pass": 3,
+      "fail": 0,
+      "skip": null
+    },
+    "unit": {
+      "exit": 0,
+      "seconds": 220,
+      "pass": 8058,
+      "fail": 0,
+      "skip": 4
+    },
+    "integration": {
+      "exit": 0,
+      "seconds": 262,
+      "pass": 494,
+      "fail": 0,
+      "skip": 7
+    }
+  }
+}

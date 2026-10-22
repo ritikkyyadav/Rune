@@ -1,0 +1,67 @@
+/**
+ * HIDDEN grader for the dogfood task (2026-10-21): neither agent sees this.
+ * Placed into each result tree as tests/reliability/model-gone.hidden.test.ts
+ * after the run, and run against that tree's own source through the real
+ * `rune -P`, with a scripted model on a loopback port.
+ */
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { startMockModelServer, type MockAction } from "../helpers/mock-model-server";
+import * as S from "../helpers/scenario";
+import { rmTemp } from "../helpers/tmp";
+
+const dirs: string[] = [];
+afterAll(() => {
+  for (const d of dirs) rmTemp(d);
+});
+
+async function runWith(status: number, message: string) {
+  const base = mkdtempSync(join(tmpdir(), "rune-hidden-"));
+  dirs.push(base);
+  const dir = join(base, "rig");
+  mkdirSync(dir, { recursive: true });
+  const fixture = S.makeFixture(dir);
+  const toolsBin = S.requireNativeBinary();
+  const lead: MockAction[] = [{ kind: "status", status, message }];
+  const server = startMockModelServer({
+    model: "fake-model",
+    script: { lead, summarizer: [{ kind: "text", text: "S" }], utility: [{ kind: "text", text: "ok" }] },
+  });
+  const home = S.makeScratchHome(dir, { baseUrl: server.baseUrl, model: "fake-model", maxTurns: 10 });
+  const run = S.spawnRun({ home, fixture, toolsBin, prompt: "Say hello." });
+  server.attach(run.proc);
+  try {
+    const code = await run.wait(120_000);
+    return {
+      code,
+      envelope: run.envelope() as Record<string, unknown> | null,
+      requests: server.requests.filter((q) => q.role === "lead").length,
+    };
+  } finally {
+    server.stop();
+  }
+}
+
+describe("hidden: a model the provider says is gone has its own ending", () => {
+  for (const status of [404, 410]) {
+    test(`${status}: model_unavailable, error_model_unavailable, exit 5, no retry`, async () => {
+      const r = await runWith(status, "The model `fake-model` does not exist or was retired.");
+      expect(r.code).toBe(5);
+      expect(r.envelope?.ok).toBe(false);
+      expect(r.envelope?.stopReason).toBe("model_unavailable");
+      expect(r.envelope?.subtype).toBe("error_model_unavailable");
+      expect(r.requests).toBeLessThanOrEqual(1);
+    }, 180_000);
+  }
+
+  test("401: a refused key ends exactly as it did before", async () => {
+    const r = await runWith(401, "Incorrect API key provided.");
+    expect(r.code).toBe(5);
+    expect(r.envelope?.ok).toBe(false);
+    expect(r.envelope?.stopReason).toBe("provider_lost");
+    expect(r.envelope?.subtype).toBe("error_provider");
+    expect(r.requests).toBeLessThanOrEqual(1);
+  }, 180_000);
+});

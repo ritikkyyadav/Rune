@@ -1,0 +1,57 @@
+{
+  "resultText": "Implemented `model_unavailable` → `error_model_unavailable`, with `ok: false`, exit code 5, and no retries. Other provider endings remain unchanged. Updated `docs/ci.md` and added regression tests.\n\n254 relevant tests and workspace typechecking pass. The full suite was blocked by unrelated local-server startup failures.\n\nNo commit made.",
+  "turns": 1,
+  "calls": null,
+  "reportedCostUsd": null,
+  "usage": {
+    "inputTokens": 1763156,
+    "outputTokens": 10395,
+    "reasoningTokens": 2391,
+    "cacheReadTokens": 1592704,
+    "cacheWriteTokens": 0
+  },
+  "models": [],
+  "scored": true,
+  "outcome": "scored",
+  "signals": {
+    "exitCode": 0,
+    "claimedSuccess": true,
+    "reachedModel": true
+  },
+  "claimedSuccess": true,
+  "arm": "codex",
+  "version": "codex-cli 0.160.1",
+  "command": [
+    "codex",
+    "exec",
+    "--json",
+    "--sandbox",
+    "workspace-write",
+    "-c",
+    "sandbox_workspace_write.network_access=false",
+    "-c",
+    "model_reasoning_effort=\"high\"",
+    "-m",
+    "gpt-6.1-sol",
+    "--ignore-user-config",
+    "--color",
+    "never",
+    "-C",
+    "/Users/ritikyadav890/rune-evidence/dogfood-20261021/codex/workspace",
+    "--output-last-message",
+    "/Users/ritikyadav890/rune-evidence/dogfood-20261021/codex/last-message.txt",
+    "When the model provider reports that the model no longer exists — HTTP 404 or 410; Rune's gateway already says \"… is gone … The model was retired or renamed: pick a current one with /model.\" — a headless run (`rune -P`) currently ends with stopReason `provider_lost` and envelope subtype `error_provider`, exactly like a provider that stopped answering, so a script or CI job cannot tell \"this model was retired\" from \"the provider is down\".\n\nGive it its own ending: stopReason `model_unavailable`, envelope subtype `error_model_unavailable`, `ok: false`, and exit code 5 (the provider cannot go on — unchanged). The request must not be retried. Every other provider failure (a refused key, credits, rate limits, outages) must end exactly as it does now. Update the table of endings in docs/ci.md, and add tests for the new ending.\n\nWork in this repository (it is Rune's own source). Make the change, run the relevant tests, and keep the existing tests passing. Do not commit."
+  ],
+  "cwd": "/Users/ritikyadav890/rune-evidence/dogfood-20261021/codex/workspace",
+  "exitCode": 0,
+  "durationMs": 1954993,
+  "listUsd": null,
+  "estimated": false,
+  "entries": 1,
+  "parityGaps": [
+    "model family: the Codex CLI runs OpenAI models, so a row against the Claude Code arm crosses model families. Same-model parity is available only against the Rune and OpenCode arms, which can both be pointed at an OpenAI model.",
+    "no dollar ceiling: Codex has no --max-budget-usd. The only per-task cap this arm has is the wall clock, so its spend is bounded by time, not by money.",
+    "reasoning: set through -c model_reasoning_effort, not a flag; the ladder is the provider's and is not proven equal to Rune's.",
+    "subscription: on a ChatGPT plan the run spends quota, not dollars, and Codex prints no cost figure at all — the listUsd on this arm is Rune's pricing table applied to Codex's reported tokens, which is a reconstruction and not an invoice."
+  ]
+}

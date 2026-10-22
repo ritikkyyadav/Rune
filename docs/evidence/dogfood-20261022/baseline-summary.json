@@ -1,0 +1,63 @@
+{
+  "mode": "baseline",
+  "model": "gpt-6.1-sol",
+  "effort": "high",
+  "startedAt": "2026-10-22T06:08:37.137Z",
+  "completedAt": "2026-10-22T06:08:37.138Z",
+  "agent": null,
+  "change": {
+    "tracked": [],
+    "untracked": []
+  },
+  "grade": {
+    "format": {
+      "exit": 0,
+      "seconds": 13,
+      "pass": null,
+      "fail": null,
+      "skip": null
+    },
+    "lint": {
+      "exit": 0,
+      "seconds": 5,
+      "pass": null,
+      "fail": null,
+      "skip": null
+    },
+    "typecheck": {
+      "exit": 0,
+      "seconds": 4,
+      "pass": null,
+      "fail": null,
+      "skip": null
+    },
+    "reliability": {
+      "exit": 0,
+      "seconds": 140,
+      "pass": 62,
+      "fail": 0,
+      "skip": null
+    },
+    "hidden": {
+      "exit": 1,
+      "seconds": 8,
+      "pass": 1,
+      "fail": 2,
+      "skip": null
+    },
+    "unit": {
+      "exit": 0,
+      "seconds": 222,
+      "pass": 8046,
+      "fail": 0,
+      "skip": 4
+    },
+    "integration": {
+      "exit": 0,
+      "seconds": 268,
+      "pass": 492,
+      "fail": 0,
+      "skip": 7
+    }
+  }
+}

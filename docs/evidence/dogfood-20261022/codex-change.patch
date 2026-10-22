@@ -1,0 +1,417 @@
+diff --git a/docs/ci.md b/docs/ci.md
+index 00169189..d9a2a5ca 100644
+--- a/docs/ci.md
++++ b/docs/ci.md
+@@ -23,7 +23,7 @@ That is the CI form, and every part of it is load-bearing:
+ 1     execution failed: an error, a stall, a stopped loop, open steps, a safety halt
+ 3     the run needed permission and had nobody to ask
+ 4     the run stopped at a limit: turns, output tokens or budget
+-5     the provider could not go on: a usage cap (see resumeAt) or lost after retries
++5     the provider could not go on: a usage cap, an unavailable model or lost after retries
+ 130   the run was cancelled; a signal's own code wins (129 SIGHUP, 130 SIGINT, 143 SIGTERM)
+ ```
+ 
+@@ -82,6 +82,7 @@ same thing in the words the exit code is chosen by.
+ | `budget`                             | `error_budget`           | 4    | Raise the budget, or switch to a priced model                                                               |
+ | `quota_wall`                         | `error_quota`            | 5    | The provider's usage cap: wait until `resumeAt` (epoch ms), or let `--resume-until` wait for you            |
+ | `provider_lost`                      | `error_provider`         | 5    | The provider stopped answering after the retries; try again later, `rune resume` continues from the handoff |
++| `model_unavailable`                  | `error_model_unavailable` | 5    | The model was retired, renamed or never existed (HTTP 404/410); pick a current one with `/model`, then resume. The request is not retried |
+ | `halted`                             | `error_halted`           | 1    | The run read instructions flagged as injected and a safety block stopped it; read what it read first        |
+ | `aborted`                            | `error_cancelled`        | 130  | Cancelled; the partial work is kept                                                                         |
+ | `stalled`, `loop_detected`, `barren` | `error_during_execution` | 1    | Nothing was progressing; resume with a different approach                                                   |
+diff --git a/packages/llm-gateway/src/gateway.ts b/packages/llm-gateway/src/gateway.ts
+index 9fb9b95c..bdb908e7 100644
+--- a/packages/llm-gateway/src/gateway.ts
++++ b/packages/llm-gateway/src/gateway.ts
+@@ -501,6 +501,7 @@ export class LlmGateway {
+               `${providerName}/${adjustedRequest.model} is gone — ${reason}. ` +
+               "The model was retired or renamed: pick a current one with /model.",
+             retryable: false,
++            code: "model_unavailable",
+           };
+           return;
+         }
+@@ -756,6 +757,7 @@ export class LlmGateway {
+             why ? ` — ${why}` : ""
+           }. The model was retired or renamed: pick a current one with /model.`,
+           retryable: false,
++          code: "model_unavailable",
+         };
+       } else if (lastStatus === 401 || lastStatus === 403) {
+         const why = this.failureReason(lastStatus, lastError);
+diff --git a/packages/llm-gateway/src/providers/codex.ts b/packages/llm-gateway/src/providers/codex.ts
+index ca21c144..020aaf13 100644
+--- a/packages/llm-gateway/src/providers/codex.ts
++++ b/packages/llm-gateway/src/providers/codex.ts
+@@ -766,6 +766,7 @@ const STREAM_STATUS: Record<ApiErrorCode, number> = {
+   context_overflow: 400,
+   invalid_request: 400,
+   server_error: 502,
++  model_unavailable: 404,
+ };
+ 
+ /**
+diff --git a/packages/llm-gateway/src/types.ts b/packages/llm-gateway/src/types.ts
+index 41bcfca4..cadb277d 100644
+--- a/packages/llm-gateway/src/types.ts
++++ b/packages/llm-gateway/src/types.ts
+@@ -1341,9 +1341,15 @@ export interface ProviderConfig {
+  *   context_overflow the prompt is over the model's window (compact, then retry)
+  *   server_error     the provider failed; retrying may succeed
+  *   invalid_request  the request itself was refused; retrying cannot succeed
++ *   model_unavailable the model was retired, renamed or never existed
+  */
+ export type ApiErrorCode =
+-  "usage_cap" | "rate_limit" | "context_overflow" | "server_error" | "invalid_request";
++  | "usage_cap"
++  | "rate_limit"
++  | "context_overflow"
++  | "server_error"
++  | "invalid_request"
++  | "model_unavailable";
+ 
+ export class ApiError extends Error {
+   readonly status: number;
+diff --git a/packages/orchestrator/src/agent-loop.ts b/packages/orchestrator/src/agent-loop.ts
+index b51156e4..a4903348 100644
+--- a/packages/orchestrator/src/agent-loop.ts
++++ b/packages/orchestrator/src/agent-loop.ts
+@@ -3595,11 +3595,12 @@ export class AgentLoop {
+             // the gateway's guidance instead of burning maxConsecutiveErrors
+             // re-hammering throttled endpoints.
+             if (result.retryable === false) {
++              const modelUnavailable = result.code === "model_unavailable";
+               // Exception: an all-providers rate limit with a known retry window
+               // is TIME-terminal, not task-terminal. Wait it out (bounded, twice
+               // per run, abortable) and resume the turn instead of failing the
+               // whole task at the finish line.
+-              const waitSecs = rateLimitWaitSecs(result.error);
++              const waitSecs = modelUnavailable ? null : rateLimitWaitSecs(result.error);
+               // A throttle is not an answer: the wait is on the outage clock,
+               // and one that would outlast the deadline is not sat through —
+               // the run ends now, resumable, instead of after it.
+@@ -3667,7 +3668,7 @@ export class AgentLoop {
+                     undefined,
+                     result.resetAt !== undefined ? { resumeAt: result.resetAt } : undefined,
+                   )
+-                : this.terminal("provider_lost", turn);
++                : this.terminal(modelUnavailable ? "model_unavailable" : "provider_lost", turn);
+               return;
+             }
+             // ── The prompt FLOOR does not fit (G15) ──
+diff --git a/packages/orchestrator/src/headless.ts b/packages/orchestrator/src/headless.ts
+index 66192039..4fec06ef 100644
+--- a/packages/orchestrator/src/headless.ts
++++ b/packages/orchestrator/src/headless.ts
+@@ -128,7 +128,7 @@ export const HEADLESS_EXIT = {
+   needsPermission: 3,
+   /** The run stopped at a limit: turns, output tokens or budget. */
+   limit: 4,
+-  /** The provider could not go on: a usage cap (see `resumeAt`) or lost after retries. */
++  /** The provider could not go on: a usage cap, an unavailable model or lost after retries. */
+   provider: 5,
+   /** The run was cancelled. A signal's own code (129, 130, 143) wins over this. */
+   cancelled: 130,
+@@ -385,6 +385,8 @@ export const UNFINISHED_STOP: Record<string, string | undefined> = {
+   // with no error at all, and silence read as success.
+   provider_lost:
+     "The provider stopped answering before the run finished; the output above is partial.",
++  model_unavailable:
++    "The model is no longer available; pick a current one with /model before resuming.",
+   // The gateway's own sentence already says when; this is the line a run owes
+   // when that error was not the first one recorded.
+   quota_wall:
+@@ -497,6 +499,7 @@ export function verdictShortfall(
+  *   error_budget            the run's budget refused the next request
+  *   error_quota             a provider usage cap; `resumeAt` says when it lifts
+  *   error_provider          the provider stopped answering after the retries
++ *   error_model_unavailable the model was retired, renamed or never existed
+  *   error_halted            the safety broker halted the run
+  *   error_open_steps        the loop ended the run with its own planned steps
+  *                           still open, after refusing the finish once (G21)
+@@ -514,6 +517,7 @@ export type HeadlessSubtype =
+   | "error_budget"
+   | "error_quota"
+   | "error_provider"
++  | "error_model_unavailable"
+   | "error_halted"
+   | "error_open_steps"
+   | "error_cancelled"
+@@ -527,6 +531,7 @@ const SUBTYPE_OF_STOP: Record<string, HeadlessSubtype> = {
+   budget: "error_budget",
+   quota_wall: "error_quota",
+   provider_lost: "error_provider",
++  model_unavailable: "error_model_unavailable",
+   halted: "error_halted",
+   aborted: "error_cancelled",
+   stalled: "error_during_execution",
+@@ -561,6 +566,7 @@ const EXIT_OF_SUBTYPE: Record<HeadlessSubtype, number> = {
+   error_budget: HEADLESS_EXIT.limit,
+   error_quota: HEADLESS_EXIT.provider,
+   error_provider: HEADLESS_EXIT.provider,
++  error_model_unavailable: HEADLESS_EXIT.provider,
+   error_halted: HEADLESS_EXIT.failed,
+   error_open_steps: HEADLESS_EXIT.failed,
+   error_cancelled: HEADLESS_EXIT.cancelled,
+diff --git a/packages/orchestrator/src/lifecycle.ts b/packages/orchestrator/src/lifecycle.ts
+index 2ca67c79..b2f55da9 100644
+--- a/packages/orchestrator/src/lifecycle.ts
++++ b/packages/orchestrator/src/lifecycle.ts
+@@ -501,6 +501,7 @@ const STATUSES: ReadonlySet<string> = new Set<TaskLifecycleStatus>([
+   "max_turns",
+   "max_tokens",
+   "provider_lost",
++  "model_unavailable",
+   // A plan or usage cap with a time on it: paused, resumable at the reset.
+   "quota_wall",
+   "open_steps",
+diff --git a/packages/orchestrator/src/subagent-result.ts b/packages/orchestrator/src/subagent-result.ts
+index 9dd74ddc..045c182c 100644
+--- a/packages/orchestrator/src/subagent-result.ts
++++ b/packages/orchestrator/src/subagent-result.ts
+@@ -126,6 +126,7 @@ const CHILD_STATUSES: Record<string, ChildLifecycleStatus> = {
+   max_turns: "max_turns",
+   max_tokens: "max_tokens",
+   provider_lost: "provider_lost",
++  model_unavailable: "model_unavailable",
+   quota_wall: "quota_wall",
+   open_steps: "open_steps",
+   stalled: "stalled",
+diff --git a/packages/protocol/src/events.ts b/packages/protocol/src/events.ts
+index 343f13b7..15b142a1 100644
+--- a/packages/protocol/src/events.ts
++++ b/packages/protocol/src/events.ts
+@@ -53,6 +53,7 @@ export type TaskLifecycleStatus =
+   | "max_turns"
+   | "max_tokens"
+   | "provider_lost"
++  | "model_unavailable"
+   // A plan or usage cap: the provider is reachable and said, with a time, when
+   // it will answer again. Recorded as `provider_lost` until 2026-10-14, which
+   // is how 39 of 44 "lost provider" endings in one install's record turned out
+diff --git a/tests/unit/gateway/gateway-fallback.test.ts b/tests/unit/gateway/gateway-fallback.test.ts
+index 2435e51e..d73e17af 100644
+--- a/tests/unit/gateway/gateway-fallback.test.ts
++++ b/tests/unit/gateway/gateway-fallback.test.ts
+@@ -242,6 +242,7 @@ describe("LlmGateway model-gone pruning", () => {
+     expect(errors.length).toBe(1); // no retry-ladder burn, no consecutive-error death
+     const err = errorEvent(events)!;
+     expect(err.retryable).toBe(false);
++    expect(err.code).toBe("model_unavailable");
+     expect(err.error).toContain("retired");
+     expect(err.error).toContain("/model");
+   });
+diff --git a/tests/unit/gateway/gateway-remembers-dead-models.test.ts b/tests/unit/gateway/gateway-remembers-dead-models.test.ts
+index 9a134b68..f40fa804 100644
+--- a/tests/unit/gateway/gateway-remembers-dead-models.test.ts
++++ b/tests/unit/gateway/gateway-remembers-dead-models.test.ts
+@@ -110,7 +110,11 @@ describe("gateway remembers dead models across sessions", () => {
+     const dead = new CountingProvider("openrouter", modelGone);
+     gw.registerProvider(dead);
+ 
+-    await drain(gw.inferStream(request("openrouter", "dead-model")));
++    const events = await drain(gw.inferStream(request("openrouter", "dead-model")));
++    expect(events.find((e) => e.type === "error")).toMatchObject({
++      retryable: false,
++      code: "model_unavailable",
++    });
+ 
+     // The whole point: not one request was spent confirming what was known.
+     expect(dead.calls).toBe(0);
+diff --git a/tests/unit/orchestrator/headless.test.ts b/tests/unit/orchestrator/headless.test.ts
+index cfba1bca..04ede6b7 100644
+--- a/tests/unit/orchestrator/headless.test.ts
++++ b/tests/unit/orchestrator/headless.test.ts
+@@ -170,6 +170,7 @@ describe("exit codes", () => {
+     ["budget", HEADLESS_EXIT.limit, "error_budget"],
+     ["quota_wall", HEADLESS_EXIT.provider, "error_quota"],
+     ["provider_lost", HEADLESS_EXIT.provider, "error_provider"],
++    ["model_unavailable", HEADLESS_EXIT.provider, "error_model_unavailable"],
+     ["halted", HEADLESS_EXIT.failed, "error_halted"],
+     ["aborted", HEADLESS_EXIT.cancelled, "error_cancelled"],
+     ["stalled", HEADLESS_EXIT.failed, "error_during_execution"],
+@@ -631,6 +632,7 @@ describe("how the turn ended reaches the caller", () => {
+     ["halted", "halted"],
+     ["max_turns", "turn ceiling"],
+     ["max_tokens", "output-token limit"],
++    ["model_unavailable", "/model"],
+   ])("%s is not a completed task", async (stopReason, reason) => {
+     const r = await run(stopReason);
+     expect(r.stopReason).toBe(stopReason);
+diff --git a/tests/unit/orchestrator/model-unavailable.test.ts b/tests/unit/orchestrator/model-unavailable.test.ts
+new file mode 100644
+index 00000000..77f66a4c
+--- /dev/null
++++ b/tests/unit/orchestrator/model-unavailable.test.ts
+@@ -0,0 +1,171 @@
++import { describe, expect, mock, test } from "bun:test";
++import { LlmGateway } from "../../../packages/llm-gateway/src/gateway";
++import { ProviderHealthStore } from "../../../packages/llm-gateway/src/provider-health";
++import { ApiError, type LlmProvider } from "../../../packages/llm-gateway/src/types";
++import { AgentLoop, type AgentTurnEvent } from "../../../packages/orchestrator/src/agent-loop";
++import type { Engine } from "../../../packages/orchestrator/src/engine";
++import {
++  headlessEnvelope,
++  headlessExitCode,
++  runHeadless,
++} from "../../../packages/orchestrator/src/headless";
++import { isUnfinished, statusFromStopReason } from "../../../packages/orchestrator/src/lifecycle";
++import { toChildStatus } from "../../../packages/orchestrator/src/subagent-result";
++import { TaskStateStore } from "../../../packages/orchestrator/src/task-state";
++
++/** Exercise the real gateway, loop and headless reducer with a failing provider. */
++async function runFailure(
++  error: Error,
++  { plan = false, remembered = false, maxRateWaits = 0 } = {},
++) {
++  const inferStream = mock(async function* () {
++    throw error;
++  });
++  const provider: LlmProvider = {
++    name: "anthropic",
++    infer: async () => {
++      throw error;
++    },
++    inferStream,
++    countTokens: async () => 0,
++    healthCheck: async () => true,
++  };
++  const health = ProviderHealthStore.ephemeral();
++  if (remembered) health.noteRetired("anthropic", "old-model", "model was retired");
++  const gateway = new LlmGateway(
++    { providers: {}, defaultProvider: "anthropic", maxRetries: 2, retryBaseMs: 1 },
++    health,
++  );
++  gateway.registerProvider(provider);
++  const taskState = new TaskStateStore();
++  if (plan) {
++    taskState.beginTurn("build it");
++    taskState.setTodos([{ content: "unfinished work", status: "in_progress" }], { enforce: false });
++  }
++  const loop = new AgentLoop(
++    {
++      model: "old-model",
++      provider: "anthropic",
++      maxTokens: 100,
++      maxTurns: 12,
++      maxConsecutiveErrors: 2,
++      maxRateWaits,
++      systemPrompt: "s",
++      taskState,
++    },
++    gateway,
++    { toLlmTools: () => [] } as any,
++  );
++  const events: AgentTurnEvent[] = [];
++  const result = await runHeadless(
++    {
++      setPermissionHandler() {},
++      chat: () => loop.run("build it", "s1", "/tmp"),
++    } as unknown as Engine,
++    "s1",
++    "build it",
++    { onEvent: (event) => events.push(event) },
++  );
++  return {
++    events,
++    result,
++    envelope: JSON.parse(headlessEnvelope(result)),
++    calls: inferStream.mock.calls.length,
++    taskState,
++  };
++}
++
++describe("an unavailable model ends a headless run distinctly", () => {
++  for (const plan of [false, true]) {
++    test.each([404, 410])(
++      "HTTP %i ends model_unavailable without a retry (plan: " + plan + ")",
++      async (status) => {
++        const { calls, result, envelope, events, taskState } = await runFailure(
++          new ApiError({ status, provider: "anthropic", message: "model not found" }),
++          { plan },
++        );
++        expect(calls).toBe(1);
++        expect(result.stopReason).toBe("model_unavailable");
++        expect(result.ok).toBe(false);
++        expect(result.error).toContain("pick a current one with /model");
++        expect(envelope).toMatchObject({
++          ok: false,
++          stopReason: "model_unavailable",
++          subtype: "error_model_unavailable",
++        });
++        expect(envelope.error).toBe(result.error);
++        expect(headlessExitCode(result)).toBe(5);
++        expect(events.at(-1)).toMatchObject({
++          type: "turn_complete",
++          stopReason: "model_unavailable",
++        });
++        const fatalIndex = events.findIndex((e) => e.type === "error" && !e.recoverable);
++        expect(fatalIndex).toBeGreaterThanOrEqual(0);
++        expect(fatalIndex).toBeLessThan(events.length - 1);
++        expect(events.some((e) => e.type === "retry")).toBe(false);
++        if (plan) {
++          expect(taskState.hasOpenTodos()).toBe(true);
++          const handoffIndex = events.findIndex((e) => e.type === "handoff");
++          expect(handoffIndex).toBeGreaterThanOrEqual(0);
++          expect(handoffIndex).toBeLessThan(fatalIndex);
++          expect(taskState.snapshot().handoff?.state).toContain("unfinished work");
++        }
++      },
++    );
++  }
++
++  test("a remembered retirement has the same ending without a request", async () => {
++    const { calls, result, envelope } = await runFailure(new Error("must not be called"), {
++      remembered: true,
++    });
++    expect(calls).toBe(0);
++    expect(envelope).toMatchObject({
++      ok: false,
++      stopReason: "model_unavailable",
++      subtype: "error_model_unavailable",
++    });
++    expect(headlessExitCode(result)).toBe(5);
++  });
++
++  test("a model-gone error mentioning a rate limit still cannot enter the retry wait", async () => {
++    const { calls, envelope } = await runFailure(
++      new ApiError({ status: 404, provider: "anthropic", message: "rate limited; retry in ~1s" }),
++      { maxRateWaits: 2 },
++    );
++    expect(calls).toBe(1);
++    expect(envelope.subtype).toBe("error_model_unavailable");
++  }, 2000);
++
++  test("lifecycle and child summaries preserve the ending", () => {
++    expect(statusFromStopReason("model_unavailable")).toBe("model_unavailable");
++    expect(isUnfinished(statusFromStopReason("model_unavailable"))).toBe(true);
++    expect(toChildStatus("model_unavailable")).toBe("model_unavailable");
++  });
++});
++
++describe("other provider failures keep their endings", () => {
++  test.each([
++    [401, "invalid API key", "provider_lost", "error_provider"],
++    [403, "access denied", "provider_lost", "error_provider"],
++    [402, "no credits", "provider_lost", "error_provider"],
++    [429, "too many requests", "provider_lost", "error_provider"],
++    [429, "usage limit reached", "quota_wall", "error_quota"],
++    [503, "service unavailable", "provider_lost", "error_provider"],
++  ])("HTTP %i (%s) retains %s / %s", async (status, message, stopReason, subtype) => {
++    const { result, envelope } = await runFailure(
++      new ApiError({ status, provider: "anthropic", message }),
++    );
++    expect(envelope).toMatchObject({ ok: false, stopReason, subtype });
++    expect(headlessExitCode(result)).toBe(5);
++  });
++
++  test("a connection failure still ends provider_lost", async () => {
++    const { result, envelope } = await runFailure(new Error("socket hang up"));
++    expect(envelope).toMatchObject({
++      ok: false,
++      stopReason: "provider_lost",
++      subtype: "error_provider",
++    });
++    expect(headlessExitCode(result)).toBe(5);
++  });
++});
