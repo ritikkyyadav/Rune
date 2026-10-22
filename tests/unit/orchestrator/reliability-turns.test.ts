@@ -9,7 +9,9 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  checkTimeoutOverride,
   DEFAULT_RELIABILITY,
+  HEADLESS_CHECK_TIMEOUT_MS,
   loopTurnCeiling,
   parseMaxBudgetFlag,
   parseMaxTurnsFlag,
@@ -203,4 +205,38 @@ describe("a run with no ceiling", () => {
     expect(calls).toBe(TURNS + 1);
     expect(loop.getBudgetProgress().turnsUsed).toBeGreaterThan(80);
   }, 60_000);
+});
+
+describe("the end-of-turn check's limit, by mode (2026-10-22)", () => {
+  test("a headless run waits five minutes per check; an interactive one keeps the verifier's 120 s", () => {
+    // Rune's own suite takes about 222 s: under 120 s a headless run's
+    // verdict could never rest on it.
+    expect(HEADLESS_CHECK_TIMEOUT_MS).toBe(300_000);
+    expect(checkTimeoutOverride({ interactive: false })).toBe(300_000);
+    expect(checkTimeoutOverride({ interactive: true })).toBeUndefined();
+  });
+
+  test("[verify] timeoutSecs as the person set it wins in either mode", () => {
+    expect(checkTimeoutOverride({ configuredSecs: 45, interactive: false })).toBe(45_000);
+    expect(checkTimeoutOverride({ configuredSecs: 600, interactive: true })).toBe(600_000);
+    expect(checkTimeoutOverride({ configuredSecs: 1.5, interactive: true })).toBe(1_500);
+  });
+
+  test("a setting that is not a positive number is no setting", () => {
+    for (const bad of [0, -5, "300", null, Number.NaN]) {
+      expect(checkTimeoutOverride({ configuredSecs: bad, interactive: false })).toBe(300_000);
+      expect(checkTimeoutOverride({ configuredSecs: bad, interactive: true })).toBeUndefined();
+    }
+  });
+
+  test("the CLI hands the engine this rule, not a hand-rolled copy of it", () => {
+    const cli = readFileSync(
+      join(import.meta.dir, "../../../packages/orchestrator/src/bin/rune-cli.ts"),
+      "utf8",
+    );
+    // The mode is read the way the turn ceiling reads it: headless is `-P`.
+    expect(cli).toMatch(
+      /verifyTimeoutMs: checkTimeoutOverride\(\{\s*configuredSecs: config\.verify\?\.timeoutSecs,\s*interactive: typeof values\.print !== "string",/,
+    );
+  });
 });

@@ -4312,16 +4312,42 @@ export class AgentLoop {
             // What the verdict may rest on (A3): the checks that ran to
             // completion, when they passed or went red only on failures that
             // were there before the run. Anything else leaves nothing.
-            const completed = (result.runs ?? []).filter(
+            const runs = result.runs ?? [];
+            const completed = runs.filter(
               (r) => !r.skipped && !r.timedOut && !r.cancelled && !r.notStarted,
             );
+            // A suite that did not finish (2026-10-22: Rune's own takes about
+            // 222 s; the limit was 120 s) may still be stood in for, by the
+            // test files the change touched, run on their own and green. Each
+            // unfinished suite needs its own passing stand-in, or there is
+            // nothing to rest on; the verdict then names what stood in for it.
+            const unfinishedRuns = runs.filter((r) => r.timedOut && !r.inPlaceOf);
+            const standIns = unfinishedRuns.map((u) =>
+              completed.find((r) => r.inPlaceOf === u.command && r.passed),
+            );
+            const covered = standIns.every((s) => s !== undefined);
+            const stoodIn =
+              outcome.status === "inconclusive" &&
+              outcome.reason === "timeout" &&
+              unfinishedRuns.length > 0 &&
+              completed.every((r) => r.passed);
             this.finalProjectChecks =
-              completed.length > 0 && (outcome.status === "passed" || preexistingOnly)
+              completed.length > 0 &&
+              covered &&
+              (outcome.status === "passed" || preexistingOnly || stoodIn)
                 ? {
                     commands: completed.map((r) => r.command),
                     preexisting: preexistingOnly
                       ? completed.filter((r) => !r.passed).map((r) => r.command)
                       : [],
+                    ...(unfinishedRuns.length > 0
+                      ? {
+                          standIns: unfinishedRuns.map((u, i) => ({
+                            unfinished: u.command,
+                            ranInstead: standIns[i]!.command,
+                          })),
+                        }
+                      : {}),
                   }
                 : null;
             this.config.taskState?.noteVerification(
@@ -4376,14 +4402,21 @@ export class AgentLoop {
               }
               if (outcome.reason === "timeout") {
                 const ran = result.runs ?? [];
-                const undoneRun = ran.find((r) => r.timedOut);
+                const undoneRun = ran.find((r) => r.timedOut && !r.inPlaceOf);
                 const undone = undoneRun?.command;
                 // What was measured in its place, if anything was: the test
-                // files this change touched (see `touchedTestsCheck`).
+                // files this change touched (see `touchedTestsCheck`), marked
+                // as such. Found by the mark, never by position: the checks
+                // after the suite run too now, and a green lint is no stand-in.
                 const inPlace = undoneRun
-                  ? ran
-                      .slice(ran.indexOf(undoneRun) + 1)
-                      .find((r) => r.passed && !r.skipped && !r.timedOut && !r.cancelled)
+                  ? ran.find(
+                      (r) =>
+                        r.inPlaceOf === undoneRun.command &&
+                        r.passed &&
+                        !r.skipped &&
+                        !r.timedOut &&
+                        !r.cancelled,
+                    )
                   : undefined;
                 // The test files this change touched were run, here, after the
                 // last write, and pass. "You never executed anything to prove

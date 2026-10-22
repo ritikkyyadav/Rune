@@ -191,18 +191,34 @@ describe.skipIf(!POSIX_SHELL)("verification outcome", () => {
     expect(logged).toEqual([{ command: "exit 3", passed: false }]);
   });
 
-  test("a pass followed by a timeout is inconclusive — the pass is kept, the kill is not a red check", async () => {
-    const { verifier, logged } = rig(["true", "sleep 5", "echo SHOULD_NOT_RUN"], 200);
+  test("a pass followed by a timeout is inconclusive — the pass is kept, the kill is not a red check, and what follows still runs", async () => {
+    const { verifier, logged } = rig(["true", "sleep 5", "echo AFTER_THE_KILL"], 200);
     const r = await verifier.verify();
     expect(verifyOutcome(r)).toEqual({ status: "inconclusive", reason: "timeout" });
     expect(r.runs?.map((x) => [x.command, x.passed, x.timedOut ?? false])).toEqual([
       ["true", true, false],
       ["sleep 5", false, true],
+      ["echo AFTER_THE_KILL", true, false],
     ]);
-    // The check log is evidence about the code. The first command is; a
-    // command killed at its deadline is not, in either direction.
-    expect(logged).toEqual([{ command: "true", passed: true }]);
-    expect(r.report).not.toContain("SHOULD_NOT_RUN");
+    // The check log is evidence about the code. The commands that finished
+    // are; a command killed at its deadline is not, in either direction.
+    expect(logged).toEqual([
+      { command: "true", passed: true },
+      { command: "echo AFTER_THE_KILL", passed: true },
+    ]);
+  });
+
+  test("a red check after a timeout is a failure, not hidden behind the unfinished one", async () => {
+    // 2026-10-22: lint is ordered after the tests, and on Rune's own source
+    // the suite outlasted the limit, so lint never ran at all.
+    const { verifier } = rig(["sleep 5", "echo lint says no >&2; exit 3"], 200);
+    const r = await verifier.verify();
+    expect(verifyOutcome(r).status).toBe("failed");
+    expect(r.runs?.map((x) => [x.command, x.passed, x.timedOut ?? false])).toEqual([
+      ["sleep 5", false, true],
+      ["echo lint says no >&2; exit 3", false, false],
+    ]);
+    expect(r.report).toContain("lint says no");
   });
 
   test("every check skipped for an absent toolchain → inconclusive(missing_runner)", async () => {

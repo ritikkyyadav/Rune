@@ -154,6 +154,12 @@ export interface CheckRunRecord {
    * pass's time went on it.
    */
   reused?: { at: number; ranAs: string; durationMs?: number };
+  /**
+   * The suite this run stood in for: set on the test files a change touched,
+   * run on their own because the suite named here did not finish. A pass is a
+   * real measurement of those files, never of the suite.
+   */
+  inPlaceOf?: string;
 }
 
 /**
@@ -1676,6 +1682,13 @@ function fileScopedCheck(
 //      those files, and red is a red check like any other. The suite as a
 //      whole is still reported as not finished — a part passing is not the
 //      whole passing.
+//   3. The checks after it still run (2026-10-22). Lint is ordered after the
+//      tests, so on a project whose suite outlasts the limit, lint never ran
+//      at all. The set stays unfinished; a red after the suite is still red.
+//
+// What a stand-in is worth to the verdict is the loop's call, not this file's:
+// the touched files' run is marked `inPlaceOf` the suite, and `done` may rest
+// on it only by naming it (contract.ts).
 
 /** How long a recorded "did not finish" is believed. */
 const SLOW_TRUST_MS = 24 * 60 * 60 * 1000;
@@ -2335,13 +2348,17 @@ export class CommandVerifier implements Verifier {
     /**
      * `check` did not finish. If it is the suite, measure what can be measured
      * in its place — the test files this change touched — and say which is
-     * which. The pass as a whole is still unfinished unless those went red.
+     * which.
+     *
+     * `null` means go on to the next check. The pass as a whole stays
+     * unfinished, but what comes after the suite is still measured: lint runs
+     * after the tests, and a red lint behind a slow suite was never run at all
+     * (the dogfood run of 2026-10-22). A result is final: cancelled, or the
+     * touched files went red.
      */
-    const unfinished = async (check: DetectedCheck): Promise<VerifyResult> => {
-      const inconclusive = (): VerifyResult =>
-        settle({ status: "inconclusive", reason: "timeout" }, runs, report());
+    const unfinished = async (check: DetectedCheck): Promise<VerifyResult | null> => {
       const scoped = touchedTestsCheck(this.config.workspaceRoot, check, touched);
-      if (!scoped) return inconclusive();
+      if (!scoped) return null;
       if (signal?.aborted) return cancelled();
       const limit = Math.min(timeoutMs, TOUCHED_TESTS_TIMEOUT_MS);
       const ran = await runCommand(
@@ -2363,6 +2380,7 @@ export class CommandVerifier implements Verifier {
         ecosystem: scoped.ecosystem,
         kind: scoped.kind,
         durationMs: ran.durationMs,
+        inPlaceOf: check.command,
       };
       const lead = "The test files this change touched, run in its place:\n";
       if (signal?.aborted) {
@@ -2375,10 +2393,10 @@ export class CommandVerifier implements Verifier {
         reports.push(
           `${lead}$ ${scoped.command}\n[timed out after ${limit}ms — nothing was measured]`,
         );
-        return inconclusive();
+        return null;
       }
       if (ran.exitCode !== 0) {
-        if (missingToolchain(scoped.command, ran.exitCode, ran.output)) return inconclusive();
+        if (missingToolchain(scoped.command, ran.exitCode, ran.output)) return null;
         note({ ...base, exitCode: ran.exitCode, passed: false });
         reports.push(
           `${lead}$ ${scoped.command}  (exit ${ran.exitCode})\n${truncate(ran.output, 2000)}`,
@@ -2391,8 +2409,10 @@ export class CommandVerifier implements Verifier {
         `${lead}$ ${scoped.command}  (ok)\n` +
           "[those files pass; the suite as a whole was not measured]",
       );
-      return inconclusive();
+      return null;
     };
+    /** Set when a check did not finish: the set is then not a pass, whatever else is green. */
+    let unmeasured = false;
 
     for (const check of checks) {
       // Cancelled between two checks. The ones before this point may all be
@@ -2446,7 +2466,10 @@ export class CommandVerifier implements Verifier {
           `$ ${cmd}\n[not started — it did not finish in ${span(known.limitMs)} when it last ran here, ` +
             `${ago(this.clock() - known.at)}; nothing was measured. \`[verify] timeoutSecs\` sets the limit.]`,
         );
-        return unfinished(check);
+        const stop = await unfinished(check);
+        if (stop) return stop;
+        unmeasured = true;
+        continue;
       }
       const { exitCode, output, timedOut, durationMs } = await runCommand(
         cmd,
@@ -2479,7 +2502,10 @@ export class CommandVerifier implements Verifier {
         note({ ...base, exitCode: null, passed: false, timedOut: true });
         reports.push(`$ ${cmd}\n[timed out after ${timeoutMs}ms — nothing was measured]`);
         this.rememberDidNotFinish(cmd, timeoutMs);
-        return unfinished(check);
+        const stop = await unfinished(check);
+        if (stop) return stop;
+        unmeasured = true;
+        continue;
       }
       // It finished, whatever it said: it is not a check that cannot.
       this.forgetDidNotFinish(cmd);
@@ -2500,6 +2526,9 @@ export class CommandVerifier implements Verifier {
       reports.push(`$ ${cmd}  (ok)`);
     }
 
+    // A check did not finish. Everything after it ran and none went red, but
+    // the set as a whole was not measured: not a pass.
+    if (unmeasured) return settle({ status: "inconclusive", reason: "timeout" }, runs, report());
     if (!runs.some(runCompleted)) {
       // Every selected check was stepped over for an absent toolchain.
       return settle(

@@ -162,6 +162,30 @@ export function turnCeilingOverride(input: {
 }
 
 /**
+ * How long a headless run's end-of-turn check may take, per command: five
+ * minutes. A headless run's verdict is its output, and on Rune's own source
+ * the suite takes about 222 s. Under the 120 s an interactive turn waits it
+ * never finished, so `done` never came (the dogfood run of 2026-10-22).
+ */
+export const HEADLESS_CHECK_TIMEOUT_MS = 300_000;
+
+/**
+ * The per-check limit a launch runs under, in ms, or undefined to keep the
+ * verifier's own (120 s). `[verify] timeoutSecs` as the person set it wins;
+ * then the mode decides. An interactive session keeps 120 s: a person waits
+ * at the end of every turn that wrote, and a suite that outlasts it is still
+ * stood in for by the test files the change touched.
+ */
+export function checkTimeoutOverride(input: {
+  configuredSecs?: unknown;
+  interactive: boolean;
+}): number | undefined {
+  const secs = input.configuredSecs;
+  if (typeof secs === "number" && secs > 0) return Math.floor(secs * 1000);
+  return input.interactive ? undefined : HEADLESS_CHECK_TIMEOUT_MS;
+}
+
+/**
  * `--max-turns`: a whole number, 0 for no ceiling. Undefined when absent; an
  * error naming the flag when it is not a count.
  */

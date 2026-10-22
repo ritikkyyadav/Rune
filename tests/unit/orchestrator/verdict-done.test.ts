@@ -518,3 +518,144 @@ describe("the loop: the end-of-turn check, then the request check", () => {
     expect((await runLoop(withShell)).verdict?.kind).not.toBe("done");
   });
 });
+
+// ─── A suite that cannot finish (2026-10-22) ───
+//
+// The dogfood run: on Rune's own source the suite takes about 222 s and the
+// end-of-turn check stopped it at 120 s, so `done` never came, though the work
+// was right and the test files the change touched passed in its place. The
+// founder's choice: wait longer, then let `done` rest on that stand-in — named.
+
+const SCOPED = "bun test './tests/unit/a.test.ts' './tests/unit/b.test.ts'";
+const STOOD_IN: FinalProjectChecks = {
+  commands: ["bun run typecheck", SCOPED, "bun run lint"],
+  preexisting: [],
+  standIns: [{ unfinished: "bun run test", ranInstead: SCOPED }],
+  request: ALL_FOUND,
+};
+
+describe("a suite that cannot finish: the test files the change touched stand in, named", () => {
+  test("done, and the line says which suite did not finish and what passed in its place", () => {
+    const v = verdictOf([], { projectChecks: STOOD_IN });
+    expect(v.kind).toBe("done");
+    if (v.kind !== "done") throw new Error("unreachable");
+    expect(v.standIns).toEqual([{ unfinished: "bun run test", ranInstead: SCOPED }]);
+    expect(v.checks).toContain(SCOPED);
+    expect(verdictLine(v)).toBe(
+      "[verdict] done — the project's checks passed on the final tree " +
+        "(`bun run typecheck`, `bun run lint`); `bun run test` did not finish, and the test " +
+        "files the change touched passed in its place; all 3 asks of the request found in the " +
+        "change; no criteria stated",
+    );
+  });
+
+  test("the stand-in's own command is never printed as if it were the suite", () => {
+    const line = verdictLine(verdictOf([], { projectChecks: STOOD_IN }));
+    expect(line).not.toContain("a.test.ts");
+  });
+
+  test("nothing finished but the stand-in: the line says that, not 'the project's checks'", () => {
+    const only: FinalProjectChecks = { ...STOOD_IN, commands: [SCOPED] };
+    const line = verdictLine(verdictOf([], { projectChecks: only }));
+    expect(line).toStartWith(
+      "[verdict] done — the test files the change touched passed on the final tree; " +
+        "`bun run test` did not finish",
+    );
+  });
+
+  test("every check finished: no stand-in clause", () => {
+    const line = verdictLine(verdictOf([], { projectChecks: GREEN }));
+    expect(line).not.toContain("did not finish");
+    expect(verdictOf([], { projectChecks: GREEN })).not.toHaveProperty("standIns");
+  });
+});
+
+const TIMED_OUT = {
+  command: "bun run test",
+  exitCode: null,
+  durationMs: 300_000,
+  passed: false,
+  timedOut: true,
+};
+const slow = (...after: VerifyResult["runs"] & object): VerifyResult =>
+  ({
+    status: "inconclusive",
+    reason: "timeout",
+    passed: false,
+    ran: false,
+    report: "$ bun run test\n[timed out after 300000ms — nothing was measured]",
+    runs: [
+      { command: "bun run typecheck", exitCode: 0, durationMs: 900, passed: true },
+      TIMED_OUT,
+      ...after,
+    ],
+  }) as VerifyResult;
+const standIn = (over: Record<string, unknown> = {}) => ({
+  command: SCOPED,
+  exitCode: 0,
+  durationMs: 4_000,
+  passed: true,
+  inPlaceOf: "bun run test",
+  ...over,
+});
+const LINT_GREEN = { command: "bun run lint", exitCode: 0, durationMs: 3_000, passed: true };
+
+describe("the loop: a suite that did not finish, and what stood in for it", () => {
+  test("stood in for, green, everything after it green: done, the stand-in on the verdict", async () => {
+    const r = await runLoop([WRITE, { text: "done" }], {
+      results: [slow(standIn(), LINT_GREEN)],
+    });
+    expect(r.verdict?.kind).toBe("done");
+    expect((r.verdict as { standIns?: unknown }).standIns).toEqual([
+      { unfinished: "bun run test", ranInstead: SCOPED },
+    ]);
+    expect(r.requestCalls).toBe(1);
+  });
+
+  test("a green check after the suite is no stand-in for it: not done, the request not asked", async () => {
+    const r = await runLoop([WRITE, { text: "done" }, { text: "done" }], {
+      results: [slow(LINT_GREEN)],
+    });
+    expect(r.verdict?.kind).not.toBe("done");
+    expect(r.requestCalls).toBe(0);
+  });
+
+  test("a stand-in for some other command: not done", async () => {
+    const r = await runLoop([WRITE, { text: "done" }, { text: "done" }], {
+      results: [slow(standIn({ inPlaceOf: "bun run test:e2e" }))],
+    });
+    expect(r.verdict?.kind).not.toBe("done");
+  });
+
+  test("the stand-in itself did not finish: not done", async () => {
+    const r = await runLoop([WRITE, { text: "done" }, { text: "done" }], {
+      results: [slow(standIn({ passed: false, exitCode: null, timedOut: true }))],
+    });
+    expect(r.verdict?.kind).not.toBe("done");
+  });
+
+  test("two suites did not finish and only one was stood in for: not done", async () => {
+    const second = { ...TIMED_OUT, command: "cd 'web' && bun run test" };
+    const r = await runLoop([WRITE, { text: "done" }, { text: "done" }], {
+      results: [slow(standIn(), second)],
+    });
+    expect(r.verdict?.kind).not.toBe("done");
+  });
+
+  test("stood in for, but every ask not found: partial, the ask named", async () => {
+    const r = await runLoop([WRITE, { text: "done" }, { text: "done" }], {
+      results: [slow(standIn(), LINT_GREEN)],
+      requestAnswers: [MISSING],
+    });
+    expect(r.verdict?.kind).toBe("partial");
+    expect(r.verdict?.gaps?.[0]?.criterion).toBe(REQUEST_GAP);
+  });
+
+  test("the notice names what stood in, found by its mark and not by position", async () => {
+    const r = await runLoop([WRITE, { text: "done" }, { text: "done" }], {
+      results: [slow(LINT_GREEN)],
+    });
+    const notice = r.notices.find((n) => n.includes("unverified")) ?? "";
+    expect(notice).not.toContain("run in its place");
+  });
+});

@@ -363,6 +363,10 @@ describe("the suite did not finish: the test files the change touched are run in
       slowChecksPath: memory,
     });
     const r = await v.verify(undefined, [join(root, "unit/a.test.ts")]);
-    expect(shape(r)).toEqual([["bun run typecheck", true, true]]);
+    expect(shape(r)[0]).toEqual(["bun run typecheck", true, true]);
+    // Nothing stands in for a typecheck. The project's own test check still
+    // runs after it (2026-10-22), as itself, not in the typecheck's place.
+    expect(r.runs?.some((x) => x.inPlaceOf !== undefined)).toBe(false);
+    expect(r.runs?.slice(1).map((x) => x.command)).toEqual(["bun test"]);
   }, 30_000);
 });

@@ -89,7 +89,12 @@ import { join as joinPath } from "node:path";
 import { parseArgs } from "util";
 import { runSettingsCommand } from "../settings-command";
 import { parseAcceptanceSpecs, type AcceptanceSpec } from "../contract";
-import { parseMaxBudgetFlag, parseMaxTurnsFlag, turnCeilingOverride } from "../reliability-policy";
+import {
+  checkTimeoutOverride,
+  parseMaxBudgetFlag,
+  parseMaxTurnsFlag,
+  turnCeilingOverride,
+} from "../reliability-policy";
 import {
   FirstRun,
   MASK_CELL_ASCII,
@@ -1383,10 +1388,10 @@ async function main() {
     verifyKeepGenerated: config.verify?.keepGenerated,
     verifyReuse: config.verify?.reuse,
     verifyEcosystems: config.verify?.ecosystems,
-    verifyTimeoutMs:
-      typeof config.verify?.timeoutSecs === "number" && config.verify.timeoutSecs > 0
-        ? Math.floor(config.verify.timeoutSecs * 1000)
-        : undefined,
+    verifyTimeoutMs: checkTimeoutOverride({
+      configuredSecs: config.verify?.timeoutSecs,
+      interactive: typeof values.print !== "string",
+    }),
     // `--acceptance` — evaluator criteria, on the contract at intake, run by
     // the runtime at the finish gate, never in a prompt.
     acceptance,

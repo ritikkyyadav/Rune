@@ -335,6 +335,13 @@ export type CompletionVerdict =
        * named and matched test by test (A4). Absent when every check passed.
        */
       preexisting?: string[];
+      /**
+       * A suite that did not finish within its time limit, and the test files
+       * the change touched, run on their own in its place, that passed. The
+       * suite as a whole was not measured; `ranInstead` is also in `checks`.
+       * Absent when every check finished.
+       */
+      standIns?: Array<{ unfinished: string; ranInstead: string }>;
       execution?: VerdictExecution;
       evaluators?: VerdictEvaluators;
     }

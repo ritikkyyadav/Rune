@@ -342,7 +342,14 @@ describe.each(AUTHORITIES)("I1 — a check killed at its deadline (%s)", (_label
           timedOut: true,
           notStarted: true,
         },
-        { command: scoped, exitCode: 0, durationMs: 900, passed: true },
+        // Marked as the suite's stand-in, as the verifier marks it.
+        {
+          command: scoped,
+          exitCode: 0,
+          durationMs: 900,
+          passed: true,
+          inPlaceOf: "bun run test",
+        },
       ],
     };
     const out = await runLoop({ script: WRITE_RUN_FINISH, authority, verifyResults: [notStarted] });
@@ -397,7 +404,10 @@ describe.each(AUTHORITIES)("I1 — a check killed at its deadline (%s)", (_label
     const scoped = "bun test './unit/a.test.ts'";
     const inPlace: VerifyResult = {
       ...TIMEOUT,
-      runs: [...TIMEOUT.runs!, { command: scoped, exitCode: 0, durationMs: 700, passed: true }],
+      runs: [
+        ...TIMEOUT.runs!,
+        { command: scoped, exitCode: 0, durationMs: 700, passed: true, inPlaceOf: "bun run test" },
+      ],
     };
     const measured = await runLoop({ script: WRITE_FINISH, authority, verifyResults: [inPlace] });
     expect(measured.notices.filter(gate)).toEqual([]);

@@ -1491,6 +1491,13 @@ export interface FinalProjectChecks {
    */
   preexisting: readonly string[];
   /**
+   * A suite that did not finish within its limit, each with what ran in its
+   * place: the test files the change touched, on their own, green. Only a
+   * suite every one of whose unfinished runs has such a stand-in reaches
+   * here; the suite itself was not measured, and the verdict says so.
+   */
+  standIns?: ReadonlyArray<{ unfinished: string; ranInstead: string }>;
+  /**
    * What the request check found, on this same tree: every ask of the
    * person's request, found in the change or not. Absent until it has run;
    * `done` needs it, with every ask found.
@@ -1769,7 +1776,9 @@ function gapWhy(criterion: Criterion, status: CriterionStatus): string {
  * criterion by criterion. Null unless every line holds:
  *
  *   it ended on its own (`end_turn`) and wrote something;
- *   the project's own checks ran to completion on the tree it left;
+ *   the project's own checks ran to completion on the tree it left — or, for
+ *   a suite that cannot finish within its limit, the test files the change
+ *   touched ran in its place and passed (`standIns`, named on the line);
  *   the request check found every ask of the person's request in the change;
  *   no planned step is open;
  *   no check is red, except one whose every failure predates the run;
@@ -1814,6 +1823,7 @@ function doneVerdict(
     unshown: short.map(({ criterion }) => criterion.text),
     requestAsks: request.asks,
     ...(red.length > 0 ? { preexisting: [...red] } : {}),
+    ...(checks.standIns?.length ? { standIns: checks.standIns.map((s) => ({ ...s })) } : {}),
     ...base,
   };
 }
@@ -1985,13 +1995,24 @@ export function verdictLine(verdict: CompletionVerdict): string {
       : "";
   if (verdict.kind === "none") return `[verdict] none — ${verdict.reason}${oracle}`;
   if (verdict.kind === "done") {
-    const ran = verdict.checks.map((c) => `\`${c}\``).join(", ");
+    // A stand-in is named by what it stood in for, not by its own command: it
+    // lists up to twenty test paths, and the line is read by a person.
+    const standIns = verdict.standIns ?? [];
+    const ranInstead = new Set(standIns.map((s) => s.ranInstead));
+    const finished = verdict.checks.filter((c) => !ranInstead.has(c));
+    const ran = finished.map((c) => `\`${c}\``).join(", ");
     const before = verdict.preexisting?.length
       ? `; already failing before the run: ${verdict.preexisting.map((c) => `\`${c}\``).join(", ")}`
       : "";
-    const head = verdict.preexisting?.length
-      ? `the project's checks found nothing this run broke (${ran})`
-      : `the project's checks passed on the final tree (${ran})`;
+    const head =
+      finished.length === 0
+        ? "the test files the change touched passed on the final tree"
+        : verdict.preexisting?.length
+          ? `the project's checks found nothing this run broke (${ran})`
+          : `the project's checks passed on the final tree (${ran})`;
+    const stood = standIns.length
+      ? `; ${standIns.map((s) => `\`${s.unfinished}\``).join(", ")} did not finish, and the test files the change touched passed in its place`
+      : "";
     const unshown =
       total === 0
         ? "; no criteria stated"
@@ -1999,7 +2020,7 @@ export function verdictLine(verdict: CompletionVerdict): string {
           ? `; ${verdict.unshown.length} of ${total} criteria not shown one by one`
           : "";
     const asks = `; all ${verdict.requestAsks} ask${verdict.requestAsks === 1 ? "" : "s"} of the request found in the change`;
-    return `[verdict] done — ${head}${asks}${before}${unshown}${oracle}`;
+    return `[verdict] done — ${head}${stood}${asks}${before}${unshown}${oracle}`;
   }
   if (verdict.kind === "met") return `[verdict] met — ${count}${attributed}${oracle}`;
   if (verdict.kind === "partial") {
