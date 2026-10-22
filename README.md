@@ -77,11 +77,10 @@ Session data is stored locally. Telemetry is off by default.
 
 ## Latest release
 
-[**v1.4.13**](https://github.com/ritikkyyadav/Rune/releases/tag/v1.4.13) lets `done` come on
-projects whose tests run long, found by Rune working on its own source. A headless run waits up
-to five minutes per check; when a suite still cannot finish, the tests your change touched stand
-in for it, and the verdict says so.
-[Release notes and validation](docs/releases/v1.4.13.md) · [Changelog](CHANGELOG.md)
+[**v1.4.14**](https://github.com/ritikkyyadav/Rune/releases/tag/v1.4.14) fixes the diff behind
+Rune's request check: a small change to a long file is now a small diff, so a run that edits
+Rune's largest files can end `done`. Found by Rune's own live test on its source.
+[Release notes and validation](docs/releases/v1.4.14.md) · [Changelog](CHANGELOG.md)
 
 ## Documentation
 

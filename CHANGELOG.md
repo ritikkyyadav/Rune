@@ -11,6 +11,24 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+## [1.4.14] - 2026-10-22
+
+**A small change to a long file is a small diff — found by Rune's live re-run on its own source.**
+A patch on 1.4.13. Full notes: [`docs/releases/v1.4.14.md`](docs/releases/v1.4.14.md).
+
+### Fixed
+
+- **The request check skipped every change to a file over 4,000 lines.** On the live re-run of
+  the dogfood task on 1.4.13, every end-of-turn check passed on Rune's own source for the first
+  time, then the request check skipped itself ("the change is larger than the check reads") and
+  the run ended `unmet`. Above 4,000 lines the diff wrote the whole file as removed and added: a
+  9-line edit to `agent-loop.ts` (7,802 lines) was a 737,609-character diff, against the check's
+  120,000. Now the unchanged start and end are set aside first, and a long middle is diffed with
+  Myers' algorithm. That edit is 1,898 characters. Past 2,000 changed lines a diff is still one
+  whole-file hunk.
+- The diffs shown for `apply_patch` and `multi_edit` on long files are their real hunks, not the
+  whole file.
+
 ## [1.4.13] - 2026-10-22
 
 **`done` on a project whose tests take longer than the check's limit — found by Rune working on
@@ -1418,7 +1436,8 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.13...HEAD
+[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.14...HEAD
+[1.4.14]: https://github.com/ritikkyyadav/Rune/compare/v1.4.13...v1.4.14
 [1.4.13]: https://github.com/ritikkyyadav/Rune/compare/v1.4.12...v1.4.13
 [1.4.12]: https://github.com/ritikkyyadav/Rune/compare/v1.4.11...v1.4.12
 [1.4.11]: https://github.com/ritikkyyadav/Rune/compare/v1.4.10...v1.4.11
