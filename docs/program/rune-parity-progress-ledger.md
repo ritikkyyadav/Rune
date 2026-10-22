@@ -3465,3 +3465,40 @@ round-trips; the edit probes fail 0 of 6.
 dogfood task re-run on 1.4.13 is owed (the founder's word first: one Rune run, about 17 points
 of the five-hour window). The dogfood test's cost finding (2.4 times Codex's quota, the fixed
 prefix of doctrine and tool schemas) is not addressed here.
+
+## The dogfood re-run on 1.4.13, 2026-10-22 · **every end-of-turn check passed on Rune's own source for the first time; `done` still did not come, because the request check could not read an edit to agent-loop.ts — a diff bug, fixed on the lane (`f978488`), not released**
+
+The founder chose "Live re-run now", then "Re-run on power". Same task, same untouched copy
+(`688f1e7`), the released 1.4.13 binary.
+
+- **First attempt (`rune-1413`): invalid.** The lid was closed at 09:14:57Z on 18% battery
+  ("Clamshell Sleep" in `pmset -g log`), 3.5 minutes into the end-of-turn check. The suite, lint
+  and the format check then each "timed out" across the sleep; awake, through the same verifier
+  code on that tree, lint takes 0.14 s and the format check 11.8 s. I first read this as lint
+  hanging while awake, from the tail of the power log only. Found by it: a check's limit counts
+  wall-clock time, so a sleep becomes a timeout; the transport's suspend clock (R2) is not used
+  by the verifier. Notes: `~/rune-evidence/dogfood-20261021/rune-1413/NOTES.md`.
+- **Second attempt (`rune-1413b`), on AC power with sleep blocked.**
+  - The end-of-turn check passed in full: `bun run typecheck` (reused), `bun run test` (finished
+    inside the five minutes), `bun run lint`, `bun run format:check`.
+  - The request check then skipped itself: "the change is larger than the check reads (1 file(s)
+    would be left out)". The run ended `unmet — no criteria stated`.
+  - **Cause.** Above 4,000 lines `unifiedDiff` wrote the whole file as removed and added. The
+    agent's 9-line edit to `agent-loop.ts` (7,802 lines) was a 737,609-character diff, against
+    the check's cap of 120,000. Every edit to Rune's two largest files did the same, and the
+    edit tools' diffs were whole-file too.
+  - **Fix, `f978488`** (on `lane/done-long-suites`, not released): the common start and end come
+    off first, and a long middle goes to Myers' O(ND) walk; past 2,000 changed lines it is still
+    one whole-file hunk. That edit is now 1,898 characters and the whole change 27,029. Six
+    mutants, all killed; Myers and the LCS table agree on 400 seeded pairs.
+  - **The agent's change, graded from outside:** hidden test 3 of 3; format, lint and typecheck
+    pass; reliability 62/0; unit 8,058/1 and integration 495/1. Both failures were timeouts while
+    I ran my own tests beside the grade, and each file passes alone (36/36, 47/47).
+  - **The smaller fixes, live:** the task was labelled `build`; the agent waited on its own test
+    run with `bash_output wait_seconds` and no loop guard fired; this time it ran prettier on
+    `docs/ci.md`, and the new format check passed.
+  - **Cost:** 55 calls and 4.95 million input tokens, against 1.4.12's 66 and 5.67 million on the
+    same task. 17.4 minutes of wall time: about 13 of work, and 4.4 of checks that now run to the
+    end instead of timing out.
+
+**Not shown.** `done` on Rune's own source, live: owed after `f978488` ships. One run per build.
