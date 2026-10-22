@@ -3522,3 +3522,33 @@ re-run on 1.4.13 found) and the ledger entries since 1.4.13.
   of 6.
 
 **Not shown yet.** `done` live on Rune's own source: the re-run on 1.4.14 is next, on AC power.
+
+## The dogfood re-run on 1.4.14, 2026-10-22 · **every check passed and the request check found 13 of 13 asks; `done` was withheld only by three "red checks" from the agent's own investigation**
+
+On AC power with sleep blocked; the released 1.4.14 binary; the same task and untouched copy.
+
+- **The end-of-turn check passed:** `bun run typecheck` (reused), `bun run test`, `bun run lint`,
+  `bun run format:check`.
+- **The request check ran,** one call, and found 13 of 13 asks in the change. The diff fix held.
+- **The verdict was still `unmet — no criteria stated`.** `done` refuses while anything the run
+  saw fail is still red, and the run's check log held three red entries, all the agent's own:
+  1. `bun test tests/unit/probes/t20-background-lifecycle.test.ts`. Inside Rune's sandbox one
+     test fails ("closing an engine stops the background shells its bash started"); outside it
+     the file passes (the untouched copy's grade, this run's grade, the harness's suite).
+  2. The agent then tried to show that failure predated its change. It built a copy of the
+     repository from `HEAD` and re-ran the test there, and the copy could not resolve the
+     workspace's modules.
+  3. Its clean-up, `test -d node_modules/.bun && … && rm -r …`, was blocked by the sandbox
+     ("chained rm via &&"). `test` and `[` are in the check classifier's program list
+     (`verification-command.ts`), so a directory probe was logged as a failed project check.
+- **The agent's change, graded from outside** (nothing ran beside the grade): hidden test 3 of 3;
+  format, lint, typecheck; reliability 62/0; unit 8,062/0; integration 492/0.
+- **Cost:** 45 calls (39 lead, 5 supervisor, 1 request check) and 4.36 million input tokens, of
+  which 209,000 uncached. 1.4.12 on the same task: 66 calls and 5.67 million; Codex CLI 1.76
+  million. 16.3 minutes of wall time.
+- **Quota:** the five-hour window went from 71% to 92% over the run. Not all of that was this
+  run: it had moved 54 points between runs with none of mine.
+
+**What stands between Rune and `done` on its own source** is one rule: "nothing seen to fail"
+counts what the agent saw while investigating, and commands that are not checks. How it should
+read is the founder's call.
