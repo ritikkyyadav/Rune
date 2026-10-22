@@ -4355,6 +4355,15 @@ export class AgentLoop {
                           })),
                         }
                       : {}),
+                    // What the passing suites ran, so a red run of a file in
+                    // them can be read as covered (check-scope.ts, 2026-10-22).
+                    ...(completed.some((r) => r.passed && r.scope?.length)
+                      ? {
+                          testScopes: completed.flatMap((r) =>
+                            r.passed && r.scope ? r.scope : [],
+                          ),
+                        }
+                      : {}),
                   }
                 : null;
             this.config.taskState?.noteVerification(

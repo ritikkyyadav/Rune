@@ -172,3 +172,118 @@ describe.skipIf(!nativeBinary.exists)("a suite that outlasts the check's limit",
     expect(r.requestChecks).toBe(0);
   }, 120_000);
 });
+
+// ─── Count only real failures, through the real Engine (2026-10-22) ───
+//
+// The dogfood re-run on 1.4.14: the agent saw a test fail, ran it again in a
+// copy of the repository it built to show the failure predated its change, and
+// probed for the copy with `test -d` before removing it. Every one of those
+// was logged as a red check, and `done` was refused though the suite passed.
+
+const bash = (id: string, command: string): ContentBlock => ({
+  type: "tool_use",
+  toolCallId: id,
+  toolName: "bash",
+  toolInput: { command },
+});
+
+async function investigate(turns: ContentBlock[][]) {
+  const base = mkdtempSync(join(tmpdir(), "rune-real-failures-"));
+  scratch.push(base);
+  const root = join(base, "ws");
+  const home = join(base, "home");
+  mkdirSync(join(root, "tests", "unit"), { recursive: true });
+  mkdirSync(join(root, "src"), { recursive: true });
+  mkdirSync(home, { recursive: true });
+  writeFileSync(
+    join(root, "package.json"),
+    JSON.stringify({ name: "app", scripts: { test: "bun test tests/unit/" } }, null, 2),
+  );
+  writeFileSync(join(root, "bun.lock"), "");
+  writeFileSync(join(root, "src", "index.ts"), "export {};\n");
+  // Red while `marker` exists: the run's own red sighting, fixed before the end.
+  writeFileSync(
+    join(root, "tests", "unit", "marker.test.ts"),
+    'import { expect, test } from "bun:test";\nimport { existsSync } from "node:fs";\n' +
+      'test("no marker", () => {\n  expect(existsSync("marker")).toBe(false);\n});\n',
+  );
+  writeFileSync(join(root, "marker"), "x\n");
+  const git = (...args: string[]) =>
+    spawnSync(
+      "git",
+      ["-C", root, "-c", "user.name=t", "-c", "user.email=t@example.invalid", ...args],
+      { encoding: "utf8" },
+    );
+  git("init", "-q");
+  git("add", ".");
+  git("commit", "-q", "-m", "fixture");
+
+  const previousHome = process.env.RUNE_HOME;
+  process.env.RUNE_HOME = home;
+  const engine = new Engine({
+    model: "claude-sonnet-5",
+    provider: "anthropic",
+    workspaceRoot: root,
+    dbPath: join(home, "rune.db"),
+    toolsBinaryPath: nativeBinary.path,
+    permissionMode: "gear-4",
+    enableCheckpoints: false,
+    enableSecurity: false,
+    enableRateLimiting: false,
+    enableHooks: false,
+    enableMcp: false,
+    enableSkills: false,
+    enableVerification: true,
+    context: { repoMap: false },
+    evolve: { playbook: false },
+    memory: { enabled: false },
+  } as ConstructorParameters<typeof Engine>[0]);
+  const provider = new Scripted();
+  (engine as unknown as { gateway: LlmGateway }).gateway.registerProvider(provider);
+  let turn = 0;
+  provider.onRequest = () => turns[turn++] ?? say("Done.");
+  const events: AgentTurnEvent[] = [];
+  try {
+    for await (const event of engine.chat(engine.createSession(), PROMPT)) events.push(event);
+  } finally {
+    engine.close();
+    if (previousHome === undefined) delete process.env.RUNE_HOME;
+    else process.env.RUNE_HOME = previousHome;
+  }
+  const complete = events.filter((e) => e.type === "turn_complete").at(-1) as
+    { verdict?: Parameters<typeof verdictLine>[0] } | undefined;
+  return { verdict: complete?.verdict };
+}
+
+describe.skipIf(!nativeBinary.exists)("count only real failures", () => {
+  test("a red file the suite covers, a red run in a copy, a red `test -d`: done", async () => {
+    const r = await investigate([
+      [SUM, testOf(5)],
+      [bash("b1", "bun test tests/unit/marker.test.ts")],
+      [bash("b2", "mkdir .copy && cp -R tests .copy/ && bun test .copy/tests/unit/marker.test.ts")],
+      [bash("b3", "test -d .no-such-copy && rm -r .no-such-copy")],
+      // One `rm` at a time: the sandbox refuses a chained one, as it did live.
+      [bash("b4", "rm marker")],
+      say("Added sum with a test."),
+    ]);
+    expect(r.verdict?.kind).toBe("done");
+    if (r.verdict?.kind !== "done") throw new Error("unreachable");
+    expect(r.verdict.superseded).toEqual(["bun test tests/unit/marker.test.ts"]);
+    expect(verdictLine(r.verdict)).toContain("an earlier red test run is covered by the suite");
+  }, 120_000);
+
+  test("a red file outside what the suite runs still refuses done", async () => {
+    const r = await investigate([
+      [SUM, testOf(5)],
+      [
+        bash(
+          "b1",
+          "mkdir -p other && cp tests/unit/marker.test.ts other/ && bun test other/marker.test.ts",
+        ),
+      ],
+      [bash("b2", "rm marker")],
+      say("Added sum with a test."),
+    ]);
+    expect(r.verdict?.kind).not.toBe("done");
+  }, 120_000);
+});

@@ -659,3 +659,72 @@ describe("the loop: a suite that did not finish, and what stood in for it", () =
     expect(notice).not.toContain("run in its place");
   });
 });
+
+// ─── Count only real failures (2026-10-22) ───
+//
+// The dogfood re-run on 1.4.14: every check passed, the request check found 13
+// of 13 asks, and `done` was refused by a test file that was red only inside
+// the agent's sandbox — a file the suite that passed on the final tree also ran.
+
+const SUITE: FinalProjectChecks = {
+  commands: ["bun run typecheck", "bun run test"],
+  preexisting: [],
+  testScopes: ["tests/unit"],
+  request: ALL_FOUND,
+};
+const redRun = (command: string): CheckRun => ({ command, passed: false, at: 1, kind: "check" });
+const T20 = "bun test tests/unit/probes/t20-background-lifecycle.test.ts";
+
+describe("a red test-file run the final suite covers does not refuse done", () => {
+  test("covered: done, and the run is named on the verdict and the line", () => {
+    const v = verdictOf([], { projectChecks: SUITE, checks: [redRun(T20)] });
+    expect(v.kind).toBe("done");
+    if (v.kind !== "done") throw new Error("unreachable");
+    expect(v.superseded).toEqual([T20]);
+    expect(v).not.toHaveProperty("preexisting");
+    expect(verdictLine(v)).toContain(
+      "an earlier red test run is covered by the suite that passed (`bun test tests/unit/probes/t20-background-lifecycle.test.ts`)",
+    );
+  });
+
+  test("outside the suite's scope: not done", () => {
+    const v = verdictOf([], {
+      projectChecks: SUITE,
+      checks: [redRun("bun test tests/integration/x.test.ts")],
+    });
+    expect(v.kind).not.toBe("done");
+  });
+
+  test("no scope known for the suite: not done", () => {
+    const v = verdictOf([], {
+      projectChecks: { ...SUITE, testScopes: undefined },
+      checks: [redRun(T20)],
+    });
+    expect(v.kind).not.toBe("done");
+  });
+
+  test("a red check that is not a test-file run: not done", () => {
+    const v = verdictOf([], { projectChecks: SUITE, checks: [redRun("bun run lint")] });
+    expect(v.kind).not.toBe("done");
+  });
+
+  test("a later green run of the same file needs no covering", () => {
+    const v = verdictOf([], {
+      projectChecks: SUITE,
+      checks: [redRun(T20), { command: T20, passed: true, at: 2, kind: "check" }],
+    });
+    expect(v.kind).toBe("done");
+    expect(v).not.toHaveProperty("superseded");
+  });
+
+  test("covered and pre-existing together: done, each named as what it is", () => {
+    const v = verdictOf([], {
+      projectChecks: { ...SUITE, preexisting: ["bun run e2e"] },
+      checks: [redRun(T20), redRun("bun run e2e")],
+    });
+    expect(v.kind).toBe("done");
+    if (v.kind !== "done") throw new Error("unreachable");
+    expect(v.superseded).toEqual([T20]);
+    expect(v.preexisting).toEqual(["bun run e2e"]);
+  });
+});

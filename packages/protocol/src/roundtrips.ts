@@ -342,6 +342,12 @@ export type CompletionVerdict =
        * Absent when every check finished.
        */
       standIns?: Array<{ unfinished: string; ranInstead: string }>;
+      /**
+       * Red test-file runs the run saw, each covered by a `bun test` suite that
+       * passed on the final tree: the suite ran those files, in the check's own
+       * environment. Absent when nothing red was superseded.
+       */
+      superseded?: string[];
       execution?: VerdictExecution;
       evaluators?: VerdictEvaluators;
     }

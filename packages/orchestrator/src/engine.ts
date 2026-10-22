@@ -84,6 +84,7 @@ import {
   runsWholeSuite,
   samePathToken,
 } from "./verification-command";
+import { ranInScratchCopy } from "./check-scope";
 import { PassLedger, equivalentCommands, workTreeFingerprint } from "./check-receipts";
 import {
   setConfigValue,
@@ -6381,7 +6382,13 @@ export class Engine {
           this.checkLog.record({
             command,
             passed: verdict.passed,
-            kind: isVerificationCommand(command) ? "check" : "execution",
+            // A test run against a copy of the project is not the project's
+            // check, whatever it returned (check-scope.ts, 2026-10-22).
+            kind:
+              isVerificationCommand(command) &&
+              !ranInScratchCopy(command, this.config.workspaceRoot)
+                ? "check"
+                : "execution",
             at: Date.now(),
             summary: verdict.summary,
             ...(verdict.exitCode != null ? { exitCode: verdict.exitCode } : {}),

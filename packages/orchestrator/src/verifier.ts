@@ -61,6 +61,7 @@ import {
   testLabel,
   type ParsedTestRun,
 } from "./check-failures";
+import { bunTestRun } from "./verification-command";
 import { isHarnessOwnedPath } from "./lifecycle";
 import { ownersOf, selectProjects, type ProjectDecision, type ScopeFacts } from "./verify-scope";
 
@@ -160,6 +161,39 @@ export interface CheckRunRecord {
    * real measurement of those files, never of the suite.
    */
   inPlaceOf?: string;
+  /**
+   * What a passing `bun test` suite ran, as workspace-relative prefixes; ""
+   * is the whole workspace. Read from the suite's own script. A red run of a
+   * file inside it is then covered by this pass (check-scope.ts, 2026-10-22).
+   */
+  scope?: string[];
+}
+
+/**
+ * The scope of a `bun test` suite: the folders and files its script runs,
+ * workspace-relative, or the whole project when it names none. Null when the
+ * suite is not `bun test`, or its script cannot be read as one.
+ */
+export function bunTestScope(workspaceRoot: string, check: DetectedCheck): string[] | null {
+  if (check.kind !== "test" || check.ecosystem !== "js") return null;
+  let body = check.command;
+  const script = check.command.match(/^(?:bun|npm|pnpm|yarn)(?: run)? ([\w:.-]+)$/)?.[1];
+  if (script) {
+    try {
+      const manifest = JSON.parse(
+        readFileSync(join(workspaceRoot, check.project, "package.json"), "utf8"),
+      ) as { scripts?: Record<string, string> };
+      body = manifest.scripts?.[script] ?? "";
+    } catch {
+      return null;
+    }
+  }
+  const run = bunTestRun(body);
+  if (!run || run.cds.length > 0) return null;
+  const prefix = check.project === "" ? "" : `${check.project.replace(/\/+$/, "")}/`;
+  if (run.targets.length === 0) return [prefix.replace(/\/$/, "")];
+  if (run.targets.some((t) => t.includes("$") || isAbsolute(t))) return null;
+  return run.targets.map((t) => `${prefix}${t.replace(/^(?:\.\/)+/, "").replace(/\/+$/, "")}`);
 }
 
 /**
@@ -2429,6 +2463,11 @@ export class CommandVerifier implements Verifier {
       }
     };
     const report = (): string => reports.join("\n\n");
+    /** A passing `bun test` suite says what it covered (check-scope.ts). */
+    const scopeOf = (check: DetectedCheck): { scope?: string[] } => {
+      const scope = bunTestScope(this.config.workspaceRoot, check);
+      return scope ? { scope } : {};
+    };
     const cancelled = (): VerifyResult => {
       reports.push("[cancelled — the remaining checks did not run]");
       return settle({ status: "inconclusive", reason: "cancelled" }, runs, report());
@@ -2527,6 +2566,7 @@ export class CommandVerifier implements Verifier {
           exitCode: 0,
           passed: true,
           reused: seen,
+          ...scopeOf(check),
         });
         const as = seen.ranAs.trim() === cmd.trim() ? "" : `, as \`${truncate(seen.ranAs, 160)}\``;
         const took = seen.durationMs != null ? ` in ${span(seen.durationMs)}` : "";
@@ -2610,7 +2650,7 @@ export class CommandVerifier implements Verifier {
         if (failure) failure.failed = { check, output };
         return settle({ status: "failed" }, runs, report());
       }
-      note({ ...base, exitCode, passed: true });
+      note({ ...base, exitCode, passed: true, ...scopeOf(check) });
       reports.push(`$ ${cmd}  (ok)`);
     }
 

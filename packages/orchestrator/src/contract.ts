@@ -48,6 +48,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
 import type { CheckRun } from "./brief";
 import type { RequestCheckOutcome } from "./request-check";
+import { coveredBySuite } from "./check-scope";
 import { statusFromStopReason, treeMovedUnder, type StampedRevision } from "./lifecycle";
 import { couldNotRunOnParent } from "./parent-check";
 import { GOAL_CAP } from "./task-state";
@@ -1498,6 +1499,12 @@ export interface FinalProjectChecks {
    */
   standIns?: ReadonlyArray<{ unfinished: string; ranInstead: string }>;
   /**
+   * What the passing `bun test` suites among those checks ran, as
+   * workspace-relative prefixes ("" is the whole workspace). A red run of a
+   * file within them is covered by the pass (`coveredBySuite`).
+   */
+  testScopes?: readonly string[];
+  /**
    * What the request check found, on this same tree: every ask of the
    * person's request, found in the change or not. Absent until it has run;
    * `done` needs it, with every ask found.
@@ -1810,7 +1817,13 @@ function doneVerdict(
   if (input.stopReason !== "end_turn" || !input.wrote) return null;
   if (input.openSteps > 0) return null;
   const before = new Set(checks.preexisting.map(normalizeCommand));
-  if (red.some((command) => !before.has(command))) return null;
+  // A red run of a test file that a suite which passed on the final tree also
+  // ran is covered by that pass (the founder's call, 2026-10-22: count only
+  // real failures). Anything else red still refuses `done`.
+  const superseded = red.filter(
+    (command) => !before.has(command) && coveredBySuite(command, checks.testScopes ?? []),
+  );
+  if (red.some((command) => !before.has(command) && !superseded.includes(command))) return null;
   for (const { criterion, status } of short) {
     if ((criterion.source ?? "inferred") !== "inferred") return null;
     if (criterion.method?.kind === "review") return null;
@@ -1822,7 +1835,10 @@ function doneVerdict(
     checks: [...checks.commands],
     unshown: short.map(({ criterion }) => criterion.text),
     requestAsks: request.asks,
-    ...(red.length > 0 ? { preexisting: [...red] } : {}),
+    ...(red.some((c) => !superseded.includes(c))
+      ? { preexisting: red.filter((c) => !superseded.includes(c)) }
+      : {}),
+    ...(superseded.length ? { superseded } : {}),
     ...(checks.standIns?.length ? { standIns: checks.standIns.map((s) => ({ ...s })) } : {}),
     ...base,
   };
@@ -2013,6 +2029,11 @@ export function verdictLine(verdict: CompletionVerdict): string {
     const stood = standIns.length
       ? `; ${standIns.map((s) => `\`${s.unfinished}\``).join(", ")} did not finish, and the test files the change touched passed in its place`
       : "";
+    const firstCovered = verdict.superseded?.[0];
+    const covered =
+      firstCovered !== undefined
+        ? `; ${verdict.superseded!.length === 1 ? "an earlier red test run is" : `${verdict.superseded!.length} earlier red test runs are`} covered by the suite that passed (\`${firstCovered.length > 80 ? `${firstCovered.slice(0, 77)}…` : firstCovered}\`${verdict.superseded!.length > 1 ? ", …" : ""})`
+        : "";
     const unshown =
       total === 0
         ? "; no criteria stated"
@@ -2020,7 +2041,7 @@ export function verdictLine(verdict: CompletionVerdict): string {
           ? `; ${verdict.unshown.length} of ${total} criteria not shown one by one`
           : "";
     const asks = `; all ${verdict.requestAsks} ask${verdict.requestAsks === 1 ? "" : "s"} of the request found in the change`;
-    return `[verdict] done — ${head}${stood}${asks}${before}${unshown}${oracle}`;
+    return `[verdict] done — ${head}${stood}${asks}${covered}${before}${unshown}${oracle}`;
   }
   if (verdict.kind === "met") return `[verdict] met — ${count}${attributed}${oracle}`;
   if (verdict.kind === "partial") {

@@ -8,6 +8,65 @@ export function isVerificationCommand(command: string): boolean {
   return chain !== null && chain.some((words) => checks(words));
 }
 
+/** `bun test` options that take a value, so the value is not read as a target. */
+const BUN_TEST_VALUE = new Set([
+  "--preload",
+  "-r",
+  "--require",
+  "--timeout",
+  "--test-name-pattern",
+  "-t",
+  "--rerun-each",
+  "--reporter",
+  "--reporter-outfile",
+  "--coverage-dir",
+  "--coverage-reporter",
+  "--seed",
+  "--max-concurrency",
+]);
+
+/**
+ * A `bun test` run, read: the directories `cd` moved to before it in its &&
+ * chain, and the files or folders it was asked to run, as written (`$PWD` and
+ * all). Null when the chain's check is not `bun test`, or the command cannot
+ * be read, or a place in it is a substitution. It tells the project's own
+ * checks from runs in a copy of the project, and a red file run from a suite
+ * that covers it (2026-10-22).
+ */
+export function bunTestRun(command: string): { cds: string[]; targets: string[] } | null {
+  const chain = lastCommandChain(command);
+  if (!chain) return null;
+  const cds: string[] = [];
+  for (const input of chain) {
+    const words = [...input];
+    while (ASSIGNMENT.test(words[0] ?? "")) words.shift();
+    const program = base(words[0] ?? "");
+    if (program === "cd") {
+      cds.push(words[1] ?? "~");
+      continue;
+    }
+    if (program === "bun" && words[1] === "test") {
+      const targets: string[] = [];
+      for (let i = 2; i < words.length; i++) {
+        const word = words[i]!;
+        if (word === "--") {
+          targets.push(...words.slice(i + 1));
+          break;
+        }
+        if (word.startsWith("-")) {
+          if (!word.includes("=") && BUN_TEST_VALUE.has(word)) i++;
+          continue;
+        }
+        targets.push(word);
+      }
+      if ([...cds, ...targets].some((place) => place.includes(OPAQUE))) return null;
+      return { cds, targets };
+    }
+    if (checks(input)) return null;
+  }
+  return null;
+}
+
 /**
  * The final list's && chain is covered by the shell's exit status. Earlier
  * lists, pipes, background jobs and || fallbacks can mask a failing check.
@@ -369,6 +428,12 @@ function checks(input: string[], depth = 0): boolean {
   const program = base(executable);
   if (!program || executable.includes(OPAQUE) || words.some((w) => HELP.has(w))) return false;
   if (program === "env" || program === "command") return checks(words, depth + 1);
+  // `test` and `[` with no path are the shell's own conditionals: "does this
+  // file exist?", not a run of the work. On the dogfood re-run of 2026-10-22 the
+  // agent's `test -d node_modules/.bun && … && rm -r …`, blocked by the
+  // sandbox, was logged as a failed check and kept `done` away. A script named
+  // test (`./test`, `scripts/test`) is still one.
+  if ((program === "test" || program === "[") && !executable.includes("/")) return false;
   if (PROGRAMS.has(program)) return true;
   if (program === "git") return words[0] === "diff" && words.includes("--check");
   if (program === "playwright") return words[0] === "test";
