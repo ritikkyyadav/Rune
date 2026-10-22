@@ -6,7 +6,11 @@
  * reads, so it is exercised against parseDiff, not against a string.
  */
 import { describe, expect, test } from "bun:test";
-import { unifiedDiff } from "../../../packages/tool-registry/src/tools/unified-diff";
+import {
+  diffOps,
+  myersOps,
+  unifiedDiff,
+} from "../../../packages/tool-registry/src/tools/unified-diff";
 import { parseDiff } from "../../../packages/orchestrator/src/bin/ui/flow";
 
 const lines = (...xs: string[]) => xs.join("\n") + "\n";
@@ -67,10 +71,44 @@ describe("unifiedDiff", () => {
     expect(parseDiff(one).rows.map((r) => r.kind)).toEqual(["context", "remove", "add"]);
   });
 
-  test("past the line cap the diff degrades to one whole-file hunk instead of an O(n²) table", () => {
+  test("past the line cap a small change is still a small hunk, with no O(n²) table", () => {
+    // 2026-10-22: above 4,000 lines every diff was a whole-file rewrite, so a
+    // 9-line edit to agent-loop.ts (7,802 lines) read as 15,005 changed lines.
     const big = Array.from({ length: 4001 }, (_, i) => `line ${i}`).join("\n");
+    const t0 = performance.now();
     const diff = unifiedDiff(big, big + "\nextra", "big.ts");
-    expect(diff.split("\n")[2]).toBe("@@ -1,4001 +1,4002 @@");
+    expect(performance.now() - t0).toBeLessThan(500);
+    expect(diff.split("\n")[2]).toBe("@@ -3999,3 +3999,4 @@");
+    expect(parseDiff(diff)).toMatchObject({ added: 1, removed: 0, hunks: 1 });
+  });
+
+  test("a few lines changed in an 8,000-line file: their hunks only, numbered from the file", () => {
+    const before = Array.from({ length: 7802 }, (_, i) => `const line${i} = ${i};`);
+    const after = [...before];
+    after[3600] = "const line3600 = 'changed';";
+    after.splice(3655, 0, "// a new line", "// and another");
+    const diff = unifiedDiff(before.join("\n"), after.join("\n"), "agent-loop.ts");
+    expect(diff.length).toBeLessThan(1500);
+    expect(parseDiff(diff)).toMatchObject({ added: 3, removed: 1, hunks: 2 });
+    expect(diff).toContain("@@ -3598,7 +3598,7 @@");
+  });
+
+  test("changes at both ends of a 10,000-line file: two hunks, found by Myers' walk", () => {
+    const before = Array.from({ length: 10_000 }, (_, i) => `row ${i}`);
+    const after = [...before];
+    after[5] = "row five, edited";
+    after[9_990] = "row 9990, edited";
+    const t0 = performance.now();
+    const diff = unifiedDiff(before.join("\n"), after.join("\n"), "engine.ts");
+    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(parseDiff(diff)).toMatchObject({ added: 2, removed: 2, hunks: 2 });
+  });
+
+  test("a wholesale rewrite of a long file is still one whole-file hunk", () => {
+    const before = Array.from({ length: 4500 }, (_, i) => `old ${i}`).join("\n");
+    const after = Array.from({ length: 4500 }, (_, i) => `new ${i}`).join("\n");
+    const diff = unifiedDiff(before, after, "bundle.js");
+    expect(diff.split("\n")[2]).toBe("@@ -1,4500 +1,4500 @@");
     expect(parseDiff(diff).hunks).toBe(1);
   });
 
@@ -81,5 +119,54 @@ describe("unifiedDiff", () => {
     const diff = unifiedDiff(before, after, "p.ts");
     expect(performance.now() - t0).toBeLessThan(1000);
     expect(parseDiff(diff)).toMatchObject({ added: 1, removed: 1, hunks: 1 });
+  });
+});
+
+/** Applies an edit script to `a`, checking every line it claims to keep or drop. */
+function apply(a: readonly string[], ops: NonNullable<ReturnType<typeof diffOps>>): string[] {
+  const out: string[] = [];
+  let i = 0;
+  for (const op of ops) {
+    if (op.kind === "ins") {
+      out.push(op.newLine!);
+      continue;
+    }
+    expect(a[i]).toBe(op.oldLine!);
+    if (op.kind === "eq") out.push(a[i]!);
+    i++;
+  }
+  expect(i).toBe(a.length);
+  return out;
+}
+const changes = (ops: NonNullable<ReturnType<typeof diffOps>>) =>
+  ops.filter((o) => o.kind !== "eq").length;
+
+describe("Myers' walk agrees with the LCS table", () => {
+  // A small seeded generator: the same cases on every run, on every machine.
+  let seed = 20261022;
+  const rand = (n: number) => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed % n;
+  };
+  const text = (len: number) => Array.from({ length: len }, () => "abcde"[rand(5)]!);
+
+  test("on 400 random pairs: both reproduce the new text, with the same number of changes", () => {
+    for (let t = 0; t < 400; t++) {
+      const a = text(rand(30));
+      const b = rand(3) === 0 ? text(rand(30)) : a.map((c) => (rand(6) === 0 ? "z" : c));
+      const myers = myersOps(a, b, 10_000)!;
+      const table = diffOps(a, b)!; // small: the LCS table
+      expect(apply(a, myers)).toEqual(b);
+      expect(apply(a, table)).toEqual(b);
+      // Both are shortest edit scripts: n + m - 2·LCS changes.
+      expect(changes(myers)).toBe(changes(table));
+    }
+  });
+
+  test("past its bound it says so instead of running on", () => {
+    const a = Array.from({ length: 50 }, (_, i) => `a${i}`);
+    const b = Array.from({ length: 50 }, (_, i) => `b${i}`);
+    expect(myersOps(a, b, 99)).toBeNull();
+    expect(myersOps(a, b, 100)).not.toBeNull();
   });
 });

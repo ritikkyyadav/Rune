@@ -16,8 +16,109 @@ const CONTEXT = 3;
 // to one hunk that replaces the whole file. The renderer caps the rows it shows
 // regardless.
 const LCS_LINE_CAP = 4000;
+/**
+ * Past this many changed lines a diff is not a reading aid, and one whole-file
+ * hunk says it better. It bounds Myers' walk below: O((n+m)·d) time and O(d²)
+ * memory.
+ */
+const MAX_EDIT_LINES = 2000;
 
 type Op = { kind: "eq" | "del" | "ins"; oldLine?: string; newLine?: string };
+
+/**
+ * The edit script between two line arrays, or null when it is too costly to
+ * find (the caller then shows one whole-file hunk).
+ *
+ * The common start and end are context by definition, so they come off first:
+ * an edit in the middle of an 8,000-line file is a few lines of work, not 64
+ * million cells. Before this, every edit to a file over the cap came out as a
+ * whole-file rewrite (2026-10-22: a 9-line change to agent-loop.ts, 7,802
+ * lines, was a 737,609-character diff), and the request check, which will not
+ * read part of a change as the whole, skipped every such run. What is left
+ * goes to the LCS table when it is small, and to Myers' walk when it is not.
+ */
+export function diffOps(a: readonly string[], b: readonly string[]): Op[] | null {
+  let pre = 0;
+  while (pre < a.length && pre < b.length && a[pre] === b[pre]) pre++;
+  let suf = 0;
+  while (
+    suf < a.length - pre &&
+    suf < b.length - pre &&
+    a[a.length - 1 - suf] === b[b.length - 1 - suf]
+  ) {
+    suf++;
+  }
+  const midA = a.slice(pre, a.length - suf);
+  const midB = b.slice(pre, b.length - suf);
+  const mid =
+    midA.length <= LCS_LINE_CAP && midB.length <= LCS_LINE_CAP
+      ? lcsOps(midA, midB)
+      : myersOps(midA, midB, MAX_EDIT_LINES);
+  if (mid === null) return null;
+  const eq = (line: string): Op => ({ kind: "eq", oldLine: line, newLine: line });
+  return [...a.slice(0, pre).map(eq), ...mid, ...a.slice(a.length - suf).map(eq)];
+}
+
+/**
+ * Myers' shortest edit script ("An O(ND) Difference Algorithm", 1986): for a
+ * pair too long for the LCS table but with few changes between them. Each
+ * round's diagonals are kept as a window of 2d+3 cells, so the trace is O(d²).
+ * Null when the script would be longer than `maxD`.
+ */
+export function myersOps(a: readonly string[], b: readonly string[], maxD: number): Op[] | null {
+  const n = a.length;
+  const m = b.length;
+  const off = n + m + 1;
+  const v = new Int32Array(2 * off + 2);
+  const trace: Int32Array[] = [];
+  const limit = Math.min(n + m, maxD);
+  let found = -1;
+  for (let d = 0; d <= limit && found < 0; d++) {
+    // Diagonals -d-1..d+1 as they stood before this round: all the walk back reads.
+    trace.push(v.slice(off - d - 1, off + d + 2));
+    for (let k = -d; k <= d; k += 2) {
+      let x =
+        k === -d || (k !== d && v[off + k - 1]! < v[off + k + 1]!)
+          ? v[off + k + 1]!
+          : v[off + k - 1]! + 1;
+      let y = x - k;
+      while (x < n && y < m && a[x] === b[y]) {
+        x++;
+        y++;
+      }
+      v[off + k] = x;
+      if (x >= n && y >= m) {
+        found = d;
+        break;
+      }
+    }
+  }
+  if (found < 0) return null;
+  // Walk back from (n, m) to (0, 0), one round at a time.
+  const ops: Op[] = [];
+  let x = n;
+  let y = m;
+  for (let d = found; d >= 0; d--) {
+    const w = trace[d]!;
+    const at = (k: number) => w[k + d + 1]!;
+    const k = x - y;
+    const prevK = k === -d || (k !== d && at(k - 1) < at(k + 1)) ? k + 1 : k - 1;
+    const prevX = at(prevK);
+    const prevY = prevX - prevK;
+    while (x > prevX && y > prevY) {
+      ops.push({ kind: "eq", oldLine: a[x - 1], newLine: b[y - 1] });
+      x--;
+      y--;
+    }
+    if (d > 0) {
+      if (x === prevX) ops.push({ kind: "ins", newLine: b[prevY] });
+      else ops.push({ kind: "del", oldLine: a[prevX] });
+    }
+    x = prevX;
+    y = prevY;
+  }
+  return ops.reverse();
+}
 
 /** Longest common subsequence of two line arrays, as a walkable op list. */
 function lcsOps(a: string[], b: string[]): Op[] {
@@ -85,14 +186,14 @@ export function unifiedDiff(oldText: string, newText: string, path: string): str
     return `--- a/${path}\n+++ b/${path}\n@@ -${n},1 +${n},1 @@\n-${a[n - 1]}\n+${b[n - 1]}`;
   }
 
-  if (a.length > LCS_LINE_CAP || b.length > LCS_LINE_CAP) {
-    // Whole-file replacement — one hunk, no LCS. Rare and deliberately coarse.
+  const ops = diffOps(a, b);
+  if (ops === null) {
+    // Whole-file replacement, one hunk: a change of more than MAX_EDIT_LINES
+    // lines in a file too long for the LCS table. Rare and deliberately coarse.
     const head = `--- a/${path}\n+++ b/${path}\n@@ -1,${a.length} +1,${b.length} @@`;
     const body = [...a.map((l) => `-${l}`), ...b.map((l) => `+${l}`)].join("\n");
     return `${head}\n${body}`;
   }
-
-  const ops = lcsOps(a, b);
 
   // Group ops into hunks: a run of changes plus up to CONTEXT equal lines on
   // each side. Equal runs longer than 2×CONTEXT split one hunk from the next.

@@ -274,3 +274,21 @@ describe("requestRepair: the arbiter's rule for the one re-prompt", () => {
     expect(requestRepair({ missing: true }).transition).toBe("unknown");
   });
 });
+
+describe("a small change to a long file is read, not left out (2026-10-22)", () => {
+  test("a 9-line edit to a 7,802-line file fits, with room to spare", () => {
+    // The live re-run on 1.4.13: the end-of-turn checks all passed, then the
+    // request check skipped ("1 file(s) would be left out") because this edit
+    // to agent-loop.ts came out as a 737,609-character whole-file rewrite.
+    const before = Array.from({ length: 7802 }, (_, i) => `const line${i} = ${i};`).join("\n");
+    const after = before
+      .replace("const line3600 = 3600;", "const line3600 = 'model_unavailable';")
+      .replace("const line3655 = 3655;", "const line3655 = 3655; // handoff reason");
+    const { diff, omitted } = changeDiff([
+      { path: "packages/orchestrator/src/agent-loop.ts", before, after },
+    ]);
+    expect(omitted).toEqual([]);
+    expect(diff.length).toBeLessThan(2_000);
+    expect(diff).toContain("+const line3600 = 'model_unavailable';");
+  });
+});
