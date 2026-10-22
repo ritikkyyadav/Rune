@@ -253,6 +253,28 @@ const PROGRAMS = new Set([
   "build",
 ]);
 const HELP = new Set(["--help", "-h", "--version", "-V", "--list-tests", "--listTests"]);
+/** The unary operators with which `test` and `[` ask about a file rather than compare values. */
+const FILE_PROBE = new Set([
+  "-e",
+  "-f",
+  "-d",
+  "-s",
+  "-r",
+  "-w",
+  "-x",
+  "-L",
+  "-h",
+  "-p",
+  "-S",
+  "-b",
+  "-c",
+  "-g",
+  "-u",
+  "-k",
+  "-O",
+  "-G",
+  "-N",
+]);
 const OPTION_VALUE = new Set([
   "--cwd",
   "-C",
@@ -428,12 +450,19 @@ function checks(input: string[], depth = 0): boolean {
   const program = base(executable);
   if (!program || executable.includes(OPAQUE) || words.some((w) => HELP.has(w))) return false;
   if (program === "env" || program === "command") return checks(words, depth + 1);
-  // `test` and `[` with no path are the shell's own conditionals: "does this
-  // file exist?", not a run of the work. On the dogfood re-run of 2026-10-22 the
-  // agent's `test -d node_modules/.bun && … && rm -r …`, blocked by the
-  // sandbox, was logged as a failed check and kept `done` away. A script named
-  // test (`./test`, `scripts/test`) is still one.
-  if ((program === "test" || program === "[") && !executable.includes("/")) return false;
+  // `test` and `[` asking about a FILE are the shell probing the tree ("does
+  // this exist?"), not a run of the work. On the dogfood re-run of 2026-10-22
+  // the agent's `test -d node_modules/.bun && … && rm -r …`, blocked by the
+  // sandbox, was logged as a failed check and kept `done` away. A comparison
+  // of what a program printed (`test "$(cat out.txt)" = ready`) is still an
+  // assertion about the work, and a script named test (`./test`) still a check.
+  if (
+    (program === "test" || program === "[") &&
+    !executable.includes("/") &&
+    words.some((w) => FILE_PROBE.has(w))
+  ) {
+    return false;
+  }
   if (PROGRAMS.has(program)) return true;
   if (program === "git") return words[0] === "diff" && words.includes("--check");
   if (program === "playwright") return words[0] === "test";

@@ -36,8 +36,15 @@ describe("the shell's own `test` and `[` are not checks", () => {
     expect(isVerificationCommand(command)).toBe(false);
   });
 
+  test("a comparison of what a program printed is still an assertion about the work", () => {
+    expect(isVerificationCommand('test "$(cat output.txt)" = ready')).toBe(true);
+    expect(isVerificationCommand('[ "$(node out.mjs)" = 3 ]')).toBe(true);
+  });
+
   test("a script named test is still one", () => {
     expect(isVerificationCommand("./test --all")).toBe(true);
+    // Even with a flag that, after a bare `test`, would ask about a file.
+    expect(isVerificationCommand("./test -d")).toBe(true);
     expect(isVerificationCommand("scripts/test")).toBe(true);
   });
 
