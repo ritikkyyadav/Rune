@@ -10,22 +10,38 @@
 // checks) is in verification-command.ts.
 
 import { spawnSync } from "node:child_process";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import path, { isAbsolute, resolve } from "node:path";
 import { bunTestRun } from "./verification-command";
 
 /** `$PWD` and `${PWD}` at the start of a place, read as the workspace root. */
 const PWD = /^\$(?:PWD|\{PWD\})(?=\/|$)/;
 
+/** The path functions `workspacePlace` uses: Node's own, or `path.win32` in a test. */
+type PathLib = Pick<typeof path, "isAbsolute" | "relative" | "resolve" | "sep">;
+
 /**
  * A place a check names, as a workspace-relative path with forward slashes;
  * `..`-prefixed when it lies outside. Null when it cannot be read: any other
  * variable, or `~`.
+ *
+ * On Windows a place on another drive has no relative form, and `relative`
+ * hands back the absolute path (`D:\tmp\copy\…` against a workspace on C:).
+ * It is outside the workspace all the same (CI, 2026-10-22: the runner's
+ * checkout is on D: and its temp folder on C:).
  */
-function place(root: string, cwd: string, text: string): string | null {
+export function workspacePlace(
+  root: string,
+  cwd: string,
+  text: string,
+  p: PathLib = path,
+): string | null {
   const expanded = text.replace(PWD, root);
   if (expanded.includes("$") || expanded.startsWith("~")) return null;
-  const abs = isAbsolute(expanded) ? expanded : resolve(cwd, expanded);
-  return relative(root, abs).split(sep).join("/");
+  const abs = p.isAbsolute(expanded) ? expanded : p.resolve(cwd, expanded);
+  const rel = p.relative(root, abs);
+  const slashed = rel.split(p.sep).join("/");
+  if (p.isAbsolute(rel)) return `../${slashed.replace(/^[A-Za-z]:/, "").replace(/^\/+/, "")}`;
+  return slashed;
 }
 
 /** The first segment of a workspace-relative path: the top-level entry it is under. */
@@ -69,12 +85,12 @@ export function ranInScratchCopy(command: string, workspaceRoot: string): boolea
   if (!run || run.targets.length === 0) return false;
   let cwd = workspaceRoot;
   for (const cd of run.cds) {
-    const rel = place(workspaceRoot, cwd, cd);
+    const rel = workspacePlace(workspaceRoot, cwd, cd);
     if (rel === null) return false;
     cwd = resolve(workspaceRoot, rel);
   }
   for (const target of run.targets) {
-    const rel = place(workspaceRoot, cwd, target);
+    const rel = workspacePlace(workspaceRoot, cwd, target);
     if (rel === null || rel === "" || rel === ".") return false;
     const segments = rel.split("/").filter((s) => s !== "" && s !== ".");
     if (!rel.startsWith("..") && tracksAnything(workspaceRoot, topOf(rel)) !== false) return false;

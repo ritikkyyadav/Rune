@@ -18,7 +18,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isVerificationCommand } from "../../../packages/orchestrator/src/brief";
-import { coveredBySuite, ranInScratchCopy } from "../../../packages/orchestrator/src/check-scope";
+import path from "node:path";
+import {
+  coveredBySuite,
+  ranInScratchCopy,
+  workspacePlace,
+} from "../../../packages/orchestrator/src/check-scope";
 import { bunTestRun } from "../../../packages/orchestrator/src/verification-command";
 import { bunTestScope, type DetectedCheck } from "../../../packages/orchestrator/src/verifier";
 
@@ -238,5 +243,23 @@ describe("what a passing suite covers, read from its own script", () => {
         command: "bun run typecheck",
       }),
     ).toBeNull();
+  });
+});
+
+describe("a place on another drive is outside the workspace (Windows)", () => {
+  // CI, 2026-10-22: the Windows runner's checkout is on D: and its temp folder
+  // on C:. `relative` cannot relate two drives and hands back the absolute
+  // path, which read as inside the workspace and hid a copy.
+  test("read with Windows' own path rules", () => {
+    const w = path.win32;
+    expect(workspacePlace("C:\\ws", "C:\\ws", "D:\\tmp\\copy\\tests\\unit\\a.test.ts", w)).toBe(
+      "../tmp/copy/tests/unit/a.test.ts",
+    );
+    expect(workspacePlace("C:\\ws", "C:\\ws", "C:\\other\\x.test.ts", w)).toBe(
+      "../other/x.test.ts",
+    );
+    expect(workspacePlace("C:\\ws", "C:\\ws", "tests\\unit\\a.test.ts", w)).toBe(
+      "tests/unit/a.test.ts",
+    );
   });
 });
