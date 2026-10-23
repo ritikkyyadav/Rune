@@ -3552,3 +3552,48 @@ On AC power with sleep blocked; the released 1.4.14 binary; the same task and un
 **What stands between Rune and `done` on its own source** is one rule: "nothing seen to fail"
 counts what the agent saw while investigating, and commands that are not checks. How it should
 read is the founder's call.
+
+## v1.4.15, 2026-10-23 · **`done` counts only real failures (the founder's call on the 1.4.14 re-run); a Windows bug caught by CI on the first release commit; installed through `rune upgrade`**
+
+The founder chose "Count only real failures (Recommended)".
+
+**What was built** (`lane/done-long-suites`):
+
+- **`f9eb8c0`, the three rules.**
+  - The shell's `test` and `[` probing a file are not checks.
+  - A `bun test` run against a copy of the project is an action, not the project's check
+    (`check-scope.ts`, `ranInScratchCopy`): every file it ran lies outside the workspace or
+    under a top-level folder git tracks nothing in, and mirrors a tracked path.
+  - A red `bun test` file run inside the scope of a suite that passed on the final tree is
+    covered. The verifier reads the suite's scope from its script (`bunTestScope`), the loop hands
+    it to the verdict (`testScopes`), and `done` names it (`verdict.superseded`, "an earlier red
+    test run is covered by the suite that passed").
+- **`a8ed670`, the probe rule narrowed.** The first cut took out every bare `test` and `[`, and
+  four of the classifier's own cases went red: `test "$(cat output.txt)" = ready` asserts a
+  program's output. Now only a file operator (`-e -f -d …`) makes it a probe; comparisons and
+  `./test` stay checks.
+- **`862808b`:** "release: Rune is 1.4.15".
+- **`913b9a3`, the Windows fix.** CI on `862808b` (run 39808580666): 22 of 23, `ts-windows` red
+  on "files outside the workspace: a copy". The runner's checkout is on D: and its temp folder on
+  C:, and `path.relative` across drives returns an absolute path. `workspacePlace` now reads that
+  as outside, and its test uses `path.win32`'s rules on any machine.
+
+**Checked.**
+
+- Replayed on the 1.4.14 run's own record: `done`, the t20 run named; without the suite's
+  scope, `unmet`.
+- 18 mutants on the rules and their wiring, and one on the cross-drive branch, all killed. Two
+  survived at first, each now pinned: a `cd` into a folder whose path lines up with the root's,
+  and `./test` with a file-like flag.
+- Through the real Engine: the investigation recreated (a red file the suite covers, a red run
+  in a copy, a red `test -d`) ends `done`; a red test in a new folder of new tests does not.
+- Gates: unit 8,118/0, integration 497/0, reliability 62/0, eval 63/63. Fresh clone at
+  `862808b`: typecheck 15/15, lint 7/7, format, `cargo` 142/0, unit 8,103/0.
+
+**Release.** CI run 39907084824 on `913b9a3`: 23 of 23. `main` fast-forwarded `3d8d201` →
+`913b9a3` (six commits); tag `v1.4.15` at `913b9a3`, as v1.4.6 was tagged at its Windows fix.
+Release run 39908401814: 13 of 13; Latest is v1.4.15 with eleven files. Installed with
+`rune upgrade`, 1.4.14 → 1.4.15: checksums match, `rune doctor` healthy, `rune tools-smoke`
+round-trips, the edit probes fail 0 of 6.
+
+**Not shown yet.** `done` live on Rune's own source: the re-run on 1.4.15 is next.
