@@ -3629,3 +3629,49 @@ investigating (1.4.15).
 **Not shown.** One run. Cost is still the gap: about 2.5 times Codex CLI's input tokens on this
 task (each call carries some 51,000 tokens of doctrine and tool schemas), and this run's 69 calls
 are the most of the four on 1.4.x. Check timers still count wall-clock time across sleep.
+
+## `/connectors`, 2026-10-26 · **connect services from the session: 32 checked by hand, tokens kept in the keychain, three sign-in paths the real vendors need; on `lane/connectors-20261026` (`2018ed5`), not released**
+
+The founder's ask: "a new section in rune for connecting the connectors as the /connectors …
+just like the claude and codex … like the vercel and other stuffs … also configure those
+plugins too".
+
+- **What existed.** `rune mcp add/login/list/doctor`, OAuth 2.1 with self-registration, two
+  config scopes, a read-only `/mcp` panel, and a bundled catalog of 58 entries lifted from the
+  skill packs. No Vercel, Supabase, Sentry or Stripe in it, and no way to connect from a session.
+- **The directory.** Each candidate's address and published sign-in metadata was fetched on
+  2026-10-26 with no credentials. 32 entries pass: 24 sign in through the browser with
+  self-registration (Vercel, Supabase, Neon, Sentry, Stripe, Linear, Notion, Figma, Atlassian v2,
+  Netlify, PostHog, Cloudflare, Hugging Face, Prisma, Railway, GitLab, Canva, Postman, Intercom,
+  monday.com, ClickUp, PlanetScale, Expo, Buildkite); GitHub and Render take a pasted token,
+  because their sign-in offers no self-registration; Context7 takes an optional key; DeepWiki,
+  Microsoft Learn, AWS Knowledge and Chrome DevTools need no sign-in; Firebase signs in with its
+  own CLI.
+- **Closed, with the reason.** Slack, Asana, PagerDuty and HubSpot accept only apps they
+  registered. Five bundled entries pointed at hosts Anthropic runs for Claude alone; the Gmail
+  one does not resolve. Atlassian's bundled `/v1` address is the one Atlassian is retiring.
+- **Vendor gates.** Vercel and Figma admit only AI apps they have reviewed, and Rune is not on
+  either list (OpenCode, Pi, Codex and Claude Code are). A community report of 2026-10-10 says
+  Vercel lets an unlisted app register, then refuses the authorize step. `/connectors` says so
+  before the browser opens. Applying is the founder's to do.
+- **The screen.** Home lists what is connected (state, tools, every project or this one), then
+  four shelves, search across the checked list, the bundled catalog and the public registry, and
+  any server by address or command. Each connector's settings: reconnect, sign in again, replace
+  its token, sign out, read-only and one-project modes where the vendor offers them (in the
+  address, where the vendor puts them), on or off, every project or this one, its tools, remove.
+  Every change is restarted into the running session.
+- **Fixed on the way.** A 2025-03-26 server (no resource metadata) now signs in at its own
+  origin instead of failing with "no authorization server advertised"; a sign-in asks the server
+  for its 401 hint first; a client registered for an earlier loopback port is registered again;
+  a paste into a one-line prompt with a trailing newline used to arrive as the text
+  "[Pasted text #1 +2 lines]".
+
+**Verified.** Unit 8,183/0; integration 503/0; lint and typecheck 22/22; format. 15 of 15
+mutants killed (one survived first: the Claude-only address rule was hidden behind the name
+list, pinned with a fixture). Live, no credentials: DeepWiki 3 tools, Microsoft Learn 3, AWS
+Knowledge 5 and Context7 without a key 2, connected through Rune's own discovery; Rune's
+sign-in discovery reaches self-registration for Vercel, Supabase, Atlassian and Linear, and
+finds none for GitHub.
+
+**Not shown.** A browser sign-in end to end with a real account (it needs the founder's
+browser); Vercel and Figma until Rune is on their lists; the screen in a live terminal.
