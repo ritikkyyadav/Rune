@@ -46,6 +46,47 @@ audit of 1.4.15 (285 frames of the real CLI in a pseudo-terminal). Key changes r
   pane can no longer interrupt the run and throw its members' findings away.
 - **Ctrl+L redraws the screen.** It used to erase the session's transcript; `/clear` still clears.
 
+## [1.4.16] - 2026-10-26
+
+**`/connectors`: connect services from the session.** A patch on 1.4.15. Full notes:
+[`docs/releases/v1.4.16.md`](docs/releases/v1.4.16.md).
+
+### Added
+
+- **`/connectors`: connect services from the session.** Browse four shelves of services checked by
+  hand on 2026-10-26 (developer tools, docs and search, work and planning, design: GitHub,
+  Vercel, Supabase, Neon, Sentry, Cloudflare, Netlify, Railway, Render, Stripe, PostHog, Prisma,
+  PlanetScale, GitLab, Buildkite, Expo, Hugging Face, Postman, Chrome DevTools, Firebase,
+  Context7, DeepWiki, Microsoft Learn, AWS Knowledge, Linear, Notion, Atlassian, monday.com,
+  ClickUp, Intercom, Figma, Canva), search those together with the bundled catalog and the public
+  MCP registry, or add any server by address or command. Each connector has its own settings:
+  reconnect, sign in again, replace its token, sign out, read-only and one-project modes where
+  the vendor offers them, on or off, every project or this one, its tools, remove. A change
+  reaches the running session at once. `/mcp` opens the same screen.
+- **Pasted tokens live in the keychain.** A service that signs in with a token (GitHub, Render,
+  Context7's optional key) has it stored in the OS credential store; the config names the account
+  (`${keychain:mcp-token:github}`) and never holds the token. `rune mcp login github` takes one
+  pasted at the terminal or piped in.
+
+### Fixed
+
+- **Dependency audit:** pin Zod to 4.6.6, which fixes
+  [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5).
+- **Sign-in to a server built to the 2025-03-26 spec.** One that publishes no resource metadata
+  keeps its sign-in at its own address; Rune now looks there instead of stopping at "no
+  authorization server advertised".
+- **Signing in again could be refused.** A client Rune registered for one sign-in was registered
+  for that sign-in's temporary local port; the next one listens on another, and servers that match
+  redirects exactly refused it. Rune now registers again when the port has changed.
+- **A sign-in from a picker found less than one after a failed call.** Rune now asks the server
+  for its sign-in challenge first, the first place the spec says to look.
+- **Services Rune cannot connect to are said so up front.** Five bundled entries pointed at
+  addresses Anthropic runs for Claude alone, and Slack, Asana, PagerDuty and HubSpot accept only
+  apps they registered; `rune mcp add` and `/connectors` now give the reason instead of writing an
+  entry that fails at sign-in. Atlassian's address moves to `/v2`, the one Atlassian documents.
+- **A paste into a one-line prompt** with a trailing newline arrived as the text
+  "[Pasted text #1 +2 lines]"; it now lands as typed, and a secret is drawn masked.
+
 ## [1.4.15] - 2026-10-22
 
 **`done` counts only real failures — found by Rune's live run on its own source.** A patch on
@@ -1491,7 +1532,8 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.15...HEAD
+[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.16...HEAD
+[1.4.16]: https://github.com/ritikkyyadav/Rune/compare/v1.4.15...v1.4.16
 [1.4.15]: https://github.com/ritikkyyadav/Rune/compare/v1.4.14...v1.4.15
 [1.4.14]: https://github.com/ritikkyyadav/Rune/compare/v1.4.13...v1.4.14
 [1.4.13]: https://github.com/ritikkyyadav/Rune/compare/v1.4.12...v1.4.13

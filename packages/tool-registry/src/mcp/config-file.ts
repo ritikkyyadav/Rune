@@ -145,3 +145,24 @@ export function setServerEnabled(
   }
   return null;
 }
+
+/**
+ * Move one server's entry, unchanged, from one scope's file to the other's —
+ * "use it in every project" and back. False when `from` does not hold it. The
+ * entry is written to its new file before it leaves the old one, so a failure
+ * between the two leaves it in both, never in neither.
+ */
+export function moveServer(
+  workspaceRoot: string,
+  name: string,
+  from: McpScope,
+  to: McpScope,
+): boolean {
+  if (from === to) return false;
+  const { config: source } = readMcpConfig(mcpConfigPath(from, workspaceRoot));
+  const entry = source.mcpServers?.[name];
+  if (!entry) return false;
+  upsertServer(to, workspaceRoot, name, entry);
+  removeServer(from, workspaceRoot, name);
+  return true;
+}

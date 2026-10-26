@@ -46,6 +46,8 @@ import {
   McpDiscovery,
   BROWSER_SERVER_NAME,
   buildBrowserServerSpec,
+  mergedServers,
+  signInHint,
   SkillLoader,
   createSkillTool,
   DashboardManager,
@@ -70,6 +72,7 @@ import { reapToolChildren, type BuiltinToolsHandle, type ReapedChild } from "@ru
 import type {
   DashboardInfo,
   McpEvent,
+  McpServerConfig,
   PluginCatalogEntry,
   SkillSearchHit,
   ToolCallOutput,
@@ -147,6 +150,7 @@ import type {
   MemoryModeMigration,
 } from "@rune/shared";
 import { buildGateway, providerStatus } from "./provider-registry";
+import type { ConnectorRow } from "./connectors";
 import { discoverModels } from "./model-discovery";
 import type { CachedModel } from "@rune/shared";
 import type { EnterpriseRouteConfig } from "./provider-registry";
@@ -3077,9 +3081,7 @@ export class Engine {
     if (ev.type === "server-down" || ev.type === "server-needs-auth") {
       this.mcpUnavailable.set(
         ev.server,
-        ev.type === "server-needs-auth"
-          ? `needs authorization (run: rune mcp login ${ev.server})`
-          : ev.reason,
+        ev.type === "server-needs-auth" ? `needs a sign-in (${signInHint(ev.server)})` : ev.reason,
       );
     } else if (ev.type === "server-ready" || ev.type === "server-restarted") {
       this.mcpUnavailable.delete(ev.server);
@@ -3195,6 +3197,75 @@ export class Engine {
     this.reconcileMcpTools();
     if (ok) this.mcpUnavailable.delete(name);
     return ok;
+  }
+
+  /**
+   * Start one connector again from what is on file now, and bring its tools
+   * into this session — backs `/connectors` after a connect, a sign-in, or a
+   * changed setting. Unlike `reconnectMcpServer`, the entry is read again:
+   * a new address or token reaches the session without a restart.
+   */
+  async restartMcpServer(name: string): Promise<boolean> {
+    await this.ensureMcpServers();
+    if (!this.mcpDiscovery) return false;
+    const ok = await this.mcpDiscovery.restart(name).catch(() => false);
+    this.reconcileMcpTools();
+    if (ok) this.mcpUnavailable.delete(name);
+    return ok;
+  }
+
+  /**
+   * Stop one connector and take its tools out of this session, leaving its
+   * entry on file — `/connectors` turning one off or removing it. The model
+   * stops seeing the tools on its next request.
+   */
+  async disconnectMcpServer(name: string): Promise<void> {
+    await this.ensureMcpServers();
+    if (!this.mcpDiscovery) return;
+    await this.mcpDiscovery.disconnect(name).catch(() => false);
+    this.reconcileMcpTools();
+    this.mcpUnavailable.delete(name);
+  }
+
+  /**
+   * Every connector this session knows and where it comes from — backs
+   * `/connectors`. Both config files first (switched-off entries included,
+   * which have no live client), then what installed plugins and the built-in
+   * browser contribute, each with its live status when it has one.
+   */
+  async listConnectors(): Promise<ConnectorRow[]> {
+    await this.ensureMcpServers();
+    const statuses = new Map((this.mcpDiscovery?.getStatus() ?? []).map((s) => [s.name, s]));
+    const rows: ConnectorRow[] = mergedServers(this.config.workspaceRoot).servers.map((s) => ({
+      name: s.name,
+      source: s.scope,
+      config: s.config,
+      shadowed: s.shadowed,
+      status: statuses.get(s.name),
+    }));
+    const seen = new Set(rows.map((r) => r.name));
+    for (const plugin of this.getPlugins()) {
+      for (const [name, config] of Object.entries(plugin.mcpServers ?? {})) {
+        if (seen.has(name)) continue;
+        seen.add(name);
+        rows.push({
+          name,
+          source: "plugin",
+          plugin: plugin.name,
+          config: config as McpServerConfig,
+          status: statuses.get(name),
+        });
+      }
+    }
+    if (this.browserEnabled && !seen.has(BROWSER_SERVER_NAME)) {
+      rows.push({
+        name: BROWSER_SERVER_NAME,
+        source: "built-in",
+        config: buildBrowserServerSpec(this.config.browser),
+        status: statuses.get(BROWSER_SERVER_NAME),
+      });
+    }
+    return rows;
   }
 
   /**

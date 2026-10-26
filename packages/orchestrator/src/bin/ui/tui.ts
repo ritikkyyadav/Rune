@@ -58,6 +58,7 @@ import {
 import { INPUT_METHODS, type InputMethods } from "./tui-input";
 import { agentsHint, fleetLedger } from "./agents-panel";
 import { COMMAND_METHODS, type CommandMethods } from "./tui-commands";
+import { CONNECTOR_METHODS, type ConnectorMethods } from "./tui-connectors";
 export { holdOpenRows } from "./tui-frame";
 import { setActivityWorkspaceRoot } from "./activity";
 import type {
@@ -575,7 +576,12 @@ export class Tui {
     sel: number;
   } | null = null;
   // transient single-line text prompt (used by /research clarify & revise)
-  askState: { resolve: (s: string | null) => void; title: string } | null = null;
+  askState: { resolve: (s: string | null) => void; title: string; masked?: boolean } | null = null;
+  /**
+   * A `/connectors` browser sign-in in flight. Esc in the composer aborts it:
+   * the loopback stops listening and the flow says the entry was kept.
+   */
+  connectorWait: AbortController | null = null;
   /** Grace window before a 4th-gear ask_user picker auto-continues. */
   static readonly QUESTION_AUTO_CONTINUE_MS = 60_000;
   // ask_user tool: blocking question with numbered options (turn-time).
@@ -1540,11 +1546,11 @@ export class Tui {
 
   // -- ask mode (transient single-line text prompt; used by /research) --
 
-  promptLine(title: string, initial = ""): Promise<string | null> {
+  promptLine(title: string, initial = "", opts: { masked?: boolean } = {}): Promise<string | null> {
     return new Promise((resolve) => {
       this.input = initial;
       this.caret = initial.length;
-      this.askState = { resolve, title };
+      this.askState = { resolve, title, ...(opts.masked ? { masked: true } : {}) };
       this.mode = "ask";
       this.scheduleDraw();
     });
@@ -3668,5 +3674,5 @@ export class Tui {
 // The members the moved methods reach are not marked `private` for the same
 // reason: TypeScript's `private` is per declaration site, and there is only one
 // declaration site. Nothing outside these four files imports `Tui`.
-export interface Tui extends FrameMethods, InputMethods, CommandMethods {}
-Object.assign(Tui.prototype, FRAME_METHODS, INPUT_METHODS, COMMAND_METHODS);
+export interface Tui extends FrameMethods, InputMethods, CommandMethods, ConnectorMethods {}
+Object.assign(Tui.prototype, FRAME_METHODS, INPUT_METHODS, COMMAND_METHODS, CONNECTOR_METHODS);

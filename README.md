@@ -77,11 +77,11 @@ Session data is stored locally. Telemetry is off by default.
 
 ## Latest release
 
-[**v1.4.15**](https://github.com/ritikkyyadav/Rune/releases/tag/v1.4.15) lets `done` count only
-real failures: a red test the final passing suite also ran, a run in a copy of the project, or a
-"does this file exist?" probe no longer keeps a careful run from finishing. Found by Rune's own
-live test on its source.
-[Release notes and validation](docs/releases/v1.4.15.md) · [Changelog](CHANGELOG.md)
+[**v1.4.16**](https://github.com/ritikkyyadav/Rune/releases/tag/v1.4.16) adds `/connectors`:
+connect GitHub, Vercel, Supabase, Linear, Notion and 27 more services from a session, each one's
+address and sign-in checked by hand, with pasted tokens kept in your keychain and each
+connector's settings one screen away.
+[Release notes and validation](docs/releases/v1.4.16.md) · [Changelog](CHANGELOG.md)
 
 ## Documentation
 

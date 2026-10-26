@@ -2,6 +2,7 @@ import { type Logger, createLogger, openCredentialStore, type CredentialStore } 
 import { McpClient } from "./client";
 import { McpOAuth } from "./oauth";
 import { mergedServers } from "./config-file";
+import { fillKeychainRefs, keychainAccountsIn } from "./directory";
 import { collectPromptCommands, createReadResourceTool } from "./resources";
 import type { McpPromptCommand } from "./resources";
 import type { McpElicitRequest, McpElicitResult } from "./types";
@@ -139,7 +140,12 @@ export class McpDiscovery {
   private handlers: Map<string, ToolHandler> = new Map();
   private handlerOwner: Map<string, string> = new Map();
   // Per-server errors (config-invalid or failed-to-start servers have no client).
-  private serverErrors: Map<string, { error: string; kind: "stdio" | "http" }> = new Map();
+  // `needsAuth` marks the one failure a sign-in fixes: a token the config
+  // points at that the keychain does not hold.
+  private serverErrors: Map<
+    string,
+    { error: string; kind: "stdio" | "http"; needsAuth?: boolean }
+  > = new Map();
   // OAuth state per remote connector, kept so login, refresh and doctor all
   // read the same tokens. Opened lazily -- a workspace with only stdio servers
   // never touches the keychain.
@@ -220,6 +226,40 @@ export class McpDiscovery {
     return this.startServer(name, config);
   }
 
+  /**
+   * Stop one connector and drop its tools, keeping its entry on file — what
+   * turning it off or removing it needs mid-session. True when something was
+   * running.
+   */
+  async disconnect(name: string): Promise<boolean> {
+    const entry = this.clients.get(name);
+    this.clients.delete(name);
+    this.serverErrors.delete(name);
+    // The provider caches a token read; a later start reads the store afresh.
+    this.oauthProviders.delete(name);
+    this.dropHandlers(name);
+    if (!entry) return false;
+    await entry.client.stop().catch(() => {});
+    return true;
+  }
+
+  /**
+   * Start one connector again from what is on file now. `reconnect` keeps the
+   * running client and its old address; a changed setting (read-only, a
+   * project, a new token) needs the entry read again, which is this.
+   */
+  async restart(name: string): Promise<boolean> {
+    await this.disconnect(name);
+    const config = this.configuredServers()[name];
+    if (!config) return false;
+    return this.startServer(name, config);
+  }
+
+  /** Every configured server, built-ins and plugins included, by name. */
+  configured(): Record<string, McpServerConfig> {
+    return this.configuredServers();
+  }
+
   /** Built-ins beneath, `mcp.json` on top — the same merge `discover()` uses. */
   private configuredServers(): Record<string, McpServerConfig> {
     const { servers: scoped, errors } = mergedServers(this.workspaceRoot);
@@ -235,19 +275,43 @@ export class McpDiscovery {
    * `getStatus()` can say it.
    */
   private async startServer(name: string, raw: McpServerConfig): Promise<boolean> {
-    const missing = new Set<string>();
-    const serverConfig = interpolateEnv(raw, missing);
-    if (missing.size > 0) {
-      this.logger.warn(`server "${name}": unset env var(s) ${[...missing].join(", ")}`);
-    }
-
-    const kind: "stdio" | "http" =
-      serverConfig.type === "http" || serverConfig.url ? "http" : "stdio";
+    const kind: "stdio" | "http" = raw.type === "http" || raw.url ? "http" : "stdio";
 
     // A disabled entry stays on file and out of the session: the point of
     // `rune mcp disable` is to stop paying for a connector without losing the
-    // configuration that took a sign-in to produce.
-    if (serverConfig.enabled === false) return false;
+    // configuration that took a sign-in to produce. Checked before anything
+    // is read from the keychain, so a switched-off connector costs nothing.
+    if (raw.enabled === false) return false;
+
+    // `${keychain:<account>}` is a pasted token's place in the config: the
+    // file says where the secret lives, never what it is. Filled first, so a
+    // `${VAR}` cannot spell a keychain reference.
+    let withSecrets = raw;
+    const accounts = keychainAccountsIn(raw);
+    if (accounts.length > 0) {
+      const store = await this.store();
+      const secrets = new Map<string, string>();
+      for (const account of accounts) {
+        const secret = await store.get(account).catch(() => null);
+        if (secret) secrets.set(account, secret);
+      }
+      const absent = new Set<string>();
+      withSecrets = fillKeychainRefs(raw, secrets, absent);
+      if (absent.size > 0) {
+        // Sending "Bearer " would only earn a 401 and read as an outage. It is
+        // a sign-in to finish, and says so.
+        const error = `no token stored for ${name} — sign in again (${[...absent].join(", ")})`;
+        this.serverErrors.set(name, { error, kind, needsAuth: true });
+        this.options.onEvent?.({ type: "server-needs-auth", server: name, reason: error });
+        return false;
+      }
+    }
+
+    const missing = new Set<string>();
+    const serverConfig = interpolateEnv(withSecrets, missing);
+    if (missing.size > 0) {
+      this.logger.warn(`server "${name}": unset env var(s) ${[...missing].join(", ")}`);
+    }
 
     const invalid = validateServer(serverConfig);
     if (invalid) {
@@ -314,12 +378,7 @@ export class McpDiscovery {
     autoApprove?: (n: string) => boolean,
   ): void {
     // Drop this server's previous entries first so a shrunk tool list is reflected.
-    for (const [n, owner] of [...this.handlerOwner]) {
-      if (owner === serverName) {
-        this.handlers.delete(n);
-        this.handlerOwner.delete(n);
-      }
-    }
+    this.dropHandlers(serverName);
     for (const h of client.toToolHandlers(autoApprove)) {
       const base = sanitizeName(h.schema.name);
       let name = base;
@@ -332,6 +391,16 @@ export class McpDiscovery {
       if (name !== h.schema.name) h.schema.name = name;
       this.handlers.set(name, h);
       this.handlerOwner.set(name, serverName);
+    }
+  }
+
+  /** Forget every handler one server registered. */
+  private dropHandlers(serverName: string): void {
+    for (const [n, owner] of [...this.handlerOwner]) {
+      if (owner === serverName) {
+        this.handlers.delete(n);
+        this.handlerOwner.delete(n);
+      }
     }
   }
 
@@ -435,7 +504,7 @@ export class McpDiscovery {
       });
     }
     // Servers that never started (bad config / spawn failure) — surface them too.
-    for (const [name, { error, kind }] of this.serverErrors) {
+    for (const [name, { error, kind, needsAuth }] of this.serverErrors) {
       if (this.clients.has(name)) continue;
       out.push({
         name,
@@ -445,6 +514,7 @@ export class McpDiscovery {
         tools: [],
         health: "down",
         lastError: error,
+        ...(needsAuth ? { needsAuth: true } : {}),
       });
     }
     return out;

@@ -129,6 +129,7 @@ export {
 } from "./tools/load-tools";
 export {
   McpClient,
+  signInHint,
   McpDiscovery,
   McpRpcError,
   McpSessionExpiredError,
@@ -142,6 +143,7 @@ export {
   discoverProtectedResource,
   discoverAuthorizationServer,
   registerClient,
+  fetchChallenge,
   BROWSER_SERVER_NAME,
   buildBrowserServerSpec,
 } from "./mcp/index";
@@ -202,6 +204,7 @@ export {
   resolveConnector,
   nearestNames,
   skillCatalogRoots,
+  fromDirectory,
   DEFAULT_REGISTRY_URL,
   mcpConfigPath,
   readMcpConfig,
@@ -211,8 +214,34 @@ export {
   upsertServer,
   removeServer,
   setServerEnabled,
+  moveServer,
+  CONNECTOR_DIRECTORY,
+  CLOSED_CONNECTORS,
+  CATEGORY_LABELS,
+  CLAUDE_ONLY_REASON,
+  claudeOnlyAddress,
+  directoryEntry,
+  closedConnector,
+  addressWith,
+  optionsIn,
+  isEntryAddress,
+  mcpTokenAccount,
+  keychainRef,
+  keychainAccountsIn,
+  fillKeychainRefs,
+  directoryConfig,
+  searchDirectory,
+  withArticle,
 } from "./mcp/index";
 export type { CatalogEntry, McpScope, McpConfigFile, MergedServer } from "./mcp/index";
+export type {
+  DirectoryEntry,
+  DirectoryAuth,
+  DirectoryOption,
+  DirectoryCategory,
+  ClosedEntry,
+  OptionValues,
+} from "./mcp/index";
 export {
   SseTransport,
   createReadResourceTool,

@@ -93,7 +93,6 @@ import {
 import { THEME_CHOICES, finishLabel, parseThemeChoice, themeChoiceIndex } from "./themes";
 import { formatCostReport, formatRunEconomics } from "../../cost-report";
 import { glyph } from "./glyphs";
-import { mcpPanel } from "./mcp-panel";
 import { saveTheme } from "./theme-store";
 import { renderWorkspaceDiff } from "./workspace-diff";
 import { buildInteractiveDirective, saveInteractiveAuto } from "./interactive";
@@ -161,7 +160,10 @@ export const COMMAND_METHODS = {
       { name: "/loop", desc: "Repeat a prompt while this session stays open" },
       { name: "/loops", desc: "List and manage this session's loops" },
       { name: "/team", desc: "Other Rune instances here: status, send, claim, intent" },
-      { name: "/mcp", desc: "MCP connectors: health and tools, or reconnect <server>" },
+      {
+        name: "/connectors",
+        desc: "Connect services: GitHub, Vercel, Supabase, Linear and more",
+      },
       { name: "/skills", desc: "Browse or search available skills" },
       { name: "/memory", desc: "System memory: your evergreen profile" },
       { name: "/notebook", desc: "Learned tactics for this workspace" },
@@ -268,9 +270,9 @@ export const COMMAND_METHODS = {
         const commands = this.slashCatalog();
         const groups: Array<[string, string[]]> = [
           ["work", ["/diff", "/undo", "/rewind", "/compress", "/clear", "/cost", "/status"]],
-          ["setup", ["/model", "/login", "/config", "/theme"]],
+          ["setup", ["/model", "/login", "/connectors", "/config", "/theme"]],
           ["autonomy", ["/gear", "/sandbox", "/browser", "/interactive", "/loop", "/loops"]],
-          ["knowledge", ["/memory", "/notebook", "/skills", "/mcp", "/team"]],
+          ["knowledge", ["/memory", "/notebook", "/skills", "/team"]],
           ["session", ["/sessions", "/bug", "/help", "/quit"]],
         ];
         const placed = new Set(groups.flatMap(([, names]) => names));
@@ -515,24 +517,14 @@ export const COMMAND_METHODS = {
       case "keys":
         this.openKeys();
         return true;
-      case "mcp": {
-        const [verb, who] = arg.split(/\s+/, 2);
-        if (verb === "reconnect") {
-          if (!who) {
-            this.print(`  ${muted("usage: /mcp reconnect <server>")}`);
-            return true;
-          }
-          const back = await engine.reconnectMcpServer(who);
-          this.print(
-            back
-              ? `  ${ok(glyph("verified"))} ${text(who)} ${muted("reconnected")}`
-              : `  ${warn(glyph("retry"))} ${text(who)} ${muted("did not come back")}  ${info("rune mcp doctor")}`,
-          );
-          return true;
-        }
-        this.print(mcpPanel(await engine.listMcpServers()));
+      // `/mcp` was the read-only panel this screen replaced. It stays as an
+      // alias -- hidden from the catalogue, never deleted -- so muscle memory
+      // and `/mcp reconnect <server>` keep working.
+      case "connectors":
+      case "connector":
+      case "mcp":
+        await this.runConnectors(arg);
         return true;
-      }
       case "skills": {
         if (arg) {
           const hits = await engine.searchSkills(arg);

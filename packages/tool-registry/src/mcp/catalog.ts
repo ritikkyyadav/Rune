@@ -19,6 +19,13 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+  CLAUDE_ONLY_REASON,
+  claudeOnlyAddress,
+  closedConnector,
+  directoryEntry,
+  type DirectoryEntry,
+} from "./directory";
 
 export interface CatalogEntry {
   /** The name `rune mcp add <name>` matches. */
@@ -30,10 +37,17 @@ export interface CatalogEntry {
   type?: "stdio" | "http";
   oauth?: { clientId?: string; callbackPort?: number };
   /** Where this entry came from, shown in `rune mcp add` output. */
-  source: "vendored" | "registry";
+  source: "directory" | "vendored" | "registry";
   /** Skills that reference this connector — useful context when listing. */
   usedBy?: string[];
   description?: string;
+  /** The checked directory entry behind it, when there is one. */
+  directory?: DirectoryEntry;
+  /**
+   * Why Rune cannot connect to it, when it cannot: a host that serves Claude
+   * alone, or a sign-in only the vendor's own partners can use.
+   */
+  closed?: string;
 }
 
 /** Candidate locations of the bundled skills catalog, most specific first. */
@@ -109,7 +123,24 @@ export function loadVendoredCatalog(env: NodeJS.ProcessEnv = process.env): Catal
       });
     }
   }
+  for (const entry of byName.values()) {
+    const closed = closedConnector(entry.name)?.reason;
+    if (closed) entry.closed = closed;
+    else if (claudeOnlyAddress(entry.url)) entry.closed = CLAUDE_ONLY_REASON;
+  }
   return [...byName.values()].sort((a, b) => (a.name < b.name ? -1 : 1));
+}
+
+/** A checked directory entry, in the catalog's shape. */
+export function fromDirectory(entry: DirectoryEntry): CatalogEntry {
+  return {
+    name: entry.id,
+    ...(entry.url ? { url: entry.url, type: "http" as const } : {}),
+    ...(entry.command ? { command: entry.command, args: entry.args } : {}),
+    source: "directory",
+    description: entry.blurb,
+    directory: entry,
+  };
 }
 
 /** The public MCP registry. Overridable so a test never reaches the network. */
@@ -170,16 +201,24 @@ export async function fetchRegistryCatalog(
 }
 
 /**
- * Resolve a name against both sources. The vendored catalog wins: it is the
- * one this repo has actually looked at, and a registry entry that shadows
- * "notion" with something else would be a supply-chain surprise.
+ * Resolve a name against the sources, most checked first: the directory (each
+ * entry's address and sign-in checked by hand), then the vendored catalog,
+ * then the public registry. A registry entry that shadowed "notion" with
+ * something else would be a supply-chain surprise, so it never wins a name.
  */
 export async function resolveConnector(
   name: string,
   opts: { includeRegistry?: boolean; registryUrl?: string; env?: NodeJS.ProcessEnv } = {},
 ): Promise<CatalogEntry | null> {
   const key = name.trim().toLowerCase();
+  const checked = directoryEntry(key);
+  if (checked) return fromDirectory(checked);
+  const closed = closedConnector(key);
   const vendored = loadVendoredCatalog(opts.env);
+  if (closed) {
+    const hit = vendored.find((e) => e.name.toLowerCase() === key);
+    return hit ?? { name: closed.id, source: "vendored", closed: closed.reason };
+  }
   const hit = vendored.find((e) => e.name.toLowerCase() === key);
   if (hit) return hit;
   if (opts.includeRegistry === false) return null;

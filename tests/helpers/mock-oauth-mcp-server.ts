@@ -26,6 +26,28 @@ interface PendingAuthorization {
   used: boolean;
 }
 
+export interface MockOAuthOptions {
+  offerRegistration?: boolean;
+  staticClientId?: string;
+  /**
+   * A 2025-03-26 server: no resource metadata anywhere, and a 401 with no
+   * `resource_metadata` hint. Its sign-in is found at its own origin or not at all.
+   */
+  legacy?: boolean;
+  /**
+   * Serve the resource metadata only at this path, never the well-known one,
+   * so the only way to it is the 401's `resource_metadata` hint.
+   */
+  prmPath?: string;
+  /**
+   * Match redirects exactly, the way most real authorization servers do: a
+   * client may only be sent back to the redirect it registered.
+   */
+  strictRedirects?: boolean;
+  /** A pasted token the MCP endpoint accepts as-is (an API key / PAT). */
+  staticBearer?: string;
+}
+
 export interface MockOAuthMcpServer {
   /** Base origin, e.g. http://127.0.0.1:54321 */
   origin: string;
@@ -43,6 +65,10 @@ export interface MockOAuthMcpServer {
   breakRefresh(): void;
   /** Seconds the next access token is valid for. Default 3600. */
   setAccessTokenLifetime(seconds: number): void;
+  /** The `resource` parameter of every authorization request, in order (null when absent). */
+  authorizeResources: Array<string | null>;
+  /** Every request path the server saw, in order. */
+  requestPaths: string[];
   close(): Promise<void>;
 }
 
@@ -75,9 +101,12 @@ const TOOLS = [
 ];
 
 export async function startMockOAuthMcpServer(
-  opts: { offerRegistration?: boolean; staticClientId?: string } = {},
+  opts: MockOAuthOptions = {},
 ): Promise<MockOAuthMcpServer> {
   const offerRegistration = opts.offerRegistration !== false;
+  const registeredRedirects = new Map<string, string[]>();
+  const authorizeResources: Array<string | null> = [];
+  const requestPaths: string[] = [];
 
   const clients = new Set<string>(opts.staticClientId ? [opts.staticClientId] : []);
   const registrations: string[] = [];
@@ -105,12 +134,14 @@ export async function startMockOAuthMcpServer(
     void (async () => {
       const url = new URL(req.url ?? "/", origin || "http://127.0.0.1");
       const path = url.pathname;
+      requestPaths.push(path);
 
       // ── RFC 9728: protected-resource metadata ──
-      if (
-        path === "/.well-known/oauth-protected-resource/mcp" ||
-        path === "/.well-known/oauth-protected-resource"
-      ) {
+      const prmHere = opts.prmPath
+        ? path === opts.prmPath
+        : path === "/.well-known/oauth-protected-resource/mcp" ||
+          path === "/.well-known/oauth-protected-resource";
+      if (!opts.legacy && prmHere) {
         json(res, 200, {
           resource: `${origin}/mcp`,
           authorization_servers: [origin],
@@ -144,6 +175,17 @@ export async function startMockOAuthMcpServer(
         const clientId = `mock-client-${randomBytes(6).toString("hex")}`;
         clients.add(clientId);
         registrations.push(clientId);
+        const regBody = await new Promise<string>((resolve) => {
+          let acc = "";
+          req.on("data", (c) => (acc += c));
+          req.on("end", () => resolve(acc));
+        });
+        try {
+          const parsed = JSON.parse(regBody) as { redirect_uris?: string[] };
+          registeredRedirects.set(clientId, parsed.redirect_uris ?? []);
+        } catch {
+          registeredRedirects.set(clientId, []);
+        }
         json(res, 201, {
           client_id: clientId,
           client_id_issued_at: Math.floor(Date.now() / 1000),
@@ -164,6 +206,20 @@ export async function startMockOAuthMcpServer(
         const state = url.searchParams.get("state") ?? "";
         if (!clients.has(clientId)) {
           json(res, 400, { error: "invalid_client" });
+          return;
+        }
+        authorizeResources.push(url.searchParams.get("resource"));
+        if (
+          opts.strictRedirects &&
+          !(registeredRedirects.get(clientId) ?? []).includes(redirectUri)
+        ) {
+          // A real server shows an error page here. The mock sends the error
+          // back to the loopback instead, so a test fails at once rather than
+          // waiting on a browser that will never return.
+          const back = new URL(redirectUri);
+          back.searchParams.set("error", "invalid_redirect_uri");
+          res.writeHead(302, { location: back.toString() });
+          res.end();
           return;
         }
         if (method !== "S256" || !challenge) {
@@ -273,16 +329,18 @@ export async function startMockOAuthMcpServer(
         const auth = req.headers.authorization ?? "";
         const token = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7) : "";
         const entry = accessTokens.get(token);
-        if (!entry?.valid) {
+        const pasted = opts.staticBearer !== undefined && token === opts.staticBearer;
+        if (!entry?.valid && !pasted) {
           // The header that starts the whole dance.
           json(
             res,
             401,
             { error: "invalid_token" },
             {
-              "www-authenticate":
-                `Bearer realm="mock", error="invalid_token", ` +
-                `resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
+              "www-authenticate": opts.legacy
+                ? `Bearer realm="mock", error="invalid_token"`
+                : `Bearer realm="mock", error="invalid_token", ` +
+                  `resource_metadata="${origin}${opts.prmPath ?? "/.well-known/oauth-protected-resource/mcp"}"`,
             },
           );
           return;
@@ -413,6 +471,8 @@ export async function startMockOAuthMcpServer(
     setAccessTokenLifetime(seconds: number) {
       lifetimeSec = seconds;
     },
+    authorizeResources,
+    requestPaths,
     close: () =>
       new Promise<void>((resolve) => {
         server.closeAllConnections?.();
