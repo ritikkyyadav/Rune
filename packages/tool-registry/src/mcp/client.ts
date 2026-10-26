@@ -42,6 +42,15 @@ import type {
 } from "./types";
 import { validateAgainstSchema } from "./validate";
 
+/**
+ * Where a person signs a connector in: `/connectors` inside a session, `rune
+ * mcp login` from a shell. Said both ways because the same words reach the
+ * TUI's status line, a headless run's log and the model's tool results.
+ */
+export function signInHint(serverName: string): string {
+  return `/connectors ${serverName} in a session, or rune mcp login ${serverName}`;
+}
+
 /** A JSON-RPC error returned by the server (the server is alive — it answered). */
 export class McpRpcError extends Error {
   constructor(
@@ -312,9 +321,9 @@ export class McpClient {
     this.onEvent?.({
       type: "server-needs-auth",
       server: this.serverName,
-      reason: `run: rune mcp login ${this.serverName}`,
+      reason: `sign in: ${signInHint(this.serverName)}`,
     });
-    this.logger.warn(`needs authorization — run: rune mcp login ${this.serverName}`);
+    this.logger.warn(`needs authorization — sign in: ${signInHint(this.serverName)}`);
     return true;
   }
 
@@ -914,7 +923,7 @@ export class McpClient {
           content: [
             {
               type: "text",
-              text: `${this.serverName} needs authorization — run: rune mcp login ${this.serverName}`,
+              text: `${this.serverName} needs authorization — sign in: ${signInHint(this.serverName)}`,
             },
           ],
           isError: true,
@@ -1036,7 +1045,7 @@ export class McpClient {
             result: "",
             error:
               err instanceof McpUnauthorizedError
-                ? `${client.name} needs authorization — run: rune mcp login ${client.name}`
+                ? `${client.name} needs authorization — sign in: ${signInHint(client.name)}`
                 : err instanceof Error
                   ? err.message
                   : String(err),

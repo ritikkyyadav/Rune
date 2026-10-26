@@ -44,6 +44,13 @@ export interface McpOAuthTokens {
   tokenEndpoint?: string;
   /** The canonical resource identifier this token was issued for (RFC 8707). */
   resource?: string;
+  /**
+   * The loopback redirect a dynamically registered client was registered
+   * with. The port is ephemeral, so the next sign-in usually listens on
+   * another one; most authorization servers match redirects exactly, and a
+   * client registered for the old port is refused for the new.
+   */
+  redirectUri?: string;
 }
 
 /** Refresh this far before the token actually expires. */
@@ -180,6 +187,56 @@ export async function discoverAuthorizationServer(
     if (doc?.token_endpoint) return doc;
   }
   return null;
+}
+
+/**
+ * The server's own 401 challenge, asked for once before a sign-in.
+ *
+ * The spec makes `WWW-Authenticate: … resource_metadata=` the first place to
+ * look for the resource metadata and the well-known path the fallback. A
+ * sign-in started from a picker or `rune mcp login` has no 401 in hand, so it
+ * asks for one: an unauthenticated `initialize`, the request a connection
+ * would have sent anyway. Anything but a 401 (a server that needs no token, a
+ * network failure) answers null and discovery goes on as before.
+ */
+export async function fetchChallenge(serverUrl: string, timeoutMs = 5_000): Promise<string | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(serverUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 0,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "rune", version: "0" },
+        },
+      }),
+      signal: controller.signal,
+    });
+    await res.body?.cancel().catch(() => {});
+    return res.status === 401 ? res.headers.get("www-authenticate") : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** The origin of a server URL: where a 2025-03-26 server keeps its own sign-in. */
+function originOf(serverUrl: string): string | null {
+  try {
+    return new URL(serverUrl).origin;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -424,9 +481,18 @@ export class McpOAuth {
     wwwAuthenticate?: string | null;
     signal?: AbortSignal;
   }): Promise<McpOAuthTokens> {
-    const hint = parseWwwAuthenticate(opts.wwwAuthenticate ?? null).params.resource_metadata;
+    const challenge =
+      opts.wwwAuthenticate !== undefined
+        ? opts.wwwAuthenticate
+        : await fetchChallenge(this.serverUrl);
+    const hint = parseWwwAuthenticate(challenge ?? null).params.resource_metadata;
     const resource = await discoverProtectedResource(this.serverUrl, hint);
-    const issuer = resource?.authorization_servers?.[0];
+    // A server built to the 2025-03-26 spec publishes no resource metadata: it
+    // is its own authorization server, at its origin. Refusing it meant every
+    // such connector failed with "no authorization server advertised" while
+    // its sign-in sat at the address the older spec says to look.
+    const issuer =
+      resource?.authorization_servers?.[0] ?? (resource ? null : originOf(this.serverUrl));
     if (!issuer) {
       throw new McpAuthRequiredError(
         this.serverName,
@@ -437,7 +503,9 @@ export class McpOAuth {
     if (!as?.authorization_endpoint || !as.token_endpoint) {
       throw new McpAuthRequiredError(
         this.serverName,
-        `authorization server ${issuer} published no usable metadata`,
+        resource
+          ? `authorization server ${issuer} published no usable metadata`
+          : `no authorization server advertised for ${this.serverUrl} — the connector does not publish OAuth metadata`,
       );
     }
     // PKCE S256 is required by OAuth 2.1; a server that says it supports only
@@ -457,8 +525,28 @@ export class McpOAuth {
       deferSuccess: true,
     });
     try {
-      let clientId = this.configuredClientId ?? (await this.load())?.clientId;
-      let clientSecret = (await this.load())?.clientSecret;
+      const stored = await this.load();
+      let clientId = this.configuredClientId ?? stored?.clientId;
+      let clientSecret =
+        !this.configuredClientId || stored?.clientId === this.configuredClientId
+          ? stored?.clientSecret
+          : undefined;
+      // A client registered by an earlier sign-in was registered for that
+      // sign-in's loopback port. This one listens on another, so register again
+      // rather than send a redirect the server never saw (a stored client with
+      // no recorded redirect predates the record, and is treated the same way).
+      const staleRegistration =
+        !this.configuredClientId &&
+        !!stored?.clientId &&
+        stored.redirectUri !== loop.redirectUri &&
+        !!as.registration_endpoint;
+      if (staleRegistration) {
+        clientId = undefined;
+        clientSecret = undefined;
+      }
+      // The redirect the client in use was registered with, kept with the
+      // tokens so the next sign-in can tell whether it still matches.
+      let registeredFor = this.configuredClientId ? undefined : stored?.redirectUri;
       if (!clientId && as.registration_endpoint) {
         const reg = await registerClient(as.registration_endpoint, loop.redirectUri, {
           clientName: "Rune",
@@ -466,6 +554,7 @@ export class McpOAuth {
         });
         clientId = reg?.clientId;
         clientSecret = reg?.clientSecret;
+        registeredFor = reg ? loop.redirectUri : undefined;
       }
       if (!clientId) {
         throw new McpAuthRequiredError(
@@ -485,9 +574,11 @@ export class McpOAuth {
       authorizeUrl.searchParams.set("code_challenge_method", "S256");
       authorizeUrl.searchParams.set("state", state);
       if (scope) authorizeUrl.searchParams.set("scope", scope);
-      // RFC 8707: name the resource so the token is audience-bound to THIS server.
-      const resourceId = resource?.resource ?? this.serverUrl;
-      authorizeUrl.searchParams.set("resource", resourceId);
+      // RFC 8707: name the resource so the token is audience-bound to THIS
+      // server. A server with no resource metadata predates resource
+      // indicators, and a strict one refuses a parameter it does not know.
+      const resourceId = resource ? (resource.resource ?? this.serverUrl) : undefined;
+      if (resourceId) authorizeUrl.searchParams.set("resource", resourceId);
 
       const opening = opts.openAuthorizationUrl(authorizeUrl.toString());
       const captured = await Promise.race([
@@ -505,7 +596,7 @@ export class McpOAuth {
         code_verifier: verifier,
         client_id: clientId,
         ...(clientSecret ? { client_secret: clientSecret } : {}),
-        resource: resourceId,
+        ...(resourceId ? { resource: resourceId } : {}),
       });
 
       const tokens = toTokens(body, {
@@ -514,6 +605,7 @@ export class McpOAuth {
         tokenEndpoint: as.token_endpoint,
         resource: resourceId,
         scope: scope || undefined,
+        ...(registeredFor ? { redirectUri: registeredFor } : {}),
       });
       await this.save(tokens);
       loop.complete();

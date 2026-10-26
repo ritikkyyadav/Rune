@@ -235,7 +235,8 @@ describe("rune mcp add + login, end to end", () => {
     // logout then actually forgets it.
     output.length = 0;
     expect(await runMcp(["logout", SERVER], { workspace })).toBe(0);
-    expect(printed()).toContain("forgot the stored token");
+    // "sign-in", not "token": logout forgets a browser sign-in and a pasted token alike.
+    expect(printed()).toContain("forgot the stored sign-in");
   });
 
   test("adding an unknown catalog name suggests near misses instead of failing blankly", async () => {

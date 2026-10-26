@@ -120,8 +120,11 @@ export const INPUT_METHODS = {
     }
     if (this.mode === "ask" && this.askState) {
       const title = `  ${info("?")} ${text(this.askState.title)} ${faint("(Enter = ok \u00b7 Esc = skip)")}`;
+      // A secret is drawn one mask cell per character, so the caret math is
+      // unchanged and the value never reaches the screen.
+      const shown = this.askState.masked ? maskLive(this.input) : this.input;
       const base = renderComposer({
-        input: this.input,
+        input: shown,
         caret: this.caret,
         width: this.contentCols(),
         status: this.statusStr(),
@@ -458,6 +461,12 @@ export const INPUT_METHODS = {
     // turn, the only time a sub-agent is live, `ctrl+f` was unbound and `esc`
     // on the panel interrupted the run.
     if ((this.mode === "input" || this.mode === "turn") && this.agentsKey(key)) return;
+    // Esc while a /connectors browser sign-in waits: stop waiting. Checked
+    // after the agents panel, which owns esc when it has focus.
+    if (key.type === "esc" && this.connectorWait && this.mode === "input") {
+      this.connectorWait.abort();
+      return;
+    }
     switch (this.mode) {
       case "input":
         this.inputKey(key);
@@ -509,6 +518,19 @@ export const INPUT_METHODS = {
     // Key/URL editor is a single-line field -- always inline, newlines stripped by insertActive.
     if (this.mode === "keys" || this.mode === "setup") {
       this.insertActive(content);
+      this.scheduleDraw();
+      return;
+    }
+    // The one-line ask is a single-line field too. A chip there was returned
+    // as the answer itself ("[Pasted text #1 +2 lines]"), so a token or an
+    // address copied with its trailing newline arrived as that text. A secret
+    // loses its line breaks; anything else has them folded to spaces.
+    if (this.mode === "ask" && this.askState) {
+      this.insert(
+        this.askState.masked
+          ? content.replace(/[\r\n]+/g, "")
+          : content.replace(/\s*[\r\n]+\s*/g, " ").trim(),
+      );
       this.scheduleDraw();
       return;
     }
