@@ -2978,8 +2978,10 @@ export class TurnRenderer {
         // gateway retried and recovered from set `hardError` and painted the
         // close of a SUCCESSFUL run as a failure. The engine retries and falls
         // back on its own; only a terminal error is this turn's verdict.
-        if (!event.recoverable) this.hardError = true;
-        if (/rate.?limit/i.test(String(event.error ?? ""))) this.rateLimited = true;
+        if (!event.recoverable) {
+          this.hardError = true;
+          this.rateLimited = /rate.?limit/i.test(String(event.error ?? ""));
+        }
         this.failures++;
         const block = formatEvent(event);
         if (block) {
@@ -3043,9 +3045,7 @@ export class TurnRenderer {
   onError(error: unknown): void {
     this.errored = true;
     this.hardError = true;
-    if (/rate.?limit/i.test(error instanceof Error ? error.message : String(error))) {
-      this.rateLimited = true;
-    }
+    this.rateLimited = /rate.?limit/i.test(error instanceof Error ? error.message : String(error));
     this.failures++;
     this.settleProse();
     this.flushRoutine();
@@ -3089,9 +3089,9 @@ export class TurnRenderer {
    * ceiling with the task unfinished.
    */
   private completionBlock(aborted: boolean): string | null {
-    const latestCheck = [...this.checks].reverse().find((check) => check.status !== "not-run");
-    const repaired = this.failures > 0 && latestCheck?.status === "passed";
-    const failed = this.hardError && !repaired;
+    // A passing code check repairs a failed check, never a terminal provider
+    // error. In particular, a check from before the error cannot undo it.
+    const failed = this.hardError;
     // A usage cap is a pause with a time on it, not an error: it arrives as a
     // hard error, so this row came out "stopped on an error" for a run whose
     // work was intact and whose provider had said when it answers again.
@@ -3152,8 +3152,7 @@ export class TurnRenderer {
   restOutcome(aborted: boolean): RestOutcome {
     if (aborted || this.abortedRun) return { word: "stopped by you", tone: "warn" };
     const latestCheck = [...this.checks].reverse().find((check) => check.status !== "not-run");
-    const repaired = this.failures > 0 && latestCheck?.status === "passed";
-    const failed = this.hardError && !repaired;
+    const failed = this.hardError;
     if (this.stoppedEarly === "quota_wall") {
       const at = this.resumeAt ? new Date(this.resumeAt).toTimeString().slice(0, 5) : null;
       return {

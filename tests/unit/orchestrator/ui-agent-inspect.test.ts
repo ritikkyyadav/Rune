@@ -485,6 +485,7 @@ describe("in a colour terminal", () => {
     const script = `
       Object.defineProperty(process.stdout, "isTTY", { value: true });
       process.env.COLORTERM = "truecolor";
+      process.env.TERM = "xterm-256color";
       delete process.env.NO_COLOR;
       const { TurnRenderer } = await import("${ui}/turn.ts");
       const { fleetLedger } = await import("${ui}/agents-panel.ts");

@@ -27,10 +27,12 @@ audit of 1.4.15 (285 frames of the real CLI in a pseudo-terminal). Key changes r
   letters (`a` and `s` granted the session), so a sentence typed as it opened approved shell
   commands on its first `a`. Letters no longer answer it; digits and enter answer only once the card
   has been up 500 ms and typing has paused; enter never answers while a message is half written;
-  what was typed is kept in the composer and shown on the card.
+  what was typed is kept in the composer and shown on the card. Pasting also starts the typing
+  guard, so the next digit cannot approve a command mid-message.
 - **Every turn ended `done`.** The row under the transcript now says how the turn ended: done,
   checks failing, stopped by you, stopped on an error, rate-limited, paused at the usage limit, ran
-  out of turns.
+  out of turns. A passing check cannot hide a terminal provider error, and a recovered rate limit
+  cannot mislabel a later error.
 - **Answers were repeated and glued together.** When the harness asked again after a failed check
   or a re-plan, the next reply was appended to the last one mid-sentence. Each reply is now its own
   block, and an answer's first line renders its markdown instead of printing backticks.

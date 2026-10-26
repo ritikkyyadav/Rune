@@ -582,6 +582,9 @@ export const INPUT_METHODS = {
     const clean = s.replace(/\r/g, "");
     this.input = this.input.slice(0, this.caret) + clean + this.input.slice(this.caret);
     this.caret += clean.length;
+    // Bracketed paste calls insert directly, bypassing editComposer. It must
+    // start the approval card's typing guard just like individual characters.
+    if (clean.length > 0) this.lastTypedAt = Date.now();
   },
 
   /** Route pasted text to whichever field is active (composer, or a key editor). */

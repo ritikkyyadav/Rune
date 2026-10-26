@@ -124,6 +124,52 @@ describe("the rest row says how the turn ended, not only that it did", () => {
     });
   });
 
+  it("a passed check cannot erase a terminal provider error", () => {
+    const passed = {
+      type: "verification_completed",
+      attempt: 1,
+      status: "passed",
+      ran: true,
+      passed: true,
+      report: "$ bun test (ok)",
+    };
+    const error = { type: "error", error: "provider API error (500)", recoverable: false };
+    for (const events of [
+      [passed, error],
+      [error, passed],
+    ]) {
+      const h = live();
+      h.feed(...events);
+      h.turn.finish();
+      expect(h.turn.restOutcome(false)).toEqual({ word: "stopped on an error", tone: "danger" });
+      expect(h.output()).toContain("stopped on an error");
+    }
+  });
+
+  it("an earlier recovered rate limit does not label a different terminal error", () => {
+    const h = live();
+    h.feed({ type: "error", error: "Rate limited; retrying", recoverable: true });
+    h.turn.onError(new Error("provider API error (500)"));
+    h.turn.finish();
+    expect(h.turn.restOutcome(false)).toEqual({ word: "stopped on an error", tone: "danger" });
+  });
+
+  it("the last terminal error names the ending, whichever came first", () => {
+    const limited = { type: "error", error: "Rate limited on the provider", recoverable: false };
+    const crashed = new Error("provider API error (500)");
+    const first = live();
+    first.feed(limited);
+    first.turn.onError(crashed);
+    first.turn.finish();
+    expect(first.turn.restOutcome(false)).toEqual({ word: "stopped on an error", tone: "danger" });
+
+    const second = live();
+    second.turn.onError(crashed);
+    second.feed(limited);
+    second.turn.finish();
+    expect(second.turn.restOutcome(false)).toEqual({ word: "rate-limited", tone: "warn" });
+  });
+
   it("a ceiling is named", () => {
     expect(ending([{ type: "turn_complete", stopReason: "max_turns", totalTurns: 80 }]).word).toBe(
       "ran out of turns",

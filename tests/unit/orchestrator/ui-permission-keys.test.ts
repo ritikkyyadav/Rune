@@ -163,6 +163,14 @@ describe("permKey: typing while the card is open", () => {
     expect(decisions).toEqual([]);
   });
 
+  it("a digit immediately after a paste belongs to the draft", () => {
+    const { t, decisions } = card();
+    t.endPaste("upgrade to v");
+    t.permKey({ type: "char", value: "2" });
+    expect(decisions).toEqual([]);
+    expect(t.input).toBe("upgrade to v2");
+  });
+
   it("a deliberate digit, after a pause, answers it", () => {
     const { t, decisions } = card();
     t.permKey({ type: "char", value: "1" });
