@@ -11,6 +11,11 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+## [1.4.16] - 2026-10-26
+
+**`/connectors`: connect services from the session.** A patch on 1.4.15. Full notes:
+[`docs/releases/v1.4.16.md`](docs/releases/v1.4.16.md).
+
 ### Added
 
 - **`/connectors`: connect services from the session.** Browse four shelves of services checked by
@@ -1490,7 +1495,8 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.15...HEAD
+[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.16...HEAD
+[1.4.16]: https://github.com/ritikkyyadav/Rune/compare/v1.4.15...v1.4.16
 [1.4.15]: https://github.com/ritikkyyadav/Rune/compare/v1.4.14...v1.4.15
 [1.4.14]: https://github.com/ritikkyyadav/Rune/compare/v1.4.13...v1.4.14
 [1.4.13]: https://github.com/ritikkyyadav/Rune/compare/v1.4.12...v1.4.13
