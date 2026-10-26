@@ -12,6 +12,62 @@ of the client driven against the reference servers.
 
 ---
 
+## `/connectors`
+
+The way in from a session. It opens on what is connected (its state, its tool count, and whether
+it applies in every project or this one), then the ways to add one:
+
+| Row                                                         | What it does                                                      |
+| ----------------------------------------------------------- | ----------------------------------------------------------------- |
+| Developer tools, Docs and search, Work and planning, Design | the checked services on that shelf                                |
+| Search everything                                           | the checked list, the bundled catalog and the public MCP registry |
+| By address or command                                       | any MCP server: an `https://` address, or a command line          |
+
+**Checked means looked at by hand.** Each service on the shelves was checked on 2026-10-26 from
+outside, with no credentials: its address answered, and for a browser sign-in its published
+metadata offered what Rune's flow needs (resource metadata or the 2025-03-26 fallback,
+authorization-server metadata, self-registration, PKCE S256). The list is in
+`packages/tool-registry/src/mcp/directory.ts`, each entry with the date it was checked. Search
+results from the bundled catalog and the registry are labelled "not checked", because they were not.
+
+**Connecting** writes the entry to `~/.rune/mcp.json` (every project), then:
+
+- a browser sign-in opens the browser; esc cancels, and it gives up on its own after five minutes;
+- a token service asks for the token in a masked prompt and says where to make one;
+- a no-sign-in service connects at once.
+
+The connector is started from its entry before the flow returns, so its tools are in the next
+request without restarting Rune.
+
+**Each connector's settings:** reconnect, sign in again, replace its token, sign out, the
+vendor's own settings (Supabase read-only and one project, GitHub read-only: they live in the
+address, where the vendor puts them), turn off and on, every project or this one only, its tools,
+and remove (which forgets its sign-in unless an entry of the same name in the other file still
+uses it). A plugin's connector and the built-in browser are managed where they come from: `rune
+plugin disable` and `/browser off`.
+
+**Services Rune cannot connect to** are listed with the reason rather than offered:
+
+| Service                                       | Why                                                        |
+| --------------------------------------------- | ---------------------------------------------------------- |
+| Slack, Asana, PagerDuty, HubSpot              | the sign-in accepts only apps the vendor registered itself |
+| Gmail, Google Calendar, Microsoft 365, PubMed | the bundled address is one Anthropic runs for Claude alone |
+
+With your own app at one of the first four, add it by address and set `"oauth": { "clientId":
+"…" }`.
+
+**Vercel and Figma review the apps they let sign in.** Rune follows their sign-in exactly, but
+neither has Rune on its list yet, so their page may refuse it; `/connectors` says so before the
+browser opens. ([Vercel's list](https://vercel.com/docs/agent-resources/vercel-mcp), [Figma's
+list](https://help.figma.com/hc/en-us/articles/32132100833559-Guide-to-the-Figma-MCP-server).)
+
+**Proved live, 2026-10-26.** DeepWiki, Microsoft Learn, AWS Knowledge and Context7 (no key)
+connected through Rune's own discovery with 3, 3, 5 and 2 tools; the sign-in discovery found
+Vercel, Supabase, Atlassian and Linear ready for self-registration and GitHub not, which is why
+GitHub takes a token.
+
+---
+
 ## Deferred tool loading
 
 A connector is not free. Every tool it exposes ships its full JSON schema on
@@ -91,6 +147,30 @@ The redirect is captured on an ephemeral `127.0.0.1` loopback — the same engin
 Keychain, libsecret on Linux, DPAPI on Windows, and a `0600` file only when
 none of those is reachable (Rune says so when it falls back).
 
+**Pasted tokens.** A service that signs in with a token instead (GitHub, Render)
+keeps it under `mcp-token:<server>`, and its entry names the account rather than
+the token:
+
+```json
+"github": {
+  "type": "http",
+  "url": "https://api.githubcopilot.com/mcp/",
+  "headers": { "Authorization": "Bearer ${keychain:mcp-token:github}" }
+}
+```
+
+The placeholder is filled when the connector starts. With nothing stored, the
+connector reads as needing a sign-in and nothing is sent: an empty `Bearer `
+would only earn a 401 that looks like an outage.
+
+**Older servers, and signing in again.** A server built to the 2025-03-26 spec
+publishes no resource metadata; its sign-in is at its own origin, and Rune looks
+there (sending no resource indicator, which such a server predates). Before a
+sign-in Rune asks the server for its 401 challenge, the first place the spec says
+to look. A client Rune registered is registered for that sign-in's loopback
+port, and the next sign-in listens on another, so Rune registers again when the
+port differs; a fixed `callbackPort` keeps one client.
+
 **When a token expires.** The transport refreshes and retries once, silently.
 You do not see it.
 
@@ -135,11 +215,14 @@ No Engine boot and no provider validation — like `rune doctor`, this is instan
 `list` and `doctor` do start the servers, because reporting real health is their
 whole job.
 
-**Resolving a name.** `rune mcp add notion` consults two sources, in order:
+**Resolving a name.** `rune mcp add notion` consults three sources, in order:
 
-1. The 20 vendored `skills/*/.mcp.json` files — 58 distinct connectors with the
-   URLs each vendor publishes. This catalog was already in the repo and unused.
-2. The public MCP registry, when it answers. Purely additive, and every failure
+1. The checked directory (`/connectors`' shelves). A closed name (`slack`,
+   `gmail`) is refused here, with the reason.
+2. The 20 vendored `skills/*/.mcp.json` files — 58 distinct connectors with the
+   URLs each skill pack names. Entries on hosts that serve Claude alone are
+   closed whatever they are called.
+3. The public MCP registry, when it answers. Purely additive, and every failure
    is soft: offline, slow, or an unfamiliar shape all mean "the bundled catalog
    is what you get", never an error you have to work around.
 

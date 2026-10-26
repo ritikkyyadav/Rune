@@ -2714,19 +2714,25 @@ async function main() {
         return;
       }
 
-      if (input === "/mcp" || input.startsWith("/mcp ")) {
-        const rest = input.slice("/mcp".length).trim();
+      // `/connectors` is the picker in the full-screen session; this plain
+      // prompt shows the same facts as a panel, and `rune mcp add` connects.
+      const connectorsCmd = /^\/(mcp|connectors?)(?:\s+(.*))?$/.exec(input);
+      if (connectorsCmd) {
+        const rest = (connectorsCmd[2] ?? "").trim();
         const [verb, who] = rest.split(/\s+/, 2);
         if (verb === "reconnect") {
           const back = who ? await engine.reconnectMcpServer(who) : false;
           process.stdout.write(
             who
               ? `  ${back ? ok(glyph("verified")) : warn(glyph("retry"))} ${text(who)} ${muted(back ? "reconnected" : "did not come back — rune mcp doctor")}\n\n`
-              : `  ${muted("usage: /mcp reconnect <server>")}\n\n`,
+              : `  ${muted("usage: /connectors reconnect <server>")}\n\n`,
           );
         } else {
           const { mcpPanel } = await import("./ui/mcp-panel");
           process.stdout.write(`${mcpPanel(await engine.listMcpServers())}\n\n`);
+          process.stdout.write(
+            `  ${muted("connect one:")} ${text("rune mcp add github")} ${muted("from a shell, or /connectors in the full-screen session")}\n\n`,
+          );
         }
         showPrompt();
         return;

@@ -29,6 +29,12 @@ import {
   upsertServer,
   removeServer,
   setServerEnabled,
+  CATEGORY_LABELS,
+  CLOSED_CONNECTORS,
+  CONNECTOR_DIRECTORY,
+  directoryConfig,
+  mcpTokenAccount,
+  withArticle,
   type CatalogEntry,
   type McpScope,
   type McpServerConfig,
@@ -37,6 +43,8 @@ import {
 import { accent, danger, dim, faint, info, ok, text, warn } from "./ui/theme";
 import { glyph } from "./ui/glyphs";
 import { openBrowser } from "./byop-cli-shared";
+import { entryFor, forgetSignIn, setConnectorToken, signInOf } from "../connectors";
+import { signInWord } from "./ui/connectors-picker";
 
 const pad = "  ";
 const say = (line = ""): void => {
@@ -53,6 +61,46 @@ const say = (line = ""): void => {
  */
 export interface McpCliDeps {
   openAuthorizationUrl?: (url: string) => void | Promise<void>;
+  /** Reads a pasted token; a test hands one in instead of a terminal. */
+  readSecret?: (question: string) => Promise<string>;
+}
+
+/**
+ * Read one line without echoing it: a token pasted at a terminal. Piped
+ * input (`pbpaste | rune mcp login github`) is read whole instead, so a
+ * script can supply it without a terminal at all.
+ */
+async function readSecret(question: string): Promise<string> {
+  const stdin = process.stdin;
+  if (!stdin.isTTY) {
+    const chunks: Buffer[] = [];
+    for await (const chunk of stdin) chunks.push(Buffer.from(chunk));
+    return Buffer.concat(chunks).toString("utf8").trim();
+  }
+  process.stdout.write(`${pad}${question} `);
+  return new Promise((resolve) => {
+    let value = "";
+    const finish = (result: string): void => {
+      stdin.removeListener("data", onData);
+      stdin.setRawMode(false);
+      stdin.pause();
+      process.stdout.write("\n");
+      resolve(result.trim());
+    };
+    const onData = (chunk: string): void => {
+      for (const ch of chunk) {
+        if (ch === "\r" || ch === "\n") return finish(value);
+        // Ctrl+C and Ctrl+D give up: an empty answer, which the caller refuses.
+        if (ch === "\u0003" || ch === "\u0004") return finish("");
+        if (ch === "\u007f" || ch === "\b") value = value.slice(0, -1);
+        else if (ch >= " ") value += ch;
+      }
+    };
+    stdin.setRawMode(true);
+    stdin.setEncoding("utf8");
+    stdin.resume();
+    stdin.on("data", onData);
+  });
 }
 
 function usage(): void {
@@ -68,7 +116,7 @@ function usage(): void {
     `  ${accent("list")} ${dim("[--catalog]      configured connectors, their scope, auth and health")}`,
   );
   say(
-    `  ${accent("login")} <name> ${dim("           OAuth 2.1 in the browser; token to the OS keychain")}`,
+    `  ${accent("login")} <name> ${dim("           browser sign-in, or a pasted token; kept in the OS keychain")}`,
   );
   say(`  ${accent("logout")} <name>`);
   say(`  ${accent("enable")} <name> ${dim(" / ")} ${accent("disable")} <name>`);
@@ -76,7 +124,9 @@ function usage(): void {
     `  ${accent("doctor")} ${dim("               check the config, start every connector, report what is wrong")}`,
   );
   say();
-  say(`  ${dim("in a session:")} ${accent("/mcp")} ${dim("·")} ${accent("/mcp reconnect <name>")}`);
+  say(
+    `  ${dim("in a session:")} ${accent("/connectors")} ${dim("— browse, connect, and change settings")}`,
+  );
   say();
   say(`${text("Examples")}`);
   say(`  ${dim("$")} rune mcp add notion ${dim("--scope user")}`);
@@ -185,6 +235,13 @@ async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<
       say(`    ${dim("see everything:")} rune mcp list --catalog`);
       return 1;
     }
+    if (entry.closed) {
+      // Claude-only hosts, and sign-ins only a vendor's partners can use:
+      // writing the entry would only defer the failure to `login`.
+      say(`  ${warn(glyph("retry"))} ${accent(entry.name)} cannot be connected from Rune`);
+      say(`    ${dim(entry.closed)}`);
+      return 1;
+    }
     if (!entry.url && !entry.command) {
       // Snowflake / Databricks / Benchling in the vendored files: the vendor
       // has not published an endpoint. Saying so beats writing a broken entry.
@@ -195,10 +252,19 @@ async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<
       return 1;
     }
     name = name ?? entry.name;
-    config = entryToConfig(entry);
+    const checked = entry.directory;
+    config = checked
+      ? directoryConfig(checked, {
+          name,
+          // A required token is named in the header now and pasted at
+          // `rune mcp login`; an optional one waits until it is given.
+          ...(checked.auth.kind === "token" ? { withToken: !checked.auth.optional } : {}),
+        })
+      : entryToConfig(entry);
     if (Object.keys(headers).length) config.headers = { ...config.headers, ...headers };
-    provenance =
-      entry.source === "vendored"
+    provenance = checked
+      ? `checked ${checked.checked}`
+      : entry.source === "vendored"
         ? `bundled catalog${entry.usedBy?.length ? ` (used by ${entry.usedBy.slice(0, 3).join(", ")})` : ""}`
         : "public MCP registry";
   }
@@ -217,7 +283,18 @@ async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<
   if (existing && existing.scope !== scope && scope === "user") {
     say(`    ${warn(glyph("retry"))} the workspace entry for ${accent(name!)} still wins here`);
   }
-  if (config.url) {
+  const added = { name: name!, source: scope, config };
+  const checkedEntry = entryFor(added);
+  if (checkedEntry?.gate) say(`    ${warn("!")} ${dim(checkedEntry.gate.note)}`);
+  if (signInOf(added) === "token" && checkedEntry?.auth.kind === "token") {
+    const store = await openCredentialStore();
+    if (!(await store.get(mcpTokenAccount(name!)))) {
+      say();
+      say(
+        `  ${text("Next")}  ${accent(`rune mcp login ${name}`)} ${dim(`— paste ${withArticle(checkedEntry.auth.noun)} from ${checkedEntry.auth.createAt}`)}`,
+      );
+    }
+  } else if (config.url && signInOf(added) === "oauth") {
     const provider = new McpOAuth({
       serverName: name!,
       serverUrl: config.url,
@@ -258,8 +335,8 @@ async function cmdRemove(args: string[], values: Record<string, unknown>): Promi
   // The token outlives the entry unless we say otherwise — deleting a
   // credential is not something a `remove` should do silently.
   const store = await openCredentialStore();
-  if (await store.get(mcpCredentialAccount(name))) {
-    say(`    ${dim("its stored token is still in the keychain —")} rune mcp logout ${name}`);
+  if ((await store.get(mcpCredentialAccount(name))) || (await store.get(mcpTokenAccount(name)))) {
+    say(`    ${dim("its stored sign-in is still in the keychain —")} rune mcp logout ${name}`);
   }
   return 0;
 }
@@ -315,7 +392,8 @@ async function cmdList(args: string[], values: Record<string, unknown>): Promise
   for (const s of servers) {
     const status = statuses.get(s.name);
     const enabled = s.config.enabled !== false;
-    const hasCreds = accounts.has(mcpCredentialAccount(s.name));
+    const hasCreds =
+      accounts.has(mcpCredentialAccount(s.name)) || accounts.has(mcpTokenAccount(s.name));
     const where = s.config.url ?? `${s.config.command} ${(s.config.args ?? []).join(" ")}`.trim();
     say(
       `    ${accent(s.name.padEnd(16))} ${healthLabel(status, enabled).padEnd(20)} ` +
@@ -332,22 +410,51 @@ async function cmdList(args: string[], values: Record<string, unknown>): Promise
 }
 
 async function cmdCatalog(): Promise<number> {
-  const vendored = loadVendoredCatalog();
+  const checkedIds = new Set(CONNECTOR_DIRECTORY.map((e) => e.id));
+  const closedIds = new Set(CLOSED_CONNECTORS.map((e) => e.id));
+  const vendored = loadVendoredCatalog().filter(
+    (e) => !checkedIds.has(e.name.toLowerCase()) && !closedIds.has(e.name.toLowerCase()),
+  );
   const registry = mcpConfig().registry === false ? [] : await fetchRegistryCatalog();
-  const known = new Set(vendored.map((e) => e.name.toLowerCase()));
+  const known = new Set([
+    ...checkedIds,
+    ...closedIds,
+    ...vendored.map((e) => e.name.toLowerCase()),
+  ]);
   const extra = registry.filter((e) => !known.has(e.name.toLowerCase()));
 
   say();
-  say(`  ${text("Bundled catalog")}  ${dim(`${vendored.length} connectors`)}`);
+  say(
+    `  ${text("Checked")}  ${dim(`${CONNECTOR_DIRECTORY.length} connectors — address and sign-in looked at by hand`)}`,
+  );
+  for (const category of ["developer", "docs", "work", "design"] as const) {
+    say(`    ${dim(CATEGORY_LABELS[category])}`);
+    for (const e of CONNECTOR_DIRECTORY.filter((d) => d.category === category)) {
+      say(`      ${accent(e.id.padEnd(18))} ${dim(signInWord(e).padEnd(34))} ${faint(e.blurb)}`);
+    }
+  }
+  say();
+  say(`  ${text("Not available from Rune")}  ${dim(`${CLOSED_CONNECTORS.length}`)}`);
+  for (const e of CLOSED_CONNECTORS) {
+    say(`    ${accent(e.id.padEnd(18))} ${faint(e.reason)}`);
+  }
+  say();
+  say(`  ${text("Bundled catalog")}  ${dim(`${vendored.length} more, not checked`)}`);
   for (const e of vendored) {
     const endpoint = e.url ?? (e.command ? `${e.command} ${(e.args ?? []).join(" ")}`.trim() : "");
     say(
-      `    ${accent(e.name.padEnd(18))} ${endpoint ? faint(endpoint) : warn("no endpoint published")}`,
+      `    ${accent(e.name.padEnd(18))} ${
+        e.closed
+          ? warn("cannot connect")
+          : endpoint
+            ? faint(endpoint)
+            : warn("no endpoint published")
+      }`,
     );
   }
   if (extra.length > 0) {
     say();
-    say(`  ${text("Public MCP registry")}  ${dim(`${extra.length} more`)}`);
+    say(`  ${text("Public MCP registry")}  ${dim(`${extra.length} more, not checked`)}`);
     for (const e of extra.slice(0, 40)) {
       say(`    ${accent(e.name.padEnd(18))} ${faint(e.url ?? "")}`);
     }
@@ -384,6 +491,40 @@ async function cmdLogin(
       `  ${warn(glyph("retry"))} ${accent(name)} is a local (stdio) server — it has nothing to log in to`,
     );
     return 1;
+  }
+
+  const row = { name, source: entry.scope, config: entry.config };
+  const how = signInOf(row);
+  const checked = entryFor(row);
+  if (how === "token" || checked?.auth.kind === "token") {
+    const auth = checked?.auth.kind === "token" ? checked.auth : undefined;
+    if (auth) {
+      say(
+        `  ${dim(`${checked!.label} signs in with ${withArticle(auth.noun)}; create one at`)} ${accent(auth.createAt)}`,
+      );
+    }
+    const token = await (deps.readSecret ?? readSecret)(`${auth?.noun ?? "token"}:`);
+    if (!token) {
+      say(`  ${danger(glyph("failure"))} nothing entered — ${accent(name)} is unchanged`);
+      return 1;
+    }
+    const store = await openCredentialStore();
+    await setConnectorToken(row, token, workspaceRoot, store);
+    say(`  ${ok(glyph("verified"))} ${accent(name)} token stored`);
+    say(
+      `    ${faint(`as ${mcpTokenAccount(name)} in ${describeCredentialBackend(store)} — the config names it, never holds it`)}`,
+    );
+    return 0;
+  }
+  if (how === "header") {
+    say(
+      `  ${warn(glyph("retry"))} ${accent(name)} sends an Authorization header you wrote in mcp.json — change it there`,
+    );
+    return 1;
+  }
+  if (how === "none") {
+    say(`  ${dim(`${name} has nothing to sign in to`)}`);
+    return 0;
   }
 
   const store = await openCredentialStore();
@@ -439,12 +580,11 @@ async function cmdLogout(args: string[]): Promise<number> {
     return 1;
   }
   const store = await openCredentialStore();
-  const had = await store.get(mcpCredentialAccount(name));
-  await store.delete(mcpCredentialAccount(name));
+  const had = await forgetSignIn(name, store);
   say(
     had
-      ? `  ${ok(glyph("verified"))} forgot the stored token for ${accent(name)}`
-      : `  ${dim(`no stored token for ${name}`)}`,
+      ? `  ${ok(glyph("verified"))} forgot the stored sign-in for ${accent(name)}`
+      : `  ${dim(`no stored sign-in for ${name}`)}`,
   );
   return 0;
 }
@@ -521,7 +661,8 @@ async function cmdDoctor(values: Record<string, unknown>): Promise<number> {
   for (const s of servers) {
     const enabled = s.config.enabled !== false;
     const status = statuses.get(s.name);
-    const hasCreds = accounts.has(mcpCredentialAccount(s.name));
+    const hasCreds =
+      accounts.has(mcpCredentialAccount(s.name)) || accounts.has(mcpTokenAccount(s.name));
     const label = `${accent(s.name.padEnd(16))}`;
 
     if (!enabled) {

@@ -1,4 +1,4 @@
-export { McpClient, McpRpcError } from "./client";
+export { McpClient, McpRpcError, signInHint } from "./client";
 export type { McpClientConfig } from "./client";
 export { McpDiscovery } from "./discovery";
 export type { McpServerStatus, McpDiscoveryOptions, McpServerConfig } from "./discovery";
@@ -27,6 +27,7 @@ export {
   discoverProtectedResource,
   discoverAuthorizationServer,
   registerClient,
+  fetchChallenge,
 } from "./oauth";
 export type {
   McpOAuthTokens,
@@ -40,9 +41,37 @@ export {
   resolveConnector,
   nearestNames,
   skillCatalogRoots,
+  fromDirectory,
   DEFAULT_REGISTRY_URL,
 } from "./catalog";
 export type { CatalogEntry } from "./catalog";
+export {
+  CONNECTOR_DIRECTORY,
+  CLOSED_CONNECTORS,
+  CATEGORY_LABELS,
+  CLAUDE_ONLY_REASON,
+  claudeOnlyAddress,
+  directoryEntry,
+  closedConnector,
+  addressWith,
+  optionsIn,
+  isEntryAddress,
+  mcpTokenAccount,
+  keychainRef,
+  keychainAccountsIn,
+  fillKeychainRefs,
+  directoryConfig,
+  searchDirectory,
+  withArticle,
+} from "./directory";
+export type {
+  DirectoryEntry,
+  DirectoryAuth,
+  DirectoryOption,
+  DirectoryCategory,
+  ClosedEntry,
+  OptionValues,
+} from "./directory";
 export {
   mcpConfigPath,
   readMcpConfig,
@@ -52,6 +81,7 @@ export {
   upsertServer,
   removeServer,
   setServerEnabled,
+  moveServer,
 } from "./config-file";
 export type { McpScope, McpConfigFile, MergedServer } from "./config-file";
 export { SseTransport } from "./transport";

@@ -3552,3 +3552,126 @@ On AC power with sleep blocked; the released 1.4.14 binary; the same task and un
 **What stands between Rune and `done` on its own source** is one rule: "nothing seen to fail"
 counts what the agent saw while investigating, and commands that are not checks. How it should
 read is the founder's call.
+
+## v1.4.15, 2026-10-23 · **`done` counts only real failures (the founder's call on the 1.4.14 re-run); a Windows bug caught by CI on the first release commit; installed through `rune upgrade`**
+
+The founder chose "Count only real failures (Recommended)".
+
+**What was built** (`lane/done-long-suites`):
+
+- **`f9eb8c0`, the three rules.**
+  - The shell's `test` and `[` probing a file are not checks.
+  - A `bun test` run against a copy of the project is an action, not the project's check
+    (`check-scope.ts`, `ranInScratchCopy`): every file it ran lies outside the workspace or
+    under a top-level folder git tracks nothing in, and mirrors a tracked path.
+  - A red `bun test` file run inside the scope of a suite that passed on the final tree is
+    covered. The verifier reads the suite's scope from its script (`bunTestScope`), the loop hands
+    it to the verdict (`testScopes`), and `done` names it (`verdict.superseded`, "an earlier red
+    test run is covered by the suite that passed").
+- **`a8ed670`, the probe rule narrowed.** The first cut took out every bare `test` and `[`, and
+  four of the classifier's own cases went red: `test "$(cat output.txt)" = ready` asserts a
+  program's output. Now only a file operator (`-e -f -d …`) makes it a probe; comparisons and
+  `./test` stay checks.
+- **`862808b`:** "release: Rune is 1.4.15".
+- **`913b9a3`, the Windows fix.** CI on `862808b` (run 39808580666): 22 of 23, `ts-windows` red
+  on "files outside the workspace: a copy". The runner's checkout is on D: and its temp folder on
+  C:, and `path.relative` across drives returns an absolute path. `workspacePlace` now reads that
+  as outside, and its test uses `path.win32`'s rules on any machine.
+
+**Checked.**
+
+- Replayed on the 1.4.14 run's own record: `done`, the t20 run named; without the suite's
+  scope, `unmet`.
+- 18 mutants on the rules and their wiring, and one on the cross-drive branch, all killed. Two
+  survived at first, each now pinned: a `cd` into a folder whose path lines up with the root's,
+  and `./test` with a file-like flag.
+- Through the real Engine: the investigation recreated (a red file the suite covers, a red run
+  in a copy, a red `test -d`) ends `done`; a red test in a new folder of new tests does not.
+- Gates: unit 8,118/0, integration 497/0, reliability 62/0, eval 63/63. Fresh clone at
+  `862808b`: typecheck 15/15, lint 7/7, format, `cargo` 142/0, unit 8,103/0.
+
+**Release.** CI run 39907084824 on `913b9a3`: 23 of 23. `main` fast-forwarded `3d8d201` →
+`913b9a3` (six commits); tag `v1.4.15` at `913b9a3`, as v1.4.6 was tagged at its Windows fix.
+Release run 39908401814: 13 of 13; Latest is v1.4.15 with eleven files. Installed with
+`rune upgrade`, 1.4.14 → 1.4.15: checksums match, `rune doctor` healthy, `rune tools-smoke`
+round-trips, the edit probes fail 0 of 6.
+
+**Not shown yet.** `done` live on Rune's own source: the re-run on 1.4.15 is next.
+
+## The live proof on 1.4.15, 2026-10-23 · **Rune ended `done` on its own source: every check passed, 13 of 13 asks found, the change correct by an independent grade**
+
+The question the dogfood test was for: can Rune work on its own code the way Codex or Claude
+does, with a frontier model, and say honestly when it has finished?
+
+- **The run** (`rune-1415b`): the released 1.4.15 binary, GPT-6.1 Sol at "high", the same task
+  and untouched copy (`688f1e7`). It started 10:40:17Z on battery, lid open, sleep blocked; a
+  first attempt (`rune-1415`) had stopped on the Codex usage limit with zero calls, as R4
+  designed (exit 5, `quota_wall`, a resume time, no weaker model).
+- **The verdict, in Rune's words:** "`[verdict] done — the project's checks passed on the final
+tree (`bun run typecheck`, `bun run test`, `bun run lint`, `bun run format:check`); all 13 asks
+of the request found in the change; an earlier red test run is covered by the suite that passed
+(`bun test tests/unit/probes/t20-background-lifecycle.test.ts --test-name-patte…`); no criteria
+stated`". Exit 0, `ok: true`.
+  - The covered run was the same sandbox-only failure as on 1.4.14, now read for what it is.
+  - On the way, the open-steps gate asked once to finish or cut a planned step, and two refused
+    turns drew a change-of-approach notice; the agent finished both.
+- **Graded from outside:** hidden test 3 of 3; format, lint, typecheck; reliability 62/0; unit
+  8,052/0; integration 494/0.
+- **Cost:** 69 calls in 14.9 minutes. The five-hour window read 4% before and 43% after
+  (`quotaPct` 42 on the run's last call); weekly 16% → 22%.
+
+**What it shows.** Rune 1.4.15 took a real task in its own codebase, did it correctly, verified
+it as CI would, and said `done`, the first time on its own source. On 1.4.12 the same correct
+work ended `unmet`. The four fixes between were each found by a live run: the check's time
+limit (1.4.13), a whole-file diff above 4,000 lines (1.4.14), and failures the agent saw while
+investigating (1.4.15).
+
+**Not shown.** One run. Cost is still the gap: about 2.5 times Codex CLI's input tokens on this
+task (each call carries some 51,000 tokens of doctrine and tool schemas), and this run's 69 calls
+are the most of the four on 1.4.x. Check timers still count wall-clock time across sleep.
+
+## `/connectors`, 2026-10-26 · **connect services from the session: 32 checked by hand, tokens kept in the keychain, three sign-in paths the real vendors need; on `lane/connectors-20261026` (`2018ed5`), not released**
+
+The founder's ask: "a new section in rune for connecting the connectors as the /connectors …
+just like the claude and codex … like the vercel and other stuffs … also configure those
+plugins too".
+
+- **What existed.** `rune mcp add/login/list/doctor`, OAuth 2.1 with self-registration, two
+  config scopes, a read-only `/mcp` panel, and a bundled catalog of 58 entries lifted from the
+  skill packs. No Vercel, Supabase, Sentry or Stripe in it, and no way to connect from a session.
+- **The directory.** Each candidate's address and published sign-in metadata was fetched on
+  2026-10-26 with no credentials. 32 entries pass: 24 sign in through the browser with
+  self-registration (Vercel, Supabase, Neon, Sentry, Stripe, Linear, Notion, Figma, Atlassian v2,
+  Netlify, PostHog, Cloudflare, Hugging Face, Prisma, Railway, GitLab, Canva, Postman, Intercom,
+  monday.com, ClickUp, PlanetScale, Expo, Buildkite); GitHub and Render take a pasted token,
+  because their sign-in offers no self-registration; Context7 takes an optional key; DeepWiki,
+  Microsoft Learn, AWS Knowledge and Chrome DevTools need no sign-in; Firebase signs in with its
+  own CLI.
+- **Closed, with the reason.** Slack, Asana, PagerDuty and HubSpot accept only apps they
+  registered. Five bundled entries pointed at hosts Anthropic runs for Claude alone; the Gmail
+  one does not resolve. Atlassian's bundled `/v1` address is the one Atlassian is retiring.
+- **Vendor gates.** Vercel and Figma admit only AI apps they have reviewed, and Rune is not on
+  either list (OpenCode, Pi, Codex and Claude Code are). A community report of 2026-10-10 says
+  Vercel lets an unlisted app register, then refuses the authorize step. `/connectors` says so
+  before the browser opens. Applying is the founder's to do.
+- **The screen.** Home lists what is connected (state, tools, every project or this one), then
+  four shelves, search across the checked list, the bundled catalog and the public registry, and
+  any server by address or command. Each connector's settings: reconnect, sign in again, replace
+  its token, sign out, read-only and one-project modes where the vendor offers them (in the
+  address, where the vendor puts them), on or off, every project or this one, its tools, remove.
+  Every change is restarted into the running session.
+- **Fixed on the way.** A 2025-03-26 server (no resource metadata) now signs in at its own
+  origin instead of failing with "no authorization server advertised"; a sign-in asks the server
+  for its 401 hint first; a client registered for an earlier loopback port is registered again;
+  a paste into a one-line prompt with a trailing newline used to arrive as the text
+  "[Pasted text #1 +2 lines]".
+
+**Verified.** Unit 8,183/0; integration 503/0; lint and typecheck 22/22; format. 15 of 15
+mutants killed (one survived first: the Claude-only address rule was hidden behind the name
+list, pinned with a fixture). Live, no credentials: DeepWiki 3 tools, Microsoft Learn 3, AWS
+Knowledge 5 and Context7 without a key 2, connected through Rune's own discovery; Rune's
+sign-in discovery reaches self-registration for Vercel, Supabase, Atlassian and Linear, and
+finds none for GitHub.
+
+**Not shown.** A browser sign-in end to end with a real account (it needs the founder's
+browser); Vercel and Figma until Rune is on their lists; the screen in a live terminal.
