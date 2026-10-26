@@ -3597,3 +3597,35 @@ Release run 39908401814: 13 of 13; Latest is v1.4.15 with eleven files. Installe
 round-trips, the edit probes fail 0 of 6.
 
 **Not shown yet.** `done` live on Rune's own source: the re-run on 1.4.15 is next.
+
+## The live proof on 1.4.15, 2026-10-23 · **Rune ended `done` on its own source: every check passed, 13 of 13 asks found, the change correct by an independent grade**
+
+The question the dogfood test was for: can Rune work on its own code the way Codex or Claude
+does, with a frontier model, and say honestly when it has finished?
+
+- **The run** (`rune-1415b`): the released 1.4.15 binary, GPT-6.1 Sol at "high", the same task
+  and untouched copy (`688f1e7`). It started 10:40:17Z on battery, lid open, sleep blocked; a
+  first attempt (`rune-1415`) had stopped on the Codex usage limit with zero calls, as R4
+  designed (exit 5, `quota_wall`, a resume time, no weaker model).
+- **The verdict, in Rune's words:** "`[verdict] done — the project's checks passed on the final
+tree (`bun run typecheck`, `bun run test`, `bun run lint`, `bun run format:check`); all 13 asks
+of the request found in the change; an earlier red test run is covered by the suite that passed
+(`bun test tests/unit/probes/t20-background-lifecycle.test.ts --test-name-patte…`); no criteria
+stated`". Exit 0, `ok: true`.
+  - The covered run was the same sandbox-only failure as on 1.4.14, now read for what it is.
+  - On the way, the open-steps gate asked once to finish or cut a planned step, and two refused
+    turns drew a change-of-approach notice; the agent finished both.
+- **Graded from outside:** hidden test 3 of 3; format, lint, typecheck; reliability 62/0; unit
+  8,052/0; integration 494/0.
+- **Cost:** 69 calls in 14.9 minutes. The five-hour window read 4% before and 43% after
+  (`quotaPct` 42 on the run's last call); weekly 16% → 22%.
+
+**What it shows.** Rune 1.4.15 took a real task in its own codebase, did it correctly, verified
+it as CI would, and said `done`, the first time on its own source. On 1.4.12 the same correct
+work ended `unmet`. The four fixes between were each found by a live run: the check's time
+limit (1.4.13), a whole-file diff above 4,000 lines (1.4.14), and failures the agent saw while
+investigating (1.4.15).
+
+**Not shown.** One run. Cost is still the gap: about 2.5 times Codex CLI's input tokens on this
+task (each call carries some 51,000 tokens of doctrine and tool schemas), and this run's 69 calls
+are the most of the four on 1.4.x. Check timers still count wall-clock time across sleep.
