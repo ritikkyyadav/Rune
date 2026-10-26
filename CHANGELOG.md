@@ -35,6 +35,8 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ### Fixed
 
+- **Dependency audit:** pin Zod to 4.6.6, which fixes
+  [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5).
 - **Sign-in to a server built to the 2025-03-26 spec.** One that publishes no resource metadata
   keeps its sign-in at its own address; Rune now looks there instead of stopping at "no
   authorization server advertised".
