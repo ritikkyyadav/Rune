@@ -3675,3 +3675,22 @@ finds none for GitHub.
 
 **Not shown.** A browser sign-in end to end with a real account (it needs the founder's
 browser); Vercel and Figma until Rune is on their lists; the screen in a live terminal.
+
+## v1.4.16, 2026-10-26 · **`/connectors` shipped; a Zod advisory pinned on the way; installed and checked**
+
+- **The first CI run stopped at `bun audit`.** Run 40357663125 on the release commit `b7fa6a0`
+  passed its unit suite and format check, then failed on GHSA-mrhx-c7xc-m3w5: Zod below 4.6.6
+  can exhaust memory validating oversized collections (high). Zod comes in through the ACP SDK
+  and the OpenAI SDK, and the advisory appeared after 1.4.15 shipped. `1f5a196` pins Zod to
+  4.6.6 (a root override and the lock) and says so in the changelog and the release notes;
+  CI 40358886529 on it: green.
+- **Release.** PR #28 merged `lane/release-1.4.16` into `main` (`37758ed`); tag `v1.4.16` at
+  `37758ed`; release run 40379549833 succeeded; Latest is v1.4.16 with eleven files. CI on
+  `main` at `37758ed`: green.
+- **Installed and checked:** `rune-compiled` and `rune-tools` match `SHA256SUMS`; `rune doctor`
+  healthy (signatures valid, rollback available); `rune tools-smoke` round-trips; the edit
+  probes fail 0 of 6; the installed build lists the 32 checked connectors.
+
+**Not shown.** A browser sign-in end to end with a real account (it needs the founder at the
+browser); Vercel and Figma until Rune is on their lists of reviewed apps. `rune doctor` notes 66
+old builds kept (5.0 GB reclaimable), the founder's to prune.
