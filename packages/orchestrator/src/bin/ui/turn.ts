@@ -39,9 +39,11 @@ import { Pulse, PULSE_WEIGHT, quietLabel } from "./pulse";
 import type { TitleBeat } from "./title";
 import { STROKE_WEIGHT, WorkGlyph, paintGlyph, restGlyph } from "./waveform";
 import {
+  REST_DONE,
   stagedRow,
   workingKindForTool,
   workingPhrase,
+  type RestOutcome,
   type WorkStage,
   type WorkingKind,
   type WorkingState,
@@ -142,6 +144,9 @@ interface CheckEvidence {
   detail: string;
   status: "passed" | "failed" | "not-run";
   count: number;
+  /** Red, but every failure was already failing before the run began
+   *  (verification_completed `preexisting`): red, and not this run's doing. */
+  preexisting?: boolean;
   /** Tests the runner reported as passing, when its output carried a tally. */
   tests?: number;
 }
@@ -604,13 +609,19 @@ export function responseBlock(markdown: string): string {
       .map((line) => line.trim())
       .join(" ");
     const rest = source.slice(end + 1);
-    const head = F.said(paragraph);
+    // The headline is markdown too. It went through F.said(), which wraps
+    // plain text, so the one line the reader came for printed its backticks
+    // and asterisks raw -- while the same text, streamed a moment earlier,
+    // had been rendered (stepBlock).
+    const head = F.dot(renderMarkdown(paragraph, { width, indent: F.BODY }));
     const detail = rest.join("\n").trim()
       ? renderMarkdown(rest.join("\n"), { width, indent: F.BODY })
       : [];
-    return ["", head, ...(detail.length ? ["", ...detail] : [])].join("\n");
+    return ["", ...head, ...(detail.length ? ["", ...detail] : [])].join("\n");
   }
-  return ["", ...renderMarkdown(source.join("\n"), { width, indent: F.BODY })].join("\n");
+  // An answer that opens with a heading, a list or a fence keeps the speaker's
+  // mark too: the streamed block had it, and the settled one lost it.
+  return ["", ...F.dot(renderMarkdown(source.join("\n"), { width, indent: F.BODY }))].join("\n");
 }
 
 function plural(count: number, singular: string, many = singular + "s"): string {
@@ -705,6 +716,16 @@ export class TurnRenderer {
   private failures = 0;
   private errored = false;
   private hardError = false;
+  /** The terminal error was the provider rate-limiting the run, so the rest
+   *  row says that rather than "stopped on an error". */
+  private rateLimited = false;
+  /** The message the prose buffer holds has ended: its `usage` landed, or the
+   *  harness spoke (a re-plan, a check). The next text delta starts a NEW
+   *  message and is not appended to the old one -- see text_delta. */
+  private proseClosed = false;
+  /** The person stopped the run. Members still out when it ended are
+   *  stopped, not done. */
+  private abortedRun = false;
   private committedErrors = new Set<string>();
   /** Gathering held until news lands -- the commit-at-end path, for a sink
    *  that cannot amend (see flushRoutine). */
@@ -1443,7 +1464,10 @@ export class TurnRenderer {
     // call landed. Reporting it as `running` on the finished list would be the
     // panel disagreeing with the transcript directly above it.
     if (card.state === "queued" || card.state === "running") {
-      card.state = "done";
+      // ...unless the run was stopped under it: then it did not finish, and a
+      // tick would say it had. An aborted fan-out showed both members ticked
+      // while their own results said nothing was written.
+      card.state = this.abortedRun ? "stopped" : "done";
       card.endedAt ??= Date.now();
     }
     this.fleet.delete(key);
@@ -1504,6 +1528,16 @@ export class TurnRenderer {
             agent.node?.dependsOn.length ? `after ${agent.node.dependsOn.join(", ")}` : "",
           ]),
           status: "none",
+        });
+      case "stopped":
+        // Back without a result: cut off, or out of turns before it wrote one.
+        // A claim with nothing behind it wears the suspected tilde, never a
+        // tick (F.toolRow `unproven`).
+        return F.toolRow({
+          name: verb,
+          arg: card.brief,
+          metric: F.receiptOf(["stopped early", "no findings", elapsed]),
+          status: "unproven",
         });
       case "done":
       case "failed": {
@@ -1764,7 +1798,11 @@ export class TurnRenderer {
     const fleet = [...this.fleet.values()];
     if (fleet.length >= 2 || (fleet.length === 1 && !this.currentTool)) {
       const settled = fleet.filter(
-        (a) => a.card.state === "done" || a.card.state === "failed" || a.card.state === "skipped",
+        (a) =>
+          a.card.state === "done" ||
+          a.card.state === "failed" ||
+          a.card.state === "skipped" ||
+          a.card.state === "stopped",
       ).length;
       const queued = fleet.filter((a) => a.card.state === "queued").length;
       if (settled > 0 && settled === fleet.length) return "all back";
@@ -2331,6 +2369,17 @@ export class TurnRenderer {
 
       case "text_delta": {
         this.activity = null;
+        // A new message, not more of the last one. When the harness asks again
+        // after a failed check or a re-plan, the reply arrives with no tool
+        // call in between; appended to the buffer, two answers were glued
+        // mid-sentence ("...added there.--version and...") and the closing
+        // block printed both. The earlier message is set down as its own block
+        // first; the buffer then holds only the newest, which is the one
+        // finish() renders as the answer.
+        if (this.proseClosed) {
+          this.proseClosed = false;
+          if (this.prose.trim()) this.settleProse();
+        }
         this.prose += event.text;
         this.heard(String(event.text ?? "").length);
         const now = Date.now();
@@ -2372,6 +2421,7 @@ export class TurnRenderer {
         this.heard(0, "callback");
         this.prose = "";
         this.proseDirty = false;
+        this.proseClosed = false;
         // The stream starts over, and so does the block it was writing.
         if (this.proseRef) {
           if (this.proseRef.handle >= 0) this.amendBlock(this.proseRef, "");
@@ -2519,6 +2569,14 @@ export class TurnRenderer {
           // member's transcript is read back from the session log later.
           const taskId = (event.output?.structured as { task_id?: unknown } | undefined)?.task_id;
           if (typeof taskId === "string") landed.card.taskId = taskId;
+          // A member that came back INCOMPLETE (subagent-result.ts: cut off,
+          // or out of turns before it wrote anything) did not finish. Its
+          // lifecycle marker still said `ok` -- the call did return -- which
+          // is how an aborted fan-out wore two ticks.
+          if (/^INCOMPLETE\b/m.test(String(event.output?.result ?? ""))) {
+            landed.card.state = "stopped";
+            landed.card.endedAt ??= Date.now();
+          }
         }
         this.retireFleetMember(endedCall);
         for (const key of [...this.fleet.keys()]) {
@@ -2624,6 +2682,8 @@ export class TurnRenderer {
         return;
 
       case "replanning": {
+        // The harness spoke between two of the model's messages.
+        if (this.prose.trim()) this.proseClosed = true;
         this.flushRoutine();
         const block = formatEvent(event);
         if (block) {
@@ -2696,6 +2756,8 @@ export class TurnRenderer {
         return;
 
       case "verification_completed": {
+        // The harness spoke between two of the model's messages.
+        if (this.prose.trim()) this.proseClosed = true;
         this.flushRoutine();
         this.verificationRunning = false;
         const report = String(event.report ?? "");
@@ -2736,6 +2798,7 @@ export class TurnRenderer {
               : "not run",
           status: !settled ? "not-run" : passed ? "passed" : "failed",
           count: settled ? commandCount : 0,
+          ...(inherited ? { preexisting: true } : {}),
         });
         // The harness's own checks read like the checks the model ran: on the
         // rail, a verb, the commands, a verdict. "✓ $ npm test (ok)" beside
@@ -2801,6 +2864,9 @@ export class TurnRenderer {
         // text the reader watched stream a moment ago.
         this.pulse.feed(Number(event.outputTokens ?? 0) * 4);
         this.downTokens += Number(event.outputTokens ?? 0);
+        // One `usage` per model call, after its last delta: what the prose
+        // buffer holds now is a finished message (see text_delta).
+        if (this.prose.trim()) this.proseClosed = true;
         if (event.context && Number(event.context.percent) > 0) {
           this.contextPercent = Number(event.context.percent);
         }
@@ -2913,6 +2979,7 @@ export class TurnRenderer {
         // close of a SUCCESSFUL run as a failure. The engine retries and falls
         // back on its own; only a terminal error is this turn's verdict.
         if (!event.recoverable) this.hardError = true;
+        if (/rate.?limit/i.test(String(event.error ?? ""))) this.rateLimited = true;
         this.failures++;
         const block = formatEvent(event);
         if (block) {
@@ -2925,6 +2992,7 @@ export class TurnRenderer {
 
       case "turn_complete":
         this.turnCount = Math.max(this.turnCount, Number(event.totalTurns ?? 0));
+        if (event.stopReason === "aborted") this.abortedRun = true;
         this.retireFleet();
         this.retrying = null;
         // A run that hit a ceiling is NOT a finished run -- remember why so
@@ -2975,6 +3043,9 @@ export class TurnRenderer {
   onError(error: unknown): void {
     this.errored = true;
     this.hardError = true;
+    if (/rate.?limit/i.test(error instanceof Error ? error.message : String(error))) {
+      this.rateLimited = true;
+    }
     this.failures++;
     this.settleProse();
     this.flushRoutine();
@@ -3063,8 +3134,60 @@ export class TurnRenderer {
     if (!aborted && !failed) return null;
     const mark = aborted ? warn("!") : danger(glyph("failure"));
     const label = aborted ? "interrupted" : "stopped on an error";
-    const meta = aborted ? [...this.workReceipt(), "partial work kept"] : this.workReceipt();
+    // "partial work kept" is a claim about the tree, so it is made only when the
+    // run changed something: an interrupt before any edit kept nothing.
+    const kept = aborted && this.editedFiles.size > 0 ? ["partial work kept"] : [];
+    const meta = [...this.workReceipt(), ...kept];
     return F.flowRow(`${F.MARK}${mark} ${text(label)}`, faint(F.receiptOf(meta)));
+  }
+
+  /**
+   * How the turn ended, for the row that stays on screen after it
+   * (tui-frame.ts, working.ts `restRow`). Read from the same facts as
+   * completionBlock and in the same order, so the row and the transcript's
+   * closing line cannot disagree. The row used to say `done` after every
+   * turn: after failing checks, a dozen provider errors, a rejected key, and
+   * the person pressing esc.
+   */
+  restOutcome(aborted: boolean): RestOutcome {
+    if (aborted || this.abortedRun) return { word: "stopped by you", tone: "warn" };
+    const latestCheck = [...this.checks].reverse().find((check) => check.status !== "not-run");
+    const repaired = this.failures > 0 && latestCheck?.status === "passed";
+    const failed = this.hardError && !repaired;
+    if (this.stoppedEarly === "quota_wall") {
+      const at = this.resumeAt ? new Date(this.resumeAt).toTimeString().slice(0, 5) : null;
+      return {
+        word: at ? `paused at the usage limit until ${at}` : "paused at the usage limit",
+        tone: "warn",
+      };
+    }
+    if (!failed && this.stoppedEarly) {
+      switch (this.stoppedEarly) {
+        case "max_turns":
+          return { word: "ran out of turns", tone: "warn" };
+        case "halted":
+          return { word: "halted by a safety check", tone: "danger" };
+        case "provider_lost":
+          return { word: "the provider stopped answering", tone: "danger" };
+        case "open_steps":
+          return { word: "planned steps left open", tone: "warn" };
+        case "stalled":
+          return { word: "stalled", tone: "danger" };
+        case "max_tokens":
+          return { word: "hit the output limit", tone: "warn" };
+      }
+    }
+    if (failed) {
+      return this.rateLimited
+        ? { word: "rate-limited", tone: "warn" }
+        : { word: "stopped on an error", tone: "danger" };
+    }
+    if (latestCheck?.status === "failed") {
+      return latestCheck.preexisting
+        ? { word: `done ${glyph("observed")} tests were already failing`, tone: "warn" }
+        : { word: "checks failing", tone: "danger" };
+    }
+    return REST_DONE;
   }
 
   /**
@@ -3131,6 +3254,12 @@ export class TurnRenderer {
 
     const answer = this.prose.trim();
     const aborted = options.aborted === true;
+    // A stop with members still out retires them here, as stopped: nothing
+    // else would, when the run ends without a turn_complete.
+    if (aborted) {
+      this.abortedRun = true;
+      this.retireFleet();
+    }
     // A call still open when the turn ends never came back; its row says so
     // rather than saying `running` forever.
     for (const open of this.pending.values()) {
@@ -3175,7 +3304,7 @@ export class TurnRenderer {
       }
     } else if (aborted) {
       if (this.proseRef && this.proseRef.handle >= 0) this.amendBlock(this.proseRef, "");
-      this.sink.commit(`\n ${warn("!")} ${muted("stopped before a result was ready")}\n`);
+      this.sink.commit(`\n${F.MARK}${warn("!")} ${muted("stopped before a result was ready")}\n`);
     }
     this.proseRef = null;
     const summary = this.summaryBlock();

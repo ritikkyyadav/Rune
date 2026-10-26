@@ -23,6 +23,15 @@ export type Key =
   | { type: "click"; x: number; y: number } // 1-based cell, SGR left press only
   | { type: "ctrl"; name: string } // e.g. "c", "d", "l", "t"
   | { type: "esc" }
+  // Option/Alt chords. A terminal sends Alt+key as ESC followed by the key
+  // (macOS Terminal's default Option+left is `ESC b`), or as an xterm-modified
+  // CSI (`ESC [1;3D`). They are their own keys: read as Escape they cleared the
+  // whole draft, and mid-turn they interrupted the run.
+  | { type: "word-left" }
+  | { type: "word-right" }
+  | { type: "word-backspace" }
+  | { type: "word-delete" }
+  | { type: "newline" }
   | { type: "paste-start" }
   | { type: "paste-end" };
 
@@ -78,6 +87,66 @@ const CSI_KEYS: Record<string, Key> = {
 function ctrlName(code: number): string {
   // 1..26 -> a..z
   return String.fromCharCode(code + 96);
+}
+
+/**
+ * An xterm-modified CSI key -- `ESC [1;3D`, `ESC [3;5~` -- as the key it
+ * means, or null when it is not one this composer has a use for.
+ *
+ * The modifier parameter is 1 + a bit set: shift 1, alt 2, ctrl 4, meta 8.
+ * Alt, ctrl or meta on a horizontal arrow is a word move (Option+left in
+ * iTerm2 and Ghostty, Ctrl+left on Linux); on delete it is a word delete.
+ * Shift alone changes nothing here -- there is no selection -- so it is the
+ * plain key. Modified up/down stay unmapped: the wheel arrives as plain arrows
+ * and a modified one is not a gesture this surface has.
+ */
+function modifiedCsi(body: string): Key | null {
+  const m = /^(\d+);(\d+)([A-Z~])$/.exec(body);
+  if (!m) return null;
+  const mods = Math.max(0, Number(m[2]) - 1);
+  const word = (mods & (2 | 4 | 8)) !== 0;
+  const final = m[3]!;
+  if (final === "~") {
+    if (m[1] !== "3") return null;
+    return word ? { type: "word-delete" } : { type: "delete" };
+  }
+  if (m[1] !== "1") return null;
+  if (final === "D") return word ? { type: "word-left" } : { type: "left" };
+  if (final === "C") return word ? { type: "word-right" } : { type: "right" };
+  if (final === "H") return { type: "home" };
+  if (final === "F") return { type: "end" };
+  return null;
+}
+
+/**
+ * What ESC followed by one more character means: the Alt/Meta chord a
+ * terminal sends for Option+key. Readline's own meanings, where it has one --
+ * `M-b` / `M-f` move by word, `M-d` and `M-DEL` delete one, and `M-Enter` is
+ * the newline every chat composer accepts. Anything else is a chord with no
+ * binding, and it is IGNORED, never read as Escape: Escape clears the draft
+ * and interrupts a run, which is the last thing a mistyped Option key should
+ * do.
+ */
+function metaKey(ch: string): Key | null {
+  switch (ch) {
+    case "b":
+    case "B":
+      return { type: "word-left" };
+    case "f":
+    case "F":
+      return { type: "word-right" };
+    case "d":
+    case "D":
+      return { type: "word-delete" };
+    case "\x7f":
+    case "\b":
+      return { type: "word-backspace" };
+    case "\r":
+    case "\n":
+      return { type: "newline" };
+    default:
+      return null;
+  }
 }
 
 export function parseKeys(data: string): Key[] {
@@ -149,7 +218,7 @@ export function parseKeys(data: string): Key[] {
           continue;
         }
 
-        const key = CSI_KEYS[body];
+        const key = CSI_KEYS[body] ?? modifiedCsi(body);
         if (key) {
           keys.push(key);
           i = j + 1;
@@ -164,24 +233,34 @@ export function parseKeys(data: string): Key[] {
       // line), and any terminal does once DECCKM is on. Unparsed, the ESC read
       // as Escape and "OA" was typed into the composer on every scroll notch.
       // F1-F4 (P Q R S) share the prefix and are consumed silently.
+      // Any other final is an application-keypad or function key this surface
+      // has no use for, and is consumed whole: read as Escape it would clear
+      // the draft and type two letters.
       if (data[i + 1] === "O" && i + 2 < data.length) {
         const fin = data[i + 2]!;
         const key = SS3_KEYS[fin];
         if (key) keys.push(key);
-        if (key || "PQRS".includes(fin)) {
-          i += 3;
-          continue;
-        }
+        i += 3;
+        continue;
       }
-      // Lone ESC (or ESC + non-CSI). If it's the last byte, it's Escape.
+      // Lone ESC. If it's the last byte, it's Escape.
       if (i === data.length - 1) {
         keys.push({ type: "esc" });
         i++;
         continue;
       }
-      // ESC followed by something we don't model -- treat as Escape, continue.
-      keys.push({ type: "esc" });
-      i++;
+      // ESC ESC: the first is Escape; the second is read on its own.
+      if (data[i + 1] === "\x1b") {
+        keys.push({ type: "esc" });
+        i++;
+        continue;
+      }
+      // ESC + one character: an Alt/Option chord (see metaKey). Bound chords
+      // become their key; the rest are consumed silently, character included.
+      const next = String.fromCodePoint(data.codePointAt(i + 1)!);
+      const meta = metaKey(next);
+      if (meta) keys.push(meta);
+      i += 1 + next.length;
       continue;
     }
 

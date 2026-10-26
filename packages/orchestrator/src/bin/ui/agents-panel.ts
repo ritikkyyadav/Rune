@@ -41,11 +41,14 @@ import { PULSE_GLYPHS, TERMINAL_GLYPH_MODE, glyph } from "./glyphs";
 import type { Key } from "./keys";
 import { Pulse, QUIET_AFTER_MS } from "./pulse";
 import { clampVisible, truncate, visLen } from "./render";
-import { accent, danger, faint, muted, ok, speakerSurface, text } from "./theme";
+import { accent, danger, faint, muted, ok, speakerSurface, text, warn } from "./theme";
 
 // ─── The card ───
 
-export type AgentState = "queued" | "running" | "done" | "failed" | "skipped";
+/** `stopped`: back without finishing -- cut off by the person, or out of turns
+ *  before it wrote anything (an INCOMPLETE result). Not `done`, which is how
+ *  an aborted fan-out came to wear two ticks, and not `failed` either. */
+export type AgentState = "queued" | "running" | "done" | "failed" | "skipped" | "stopped";
 
 /**
  * The rungs of the claim ladder a card is allowed to carry, as GLYPH NAMES so
@@ -327,11 +330,13 @@ function headRow(card: AgentCard, index: number, view: PanelView, now: number, w
       ? ok(glyph("verified"))
       : card.state === "failed"
         ? danger(glyph("failure"))
-        : card.state === "skipped"
-          ? faint(glyph("observed"))
-          : card.state === "queued"
-            ? faint(glyph("live"))
-            : liveMark(card);
+        : card.state === "stopped"
+          ? warn(glyph("suspected"))
+          : card.state === "skipped"
+            ? faint(glyph("observed"))
+            : card.state === "queued"
+              ? faint(glyph("live"))
+              : liveMark(card);
   // The stall is STATED. Past the quiet threshold the row swaps its clock's
   // tail for the word, because a flat pulse and a dead pulse are the same cell.
   const quiet =
@@ -463,7 +468,9 @@ function pairRow(
         ? glyph("verified")
         : card.state === "failed"
           ? glyph("failure")
-          : glyph("live");
+          : card.state === "stopped"
+            ? glyph("suspected")
+            : glyph("live");
     const span =
       card.startedAt == null ? "" : compactElapsed((card.endedAt ?? now) - card.startedAt);
     const name = truncate(card.name, Math.max(4, cell - 8));
@@ -489,9 +496,11 @@ function initialsRow(cards: AgentCard[], view: PanelView, width: number): string
         ? glyph("verified")
         : card.state === "failed"
           ? glyph("failure")
-          : card.state === "running"
-            ? glyph("live")
-            : glyph("observed");
+          : card.state === "stopped"
+            ? glyph("suspected")
+            : card.state === "running"
+              ? glyph("live")
+              : glyph("observed");
     const cell = `${marks[i]}${beat}`;
     return view.focused && view.selectedId === card.id ? accent(cell) : faint(cell);
   });
@@ -784,9 +793,11 @@ function blockText(card: AgentCard): string {
       ? ` ${glyph("verified")}`
       : card.state === "failed"
         ? ` ${glyph("failure")}`
-        : card.state === "skipped"
-          ? ` ${glyph("observed")}`
-          : "";
+        : card.state === "stopped"
+          ? ` ${glyph("suspected")}`
+          : card.state === "skipped"
+            ? ` ${glyph("observed")}`
+            : "";
   return `[${card.name}${settled}]`;
 }
 
@@ -1377,7 +1388,7 @@ export class FleetLedger {
         status === "provider_lost" ||
         status === "quota_wall" ||
         status === "error";
-      card.state = failed ? "failed" : "done";
+      card.state = failed ? "failed" : status === "aborted" ? "stopped" : "done";
       card.retired = true;
       card.restored = true;
       card.taskId = child.id;

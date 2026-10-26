@@ -11,6 +11,41 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
+**The interface stops destroying work and stops saying `done` when it is not.** From the TUI
+audit of 1.4.15 (285 frames of the real CLI in a pseudo-terminal). Key changes recorded in
+[`docs/program/ui-decision-20261026-trust-fixes.md`](docs/program/ui-decision-20261026-trust-fixes.md).
+
+### Fixed
+
+- **Option and Alt keys erased the draft and stopped runs.** Terminals send Option+key as `ESC`
+  plus the key (macOS Terminal's Option+left is `ESC b`), and Rune read it as Escape: the draft was
+  cleared, and mid-run the run was interrupted, with the stray letter sent in the next message.
+  `ESC b`/`ESC f` now move by word, Option+Backspace and `ESC d` delete one, Option+Enter is a
+  newline, xterm's modified arrows move by word, and any other Option chord is ignored. `ctrl+w`
+  deletes the previous word.
+- **Typing could approve a command for the whole session.** The approval card answered to single
+  letters (`a` and `s` granted the session), so a sentence typed as it opened approved shell
+  commands on its first `a`. Letters no longer answer it; digits and enter answer only once the card
+  has been up 500 ms and typing has paused; enter never answers while a message is half written;
+  what was typed is kept in the composer and shown on the card.
+- **Every turn ended `done`.** The row under the transcript now says how the turn ended: done,
+  checks failing, stopped by you, stopped on an error, rate-limited, paused at the usage limit, ran
+  out of turns.
+- **Answers were repeated and glued together.** When the harness asked again after a failed check
+  or a re-plan, the next reply was appended to the last one mid-sentence. Each reply is now its own
+  block, and an answer's first line renders its markdown instead of printing backticks.
+- **Aborted sub-agents were ticked.** A member cut off or out of turns before it wrote anything is
+  `stopped` (`~`), not done; a "No" on the approval card is drawn as a choice, not a red failure;
+  "partial work kept" is said only when files changed.
+- **One Backspace after an emoji left half of it.** The composer edits by character.
+
+### Changed
+
+- **Two presses of Esc stop a run.** The first says `esc again to stop`; the second, within two
+  seconds, stops it. Esc out of a sub-agent's transcript steps back to the agents, so leaving a
+  pane can no longer interrupt the run and throw its members' findings away.
+- **Ctrl+L redraws the screen.** It used to erase the session's transcript; `/clear` still clears.
+
 ## [1.4.15] - 2026-10-22
 
 **`done` counts only real failures — found by Rune's live run on its own source.** A patch on

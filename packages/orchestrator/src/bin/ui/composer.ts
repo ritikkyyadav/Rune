@@ -74,6 +74,8 @@ export interface ComposerStatus {
   /** Something is typed in the field: `?` would type a `?`, not open the sheet,
    *  and mid-turn enter/esc act on the draft. */
   drafting?: boolean;
+  /** Esc was pressed once over the running turn; the next press stops it. */
+  stopArmed?: boolean;
   /** The keys are on the agents (the row, the cards, an open transcript)
    *  rather than on the field, and this is their legend. It replaces the
    *  field's own keys: from there `esc` goes back, and does nothing else. */
@@ -278,7 +280,11 @@ export function statusLine(s: ComposerStatus, width = process.stdout.columns || 
   const keys = s.focusKeys
     ? faint(s.focusKeys)
     : s.streaming
-      ? faint(s.drafting ? `enter sends${sep}esc clears` : "esc stop")
+      ? s.drafting
+        ? faint(`enter sends${sep}esc clears`)
+        : s.stopArmed
+          ? warn("esc again to stop")
+          : faint("esc stop")
       : s.drafting
         ? ""
         : [s.folds ? keyHint("ctrl+o", "open") : "", keyHint("?", "keys")]

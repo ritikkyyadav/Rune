@@ -111,7 +111,7 @@ import {
 } from "./composer";
 import { RUNE_MARK, renderBanner } from "./banner";
 import { WorkGlyph, paintGlyph } from "./waveform";
-import { FRAME_MS, stagedRow } from "./working";
+import { FRAME_MS, stagedRow, type RestOutcome } from "./working";
 import { notifyWarp } from "./warp";
 import { Glide, setTitle, clearTitle, type TitleBeat } from "./title";
 import { renderReadBack, renderClose } from "./read-back";
@@ -217,52 +217,77 @@ export interface PermissionKeyAction {
   handled: boolean;
 }
 
+/** Two presses of esc (or ctrl+c) stop a running turn; this is how long the
+ *  first one waits for the second (founder decision 2026-10-26,
+ *  docs/program/ui-decision-20261026-trust-fixes.md). */
+export const STOP_CONFIRM_MS = 2000;
+/** The approval card takes no digit and no enter until it has been up this
+ *  long: a card that opens mid-sentence must not be answered by the sentence. */
+export const PERM_ARM_MS = 500;
+/** ...nor until this long after the last key typed... */
+export const PERM_QUIET_MS = 500;
+/** ...or this long when a message is already half written in the composer. */
+export const PERM_QUIET_DRAFT_MS = 1500;
+
+/** When the card may take an answer, as permKey measures it. */
+export interface PermissionGuard {
+  /** Up long enough, and nothing typed recently enough (PERM_* above). */
+  armed?: boolean;
+  /** Something is typed in the composer. */
+  drafting?: boolean;
+}
+
 /**
  * Pure reducer so the highlighted approval row and the resolved action cannot
  * drift apart. `choiceCount` is 2 on circuit-breaker cards, which offer no
  * session grant: [allow once, deny] instead of [allow once, session, deny].
+ *
+ * Only digits, the arrows, enter and esc act on the card (founder decision
+ * 2026-10-26). Letters used to answer it -- `y` once, `a` or `s` for the whole
+ * session -- and Rune invites typing ahead while it works, so a sentence typed
+ * as the card opened ("build it as json") granted shell commands for the rest
+ * of the session on its first `a`. A letter is never an answer now: it comes
+ * back unhandled, and the caller puts it in the composer with the rest of what
+ * was being typed. Shift+Tab, which also granted the session, moves the
+ * selection like Tab.
+ *
+ * Not armed -- the card only just opened, or keys are still arriving -- a
+ * digit is typing (unhandled) and enter does nothing, so neither can answer
+ * the card mid-sentence. With a message in the composer enter never answers:
+ * it is the key that would have sent the message. Esc and ctrl+c always
+ * decline; refusing is the safe thing to do by accident.
  */
 export function permissionKeyAction(
   key: Key,
   selected: number,
   choiceCount: 2 | 3 = 3,
+  guard: PermissionGuard = {},
 ): PermissionKeyAction {
+  const armed = guard.armed !== false;
   const kinds: Array<UserPermissionDecision["kind"]> =
     choiceCount === 3 ? ["allow_once", "allow_session", "deny"] : ["allow_once", "deny"];
   const current = Math.max(0, Math.min(choiceCount - 1, selected));
-  if (key.type === "up" || key.type === "left") {
+  if (key.type === "up" || key.type === "left" || key.type === "shift-tab") {
     return { selected: (current + choiceCount - 1) % choiceCount, handled: true };
   }
   if (key.type === "down" || key.type === "right" || key.type === "tab") {
     return { selected: (current + 1) % choiceCount, handled: true };
   }
-
-  let decision: UserPermissionDecision | undefined;
-  if (key.type === "char" && /^[123]$/.test(key.value)) {
-    const choice = Number(key.value) - 1;
-    if (choice < choiceCount) decision = { kind: kinds[choice]! };
-    // A digit past the card's last row is swallowed, not bubbled to the composer.
-    else return { selected: current, handled: true };
-  } else if (key.type === "char" && (key.value === "n" || key.value === "N")) {
-    decision = { kind: "deny" };
-  } else if (
-    key.type === "shift-tab" ||
-    // `a` = "allow for session" per the v2 card's printed shortcut; `s`
-    // (session) remains for muscle memory from earlier releases.
-    (key.type === "char" && /^[sSaA]$/.test(key.value))
-  ) {
-    // No session choice on a 2-row card -- swallow the shortcut so shift-tab
-    // cannot fall through to the gear cycle while a decision is pending.
-    if (choiceCount === 2) return { selected: current, handled: true };
-    decision = { kind: "allow_session" };
-  } else if (key.type === "char" && (key.value === "y" || key.value === "Y")) {
-    decision = { kind: "allow_once" };
-  } else if (key.type === "enter") {
-    decision = { kind: kinds[current]! };
-  } else if (key.type === "esc") {
-    decision = { kind: "deny" };
+  if (key.type === "esc" || (key.type === "ctrl" && key.name === "c")) {
+    return { selected: current, decision: { kind: "deny" }, handled: true };
   }
-  return { selected: current, decision, handled: decision != null };
+  if (key.type === "char" && /^[1-9]$/.test(key.value)) {
+    if (!armed) return { selected: current, handled: false };
+    const choice = Number(key.value) - 1;
+    // A digit past the card's last row is swallowed, not typed.
+    if (choice >= choiceCount) return { selected: current, handled: true };
+    return { selected: current, decision: { kind: kinds[choice]! }, handled: true };
+  }
+  if (key.type === "enter") {
+    if (!armed || guard.drafting) return { selected: current, handled: true };
+    return { selected: current, decision: { kind: kinds[current]! }, handled: true };
+  }
+  return { selected: current, handled: false };
 }
 
 type SessionListItem = ReturnType<Engine["listSessions"]>[number];
@@ -422,6 +447,16 @@ export class Tui {
   streamBuf = "";
   queued: string[] = []; // type-ahead: messages composed mid-turn, run in order on completion
   aborting = false; // an esc/ctrl-c interrupt is in flight (guards the "interrupting..." flood)
+  /** When esc (or ctrl+c) was pressed once over a running turn with nothing
+   *  typed. A second press within STOP_CONFIRM_MS stops the run (turnKey). */
+  stopArmedAt = 0;
+  /** When the composer's text last changed: typing rhythm, read by the
+   *  approval card so a digit or enter typed mid-sentence is not an answer. */
+  lastTypedAt = 0;
+  /** When the open approval card appeared (permKey's arming window). */
+  permOpenedAt = 0;
+  /** How the last turn ended, in the rest row's words (tui-frame.ts). */
+  lastOutcome: RestOutcome | null = null;
   // Warp's badge is showing this pane as blocked on us. Set when we raise an
   // approval or a question, cleared by the first tool call that finishes after
   // -- which is the event that means the answer landed and work resumed. Kept
@@ -780,6 +815,7 @@ export class Tui {
         folds: !this.inline && this.folds.size > 0,
         streaming: this.mode === "turn",
         drafting: this.input.length > 0,
+        stopArmed: this.mode === "turn" && Date.now() - (this.stopArmedAt ?? 0) <= STOP_CONFIRM_MS,
         // With the keys on the agents, `esc` goes BACK. The strip says so --
         // mid-turn it otherwise reads `esc stop`, which is the one thing `esc`
         // will not do from there.
@@ -2604,6 +2640,7 @@ export class Tui {
         preview,
         sel: 0,
       };
+      this.permOpenedAt = Date.now();
       this.mode = "permission";
       // Until this resolves the pane is waiting on a person, not working. Warp
       // shows that as its own badge, which is what pulls someone back to a tab
@@ -2753,8 +2790,18 @@ export class Tui {
   permKey(key: Key): void {
     if (!this.perm) return;
     const choiceCount = this.perm.preview.choices.length === 2 ? 2 : 3;
-    const action = permissionKeyAction(key, this.perm.sel, choiceCount);
-    if (!action.handled) return;
+    const drafting = this.input.length > 0;
+    const now = Date.now();
+    const quiet = drafting ? PERM_QUIET_DRAFT_MS : PERM_QUIET_MS;
+    const armed =
+      now - (this.permOpenedAt ?? 0) >= PERM_ARM_MS && now - (this.lastTypedAt ?? 0) >= quiet;
+    const action = permissionKeyAction(key, this.perm.sel, choiceCount, { armed, drafting });
+    if (!action.handled) {
+      // Not an answer, so it is typing: it goes where typing goes -- the
+      // message being written, kept for after the card -- and the card stays.
+      if (this.editComposer(key)) this.scheduleDraw();
+      return;
+    }
     if (!action.decision) {
       this.perm.sel = action.selected;
       this.scheduleDraw();
@@ -2784,7 +2831,11 @@ export class Tui {
       this.expandWorkLog();
       return;
     }
-    // Esc / Ctrl-C: clear a typed-ahead draft first; with the composer empty, interrupt the turn.
+    // Esc / Ctrl-C: clear a typed-ahead draft first; with the composer empty, the
+    // FIRST press arms the stop and the second, within STOP_CONFIRM_MS, makes it.
+    // One press used to interrupt at once, and esc is also how every pane and
+    // panel is left -- so "one esc too many" out of a sub-agent's transcript
+    // stopped the run and threw its members' findings away.
     if (key.type === "esc" || (key.type === "ctrl" && key.name === "c")) {
       if (this.input.length > 0) {
         this.input = "";
@@ -2793,6 +2844,17 @@ export class Tui {
         return;
       }
       if (!this.aborting) {
+        const now = Date.now();
+        // An unknown arm time is "never armed": a guard that compared against
+        // undefined got NaN, failed the test, and stopped on the FIRST press.
+        if (now - (this.stopArmedAt ?? 0) > STOP_CONFIRM_MS) {
+          this.stopArmedAt = now;
+          this.scheduleDraw();
+          // The strip's "esc again to stop" goes when the window does.
+          setTimeout(() => this.scheduleDraw(), STOP_CONFIRM_MS + 50);
+          return;
+        }
+        this.stopArmedAt = 0;
         if (this.activeLoopId) {
           const cancelled = this.ctx.engine.cancelLoopTask(this.ctx.sessionId, this.activeLoopId);
           if (cancelled.ok)
@@ -3062,6 +3124,9 @@ export class Tui {
     } finally {
       this.lastTurnMs = Math.max(0, Date.now() - this.turnStart);
       turn.finish({ aborted: this.aborting });
+      // The rest row says how this turn ended, not only that it did.
+      this.lastOutcome = turn.restOutcome(this.aborting);
+      this.stopArmedAt = 0;
       this.lastPlanKey = turn.planKey() ?? this.lastPlanKey;
       this.printClose();
       // The event a long run is actually for: Warp raises a notification when
@@ -3535,6 +3600,9 @@ export class Tui {
     } finally {
       this.lastTurnMs = Math.max(0, Date.now() - this.turnStart);
       turn.finish({ aborted: this.aborting });
+      // The rest row says how this turn ended, not only that it did.
+      this.lastOutcome = turn.restOutcome(this.aborting);
+      this.stopArmedAt = 0;
       this.lastPlanKey = turn.planKey() ?? this.lastPlanKey;
       this.printClose();
       // The event a long run is actually for: Warp raises a notification when

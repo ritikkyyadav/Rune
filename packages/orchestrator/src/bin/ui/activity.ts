@@ -526,8 +526,22 @@ function delegationTakeaway(result: string): { text: string; tone: "muted" | "fa
 
 /** A failed call, in one row and one reason. Nothing is hidden and nothing is
  *  padded: the row says which call, the note says what the tool actually said. */
+/** The reason the engine gives a call the person declined on the approval card
+ *  (engine.ts: `reason: "User denied"`). */
+const DECLINED_BY_PERSON = /^User denied\b/;
+
 function failedCall(v: ToolActivityView, name: string): string {
   const reason = firstLine(v.error ?? "failed").trim() || "failed";
+  // A "No" on the approval card is the person's decision, not a failure: it
+  // was drawn as a red cross over "User denied", the same row as a crash.
+  if (DECLINED_BY_PERSON.test(reason)) {
+    return F.toolRow({
+      name,
+      arg: compactTarget(v),
+      status: "none",
+      metric: "skipped, you said no",
+    });
+  }
   // The ledger declining a claim, a question the user did not answer, a
   // citation with nothing behind it: the harness talking, not the tree
   // breaking. One quiet row and the reason, in the neutral tone.
