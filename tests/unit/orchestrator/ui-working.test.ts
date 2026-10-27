@@ -47,7 +47,7 @@ import {
   glyph,
 } from "../../../packages/orchestrator/src/bin/ui/glyphs";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
-import { visLen } from "../../../packages/orchestrator/src/bin/ui/render";
+import { setTermWidthOverride, visLen } from "../../../packages/orchestrator/src/bin/ui/render";
 import { OPENING, VOICE, address } from "../../../packages/orchestrator/src/bin/ui/voice";
 
 /** Whether a rung carries one of a voice set's lines. A bare kind (working,
@@ -492,7 +492,13 @@ import { fleetLedger } from "../../../packages/orchestrator/src/bin/ui/agents-pa
 // One ledger per process, shared by every test file in it: a member left there
 // by another file is drawn on this file's rung, in place of what the rung was
 // about to say. Every test starts from an empty ledger, and leaves one.
-beforeEach(() => fleetLedger.reset());
+// The width override is a process global; a file that drove the frame before
+// this one can leave it at the frame's measure, and the rung here is drawn at
+// whatever is in force. Cleared, the rung is drawn at the window's width.
+beforeEach(() => {
+  fleetLedger.reset();
+  setTermWidthOverride(null);
+});
 afterEach(() => fleetLedger.reset());
 
 /** The live rung, as the frame tick would paint it. */

@@ -7,9 +7,10 @@
  * rung looked identical at four seconds and at four minutes.
  */
 
-import { describe, test, expect } from "bun:test";
+import { afterEach, beforeEach, describe, test, expect } from "bun:test";
 import { TurnRenderer } from "../../../packages/orchestrator/src/bin/ui/turn";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
+import { setTermWidthOverride } from "../../../packages/orchestrator/src/bin/ui/render";
 import type { Pulse } from "../../../packages/orchestrator/src/bin/ui/pulse";
 
 function makeRenderer() {
@@ -84,6 +85,12 @@ describe("live rung liveness", () => {
 });
 
 describe("retries are never silent", () => {
+  // The rung gives its voice up below a 72-column measure, and the width is a
+  // process global another file can leave narrow: pinned here, so what is
+  // measured is the row, not the order the files ran in.
+  beforeEach(() => setTermWidthOverride(100));
+  afterEach(() => setTermWidthOverride(null));
+
   test("a retry rides the rung for as long as it lasts", () => {
     const { r, rung } = makeRenderer();
     r.onEvent({
@@ -98,6 +105,7 @@ describe("retries are never silent", () => {
     } as any);
     expect(rung()).toContain("↻ retry 1");
     // The voice says what the provider did, not that Rune is thinking.
+    expect(r.workingState().voice).toBe("the provider said 529, trying again");
     expect(rung()).toContain("the provider said 529, trying again");
 
     r.onEvent({ type: "retry", provider: "anthropic", model: "m", attempt: 2, of: 3 } as any);

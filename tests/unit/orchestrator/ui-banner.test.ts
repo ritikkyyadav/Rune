@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { renderBanner, wordmark } from "../../../packages/orchestrator/src/bin/ui/banner";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
 import { glyph } from "../../../packages/orchestrator/src/bin/ui/glyphs";
 import * as F from "../../../packages/orchestrator/src/bin/ui/flow";
+import { setTermWidthOverride } from "../../../packages/orchestrator/src/bin/ui/render";
 import * as os from "os";
 
 // Hermetic: the header prints the whole directory coordinate, so the workspace
@@ -11,6 +12,13 @@ import * as os from "os";
 const WORKSPACE = `${os.homedir()}/Projects/sample-app`;
 
 const originalColumns = process.stdout.columns;
+
+// These tests set the WINDOW's width (process.stdout.columns) and read what the
+// header does with it, so no width override may be in force. The override is a
+// process global, and a test elsewhere that drives the frame leaves it at the
+// frame's measure (tui-frame `atWidth` restores to contentCols()); on a runner
+// that ordered that file first, every banner here was drawn at 79 columns.
+beforeEach(() => setTermWidthOverride(null));
 
 afterEach(() => {
   Object.defineProperty(process.stdout, "columns", {
