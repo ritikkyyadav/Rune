@@ -11,8 +11,11 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 
 ## [Unreleased]
 
-**The interface stops destroying work and stops saying `done` when it is not.** From the TUI
-audit of 1.4.15 (285 frames of the real CLI in a pseudo-terminal). Key changes recorded in
+## [1.4.17] - 2026-10-27
+
+**The interface stops destroying work and stops saying `done` when it is not.** A patch on
+1.4.16, from the TUI audit of 1.4.15 (285 frames of the real CLI in a pseudo-terminal). Full
+notes: [`docs/releases/v1.4.17.md`](docs/releases/v1.4.17.md). Key changes recorded in
 [`docs/program/ui-decision-20261026-trust-fixes.md`](docs/program/ui-decision-20261026-trust-fixes.md).
 
 ### Fixed
@@ -1579,7 +1582,8 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.16...HEAD
+[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.17...HEAD
+[1.4.17]: https://github.com/ritikkyyadav/Rune/compare/v1.4.16...v1.4.17
 [1.4.16]: https://github.com/ritikkyyadav/Rune/compare/v1.4.15...v1.4.16
 [1.4.15]: https://github.com/ritikkyyadav/Rune/compare/v1.4.14...v1.4.15
 [1.4.14]: https://github.com/ritikkyyadav/Rune/compare/v1.4.13...v1.4.14

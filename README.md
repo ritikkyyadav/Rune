@@ -77,11 +77,11 @@ Session data is stored locally. Telemetry is off by default.
 
 ## Latest release
 
-[**v1.4.16**](https://github.com/ritikkyyadav/Rune/releases/tag/v1.4.16) adds `/connectors`:
-connect GitHub, Vercel, Supabase, Linear, Notion and 27 more services from a session, each one's
-address and sign-in checked by hand, with pasted tokens kept in your keychain and each
-connector's settings one screen away.
-[Release notes and validation](docs/releases/v1.4.16.md) · [Changelog](CHANGELOG.md)
+[**v1.4.17**](https://github.com/ritikkyyadav/Rune/releases/tag/v1.4.17) makes the interface
+stop destroying work and stop saying `done` when it is not: Option keys and a stray Esc no longer
+erase a draft or stop a run, typing cannot approve a command, each turn ends with how it actually
+ended, sub-agents are named and watched as they work, and a first launch asks which model.
+[Release notes and validation](docs/releases/v1.4.17.md) · [Changelog](CHANGELOG.md)
 
 ## Documentation
 
