@@ -166,7 +166,7 @@ export function formatEvent(ev: AgentTurnEvent | ResearchEvent): string | null {
       // New shape: { reason, trigger } (verification kept failing, or a
       // struggle signal). The legacy PlanRunner { failedStep } shape is gone.
       return F.railRow(
-        `${warn("!")} ${muted(`re-planning -- ${ev.reason ?? "changing approach"}`)}`,
+        `${warn("!")} ${muted(F.receiptOf(["re-planning", ev.reason ?? "changing approach"]))}`,
       );
 
     case "handoff": {

@@ -27,7 +27,14 @@
 import type { AgentTurnEvent } from "@rune/protocol";
 import { verificationOutcome } from "@rune/protocol";
 import type { DelegationEntry } from "../../delegation-replay";
-import { renderToolActivity, renderToolDetail, stepBlock, targetOf, verbOf } from "./activity";
+import {
+  isRoutineTool,
+  renderToolActivity,
+  renderToolDetail,
+  stepBlock,
+  targetOf,
+  verbOf,
+} from "./activity";
 import { formatEvent } from "./events";
 import * as F from "./flow";
 import { glyph } from "./glyphs";
@@ -268,9 +275,25 @@ function callRows(call: {
   error?: string;
   durationMs?: number;
 }): string[] {
-  // This pane is already an explicit inspection. Unlike the lead's timeline,
-  // it has no per-call folds, so retain a bounded excerpt of routine output.
+  // A read or a search is context, not evidence: the lead's transcript sets it
+  // down as one quiet row, and so does this one. It printed the file in a box
+  // instead -- twelve rows of somebody else's source per read, the pane's
+  // whole height spent on what the agent looked at rather than what it did.
+  if (quietCall(call)) return rowsOf(renderToolActivity(call));
+  // A command's output and a diff ARE the evidence, and this pane has no
+  // per-call folds, so it keeps a bounded excerpt of them.
   return rowsOf(renderToolDetail(call, F.BOX_BODY_ROWS) ?? renderToolActivity(call));
+}
+
+/** The calls whose result is what the agent looked at, not what it did. */
+function quietCall(call: { toolName: string; success: boolean }): boolean {
+  if (!call.success) return false;
+  return (
+    isRoutineTool(call.toolName) ||
+    call.toolName === "read_many" ||
+    call.toolName === "web_search" ||
+    call.toolName === "web_fetch"
+  );
 }
 
 /** The head of a call's arguments, as far as they have arrived. */

@@ -205,8 +205,8 @@ describe("the fleet panel — a row per sub-agent, not a count", () => {
 
     const briefs = h
       .rows()
-      .filter((l) => l.includes("scout "))
-      .map((l) => (/(first|second|third) scout/.exec(l) ?? [""])[0]);
+      .map((l) => (/(first|second|third) scout/.exec(l) ?? [""])[0])
+      .filter(Boolean);
     expect(briefs).toEqual(["first scout", "second scout", "third scout"]);
     setTermWidthOverride(undefined as unknown as number);
   });

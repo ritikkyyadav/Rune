@@ -35,7 +35,7 @@ import type {
 } from "@rune/protocol";
 import { assertNeverSoft, describeVerification, verificationOutcome } from "@rune/protocol";
 import { formatError, formatEvent, fmtTokens } from "./events";
-import { Pulse, PULSE_WEIGHT, quietLabel } from "./pulse";
+import { Pulse, PULSE_WEIGHT, QUIET_AFTER_MS, quietLabel } from "./pulse";
 import type { TitleBeat } from "./title";
 import { STROKE_WEIGHT, WorkGlyph, paintGlyph, restGlyph } from "./waveform";
 import {
@@ -248,6 +248,22 @@ function stripWorkerId(note: string): string {
 }
 
 /**
+ * A member's heartbeat without the tag that names the member.
+ *
+ * subagent-events.ts prefixes each projected line with the child's id, for
+ * surfaces that show many members' lines in one place. On the member's own row
+ * the row already names it, and the id was a provider's call id:
+ * `mapper  map the store  ollama_tool_1793066052770_0 read_file s...`.
+ */
+function stripAgentTag(note: string, ids: ReadonlyArray<string | undefined>): string {
+  let out = stripWorkerId(note);
+  for (const id of ids) {
+    if (id && out.startsWith(`${id} `)) out = out.slice(id.length + 1);
+  }
+  return out;
+}
+
+/**
  * What a fleet member is called on screen.
  *
  * The `label` the model wrote for this call, which is the only part of the row
@@ -396,10 +412,15 @@ const ELAPSED_AFTER_MS = 2000;
 
 /** `second pass`, `third pass`, `4th pass`: how many times the run has been
  *  over the same work, counting the first. */
+/**
+ * The run going back over its work, in words. It said `second pass`, and
+ * "pass" is the word a test report uses for success -- `17 pass` and `second
+ * pass` on one row meant two different things. (It also said `21th`.)
+ */
 function passWord(pass: number): string {
-  if (pass === 2) return "second pass";
-  if (pass === 3) return "third pass";
-  return `${pass}th pass`;
+  if (pass === 2) return "second try";
+  if (pass === 3) return "third try";
+  return `try ${pass}`;
 }
 
 /**
@@ -559,8 +580,8 @@ function partialArgs(raw: string): Record<string, unknown> {
  * an unused parameter that two call sites compute a database read for is worse
  * than either drawing it or not carrying it.
  */
-export function userBlock(raw: string): string {
-  return F.asked(raw);
+export function userBlock(raw: string, note?: string): string {
+  return F.asked(raw, note);
 }
 
 export function responseHead(): string {
@@ -726,7 +747,12 @@ export class TurnRenderer {
   /** The person stopped the run. Members still out when it ended are
    *  stopped, not done. */
   private abortedRun = false;
+  /** The answer finish() set down -- the last message, not the turn's
+   *  narration -- for /copy. */
+  private finalAnswer = "";
   private committedErrors = new Set<string>();
+  /** A re-plan row was just set down; the loop's notice repeating it is not. */
+  private replanSaid = false;
   /** Gathering held until news lands -- the commit-at-end path, for a sink
    *  that cannot amend (see flushRoutine). */
   private routineQueue: ToolActivityView[] = [];
@@ -747,7 +773,19 @@ export class TurnRenderer {
    * Insertion-ordered, which is the order the rows were set down in, so
    * finish() closes them top to bottom.
    */
-  private pending = new Map<string, { ref: BlockRef | null; name: string; arg: string }>();
+  private pending = new Map<
+    string,
+    {
+      ref: BlockRef | null;
+      name: string;
+      arg: string;
+      /** What a delegation's row last read, so a tick amends only on change. */
+      painted?: string;
+      /** The member a delegation's row names, kept for the row a call still
+       *  open at the end of the turn is set down as. */
+      member?: { name: string; brief: string; cols: number };
+    }
+  >();
   /** The current run of consecutive gathering rows, as one chamber. */
   private chamber: { views: ToolActivityView[]; refs: BlockRef[] } | null = null;
   /** The model's prose as it streams into the transcript. `plan` is whether
@@ -792,7 +830,11 @@ export class TurnRenderer {
   /** The provider retry in flight, when there is one. A silent retry is a lie
    *  of omission about how long something took and how reliable it was, so it
    *  rides the rung for as long as it lasts. */
-  private retrying: { attempt: number; of: number } | null = null;
+  private retrying: { attempt: number; of: number; status?: number } | null = null;
+  /** Every provider retry this turn, across the gateway's ladder and the
+   *  loop's own: the one number the rung shows. The pair above restarts with
+   *  each ladder, so the rung used to count 2 of 3, 2 of 3, 1 of 3, 3 of 3. */
+  private retries = 0;
   /** The live rung's current frame and when it went up -- see steadyFrame. */
   private frame: SteadyFrame = { kind: "working", phrase: "working", detail: "" };
   private frameAt = 0;
@@ -841,7 +883,7 @@ export class TurnRenderer {
     if (this.downTokens > 0) facts.push(`${fmtTokens(this.downTokens)} tokens`);
     if (this.thinkingMs >= 100) facts.push(`thought for ${(this.thinkingMs / 1000).toFixed(1)}s`);
     return [
-      `  ${bold(text("Work details"))} ${faint(`| ${facts.join(" | ")}`)}`,
+      `  ${bold(text("Work details"))} ${faint(`${glyph("observed")} ${F.receiptOf(facts)}`)}`,
       ...this.workLog.map((entry) => entry.line),
     ].join("\n");
   }
@@ -886,13 +928,37 @@ export class TurnRenderer {
       stage: this.stage(),
       phrase: frame.phrase,
       elapsedMs,
-      voice: voiceLine({
-        kind: frame.kind,
-        elapsedMs,
-        phaseMs: now - this.kindSince,
-        seed: this.startedAt,
-      }),
+      voice:
+        this.honestVoice(frame.kind) ??
+        voiceLine({
+          kind: frame.kind,
+          elapsedMs,
+          phaseMs: now - this.kindSince,
+          seed: this.startedAt,
+        }),
     };
+  }
+
+  /**
+   * What the voice says when the turn is waiting on the PROVIDER rather than
+   * working: the voice walk is written for work in progress, and it went on
+   * rotating "connecting the dots" and "one thought at a time" through a
+   * 45-second silence and a dozen HTTP 500s. Only when nothing else is in
+   * flight -- a running command's silence is the command's, and its own voice
+   * ("letting it run") is true. Null when the ordinary walk is honest.
+   */
+  private honestVoice(kind: WorkingKind): string | null {
+    if (kind === "waiting" || kind === "done") return null;
+    const onTheModel =
+      !this.currentTool && !this.verificationRunning && !this.compacting && this.fleet.size === 0;
+    if (!onTheModel) return null;
+    if (this.retrying) {
+      return this.retrying.status
+        ? `the provider said ${this.retrying.status}, trying again`
+        : "the provider did not answer, trying again";
+    }
+    if (this.pulse.sample().quietMs >= QUIET_AFTER_MS) return "waiting on the model";
+    return null;
   }
 
   /** Where the turn is, for the rung's first word. The harness's own phase,
@@ -1037,10 +1103,18 @@ export class TurnRenderer {
     // blocks already show who is back.
     // (Not beside the selector: there the row's room is the roster's.)
     const proved = blocks && !marked ? newestReceipt(members) : null;
+    // The frame is held for a moment against flicker; a plan step named from it
+    // could be the PREVIOUS step beside the current number ("Map the CLI and
+    // the store · step 2 of 4"). The open step is read now, like its number.
+    const openStep = this.todos.find((item) => item.status === "in_progress")?.content;
+    const frameDetail =
+      frame.detail && this.todos.some((item) => item.content === frame.detail)
+        ? (openStep ?? "")
+        : frame.detail;
     const detail = proved
       ? truncate(`${glyph(proved.receipt.rung)} ${proved.card.name} ${proved.receipt.text}`, 40)
-      : !blocks && frame.detail
-        ? truncate(frame.detail, 36)
+      : !blocks && frameDetail
+        ? truncate(frameDetail, 36)
         : "";
     // Each part carries its own ink: the blocks say by theirs which member is
     // working and which is queued or quiet, and everything else is faint.
@@ -1278,7 +1352,7 @@ export class TurnRenderer {
       return;
     }
     if (!note) return;
-    const clean = stripWorkerId(note);
+    const clean = stripAgentTag(note, [child?.agentId, callId]);
     // The typed tallies are taken in absorbChildEvent, above this gate. They
     // used to be taken HERE, behind `if (!note) return`, which made every count
     // on the card depend on the parent's one-line projection of that event
@@ -1486,6 +1560,67 @@ export class TurnRenderer {
     for (const key of [...this.fleet.keys()]) this.retireFleetMember(key);
   }
 
+  /**
+   * The column one member's name is padded to: the longest name among this
+   * turn's members, held at its high-water mark so a row already set down does
+   * not shift when a shorter sibling finishes -- but never more than ONE cell
+   * past the name itself. `mapper` and `scout` line up; `deploy` beside
+   * `auth-store` does not open a four-space gutter, which is the far-margin
+   * gap the grammar law forbids (ui-grammar.test.ts). A placeholder ordinal
+   * (`agent-1`, before the arguments say who it is) never sets the width.
+   */
+  private nameColsFor(name: string): number {
+    for (const agent of this.fleet.values()) {
+      if (/^agent-\d+$/.test(agent.card.name)) continue;
+      this.nameCols = Math.max(this.nameCols, agent.card.name.length);
+    }
+    return Math.min(this.nameCols, name.length + 1);
+  }
+  private nameCols = 0;
+
+  /**
+   * Each sub-agent's transcript row, kept current while it runs.
+   *
+   * The fixed frame draws ONE live row above the composer, so the per-member
+   * rows `fleetLines` builds never reached the screen there: a fan-out read as
+   * two unchanging `scout` rows for as long as it ran, and the only progress
+   * was two names in boxes. The member's own row in the transcript is where
+   * the eye already is, so that row is the one that moves -- its name, what it
+   * was sent to do, what it is doing now and for how long. A workflow's call
+   * row carries its waves beneath it the same way. Amended only when it reads
+   * differently: the clock moves once a second, the note no faster than the
+   * dwell.
+   */
+  private paintFleetRows(now = Date.now()): void {
+    if (!this.live) return;
+    for (const [callId, open] of this.pending) {
+      if (!open.ref) continue;
+      const member = this.fleet.get(callId);
+      let row: string | null = null;
+      if (member && !member.node) {
+        row = this.fleetRow(member, now);
+        open.member = {
+          name: member.card.name,
+          brief: member.card.brief === member.card.name ? "" : member.card.brief,
+          cols: this.nameColsFor(member.card.name),
+        };
+      } else {
+        const nodes = [...this.fleet.values()].filter(
+          (agent) => agent.node && agent.callId.startsWith(`${callId}:`),
+        );
+        if (nodes.length > 0) {
+          row = [
+            TurnRenderer.provisionalRow(open.name, open.arg),
+            ...this.waveLines(nodes, now),
+          ].join("\n");
+        }
+      }
+      if (row === null || row === open.painted) continue;
+      open.painted = row;
+      this.amendBlock(open.ref, row);
+    }
+  }
+
   private fleetRow(agent: FleetAgent, now: number): string {
     // The heartbeat holds for a beat before it is replaced, for the same reason
     // the rung above it does -- see steadyFrame. The 125ms tick re-renders, so
@@ -1494,12 +1629,15 @@ export class TurnRenderer {
       agent.note = agent.wantNote;
       agent.noteAt = now;
     }
-    // Padded to the longer of the two verbs: a fleet is a LIST, and a list of
-    // mixed scouts and workers whose briefs start one column apart reads as
-    // ragged rather than as a column. (toolRow's own pad is 4 and never shrinks
-    // a name, so this only ever adds the cell `work` is missing.)
+    // Named by the MEMBER, not the tool: a fan-out of two drew two rows called
+    // `scout` while the blocks on the rung said `mapper` and `scout`. Padded
+    // to the longest name in the fleet -- a fleet is a LIST, and briefs that
+    // start one column apart read as ragged rather than as a column. A node
+    // whose brief IS its name says it once.
     const card = agent.card;
-    const verb = (card.kind === "worker" ? "work" : "scout").padEnd(5);
+    const verb = card.name || (card.kind === "worker" ? "work" : "scout");
+    const nameCols = this.nameColsFor(verb);
+    const brief = card.brief === card.name ? "" : card.brief;
     // A queued member has no clock to show, and `0s` beside one that started a
     // moment ago is noise pretending to be data -- the same floor the rung keeps.
     const until = card.endedAt ?? now;
@@ -1516,11 +1654,12 @@ export class TurnRenderer {
         : "";
     switch (card.state) {
       case "queued":
-        return F.toolRow({ name: verb, arg: card.brief, metric: "queued", status: "none" });
+        return F.toolRow({ name: verb, nameCols, arg: brief, metric: "queued", status: "none" });
       case "skipped":
         return F.toolRow({
           name: verb,
-          arg: card.brief,
+          nameCols,
+          arg: brief,
           // Why, not just that: the reason a skipped node did not run is the
           // upstream that did not complete, and it is already on this screen.
           metric: F.receiptOf([
@@ -1535,8 +1674,13 @@ export class TurnRenderer {
         // tick (F.toolRow `unproven`).
         return F.toolRow({
           name: verb,
-          arg: card.brief,
-          metric: F.receiptOf(["stopped early", "no findings", elapsed]),
+          nameCols,
+          arg: brief,
+          metric: F.receiptOf([
+            "stopped early",
+            card.kind === "worker" ? "no report" : "no findings",
+            elapsed,
+          ]),
           status: "unproven",
         });
       case "done":
@@ -1551,11 +1695,12 @@ export class TurnRenderer {
         // would claim the work happened this time, which is the one thing the
         // reader would use the number for.
         if (agent.node?.cached) {
-          return F.toolRow({ name: verb, arg: card.brief, metric: "cached", status: "ok" });
+          return F.toolRow({ name: verb, nameCols, arg: brief, metric: "cached", status: "ok" });
         }
         return F.toolRow({
           name: verb,
-          arg: card.brief,
+          nameCols,
+          arg: brief,
           metric: F.receiptOf([outcome, retrying, steps, checks, reroutes, elapsed]),
           status: card.state === "done" ? "ok" : "fail",
         });
@@ -1563,7 +1708,8 @@ export class TurnRenderer {
       default:
         return F.toolRow({
           name: verb,
-          arg: card.brief,
+          nameCols,
+          arg: brief,
           metric: F.receiptOf([retrying, this.fittedNote(agent, elapsed), elapsed]),
           status: "active",
         });
@@ -1622,8 +1768,15 @@ export class TurnRenderer {
    */
   private fittedNote(agent: FleetAgent, elapsed: string): string {
     if (!agent.note) return "";
-    // rail + mark + verb + the two-space joins around the brief and the receipt.
-    const spent = 2 + 5 + 2 + agent.card.brief.length + 2 + (elapsed ? elapsed.length + 3 : 0);
+    // rail + mark + name column + the two-space joins around the brief and the
+    // receipt.
+    const spent =
+      2 +
+      Math.max(4, this.nameColsFor(agent.card.name)) +
+      2 +
+      agent.card.brief.length +
+      2 +
+      (elapsed ? elapsed.length + 3 : 0);
     const room = F.railWidth() - spent;
     return room >= 12 ? truncate(agent.note, room) : "";
   }
@@ -1710,7 +1863,11 @@ export class TurnRenderer {
       };
     }
     if (this.verificationRunning) return said("running", "checks");
-    if (this.prose.trim()) return said("answering");
+    // A sentence before a call is narration, not the answer: the row said
+    // "answering" before nearly every tool call. Only a reply that runs past one
+    // line, or long enough to be one, is the answer being written.
+    const prose = this.prose.trim();
+    if (prose && (prose.includes("\n") || prose.length > 160)) return said("answering");
     return said("working");
   }
 
@@ -1856,9 +2013,7 @@ export class TurnRenderer {
    */
   private workReceipt(): string[] {
     const parts: string[] = [];
-    if (this.retrying) {
-      parts.push(`${glyph("retry")} ${this.retrying.attempt} of ${this.retrying.of}`);
-    }
+    if (this.retrying) parts.push(`${glyph("retry")} retry ${this.retries}`);
     return parts;
   }
 
@@ -1882,9 +2037,7 @@ export class TurnRenderer {
     // the glyph or the colour, so it survives NO_COLOR and a mono rung.
     const quiet = quietLabel(this.pulse.sample());
     if (quiet) parts.push(quiet);
-    if (this.retrying) {
-      parts.push(`${glyph("retry")} ${this.retrying.attempt} of ${this.retrying.of}`);
-    }
+    if (this.retrying) parts.push(`${glyph("retry")} retry ${this.retries}`);
     // Token counts and reasoning wall-clock are no longer here. They are true,
     // and they are telemetry about the machine rather than news about the
     // work; on a row meant to be watched for an hour they were two more
@@ -1930,6 +2083,7 @@ export class TurnRenderer {
    */
   tick(): void {
     if (this.live && this.proseRef && this.proseDirty) this.paintProse();
+    this.paintFleetRows();
   }
 
   // ── Blocks: commit, and amend in place ──
@@ -2176,14 +2330,24 @@ export class TurnRenderer {
       error: event.output?.error,
       durationMs: event.output?.durationMs,
     };
+    // A delegation's row keeps the name it had while it ran.
+    const member = this.fleet.get(String(event.callId ?? ""));
+    if (member && (name === "task" || name === "worker")) {
+      view.agent = { name: member.card.name, cols: this.nameColsFor(member.card.name) };
+    }
     const rendered = renderToolActivity(view);
     // The work review has no per-call folds. Preserve the expanded file and
     // diff evidence there; bash already appends its output separately below.
     const logBlock = name === "bash" ? rendered : (renderToolDetail(view) ?? rendered);
     this.addLog(logBlock, name === "edit_file" || name === "multi_edit" || name === "apply_patch");
     // The narrative tools draw their rows from the narrative events that
-    // follow them (hypothesis, decision); the call row would say it twice.
-    const narrative = success && (name === "note_hypothesis" || name === "record_decision");
+    // follow them (hypothesis, decision); the call row would say it twice. A
+    // plan update is the same: the plan block above is amended in place by
+    // `todo_updated`, and `plan updated 4 steps` under every update was five
+    // rows of noise saying the block had changed.
+    const narrative =
+      success &&
+      (name === "note_hypothesis" || name === "record_decision" || name === "todo_write");
     // The row this call opened, and only this call's. A result whose id names
     // a row takes that row; a result with no id at all (the legacy unpaired
     // shape) takes the oldest one still open; a result whose id names nothing
@@ -2355,6 +2519,8 @@ export class TurnRenderer {
   onEvent(event: AgentTurnEvent | ResearchEvent): void {
     switch (event.type) {
       case "thinking_delta": {
+        // Output is arriving again: whatever retry was in flight is over.
+        this.retrying = null;
         // Reasoning remains private. The UI communicates intent and evidence
         // instead -- but the time SPENT reasoning is honest turn metadata
         // ("thought for 2.3s"), so accumulate wall-clock across delta bursts.
@@ -2369,6 +2535,9 @@ export class TurnRenderer {
 
       case "text_delta": {
         this.activity = null;
+        // Output is arriving again: whatever retry was in flight is over. Left
+        // set, `retry 1 of 3` stayed on the rung for the rest of a recovered turn.
+        this.retrying = null;
         // A new message, not more of the last one. When the harness asks again
         // after a failed check or a re-plan, the reply arrives with no tool
         // call in between; appended to the buffer, two answers were glued
@@ -2450,6 +2619,7 @@ export class TurnRenderer {
 
       case "tool_call_start": {
         this.heard(0, "callback");
+        this.retrying = null;
         this.settleProse();
         this.currentTool = {
           callId: String(event.callId ?? ""),
@@ -2493,8 +2663,17 @@ export class TurnRenderer {
         // a minute of the screen standing still.
         if (this.live) {
           const name = this.currentTool.name;
-          const ref = this.pushBlock(TurnRenderer.provisionalRow(name, ""));
-          this.pending.set(this.currentTool.callId, { ref, name, arg: "" });
+          const member = this.fleet.get(this.currentTool.callId);
+          const first = member
+            ? this.fleetRow(member, Date.now())
+            : TurnRenderer.provisionalRow(name, "");
+          const ref = this.pushBlock(first);
+          this.pending.set(this.currentTool.callId, {
+            ref,
+            name,
+            arg: "",
+            painted: member ? first : undefined,
+          });
         }
         this.compacting = false;
         this.activity = runningLabel(this.currentTool.name);
@@ -2513,7 +2692,7 @@ export class TurnRenderer {
           // finished saying it -- partialArgs only yields a closed value, so
           // this amends a few times per call, never per token.
           const open = this.pending.get(this.currentTool.callId);
-          if (open?.ref) {
+          if (open?.ref && !this.fleet.has(this.currentTool.callId)) {
             const name = this.currentTool.name;
             const arg = name === "todo_write" ? "" : targetOf(name, this.currentTool.args);
             if (arg && arg !== open.arg) {
@@ -2538,6 +2717,8 @@ export class TurnRenderer {
             fleetName(member),
             deriveChildName(member.card.kind, member.card.brief),
           );
+          // Its row names it the moment the arguments have said who it is.
+          this.paintFleetRows();
         }
         return;
       }
@@ -2690,6 +2871,10 @@ export class TurnRenderer {
           this.addLog(block);
           this.commitTimeline(block);
         }
+        // The loop follows this event with a notice saying the same thing in
+        // other words ("Repeated fixes failed -- asking the agent to re-plan");
+        // one event is one row.
+        this.replanSaid = true;
         this.setPhase("plan");
         return;
       }
@@ -2902,9 +3087,13 @@ export class TurnRenderer {
       // wedged for the length of the backoff with nothing to explain it.
       case "retry": {
         this.heard(0, "callback");
+        this.retries++;
         this.retrying = {
           attempt: Math.max(1, Number(event.attempt ?? 1)),
           of: Math.max(1, Number(event.of ?? 1)),
+          ...(Number.isFinite(Number(event.status)) && Number(event.status) > 0
+            ? { status: Number(event.status) }
+            : {}),
         };
         this.updateLive();
         return;
@@ -2942,6 +3131,18 @@ export class TurnRenderer {
       case "notice":
       case "context_warning": {
         const message = String(event.message ?? "");
+        if (this.replanSaid && /\bre-?plan/i.test(message)) {
+          this.replanSaid = false;
+          this.setPhase("plan");
+          this.updateLive();
+          return;
+        }
+        // The composer set the steer down with its receipt on the message's
+        // own row (tui.ts); the loop's confirmation of it is the same fact.
+        if (/^New message from you folded into the running task/i.test(message)) {
+          this.updateLive();
+          return;
+        }
         if (/verifying changes/i.test(message)) {
           this.verificationRunning = true;
           this.setPhase("verify");
@@ -3088,7 +3289,7 @@ export class TurnRenderer {
    * news: interrupted, ended on a failure nothing repaired, or stopped at a
    * ceiling with the task unfinished.
    */
-  private completionBlock(aborted: boolean): string | null {
+  private completionBlock(aborted: boolean, noResult = false): string | null {
     // A passing code check repairs a failed check, never a terminal provider
     // error. In particular, a check from before the error cannot undo it.
     const failed = this.hardError;
@@ -3133,11 +3334,14 @@ export class TurnRenderer {
     }
     if (!aborted && !failed) return null;
     const mark = aborted ? warn("!") : danger(glyph("failure"));
-    const label = aborted ? "interrupted" : "stopped on an error";
+    // The rest row's own words, so the two cannot disagree.
+    const label = aborted ? "stopped by you" : "stopped on an error";
     // "partial work kept" is a claim about the tree, so it is made only when the
-    // run changed something: an interrupt before any edit kept nothing.
+    // run changed something: an interrupt before any edit kept nothing. And a
+    // stop that came before any answer says so on this same row -- it was a
+    // second notice of its own.
     const kept = aborted && this.editedFiles.size > 0 ? ["partial work kept"] : [];
-    const meta = [...this.workReceipt(), ...kept];
+    const meta = [...this.workReceipt(), ...kept, noResult ? "before a result was ready" : ""];
     return F.flowRow(`${F.MARK}${mark} ${text(label)}`, faint(F.receiptOf(meta)));
   }
 
@@ -3149,6 +3353,11 @@ export class TurnRenderer {
    * turn: after failing checks, a dozen provider errors, a rejected key, and
    * the person pressing esc.
    */
+  /** The final answer of this turn, as the model wrote it (markdown). */
+  answerText(): string {
+    return this.finalAnswer;
+  }
+
   restOutcome(aborted: boolean): RestOutcome {
     if (aborted || this.abortedRun) return { word: "stopped by you", tone: "warn" };
     const latestCheck = [...this.checks].reverse().find((check) => check.status !== "not-run");
@@ -3252,6 +3461,7 @@ export class TurnRenderer {
     this.sink.preview?.(null);
 
     const answer = this.prose.trim();
+    this.finalAnswer = answer;
     const aborted = options.aborted === true;
     // A stop with members still out retires them here, as stopped: nothing
     // else would, when the run ends without a turn_complete.
@@ -3263,14 +3473,29 @@ export class TurnRenderer {
     // rather than saying `running` forever.
     for (const open of this.pending.values()) {
       if (!open.ref) continue;
+      // A member still out is set down by its own name, as what it is: back
+      // without a result, the suspected tilde -- not a neutral `interrupted`
+      // under the tool's verb.
+      const member = open.member;
       this.amendBlock(
         open.ref,
-        F.toolRow({
-          name: verbOf(open.name),
-          arg: open.arg,
-          status: "none",
-          metric: aborted ? "interrupted" : "no result",
-        }),
+        member
+          ? F.toolRow({
+              name: member.name,
+              nameCols: member.cols,
+              arg: member.brief,
+              status: "unproven",
+              metric: F.receiptOf([
+                aborted ? "stopped early" : "no result",
+                open.name === "worker" ? "no report" : "no findings",
+              ]),
+            })
+          : F.toolRow({
+              name: verbOf(open.name),
+              arg: open.arg,
+              status: "none",
+              metric: aborted ? "interrupted" : "no result",
+            }),
       );
     }
     this.pending.clear();
@@ -3285,7 +3510,7 @@ export class TurnRenderer {
       this.commitTimeline(this.latestPlan);
     }
     if (this.worked || this.errored || aborted || this.verificationRunning || this.stoppedEarly) {
-      const closing = this.completionBlock(aborted);
+      const closing = this.completionBlock(aborted, aborted && !answer);
       if (closing) this.commitTimeline(closing);
     }
     if (answer) {
@@ -3302,8 +3527,8 @@ export class TurnRenderer {
         this.sink.commit(responseBlock(answer), undefined, reflow);
       }
     } else if (aborted) {
+      // The closing row above already says it stopped before a result.
       if (this.proseRef && this.proseRef.handle >= 0) this.amendBlock(this.proseRef, "");
-      this.sink.commit(`\n${F.MARK}${warn("!")} ${muted("stopped before a result was ready")}\n`);
     }
     this.proseRef = null;
     const summary = this.summaryBlock();

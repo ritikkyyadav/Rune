@@ -47,6 +47,20 @@ export interface ConfigSetting {
    * so the tool always says so plainly. The confirmation prompt is the real gate.
    */
   sensitive?: boolean;
+  /** What the settings page calls it, when the key is not a word a person
+   *  would use (`budget` is a spend cap; `gear` is permissions). */
+  label?: string;
+  /**
+   * Shown on the first page of `/config`. The rest -- the controller, the
+   * evidence gate, routing, the doctrine -- are the harness's own dials and
+   * wait behind Advanced: a first page of twenty-seven rows, ten visible at
+   * 80x24, read as a debugger rather than as settings.
+   */
+  everyday?: boolean;
+  /** A value in words, for the settings page (`3` is `3rd gear ...`). */
+  valueLabels?: Record<string, string>;
+  /** A number that is money, shown as `$5` rather than `5`. */
+  unit?: "usd";
 }
 
 export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
@@ -56,14 +70,20 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     kind: "number",
     min: 0,
     max: 10000,
+    zeroMeans: "no limit",
+    valueAliases: { none: "0", off: "0", unlimited: "0", "no limit": "0" },
     description:
       "Session limit in USD at list rates, including workers, compaction and safety review. 0 = no limit; already in-flight calls may finish.",
-    nameAliases: ["session budget", "cost cap"],
+    nameAliases: ["session budget", "cost cap", "spend cap"],
     live: true,
+    label: "spend cap",
+    everyday: true,
+    unit: "usd",
   },
   {
     key: "memory",
     tomlPath: "memory.mode",
+    everyday: true,
     kind: "enum",
     values: ["off", "auto", "manual"],
     valueAliases: {
@@ -103,6 +123,8 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
   {
     key: "subagent_budget",
     tomlPath: "subagents.costCapUsd",
+    label: "sub-agent spend cap",
+    unit: "usd",
     kind: "number",
     min: 0.01,
     max: 1000,
@@ -162,6 +184,7 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
   {
     key: "turns",
     tomlPath: "reliability.maxTurns",
+    label: "turn ceiling",
     kind: "number",
     min: 8,
     max: 1000,
@@ -193,6 +216,16 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
   {
     key: "gear",
     tomlPath: "permissions.gear",
+    label: "permissions",
+    everyday: true,
+    // The status line's own words for each gear (bin/ui/composer.ts modeInfo).
+    valueLabels: {
+      "1": "1st gear -- every action asks first",
+      "2": "2nd gear -- workspace edits proceed",
+      "3": "3rd gear -- edits + sandboxed shell",
+      "4": "4th gear -- never asks first",
+      auto: "Auto mode -- a reviewer checks risky steps",
+    },
     description:
       "Which gear Rune runs in: 1 = guided (asks before writes and commands); 2 = workspace " +
       "file edits proceed; 3 = also sandboxed commands and confined delegation; 4 = full " +
@@ -282,6 +315,12 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
   {
     key: "sandbox",
     tomlPath: "sandbox.mode",
+    everyday: true,
+    valueLabels: {
+      "auto-allow": "auto-allow -- sandboxed, no prompt",
+      regular: "regular -- sandboxed, asks as the gear does",
+      off: "off -- full host access",
+    },
     description:
       "How shell commands run. auto-allow (default): inside the OS sandbox (no network, " +
       "workspace-confined writes) and approved without a prompt in 3rd gear and Auto. " +
@@ -553,6 +592,11 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
   {
     key: "layout",
     tomlPath: "ui.layout",
+    everyday: true,
+    valueLabels: {
+      single: "single column",
+      split: "split -- a right column beside the transcript",
+    },
     kind: "enum",
     values: ["single", "split"],
     valueAliases: {
@@ -677,6 +721,29 @@ export function settingTomlValue(
 }
 
 /** How a canonical value reads back to the user (boolean → on/off). */
+/** What the settings page calls a setting. */
+export function settingLabel(setting: ConfigSetting): string {
+  return setting.label ?? setting.key.replaceAll("_", " ");
+}
+
+/**
+ * A value as the settings page says it: in words. `0` on the spend cap is "no
+ * limit" (the page said `0`, which reads as a cap of nothing), an empty
+ * controller authority is "none", a gear is the status line's own phrase. The
+ * text forms (`/config budget 0`, the update_config tool) keep the canonical
+ * value beside its meaning -- see displaySettingValue -- because that is what
+ * gets typed back.
+ */
+export function settingInWords(setting: ConfigSetting, canonical: string): string {
+  if (setting.kind === "boolean") return canonical === "true" ? "on" : "off";
+  if (setting.zeroMeans && canonical === "0") return setting.zeroMeans;
+  const label = setting.valueLabels?.[canonical];
+  if (label) return label;
+  if (setting.kind === "text" && !canonical.trim()) return "none";
+  if (setting.unit === "usd" && canonical.trim()) return `$${canonical}`;
+  return canonical;
+}
+
 export function displaySettingValue(setting: ConfigSetting, canonical: string): string {
   if (setting.kind === "boolean") return canonical === "true" ? "on" : "off";
   if (setting.zeroMeans && canonical === "0") return `0 (${setting.zeroMeans})`;

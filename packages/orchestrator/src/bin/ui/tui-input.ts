@@ -345,12 +345,11 @@ export const INPUT_METHODS = {
     }
     if (this.mode === "review") {
       const log = this.liveTurn?.fullLog() ?? this.reviewLog ?? `  ${faint("No work details yet")}`;
-      return renderWorkReview(
-        log,
-        this.reviewTop,
-        this.contentCols(),
-        Math.max(4, rowsCount() - 1),
-      );
+      // The rows the frame actually gives this block. It used the whole
+      // window, the frame cut the review to fit under the header, and the
+      // screen said `195-220 of 220` above `... 3 more lines below`.
+      this.reviewRows = Math.max(4, height);
+      return renderWorkReview(log, this.reviewTop, this.contentCols(), this.reviewRows);
     }
     if (this.mode === "turn") {
       // The composer stays live while a turn streams so the next message can be typed ahead.
@@ -459,7 +458,7 @@ export const INPUT_METHODS = {
       (this.mode === "input" || this.mode === "turn")
     ) {
       const fold = this.inline ? undefined : this.folds.newest();
-      if (fold) this.toggleFold(fold);
+      if (fold) this.toggleFold(fold, true);
       else this.expandWorkLog();
       return;
     }
@@ -1074,10 +1073,13 @@ export const INPUT_METHODS = {
           this.exit(0);
           return;
         }
+        // The hint is the status line's, for as long as it is true. Printed,
+        // it stayed in the transcript forever, long after it stopped being so.
         this.sigintArmed = true;
-        this.print(`  ${faint("(ctrl-c again to exit)")}`);
+        this.scheduleDraw();
         setTimeout(() => {
           this.sigintArmed = false;
+          this.scheduleDraw();
         }, 2000);
         break;
       case "d":

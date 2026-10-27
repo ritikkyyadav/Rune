@@ -21,6 +21,12 @@ def boot(s):
         raise AssertionError("Rune did not reach its startup screen")
     s.pump(1.5)
 
+def low(s):
+    return text(s).lower()
+
+def rows_with(s, *needles):
+    return [r for r in text(s).split("\n") if all(n in r for n in needles)]
+
 def ask(s, prompt):
     s.send(prompt, settle=0.4); s.send(CR, settle=0.2)
 
@@ -70,7 +76,7 @@ elif CASE == "midturn":
         ask(s, "read the cli")
         s.pump(3.0)
         s.send(b"\x1bf", settle=1.5)
-        check("Option+right mid-run does not stop the run", "interrupting" not in text(s), s)
+        check("Option+right mid-run does not stop the run", "interrupting" not in low(s), s)
         check("and types nothing into the composer", not composer_line(s).startswith("› f"), s)
         ok = wait_text(s, "the CLI parses two flags", 60)
         s.pump(12)
@@ -97,20 +103,37 @@ elif CASE == "agents":
     try:
         boot(s)
         ask(s, "figure out how sessions are stored and who uses them")
-        wait_text(s, "investigations", 60); s.pump(3.0)
+        wait_text(s, "investigations", 60); s.pump(2.0)
+        save(s, OUT, "agents-running")
+        # Each member has its own live row in the transcript, named by it.
+        mapper = rows_with(s, "mapper", "map the store")
+        check("each agent's row is named by the agent", bool(mapper) and bool(rows_with(s, "scout", "find the callers")), s)
+        check("not by the tool's verb", not rows_with(s, "scout", "map the store"), s)
+        # The children's first step stalls five seconds; then the row moves.
+        doing = lambda: [r for r in rows_with(s, "mapper", "map the store")
+                         if any(w in r for w in ("read", "grep", "list", "src/"))]
+        end = time.monotonic() + 15
+        while time.monotonic() < end and not doing():
+            s.pump(0.5)
+        save(s, OUT, "agents-working")
+        check("and says what it is doing now", bool(doing()), s)
         s.send(RIGHT, settle=0.8); s.send(CR, settle=1.5)
         check("an agent's transcript opens", "── " in text(s) and "esc back" in text(s), s)
         s.send(ESC, settle=0.8); s.send(ESC, settle=0.8)
-        check("two Escs out of an agent's transcript do not stop the run", "interrupting" not in text(s), s)
+        check("two Escs out of an agent's transcript do not stop the run", "interrupting" not in low(s), s)
         s.send(ESC, settle=0.5)
         check("the first Esc on the composer only arms the stop, and says so",
-              "esc again to stop" in text(s) and "interrupting" not in text(s), s)
+              "esc again to stop" in text(s) and "interrupting" not in low(s), s)
         save(s, OUT, "agents-armed")
-        s.send(ESC, settle=2.0)
-        check("the second Esc stops the run", "interrupting" in text(s), s)
+        s.send(ESC, settle=0.6)
+        check("the second Esc stops the run", "interrupting" in low(s) or "stopped by you" in low(s), s)
         s.pump(6.0)
         save(s, OUT, "agents-stopped")
         check("the rest row says stopped by you", "stopped by you" in rest_row(s), s)
+        check("stopped agents are set down by name, as stopped",
+              bool(rows_with(s, "mapper", "stopped early")) and bool(rows_with(s, "scout", "stopped early")), s)
+        closing = [r for r in text(s).split("\n")[3:-6] if r.strip().startswith("! ")]
+        check("the stop is one closing row, not three (got %d)" % len(closing), len(closing) == 1, s)
         s.send(b"\x06", settle=1.0)
         save(s, OUT, "agents-cards")
         cards = text(s)
@@ -208,6 +231,74 @@ elif CASE == "glue":
         check("no two answers glued mid-sentence", "there.--version" not in joined and "there.`--version" not in joined, s)
         heads = [r for r in joined.split("\n") if "◇" in r and "now print the version" in r]
         check("every answer headline is rendered (no raw backticks)", heads and all("`" not in h for h in heads), s)
+    finally:
+        s.close(); mock.stop()
+
+elif CASE == "first":
+    # A first launch with nothing connected: screens and Esc only. Never a
+    # route, never the key step -- that writes the real login keychain.
+    import shutil
+    shutil.rmtree(SCR, ignore_errors=True)
+    rig.SCRATCH = SCR
+    rig.PROFILE = os.path.join(SCR, "profile")
+    rig.WORK = os.path.join(SCR, "code", "lantern")
+    os.makedirs(rig.PROFILE, exist_ok=True)
+    os.makedirs(rig.WORK, exist_ok=True)
+    with open(os.path.join(rig.PROFILE, "config.toml"), "w") as fh:
+        fh.write("[update]\ncheck = false\n")
+    with open(os.path.join(rig.PROFILE, "telemetry.json"), "w") as fh:
+        fh.write('{"v":1,"installId":null,"decision":"denied","decidedAt":"2026-09-10T00:00:00.000Z","lastHeartbeat":null}\n')
+    s = session(24, 80)
+    try:
+        ok = wait_text(s, "needs a model", 40)
+        s.pump(1.0)
+        save(s, OUT, "first-open")
+        t = text(s)
+        check("the first screen asks which model, in plain words", ok, s)
+        check("three ways in, and web search waits",
+              all(w in t for w in ("Subscription", "API key", "Offline")) and "Web search" not in t, s)
+        check("no configuration debugger", "in force" not in t and "flag > env" not in t, s)
+        s.send(ESC, settle=1.2)
+        save(s, OUT, "first-esc")
+        check("Esc says nothing runs until a model is connected", "no model yet" in text(s), s)
+        check("the status line names no model, not a keyless default",
+              "no model" in text(s).split("\n")[-1] or "no model" in "\n".join(text(s).split("\n")[-2:]), s)
+        s.send("hello there", settle=0.5); s.send(CR, settle=1.5)
+        save(s, OUT, "first-send")
+        check("a message sent with no model is held, and says why", "connect a model first" in text(s), s)
+        s.send(ESC, settle=1.0)
+        check("and it is still in the composer", "hello there" in composer_line(s), s)
+        save(s, OUT, "first-final")
+    finally:
+        s.close()
+
+elif CASE == "config":
+    mock = MockModel(Script({}, Step("ok")))
+    setup(SCR, mock.port)
+    s = session(24, 80)
+    try:
+        boot(s)
+        s.send("/config", settle=0.4); s.send(CR, settle=1.5)
+        save(s, OUT, "config-open")
+        t = text(s)
+        check("/config opens on Settings", "settings" in low(s), s)
+        check("the spend cap says no limit, in words", bool(rows_with(s, "spend cap", "no limit")), s)
+        check("permissions say the gear in words", bool(rows_with(s, "permissions", "3rd gear")), s)
+        check("the harness dials wait behind Advanced",
+              "Advanced" in t and "shadow controller" not in t and "evidence gate" not in t, s)
+        s.send(ESC, settle=0.8)
+    finally:
+        s.close(); mock.stop()
+
+elif CASE == "small":
+    mock = MockModel(Script({}, Step("ok")))
+    setup(SCR, mock.port)
+    s = session(12, 60)
+    try:
+        boot(s)
+        save(s, OUT, "small-60x12")
+        t = text(s)
+        check("a 60x12 window draws the frame, not the refusal", "needs 60x" not in t and "describe a change" in t, s)
     finally:
         s.close(); mock.stop()
 

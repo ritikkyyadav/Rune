@@ -96,16 +96,52 @@ describe("retries are never silent", () => {
       waitMs: 1000,
       reason: "overloaded",
     } as any);
-    expect(rung()).toContain("↻ 1 of 3");
+    expect(rung()).toContain("↻ retry 1");
+    // The voice says what the provider did, not that Rune is thinking.
+    expect(rung()).toContain("the provider said 529, trying again");
 
     r.onEvent({ type: "retry", provider: "anthropic", model: "m", attempt: 2, of: 3 } as any);
-    expect(rung()).toContain("↻ 2 of 3");
+    expect(rung()).toContain("↻ retry 2");
+    // A second ladder restarts its own count; the rung's only goes up. It
+    // used to read 2 of 3, 2 of 3, 1 of 3, 3 of 3 through one outage.
+    r.onEvent({ type: "retry", provider: "anthropic", model: "m", attempt: 1, of: 3 } as any);
+    expect(rung()).toContain("↻ retry 3");
+  });
+
+  test("a silent model is said as waiting on it, not as thinking", () => {
+    const { r, rewind } = makeRenderer();
+    rewind(5_000);
+    // The voice walk ("connecting the dots", "one thought at a time") ran
+    // through a 45-second silence; nothing was arriving, and the row said so
+    // only in the small `quiet 39s`.
+    expect(r.workingState().voice).toBe("waiting on the model");
+  });
+
+  test("a running command's silence keeps the command's own voice", () => {
+    const { r, rewind } = makeRenderer();
+    r.onEvent({ type: "tool_call_start", callId: "b1", toolName: "bash" } as any);
+    r.onEvent({
+      type: "tool_call_args_delta",
+      callId: "b1",
+      partialJson: JSON.stringify({ command: "bun test" }),
+    } as any);
+    rewind(5_000);
+    expect(r.workingState().voice).not.toBe("waiting on the model");
+  });
+
+  test("output arriving again ends the retry on the rung", () => {
+    const { r, rung } = makeRenderer();
+    r.onEvent({ type: "retry", provider: "anthropic", model: "m", attempt: 1, of: 3 } as any);
+    expect(rung()).toContain("↻");
+    r.onEvent({ type: "text_delta", text: "Recovered and answering." } as any);
+    expect(rung()).not.toContain("↻");
+    expect(rung()).not.toContain("trying again");
   });
 
   test("switching provider ends that provider's ladder", () => {
     const { r, rung } = makeRenderer();
     r.onEvent({ type: "retry", provider: "anthropic", model: "m", attempt: 2, of: 3 } as any);
-    expect(rung()).toContain("↻ 2 of 3");
+    expect(rung()).toContain("↻ retry 1");
     r.onEvent({
       type: "fallback",
       from: { provider: "anthropic", model: "m" },

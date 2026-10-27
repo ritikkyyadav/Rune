@@ -40,6 +40,35 @@ audit of 1.4.15 (285 frames of the real CLI in a pseudo-terminal). Key changes r
   `stopped` (`~`), not done; a "No" on the approval card is drawn as a choice, not a red failure;
   "partial work kept" is said only when files changed.
 - **One Backspace after an emoji left half of it.** The composer edits by character.
+- **The working row invented progress.** During a silence it rotated phrases ("thinking this
+  through"), and during an outage it said "one thought at a time". When nothing arrives it now
+  says `waiting on the model`; while a provider error is retried it names the error ("the provider
+  said 529, trying again"); and the retry count runs across the whole turn instead of restarting
+  per loop.
+- **Errors lost the part you need.** A long error keeps its start and its end over two or three
+  rows instead of being cut at the right edge, and workspace paths are shown relative.
+- **Edit previews showed unchanged lines.** A preview leads with the changed lines and one line of
+  context; `ctrl+o` scrolls to the fold it opened.
+- **Copying code copied its frame.** Code blocks keep their top and bottom rules and drop the side
+  borders and padding, so a selection is the code. `/copy` puts the last answer's code block (or
+  `/copy all`, the whole answer) on the clipboard.
+- **Added lines failed contrast.** Syntax colours on the added and removed bands are lifted to at
+  least 4.5:1 against the band, and `/diff` uses the same ink. The band colours are unchanged.
+- **A fan-out of sub-agents was a black box.** Each member's transcript row is named by the member
+  and shows what it is doing now and for how long, updated in place. A member that came back with
+  nothing reads `~ mapper  map the store  stopped early · no findings` rather than the raw
+  `INCOMPLETE` banner, and a member still out when the run is stopped is set down the same way. In a
+  sub-agent's own transcript a read is one row, as in the lead's, instead of the file in a box.
+- **Smaller fixes from the same audit.** One separator (`·`) in receipts; box footers no longer
+  carry the word `observed`; a re-plan, a steer and a stop each make one row; `ctrl+c again to exit`
+  is a status-line hint instead of a transcript line; `second pass` is `second try`; the check
+  parser's harness phrasing is plain English; the work review's own counter agrees with the frame;
+  an answered question keeps its question, and an ask with several questions keeps every answer;
+  hints and descriptions are cut at a word; a plan update no longer adds a `plan updated` row;
+  `1 line`; `/status` opens with a title instead of a second masthead, and an unspent session says
+  `nothing spent yet` (a subscription's tokens say what they would cost `at list prices`); the model
+  picker marks the row in use once and points to `/login`; the session picker says how long ago a
+  session was instead of its event count; the dashboard tip is not offered after a failed run.
 
 ### Changed
 
@@ -47,6 +76,22 @@ audit of 1.4.15 (285 frames of the real CLI in a pseudo-terminal). Key changes r
   seconds, stops it. Esc out of a sub-agent's transcript steps back to the agents, so leaving a
   pane can no longer interrupt the run and throw its members' findings away.
 - **Ctrl+L redraws the screen.** It used to erase the session's transcript; `/clear` still clears.
+- **A first launch asks which model.** With nothing connected, Rune opens the connect picker
+  (subscription, API key, local model) instead of the six-step setup wizard, which `/setup` still
+  opens. Esc says that nothing runs until a model is connected; a message sent before then stays
+  in the composer while the picker opens again; and the status line says `no model -- /login`
+  instead of naming a default model that has no key.
+- **`/config` is a short Settings page.** Model, keys, theme, permissions, memory, spend cap,
+  sandbox, layout and browser, with values in words: a spend cap of 0 is `no limit`, and gear 3 is
+  `3rd gear -- edits + sandboxed shell`. The harness's own dials (the controller, the evidence
+  gate, routing, the doctrine) are under Advanced.
+- **The frame draws down to 60×12.** It refused anything under 16 rows, which ruled out short IDE
+  panels and splits.
+
+### Added
+
+- **`/copy`**: the last answer's code block, or the whole answer with `/copy all`, through the
+  system clipboard or the terminal's OSC 52.
 
 ## [1.4.16] - 2026-10-26
 

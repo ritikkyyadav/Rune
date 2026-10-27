@@ -1,6 +1,6 @@
 # TUI trust checks
 
-Replay the seven scenarios from the October 2026 interface audit in real pseudo-terminals:
+Replay the scenarios from the October 2026 interface audit in real pseudo-terminals:
 
 ```sh
 python3 scripts/tui-capture/trust/run.py /tmp/rune-trust-evidence
@@ -17,6 +17,9 @@ called. The agent scenario exercises Rune's own child-session behavior against t
 
 The checks cover word editing, Option keys during a run, stepping back from agent panes, deliberate
 stop confirmation, typing on approval cards, declined actions, terminal outcomes, separate replies,
-rendered Markdown and Ctrl+L preserving the transcript. Text and HTML frames accompany the logs.
+rendered Markdown and Ctrl+L preserving the transcript; then each sub-agent's live row and how a
+stopped one is set down, a first launch with nothing connected (screens and Esc only -- the rig
+never selects a route, so the key step and the login keychain are never reached), the Settings
+page, and a 60x12 window. Text and HTML frames accompany the logs.
 Any failed assertion, crash or timeout makes the runner fail; a successful process exit alone is
 not the proof. Unit tests cover additional event sequences and the paste-to-approval guard.

@@ -333,11 +333,12 @@ describe("reaching a sub-agent while the turn is running", () => {
     const header = frame.find((row) => row.includes("planner") && row.includes("esc back"));
     expect(header).toBeDefined();
     const text = frame.join("\n");
-    // What it was asked, what it said, and what it ran -- with the path.
+    // What it was asked, what it said, and what it ran -- with the path, as
+    // the lead's own quiet row: a read says what was read, not the file.
     expect(text).toContain("Brief for planner.");
     expect(text).toContain("Reading the settings table.");
-    expect(text).toContain("src/config-settings.ts");
-    expect(text).toContain("export const A = 1;");
+    expect(text).toContain("read  src/config-settings.ts");
+    expect(text).not.toContain("export const A = 1;");
     // The lead's own transcript gave the workspace up.
     expect(text).not.toContain("lead row one");
   });

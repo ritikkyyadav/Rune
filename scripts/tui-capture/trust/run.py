@@ -1,4 +1,4 @@
-"""Run the seven TUI trust scenarios with local scripted models and real PTYs."""
+"""Run the TUI trust scenarios with local scripted models and real PTYs."""
 import concurrent.futures
 import pathlib
 import subprocess
@@ -6,7 +6,7 @@ import sys
 import tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
-CASES = ("keys", "midturn", "agents", "card", "deny", "outcomes", "glue")
+CASES = ("keys", "midturn", "agents", "card", "deny", "outcomes", "glue", "first", "config", "small")
 out = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else pathlib.Path(tempfile.mkdtemp(prefix="rune-trust-evidence-"))
 out.mkdir(parents=True, exist_ok=True)
 scratch = pathlib.Path(tempfile.mkdtemp(prefix="rune-trust-sessions-"))
