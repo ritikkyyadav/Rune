@@ -346,9 +346,11 @@ export function paintCode(
   /** The syntax palette to paint with; defaults to the theme's. A diff band on
    *  the opposite ground passes the palette that reads there. */
   palette?: RuneBaseName,
+  /** The diff band the line is drawn on, so each token's ink reads there. */
+  band?: "ok" | "danger",
 ): string {
   if (!lang) return base(line);
   return tokenize(line, lang)
-    .map((t) => (t.role ? syntax(t.role, t.text, palette) : base(t.text)))
+    .map((t) => (t.role ? syntax(t.role, t.text, palette, band) : base(t.text)))
     .join("");
 }

@@ -309,10 +309,14 @@ export function formatRunEconomics(e: RunEconomics): CostReportLine[] {
  */
 export function formatCostSummary(b: CostBreakdown): string {
   const tilde = b.hasEstimatedRates ? "~" : "";
+  // `$0.00 value` said nothing twice: on a subscription it is what the tokens
+  // would cost at list prices, and before anything ran it is nothing at all.
   const spend =
     b.totalCostUsd > 0
       ? formatUsd(b.totalCostUsd)
-      : `${tilde}${formatUsd(b.totalListCostUsd)} value`;
+      : b.totalListCostUsd > 0
+        ? `${tilde}${formatUsd(b.totalListCostUsd)} at list prices`
+        : "nothing spent yet";
   if (b.cacheHitRate === null) return spend;
   return `${spend} · cache ${formatCacheRate(b.cacheHitRate)}`;
 }

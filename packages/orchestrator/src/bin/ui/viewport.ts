@@ -111,9 +111,16 @@ const MIN_BODY_ROWS = 1;
 // why it is here and not in the controller: the off-by-one that puts a divider
 // through a diff is a unit test, not a screenshot.
 
-/** Below either, the frame refuses rather than lying by truncation. */
+/**
+ * Below either, the frame refuses rather than lying by truncation.
+ *
+ * Twelve rows, not sixteen: a bottom IDE panel or a short split is often
+ * twelve to fifteen rows high, and those got the refusal screen. At twelve the
+ * single column still has its header, a four-row transcript, the working row,
+ * the composer and the status strip -- small, but every part telling the truth.
+ */
 export const MIN_COLS = 60;
-export const MIN_ROWS = 16;
+export const MIN_ROWS = 12;
 /**
  * The width at which the right column stops earning its cells.
  *

@@ -6,7 +6,7 @@ import { bold, danger, text, muted, info, warn } from "./theme";
 import { modeInfo } from "./composer";
 import { kv } from "./render";
 import * as F from "./flow";
-import { PRODUCT_NAME, PRODUCT_VERSION } from "./brand";
+import { PRODUCT_VERSION } from "./brand";
 
 function shortPath(p: string): string {
   const home = os.homedir();
@@ -162,15 +162,13 @@ export function renderStatus(s: StatusView): string {
   // of the UI dropped when hairlines replaced dash rules -- so a card that
   // called itself "the header, expanded" disagreed with the row pinned at the
   // top of the same window.
-  const mark = F.lockup(PRODUCT_NAME);
-  // Same geometry as flow.header: the pill's own left pad is the second cell
-  // of the indent, so the R lands on column 2 and the heavy rule ends under
-  // the pill's right edge.
-  const gutter = F.MARK.slice(0, -1);
+  // A title, not the wordmark: the header pinned at the top of the window
+  // already says R U N E and the version, and the card printed a second one
+  // into the transcript beneath it.
   return [
     "",
-    `${gutter}${F.row(mark.text, F.versionTag(s.version ?? PRODUCT_VERSION), surface - gutter.length)}`,
-    F.seamRule(surface, mark.cells - 1),
+    `${F.MARK}${F.row(bold(text("Status")), F.versionTag(s.version ?? PRODUCT_VERSION), surface - F.MARK.length)}`,
+    F.hairline(surface),
     ...kvRows.map((row) => `${F.MARK}${row.trimStart()}`),
     F.hairline(surface),
     "",

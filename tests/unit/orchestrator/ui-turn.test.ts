@@ -331,7 +331,7 @@ describe("TurnRenderer — customizer activity stream", () => {
     h.turn.onEvent({ type: "text_delta", text: "Updated the handler." });
     h.turn.finish();
     expect(h.output()).toContain("\u250c edit  src/app.ts");
-    expect(h.output()).toContain("+2 -1 | 1 hunk");
+    expect(h.output()).toContain("+2 -1 \u00b7 1 hunk");
     expect(h.output()).toContain("1 - old");
     expect(h.output()).toContain("1 + new");
     expect(h.output()).toContain("│ changed  1 file");
@@ -518,7 +518,9 @@ describe("TurnRenderer — customizer activity stream", () => {
     const h = harness();
     h.turn.onEvent(toolEnd("read_file", { path: "a.ts" }));
     h.turn.finish({ aborted: true });
-    expect(h.output()).toContain("interrupted");
+    // The rest row's own words, and on the same row that no answer came.
+    expect(h.output()).toContain("stopped by you");
+    expect(h.output()).toContain("before a result was ready");
     expect(h.output()).not.toContain("✓ Done");
   });
 });

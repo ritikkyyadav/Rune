@@ -707,7 +707,7 @@ describe("CommandVerifier — whose failures are these", () => {
     v.beginChanges();
     const r = await v.verify();
     expect(r.status).toBe("failed");
-    expect(why(r.attribution)).toContain("not a test report");
+    expect(why(r.attribution)).toContain("could not read test results");
   });
 
   test("the environment changed during the run: unknown", async () => {

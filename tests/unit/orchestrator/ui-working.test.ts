@@ -47,7 +47,7 @@ import {
   glyph,
 } from "../../../packages/orchestrator/src/bin/ui/glyphs";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
-import { visLen } from "../../../packages/orchestrator/src/bin/ui/render";
+import { setTermWidthOverride, visLen } from "../../../packages/orchestrator/src/bin/ui/render";
 import { OPENING, VOICE, address } from "../../../packages/orchestrator/src/bin/ui/voice";
 
 /** Whether a rung carries one of a voice set's lines. A bare kind (working,
@@ -492,7 +492,13 @@ import { fleetLedger } from "../../../packages/orchestrator/src/bin/ui/agents-pa
 // One ledger per process, shared by every test file in it: a member left there
 // by another file is drawn on this file's rung, in place of what the rung was
 // about to say. Every test starts from an empty ledger, and leaves one.
-beforeEach(() => fleetLedger.reset());
+// The width override is a process global; a file that drove the frame before
+// this one can leave it at the frame's measure, and the rung here is drawn at
+// whatever is in force. Cleared, the rung is drawn at the window's width.
+beforeEach(() => {
+  fleetLedger.reset();
+  setTermWidthOverride(null);
+});
 afterEach(() => fleetLedger.reset());
 
 /** The live rung, as the frame tick would paint it. */
@@ -582,10 +588,18 @@ describe("the rung says what the events say", () => {
     expect(voiced(h.rung(), VOICE.compacting)).toBe(false);
   });
 
-  it("says answering only once prose has actually streamed", async () => {
+  it("says answering only once an answer has actually streamed", async () => {
     const h = rungHarness();
     expect(h.turn.workingState().kind).not.toBe("answering");
-    h.turn.onEvent({ type: "text_delta", text: "The loop breaks on the wrong event." } as never);
+    // One sentence before a call is narration, not the answer: the row said
+    // "answering, wrapping it up" three seconds into an eight-step run.
+    h.turn.onEvent({ type: "text_delta", text: "Checking the parser first." } as never);
+    await sleep(DWELL + 60);
+    expect(h.turn.workingState().kind).not.toBe("answering");
+    h.turn.onEvent({
+      type: "text_delta",
+      text: "\n\nThe loop breaks on the wrong event, so the second read never runs.",
+    } as never);
     await sleep(DWELL + 60);
     expect(h.turn.workingState().kind).toBe("answering");
     expect(voiced(h.rung(), VOICE.answering)).toBe(true);
@@ -643,15 +657,15 @@ describe("the rung says what the events say", () => {
       passed: false,
       report: "$ bun test (exit 1)\n1 fail",
     } as never);
-    expect(h.rung()).toContain("second pass");
+    expect(h.rung()).toContain("second try");
     h.turn.onEvent({
       type: "step_check",
       passed: false,
       report: "$ bun test (exit 1)\n1 fail",
     } as never);
-    expect(h.rung()).toContain("third pass");
+    expect(h.rung()).toContain("third try");
     // A check passing ends it.
     h.turn.onEvent({ type: "step_check", passed: true, report: "$ bun test (ok)" } as never);
-    expect(h.rung()).not.toContain("pass");
+    expect(h.rung()).not.toContain(" try");
   });
 });

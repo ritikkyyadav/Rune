@@ -333,11 +333,12 @@ describe("reaching a sub-agent while the turn is running", () => {
     const header = frame.find((row) => row.includes("planner") && row.includes("esc back"));
     expect(header).toBeDefined();
     const text = frame.join("\n");
-    // What it was asked, what it said, and what it ran -- with the path.
+    // What it was asked, what it said, and what it ran -- with the path, as
+    // the lead's own quiet row: a read says what was read, not the file.
     expect(text).toContain("Brief for planner.");
     expect(text).toContain("Reading the settings table.");
-    expect(text).toContain("src/config-settings.ts");
-    expect(text).toContain("export const A = 1;");
+    expect(text).toContain("read  src/config-settings.ts");
+    expect(text).not.toContain("export const A = 1;");
     // The lead's own transcript gave the workspace up.
     expect(text).not.toContain("lead row one");
   });
@@ -360,7 +361,7 @@ describe("reaching a sub-agent while the turn is running", () => {
     expect(text).toContain("Brief for planner.");
   });
 
-  test("esc steps back and does not interrupt the run", () => {
+  test("esc steps back one level at a time and never interrupts on the way out", () => {
     const r = rig();
     fanOut(r);
     r.key(RIGHT);
@@ -368,8 +369,13 @@ describe("reaching a sub-agent while the turn is running", () => {
     r.key(ESC);
     expect(r.t.aborts).toBe(0);
     expect(r.t.childPane).toBeNull();
-    expect(r.t.agentFocus()).toBe("composer");
+    // Back to the agents the transcript was opened from -- not the composer,
+    // where the next esc (the natural second tap out) would stop the run.
+    expect(r.t.agentFocus()).toBe("row");
     expect(r.frame().join("\n")).toContain("lead row one");
+    r.key(ESC);
+    expect(r.t.agentFocus()).toBe("composer");
+    expect(r.t.aborts).toBe(0);
 
     // From the row, and from the cards, the same.
     r.key(RIGHT);
@@ -379,7 +385,10 @@ describe("reaching a sub-agent while the turn is running", () => {
     expect(r.t.aborts).toBe(0);
     expect(r.t.agentFocus()).toBe("composer");
 
-    // And with the keys back on the composer, esc is the turn's again.
+    // With the keys on the composer the first esc only arms the stop; the
+    // second, inside the window, makes it (founder decision 2026-10-26).
+    r.key(ESC);
+    expect(r.t.aborts).toBe(0);
     r.key(ESC);
     expect(r.t.aborts).toBe(1);
   });
@@ -477,6 +486,7 @@ describe("in a colour terminal", () => {
     const script = `
       Object.defineProperty(process.stdout, "isTTY", { value: true });
       process.env.COLORTERM = "truecolor";
+      process.env.TERM = "xterm-256color";
       delete process.env.NO_COLOR;
       const { TurnRenderer } = await import("${ui}/turn.ts");
       const { fleetLedger } = await import("${ui}/agents-panel.ts");
@@ -585,6 +595,10 @@ describe("nothing moves when the keys do", () => {
     r.key(ENTER);
     expect(strip()).toContain("esc back");
     expect(strip()).not.toContain("esc stop");
+    // Out of the transcript, onto the row: still away, still "esc back".
+    r.key(ESC);
+    expect(strip()).toContain("esc back");
+    expect(strip()).not.toContain("esc stop");
     r.key(ESC);
     expect(strip()).toContain("esc stop");
   });
@@ -597,6 +611,20 @@ describe("nothing moves when the keys do", () => {
       for (const row of r.frame()) expect(visLen(row)).toBeLessThanOrEqual(80);
       expect(r.frame()).toHaveLength(24);
     }
+  });
+});
+
+describe("the rest row, painted", () => {
+  test("says how the last turn ended, not only that it did", () => {
+    const r = rig({ mode: "input" });
+    r.t.lastTurnMs = 23_000;
+    r.t.lastOutcome = { word: "checks failing", tone: "danger" };
+    r.t.renderViewport();
+    expect(rung(r.frame()).row).toContain("checks failing");
+    expect(rung(r.frame()).row).not.toContain("done");
+    r.t.lastOutcome = null;
+    r.t.renderViewport();
+    expect(rung(r.frame()).row).toContain("done");
   });
 });
 
@@ -624,6 +652,10 @@ describe("at rest, a finished agent is still one key away", () => {
     expect(rung(r.frame()).row).toContain("›[planner ✓] [builder ✓] [verifier ✓]");
     r.key(ENTER);
     expect(r.frame().join("\n")).toContain("src/config-settings.ts");
+    // One esc is one step: back on the row, the agent still selected...
+    r.key(ESC);
+    expect(rung(r.frame()).row).toContain("[planner ✓]");
+    // ...and the next leaves the agents.
     r.key(ESC);
     expect(rung(r.frame()).row).toContain("3 agents back");
   });
@@ -662,7 +694,10 @@ describe('with a right column (`[ui] layout = "split"`)', () => {
     r.key(ESC);
     expect(r.t.aborts).toBe(0);
     expect(r.t.focus).toBe("composer");
-    // And from the composer it is the turn's, as always.
+    // And from the composer it is the turn's: the first press arms the stop,
+    // the second makes it (founder decision 2026-10-26).
+    r.key(ESC);
+    expect(r.t.aborts).toBe(0);
     r.key(ESC);
     expect(r.t.aborts).toBe(1);
   });
