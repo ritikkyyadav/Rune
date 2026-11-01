@@ -49,6 +49,9 @@ export function providerChoices(
   custom: CustomEndpoint | undefined,
   env: NodeJS.ProcessEnv = process.env,
   presetFor: (id: string) => ProviderPreset | undefined = () => undefined,
+  /** The TUI's picker marks the row in use itself (`current`); a second
+   *  `active` in the hint said the same thing again. */
+  opts: { markActive?: boolean } = {},
 ): ProviderChoice[] {
   const eligible = rows.filter((r) => {
     if (r.id === CUSTOM_PROVIDER_ID) return !!custom && (!r.disabled || r.active);
@@ -58,7 +61,7 @@ export function providerChoices(
 
   const hintFor = (r: ProviderStatusRow): string => {
     const bits: string[] = [];
-    if (r.active) bits.push(ok(`${glyph("live")} active`));
+    if (r.active && opts.markActive !== false) bits.push(ok(`${glyph("live")} active`));
     if (r.id === CUSTOM_PROVIDER_ID && custom) {
       bits.push(muted(`${hostOf(custom.baseUrl)} \u00b7 ${custom.model}`));
     } else if (r.local) {

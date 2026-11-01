@@ -23,27 +23,32 @@ describe("renderMarkdown — block structure", () => {
     expect(out[1]).toMatch(/-+/);
   });
 
-  it("frames fenced code the way the rail frames a tool's record", () => {
-    // The founder, 2026-09-15, put the framed diffs and the unframed answer
-    // side by side and named which one was right. Code in an answer is a
-    // record being quoted, and a record closes on both edges: the same
-    // corners, rule and gutter as flow.box, with the language on the top rule.
+  it("frames fenced code above and below, and leaves the code itself copyable", () => {
+    // The founder, 2026-09-15, chose a framed answer over an unframed one. The
+    // frame keeps its top rule (with the language) and its bottom rule; it has
+    // no sides, because a terminal copies what it shows, and `| code ... |`
+    // put borders and trailing spaces into every command copied out of an
+    // answer (the 2026-10-26 audit; founder approval 2026-10-27).
     const md = "Run this:\n\n```bash\ncd atlas-studio\npython3 -m http.server 8000\n```\nDone.";
     const out = plain(renderMarkdown(md, { width: 60, indent: "" }));
     const joined = out.join("\n");
     expect(joined).not.toContain("```");
-    expect(out[2]).toMatch(/^┌ bash ─+┐$/); // the language is the frame's label
-    expect(out[3]).toMatch(/^│ cd atlas-studio\s+│$/);
-    expect(out[4]).toMatch(/^│ python3 -m http\.server 8000\s+│$/);
-    expect(out[5]).toMatch(/^└─+┘$/);
-    // Every row of the frame is the same width: the box closes.
-    expect(new Set(out.slice(2, 6).map((l) => l.length)).size).toBe(1);
+    expect(out[2]).toMatch(/^┌ bash ─+$/); // the language is the frame's label
+    expect(out[3]).toBe("  cd atlas-studio");
+    expect(out[4]).toBe("  python3 -m http.server 8000");
+    expect(out[5]).toMatch(/^└─+$/);
+    // The rules are one width; the code rows carry no frame and no padding.
+    expect(out[2]!.length).toBe(out[5]!.length);
+    for (const row of out.slice(3, 5)) {
+      expect(row).not.toMatch(/[│┃|]/);
+      expect(row).toBe(row.trimEnd());
+    }
     expect(out[out.length - 1]).toBe("Done.");
   });
 
   it("labels an unlabelled fence `code`, so the frame still says what it holds", () => {
     const out = plain(renderMarkdown("```\nx = 1\n```", { width: 40, indent: "" }));
-    expect(out[0]).toMatch(/^┌ code ─+┐$/);
+    expect(out[0]).toMatch(/^┌ code ─+$/);
   });
 
   it("never eats an underscore inside an identifier", () => {
@@ -68,8 +73,8 @@ describe("renderMarkdown — block structure", () => {
   it("closes the frame of a fence the model never terminated", () => {
     const out = plain(renderMarkdown("```\ncode", { width: 60, indent: "" }));
     expect(out).toHaveLength(3);
-    expect(out[1]).toMatch(/^│ code\s+│$/);
-    expect(out[2]).toMatch(/^└─+┘$/);
+    expect(out[1]).toBe("  code");
+    expect(out[2]).toMatch(/^└─+$/);
   });
 
   it("renders list items with real bullets and hanging indents", () => {

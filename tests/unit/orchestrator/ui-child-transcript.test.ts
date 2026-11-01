@@ -92,9 +92,12 @@ describe("a call, from the moment it opens", () => {
       ),
     );
     const rows = plain(log).join("\n");
-    // The same box the lead's transcript draws for a read: path and content.
-    expect(rows).toContain("src/auth.ts");
-    expect(rows).toContain("export const token = 1;");
+    // The same quiet row the lead's transcript draws for a read: the path and
+    // how much was read -- never the file itself, which is what the agent
+    // looked at, not what it did.
+    expect(rows).toContain("read  src/auth.ts");
+    expect(rows).toContain("2 lines");
+    expect(rows).not.toContain("export const token = 1;");
     // One block: the running row is gone, not left above its result.
     expect(plain(log).filter((row) => row.includes("› read"))).toHaveLength(0);
   });
@@ -404,14 +407,18 @@ describe("a finished child, read back", () => {
         },
       ),
     );
-    // The box a read draws is the same box from either producer. (Durations
+    // The row a read draws is the same row from either producer. (Durations
     // are not in the record, so the receipt's clock is the one difference.)
-    const box = (log: ChildLog) => plain(log).filter((row) => /^ {2}[┌│]/.test(row));
-    expect(box(stored).slice(0, 2)).toEqual(box(live).slice(0, 2));
+    const read = (log: ChildLog) =>
+      plain(log)
+        .find((row) => row.includes("read  src/config-settings.ts"))
+        ?.replace(/ · \d+ms$/, "");
+    expect(read(stored)).toBeDefined();
+    expect(read(stored)).toEqual(read(live));
     const rows = plain(stored).join("\n");
     expect(rows).toContain("Map the settings surface.");
     expect(rows).toContain("Probably one table.");
-    expect(rows).toContain("export const A = 1;");
+    expect(rows).not.toContain("export const A = 1;");
     expect(rows).toContain("The table is one array.");
   });
 

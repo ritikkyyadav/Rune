@@ -553,14 +553,43 @@ const SYNTAX_ANSI16: Record<SyntaxRole, number> = {
   decorator: 33,
 };
 
-export function syntax(role: SyntaxRole, value: string, palette?: RuneBaseName): string {
+/** The least contrast a syntax colour may have against the band it is drawn on:
+ *  WCAG AA for body text. */
+export const BAND_MIN_CONTRAST = 4.5;
+
+/**
+ * `fg`, moved toward the contrast pole of `bg` until it reads there.
+ *
+ * The bands are the founder's colours and stay as they are; what changes is
+ * the ink on them. A syntax palette chosen by the band's luminance still put
+ * `null` and `false` at 2.79:1 and `const` at 2.96:1 on the light theme's blue
+ * added band. Each step mixes 15% toward black or white, so a colour keeps as
+ * much of its hue as the band allows.
+ */
+export function legibleAgainst(fg: Rgb, bg: Rgb, min = BAND_MIN_CONTRAST): Rgb {
+  const pole: Rgb = relativeLuminance(bg) >= 0.42 ? [0, 0, 0] : [255, 255, 255];
+  let out = fg;
+  for (let step = 0; step < 16 && contrastRatio(out, bg) < min; step++) {
+    out = mixRgb(out, pole, 0.15);
+  }
+  return out;
+}
+
+export function syntax(
+  role: SyntaxRole,
+  value: string,
+  palette?: RuneBaseName,
+  /** The band the token is drawn on, when it is: its ink is made to read there. */
+  onBand?: "ok" | "danger",
+): string {
   const safe = terminalText(value);
   if (!COLOR_CAPABLE) return safe;
   if (active.useNativeColors || DEPTH === "ansi16") {
     return `\x1b[${SYNTAX_ANSI16[role]}m${safe}${RESET}`;
   }
   const base: RuneBaseName = palette ?? (active.appearance === "light" ? "light" : "dark");
-  const [r, g, b] = hexToRgbTuple(syntaxPalette(base)[role]);
+  let [r, g, b] = hexToRgbTuple(syntaxPalette(base)[role]) as Rgb;
+  if (onBand && bandsEnabled()) [r, g, b] = legibleAgainst([r, g, b], bandRgb(onBand));
   const seq =
     DEPTH === "truecolor" ? `\x1b[38;2;${r};${g};${b}m` : `\x1b[38;5;${nearestAnsi256([r, g, b])}m`;
   return `${seq}${safe}${RESET}`;

@@ -292,7 +292,7 @@ describe("renderToolActivity — one call, one row", () => {
     // rail that used to carry it would be a second left edge on the same row.
     expect(text[0]).toBe("   1 - const a = 1;");
     expect(text[1]).toBe("   1 + const a = 2;");
-    expect(receipt).toContain("+1 -1 | 1 hunk");
+    expect(receipt).toContain("+1 -1 \u00b7 1 hunk");
     // An edit's receipt carries no tick: the diff above it is the evidence, and
     // it does not need one to vouch for it.
     expect(receipt).not.toContain("✓");
@@ -309,7 +309,7 @@ describe("renderToolActivity — one call, one row", () => {
       ),
     );
     expect(out).toContain("new   a.ts");
-    expect(out).toContain("+3 | new file");
+    expect(out).toContain("+3 \u00b7 new file");
   });
 
   it("renders web_search with its query, never the raw args JSON", () => {
@@ -537,7 +537,7 @@ describe("the harness envelope around a tool result", () => {
         renderToolActivity(tool({ toolName: "edit_file", args: { path: "src/a.ts" }, result })),
       );
       expect(out, result.slice(0, 40)).toContain("\u250c edit  src/a.ts ");
-      expect(out, result.slice(0, 40)).toContain("+1 -1 | 1 hunk");
+      expect(out, result.slice(0, 40)).toContain("+1 -1 \u00b7 1 hunk");
       expect(out, result.slice(0, 40)).toContain("2 - b");
       expect(out, result.slice(0, 40)).toContain("2 + B");
     }
@@ -599,7 +599,12 @@ describe("the harness's own tools have designed rows", () => {
         args: { questions: [{ question: "Platform?" }, { question: "Depth?" }] },
         result: "Q: Platform?\nA: web\n\nQ: Depth?\nA: working core",
       }),
-      ["│   ask   Platform?  2 questions", "│ │ answered web"],
+      // Every answer beside its own question; the row used to keep the first.
+      [
+        "│   ask   Platform?  2 questions",
+        "│ │ Platform? \u00b7 web",
+        "│ │ Depth? \u00b7 working core",
+      ],
     ],
     [
       tool({
@@ -729,9 +734,9 @@ describe("apply_patch renders a row and a diff per file", () => {
     // One box per file, each closing on its own receipt: a patch that touched
     // two files is two changes, and one frame around both would say otherwise.
     expect(out).toContain("\u250c edit  src/a.ts ");
-    expect(out).toContain("+1 -1 | 1 hunk");
+    expect(out).toContain("+1 -1 \u00b7 1 hunk");
     expect(out).toContain("\u250c edit  src/gone.ts ");
-    expect(out).toContain("-2 | deleted");
+    expect(out).toContain("-2 \u00b7 deleted");
     expect(out.split("\n").filter((l) => l.startsWith("  \u250c "))).toHaveLength(2);
     expect(out.split("\n").filter((l) => l.startsWith("  \u2514 "))).toHaveLength(2);
     expect(out).toContain("1 - one");

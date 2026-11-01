@@ -94,7 +94,6 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { type Key } from "./keys";
-import { fmtTokens } from "./events";
 import { PasteScanner, expandPastes } from "./paste";
 import {
   workReviewPageSize,
@@ -112,7 +111,7 @@ import {
 } from "./composer";
 import { RUNE_MARK, renderBanner } from "./banner";
 import { WorkGlyph, paintGlyph } from "./waveform";
-import { FRAME_MS, stagedRow } from "./working";
+import { FRAME_MS, REST_DONE, stagedRow, type RestOutcome } from "./working";
 import { notifyWarp } from "./warp";
 import { Glide, setTitle, clearTitle, type TitleBeat } from "./title";
 import { renderReadBack, renderClose } from "./read-back";
@@ -218,52 +217,77 @@ export interface PermissionKeyAction {
   handled: boolean;
 }
 
+/** Two presses of esc (or ctrl+c) stop a running turn; this is how long the
+ *  first one waits for the second (founder decision 2026-10-26,
+ *  docs/program/ui-decision-20261026-trust-fixes.md). */
+export const STOP_CONFIRM_MS = 2000;
+/** The approval card takes no digit and no enter until it has been up this
+ *  long: a card that opens mid-sentence must not be answered by the sentence. */
+export const PERM_ARM_MS = 500;
+/** ...nor until this long after the last key typed... */
+export const PERM_QUIET_MS = 500;
+/** ...or this long when a message is already half written in the composer. */
+export const PERM_QUIET_DRAFT_MS = 1500;
+
+/** When the card may take an answer, as permKey measures it. */
+export interface PermissionGuard {
+  /** Up long enough, and nothing typed recently enough (PERM_* above). */
+  armed?: boolean;
+  /** Something is typed in the composer. */
+  drafting?: boolean;
+}
+
 /**
  * Pure reducer so the highlighted approval row and the resolved action cannot
  * drift apart. `choiceCount` is 2 on circuit-breaker cards, which offer no
  * session grant: [allow once, deny] instead of [allow once, session, deny].
+ *
+ * Only digits, the arrows, enter and esc act on the card (founder decision
+ * 2026-10-26). Letters used to answer it -- `y` once, `a` or `s` for the whole
+ * session -- and Rune invites typing ahead while it works, so a sentence typed
+ * as the card opened ("build it as json") granted shell commands for the rest
+ * of the session on its first `a`. A letter is never an answer now: it comes
+ * back unhandled, and the caller puts it in the composer with the rest of what
+ * was being typed. Shift+Tab, which also granted the session, moves the
+ * selection like Tab.
+ *
+ * Not armed -- the card only just opened, or keys are still arriving -- a
+ * digit is typing (unhandled) and enter does nothing, so neither can answer
+ * the card mid-sentence. With a message in the composer enter never answers:
+ * it is the key that would have sent the message. Esc and ctrl+c always
+ * decline; refusing is the safe thing to do by accident.
  */
 export function permissionKeyAction(
   key: Key,
   selected: number,
   choiceCount: 2 | 3 = 3,
+  guard: PermissionGuard = {},
 ): PermissionKeyAction {
+  const armed = guard.armed !== false;
   const kinds: Array<UserPermissionDecision["kind"]> =
     choiceCount === 3 ? ["allow_once", "allow_session", "deny"] : ["allow_once", "deny"];
   const current = Math.max(0, Math.min(choiceCount - 1, selected));
-  if (key.type === "up" || key.type === "left") {
+  if (key.type === "up" || key.type === "left" || key.type === "shift-tab") {
     return { selected: (current + choiceCount - 1) % choiceCount, handled: true };
   }
   if (key.type === "down" || key.type === "right" || key.type === "tab") {
     return { selected: (current + 1) % choiceCount, handled: true };
   }
-
-  let decision: UserPermissionDecision | undefined;
-  if (key.type === "char" && /^[123]$/.test(key.value)) {
-    const choice = Number(key.value) - 1;
-    if (choice < choiceCount) decision = { kind: kinds[choice]! };
-    // A digit past the card's last row is swallowed, not bubbled to the composer.
-    else return { selected: current, handled: true };
-  } else if (key.type === "char" && (key.value === "n" || key.value === "N")) {
-    decision = { kind: "deny" };
-  } else if (
-    key.type === "shift-tab" ||
-    // `a` = "allow for session" per the v2 card's printed shortcut; `s`
-    // (session) remains for muscle memory from earlier releases.
-    (key.type === "char" && /^[sSaA]$/.test(key.value))
-  ) {
-    // No session choice on a 2-row card -- swallow the shortcut so shift-tab
-    // cannot fall through to the gear cycle while a decision is pending.
-    if (choiceCount === 2) return { selected: current, handled: true };
-    decision = { kind: "allow_session" };
-  } else if (key.type === "char" && (key.value === "y" || key.value === "Y")) {
-    decision = { kind: "allow_once" };
-  } else if (key.type === "enter") {
-    decision = { kind: kinds[current]! };
-  } else if (key.type === "esc") {
-    decision = { kind: "deny" };
+  if (key.type === "esc" || (key.type === "ctrl" && key.name === "c")) {
+    return { selected: current, decision: { kind: "deny" }, handled: true };
   }
-  return { selected: current, decision, handled: decision != null };
+  if (key.type === "char" && /^[1-9]$/.test(key.value)) {
+    if (!armed) return { selected: current, handled: false };
+    const choice = Number(key.value) - 1;
+    // A digit past the card's last row is swallowed, not typed.
+    if (choice >= choiceCount) return { selected: current, handled: true };
+    return { selected: current, decision: { kind: kinds[choice]! }, handled: true };
+  }
+  if (key.type === "enter") {
+    if (!armed || guard.drafting) return { selected: current, handled: true };
+    return { selected: current, decision: { kind: kinds[current]! }, handled: true };
+  }
+  return { selected: current, handled: false };
 }
 
 type SessionListItem = ReturnType<Engine["listSessions"]>[number];
@@ -423,6 +447,18 @@ export class Tui {
   streamBuf = "";
   queued: string[] = []; // type-ahead: messages composed mid-turn, run in order on completion
   aborting = false; // an esc/ctrl-c interrupt is in flight (guards the "interrupting..." flood)
+  /** When esc (or ctrl+c) was pressed once over a running turn with nothing
+   *  typed. A second press within STOP_CONFIRM_MS stops the run (turnKey). */
+  stopArmedAt = 0;
+  /** When the composer's text last changed: typing rhythm, read by the
+   *  approval card so a digit or enter typed mid-sentence is not an answer. */
+  lastTypedAt = 0;
+  /** When the open approval card appeared (permKey's arming window). */
+  permOpenedAt = 0;
+  /** How the last turn ended, in the rest row's words (tui-frame.ts). */
+  lastOutcome: RestOutcome | null = null;
+  /** The last turn's answer, as written, for /copy. */
+  lastAnswer = "";
   // Warp's badge is showing this pane as blocked on us. Set when we raise an
   // approval or a question, cleared by the first tool call that finishes after
   // -- which is the event that means the answer landed and work resumed. Kept
@@ -508,6 +544,10 @@ export class Tui {
   // on Esc/Ctrl+R, so inspecting work never duplicates it into scrollback.
   reviewLog: string | null = null;
   reviewTop = 0;
+  /** The connect picker's "which model" question has been asked this session. */
+  connectAsked = false;
+  /** The rows the work review was last drawn in (tui-input composerBlock). */
+  reviewRows: number | null = null;
   reviewReturnMode: "input" | "turn" = "input";
 
   // render coalescing -- collapse bursts of draw requests into one paint per frame (~60fps), so a
@@ -595,9 +635,6 @@ export class Tui {
 
   async run(): Promise<void> {
     const { engine } = this.ctx;
-    if (this.ctx.firstRunOnLaunch && this.ctx.firstRun && !this.ctx.firstRun.done()) {
-      this.mode = "setup";
-    }
 
     // The banner is a live header (re-themed every frame), so nothing to seed here.
     // The handler is registered in every mode: the broker short-circuits to "allowed"
@@ -683,6 +720,12 @@ export class Tui {
       stdin.on("data", onData);
       // The launch picker needs the input loop wired, so kick it off here.
       if (this.ctx.launchPick) void this.runLaunchPicker();
+      // A first launch with no model asks the one question a new person has
+      // -- which model, and how -- rather than opening the configuration
+      // wizard (/setup still does). See openLogin.
+      else if (this.ctx.firstRunOnLaunch && !this.modelConnected()) {
+        void this.openLogin({ needModel: true });
+      }
       this.exit = (code = 0) => {
         stdin.off("data", onData);
         process.stdout.off("resize", this.onResize);
@@ -774,10 +817,13 @@ export class Tui {
       contextPercent = undefined;
     }
     const loop = this.ctx.engine.getLoopStatus(this.ctx.sessionId);
+    // With nothing connected the default model is a name with no key behind
+    // it; the strip says what is true instead, and where to fix it.
+    const connected = this.modelConnected();
     return statusLine(
       {
-        model: this.ctx.engine.getModel(),
-        effort: this.ctx.engine.getReasoningEffortLabel(),
+        model: connected ? this.ctx.engine.getModel() : "no model -- /login",
+        effort: connected ? this.ctx.engine.getReasoningEffortLabel() : undefined,
         workspace: this.ctx.workspaceRoot,
         mode: this.ctx.engine.getPermissionMode(),
         contextPercent,
@@ -786,6 +832,8 @@ export class Tui {
         folds: !this.inline && this.folds.size > 0,
         streaming: this.mode === "turn",
         drafting: this.input.length > 0,
+        stopArmed: this.mode === "turn" && Date.now() - (this.stopArmedAt ?? 0) <= STOP_CONFIRM_MS,
+        exitArmed: this.mode !== "turn" && this.sigintArmed === true,
         // With the keys on the agents, `esc` goes BACK. The strip says so --
         // mid-turn it otherwise reads `esc stop`, which is the one thing `esc`
         // will not do from there.
@@ -1040,7 +1088,7 @@ export class Tui {
     }
   }
 
-  toggleFold(region: FoldRegion): void {
+  toggleFold(region: FoldRegion, reveal = false): void {
     const top = this.transcript.length - this.scroll - this.frameZones().bodyRows;
     const splice = this.folds.toggle(region);
     this.transcript.splice(splice.start, splice.remove, ...splice.insert);
@@ -1053,6 +1101,18 @@ export class Tui {
     }
     if (this.scroll > 0 && splice.start >= top) {
       this.scroll = Math.max(0, this.scroll + splice.delta);
+    }
+    // ctrl+o acts on the newest fold wherever it is, and at the end of a run
+    // that was often above the screen: the frame before and after the key was
+    // identical, so the key looked dead. The fold it opened is brought into
+    // view. (A click needs none of this: what was clicked is on screen.)
+    if (reveal) {
+      const rows = this.frameZones().bodyRows;
+      const at = splice.start - Math.max(0, overflow);
+      const first = this.transcript.length - this.scroll - rows;
+      if (at < first || at >= first + rows) {
+        this.scroll = Math.max(0, this.transcript.length - at - rows);
+      }
     }
     this.scheduleDraw();
   }
@@ -1155,15 +1215,21 @@ export class Tui {
     // it said what the placeholder (`/ for commands`) and the status line
     // (`? keys`) already say -- the founder's "no unnecessary information".
     if (engine.getTranscript(this.ctx.sessionId).length === 0) {
+      // Whole examples only: the second is dropped, not cut mid-word, when
+      // the window cannot hold it ("explain how this repo is wir...").
+      const examples = ['"fix the failing test"', '"explain how this repo is wired"'];
+      const sep = ` ${glyph("observed")} `;
+      const room = F.measure() - "  try  ".length;
+      while (examples.length > 1 && examples.join(sep).length > room) examples.pop();
       this.print(
-        `  ${faint("try")}  ${['"fix the failing test"', '"explain how this repo is wired"']
-          .map((example) => faint(example))
-          .join(` ${faint(glyph("observed"))} `)}`,
+        `  ${faint("try")}  ${examples.map((example) => faint(example)).join(faint(sep))}`,
       );
     }
     const mem = engine.getSystemMemory();
     if (mem.mode !== "off" && !mem.content.trim()) {
-      this.print(`  ${faint("tip: Rune can learn your style over time --")} ${info("/memory")}`);
+      this.print(
+        `  ${faint(`tip: Rune can learn your style over time ${glyph("observed")}`)} ${info("/memory")}`,
+      );
     }
     // The cadence is withdrawn: a user who had chosen one hears it once, here,
     // rather than discovering that nothing refreshes any more. No startup
@@ -1352,8 +1418,30 @@ export class Tui {
 
   // -- submit --
 
+  /**
+   * Whether any model can be reached. False on a first launch and until
+   * something is connected: the engine still names a default model then, but
+   * no provider is registered for it, and a message sent to it failed on its
+   * first request. A rig without the method counts as connected.
+   */
+  modelConnected(): boolean {
+    try {
+      const registered = this.ctx.engine.getRegisteredProviders?.();
+      return registered === undefined || registered.length > 0;
+    } catch {
+      return true;
+    }
+  }
+
   async submit(): Promise<void> {
     const raw = this.expandPastes(this.input).trim();
+    // Nothing runs until a model is connected. The message stays in the
+    // composer, where it was typed, and the connect picker opens.
+    if (raw && !raw.startsWith("/") && !this.modelConnected()) {
+      this.print(`  ${warn("!")} ${muted("connect a model first -- your message is kept")}`);
+      void this.openLogin({ needModel: true });
+      return;
+    }
     this.input = "";
     this.caret = 0;
     this.histIdx = -1;
@@ -1612,9 +1700,10 @@ export class Tui {
 
   sessionRowView(s: SessionListItem): SessionRowView {
     const title = s.title && s.title.trim() ? s.title.trim() : "untitled";
-    const parts = [s.model];
-    if (s.eventCount > 0) parts.push(`${s.eventCount} events`);
-    if (s.lastTokens && s.lastTokens > 0) parts.push(`${fmtTokens(s.lastTokens)} tokens`);
+    // When, and on what: `23 events` and a token count are the log's own
+    // bookkeeping, and the one thing a person picking a session wants -- how
+    // long ago it was -- was not there.
+    const parts = [this.relTime(s.updatedAt), s.model];
     return {
       id: s.id,
       title,
@@ -2610,6 +2699,7 @@ export class Tui {
         preview,
         sel: 0,
       };
+      this.permOpenedAt = Date.now();
       this.mode = "permission";
       // Until this resolves the pane is waiting on a person, not working. Warp
       // shows that as its own badge, which is what pulls someone back to a tab
@@ -2723,8 +2813,8 @@ export class Tui {
     this.mode = q.prevMode === "question" ? "turn" : q.prevMode;
     this.print(
       chosen != null
-        ? F.answered(chosen, answer)
-        : `  ${ok(glyph("verified"))} ${muted(truncate(answer, F.proseWidth()))}`,
+        ? F.answered(chosen, answer, q.question)
+        : `  ${faint(truncate(q.question, F.proseWidth()))}\n  ${ok(glyph("verified"))} ${muted(truncate(answer, F.proseWidth()))}`,
     );
     this.scheduleDraw();
     q.resolve(answer);
@@ -2759,8 +2849,18 @@ export class Tui {
   permKey(key: Key): void {
     if (!this.perm) return;
     const choiceCount = this.perm.preview.choices.length === 2 ? 2 : 3;
-    const action = permissionKeyAction(key, this.perm.sel, choiceCount);
-    if (!action.handled) return;
+    const drafting = this.input.length > 0;
+    const now = Date.now();
+    const quiet = drafting ? PERM_QUIET_DRAFT_MS : PERM_QUIET_MS;
+    const armed =
+      now - (this.permOpenedAt ?? 0) >= PERM_ARM_MS && now - (this.lastTypedAt ?? 0) >= quiet;
+    const action = permissionKeyAction(key, this.perm.sel, choiceCount, { armed, drafting });
+    if (!action.handled) {
+      // Not an answer, so it is typing: it goes where typing goes -- the
+      // message being written, kept for after the card -- and the card stays.
+      if (this.editComposer(key)) this.scheduleDraw();
+      return;
+    }
     if (!action.decision) {
       this.perm.sel = action.selected;
       this.scheduleDraw();
@@ -2790,7 +2890,11 @@ export class Tui {
       this.expandWorkLog();
       return;
     }
-    // Esc / Ctrl-C: clear a typed-ahead draft first; with the composer empty, interrupt the turn.
+    // Esc / Ctrl-C: clear a typed-ahead draft first; with the composer empty, the
+    // FIRST press arms the stop and the second, within STOP_CONFIRM_MS, makes it.
+    // One press used to interrupt at once, and esc is also how every pane and
+    // panel is left -- so "one esc too many" out of a sub-agent's transcript
+    // stopped the run and threw its members' findings away.
     if (key.type === "esc" || (key.type === "ctrl" && key.name === "c")) {
       if (this.input.length > 0) {
         this.input = "";
@@ -2799,6 +2903,17 @@ export class Tui {
         return;
       }
       if (!this.aborting) {
+        const now = Date.now();
+        // An unknown arm time is "never armed": a guard that compared against
+        // undefined got NaN, failed the test, and stopped on the FIRST press.
+        if (now - (this.stopArmedAt ?? 0) > STOP_CONFIRM_MS) {
+          this.stopArmedAt = now;
+          this.scheduleDraw();
+          // The strip's "esc again to stop" goes when the window does.
+          setTimeout(() => this.scheduleDraw(), STOP_CONFIRM_MS + 50);
+          return;
+        }
+        this.stopArmedAt = 0;
         if (this.activeLoopId) {
           const cancelled = this.ctx.engine.cancelLoopTask(this.ctx.sessionId, this.activeLoopId);
           if (cancelled.ok)
@@ -2807,9 +2922,12 @@ export class Tui {
             );
         }
         // Guard the flood: one interrupt request per turn, however many times esc is pressed.
+        // The row above the composer says `Interrupting...` while the abort
+        // drains (turnStateLines); the transcript gets ONE line when it has,
+        // from the turn's own close. Printing here made an interrupt three
+        // rows: interrupting, interrupted, and stopped before a result.
         this.aborting = true;
         this.ctx.engine.abort();
-        this.print(`  ${danger(glyph("failure"))} ${muted("interrupting...")}`);
         this.scheduleDraw();
       }
       return;
@@ -2832,8 +2950,10 @@ export class Tui {
         const steered = !raw.startsWith("/") && this.ctx.engine.interject(raw);
         if (steered) {
           this.history.push(raw);
-          this.print(userBlock(raw), undefined, () => userBlock(raw));
-          this.print(`  ${info("->")} ${faint("folded into the running task")}`);
+          // One event, one block: the message, and on its row what became of
+          // it -- folded into the work in flight, not queued behind it.
+          const note = "folded into the running task";
+          this.print(userBlock(raw, note), undefined, () => userBlock(raw, note));
         } else {
           this.queued.push(raw);
         }
@@ -3068,6 +3188,10 @@ export class Tui {
     } finally {
       this.lastTurnMs = Math.max(0, Date.now() - this.turnStart);
       turn.finish({ aborted: this.aborting });
+      // The rest row says how this turn ended, not only that it did.
+      this.lastOutcome = turn.restOutcome(this.aborting);
+      this.lastAnswer = turn.answerText() || this.lastAnswer;
+      this.stopArmedAt = 0;
       this.lastPlanKey = turn.planKey() ?? this.lastPlanKey;
       this.printClose();
       // The event a long run is actually for: Warp raises a notification when
@@ -3075,15 +3199,22 @@ export class Tui {
       // watching a spinner and being told when it is your turn again.
       this.warp("stop");
       setTitle({ kind: "idle" }, this.titleProject());
+      // Offered after a run that went well, never under one that failed: a
+      // dashboard tip beneath "stopped on an error" read as the product
+      // changing the subject.
       if (
         !this.aborting &&
+        !turnFailed &&
+        this.lastOutcome?.word === REST_DONE.word &&
         !dashboardTouched &&
         !this.interactiveTipShown &&
         !engine.isInteractiveAuto() &&
         shouldOfferInteractive(answerText)
       ) {
         this.interactiveTipShown = true;
-        this.print(`  ${faint(`${glyph("phase")} /interactive -- view this as a live dashboard`)}`);
+        this.print(
+          `  ${faint(`${glyph("phase")} /interactive ${glyph("observed")} view this as a live dashboard`)}`,
+        );
       }
       this.lastWorkLog = turn.fullLog();
       this.liveTurn = null;
@@ -3356,17 +3487,26 @@ export class Tui {
       return;
     }
     this.reviewLog = log;
+    this.reviewRows = null;
     this.reviewReturnMode = this.liveTurn ? "turn" : "input";
     const body = Math.max(0, log.split("\n").filter((line) => stripAnsi(line).trim()).length - 1);
-    this.reviewTop = Math.max(0, body - workReviewPageSize(Math.max(4, rowsCount() - 1)));
+    this.reviewTop = Math.max(0, body - workReviewPageSize(this.reviewBudget()));
     this.mode = "review";
     this.scheduleDraw();
+  }
+
+  /** The rows the review has: what it was last drawn in, else what the frame
+   *  gives a footer under the header (tui-frame footerBlock's own sum). */
+  reviewBudget(): number {
+    if (this.reviewRows != null) return this.reviewRows;
+    const header = this.inline ? 0 : this.bannerLines().length;
+    return Math.max(4, rowsCount() - header - 1);
   }
 
   moveWorkReview(delta: number): void {
     const log = this.liveTurn?.fullLog() ?? this.reviewLog ?? "";
     const body = Math.max(0, log.split("\n").filter((line) => stripAnsi(line).trim()).length - 1);
-    const maxTop = Math.max(0, body - workReviewPageSize(Math.max(4, rowsCount() - 1)));
+    const maxTop = Math.max(0, body - workReviewPageSize(this.reviewBudget()));
     this.reviewTop = Math.max(0, Math.min(maxTop, this.reviewTop + delta));
     this.scheduleDraw();
   }
@@ -3379,7 +3519,7 @@ export class Tui {
   }
 
   workReviewKey(key: Key): void {
-    const page = workReviewPageSize(Math.max(4, rowsCount() - 1));
+    const page = workReviewPageSize(this.reviewBudget());
     if (key.type === "up") this.moveWorkReview(-1);
     else if (key.type === "down") this.moveWorkReview(1);
     else if (key.type === "pageup") this.moveWorkReview(-page);
@@ -3541,6 +3681,10 @@ export class Tui {
     } finally {
       this.lastTurnMs = Math.max(0, Date.now() - this.turnStart);
       turn.finish({ aborted: this.aborting });
+      // The rest row says how this turn ended, not only that it did.
+      this.lastOutcome = turn.restOutcome(this.aborting);
+      this.lastAnswer = turn.answerText() || this.lastAnswer;
+      this.stopArmedAt = 0;
       this.lastPlanKey = turn.planKey() ?? this.lastPlanKey;
       this.printClose();
       // The event a long run is actually for: Warp raises a notification when

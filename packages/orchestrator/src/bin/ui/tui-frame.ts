@@ -38,7 +38,7 @@ import {
 } from "./viewport";
 import { uiLayout } from "./layout";
 import { restGlyph } from "./waveform";
-import { stagedRow } from "./working";
+import { REST_DONE, restRow } from "./working";
 import { arrowRun } from "./keys";
 import { renderBanner } from "./banner";
 import * as F from "./flow";
@@ -350,6 +350,12 @@ export const FRAME_METHODS = {
     if (this.focus === "composer") return false;
     if (this.focus === "child") {
       this.closeChildPane();
+      // One step back, not two: from a transcript to the agents it was opened
+      // from. Landing on the composer made the next esc -- the natural second
+      // tap out -- the one that interrupted the run, and an interrupted
+      // fan-out throws its members' findings away.
+      if (fleetLedger.order().length > 0) this.focus = "panel";
+      this.scheduleDraw();
       return true;
     }
     this.focus = "composer";
@@ -767,7 +773,7 @@ export const FRAME_METHODS = {
     // the live rung drew, so the block you watched is where you left it.
     const rest =
       this.lastTurnMs != null
-        ? stagedRow(restGlyph(), { kind: "done", stage: "verify", elapsedMs: this.lastTurnMs })
+        ? restRow(restGlyph(), this.lastOutcome ?? REST_DONE, this.lastTurnMs)
         : "";
     const back = marked
       ? agentBlocks(fleetLedger.order(), Math.max(10, inner - visLen(rest) - 2), {

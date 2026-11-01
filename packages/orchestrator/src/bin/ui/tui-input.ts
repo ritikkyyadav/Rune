@@ -12,6 +12,19 @@
 
 import type { Tui } from "./tui";
 import { arrowRun, parseKeys, type Key } from "./keys";
+import { clampVisible } from "./render";
+import {
+  deleteBack,
+  deleteForward,
+  deleteSpaceWordBack,
+  deleteWordBack,
+  deleteWordForward,
+  nextBoundary,
+  prevBoundary,
+  wordLeft,
+  wordRight,
+  type Edit,
+} from "./edit";
 import { PasteScanner, shouldCollapse, pasteChip, expandPastes, livePasteIds } from "./paste";
 import {
   renderComposer,
@@ -91,8 +104,17 @@ export const INPUT_METHODS = {
       // elapsed receipt and the gear the decision is needed in.
       const waitSecs = Math.max(0, Math.floor((Date.now() - this.turnStart) / 1000));
       const head = waitingRung(waitSecs, this.perm.toolName, this.ctx.engine.getPermissionMode());
+      // What was being typed when the card opened stays the person's: it is
+      // kept in the composer for after the card, and said here, so typing the
+      // card did not take does not look lost (tui.ts permKey).
+      const draft = this.input.replace(/\s+/g, " ").trim();
+      const kept = draft
+        ? [
+            `${F.BODY}${faint(clampVisible(`kept for after: ${draft}`, Math.max(12, this.contentCols() - F.BODY.length)))}`,
+          ]
+        : [];
       return {
-        lines: [head, ...card.lines],
+        lines: [head, ...card.lines, ...kept],
         caretRow: card.caretRow + 1,
         caretCol: card.caretCol,
       };
@@ -323,12 +345,11 @@ export const INPUT_METHODS = {
     }
     if (this.mode === "review") {
       const log = this.liveTurn?.fullLog() ?? this.reviewLog ?? `  ${faint("No work details yet")}`;
-      return renderWorkReview(
-        log,
-        this.reviewTop,
-        this.contentCols(),
-        Math.max(4, rowsCount() - 1),
-      );
+      // The rows the frame actually gives this block. It used the whole
+      // window, the frame cut the review to fit under the header, and the
+      // screen said `195-220 of 220` above `... 3 more lines below`.
+      this.reviewRows = Math.max(4, height);
+      return renderWorkReview(log, this.reviewTop, this.contentCols(), this.reviewRows);
     }
     if (this.mode === "turn") {
       // The composer stays live while a turn streams so the next message can be typed ahead.
@@ -437,7 +458,7 @@ export const INPUT_METHODS = {
       (this.mode === "input" || this.mode === "turn")
     ) {
       const fold = this.inline ? undefined : this.folds.newest();
-      if (fold) this.toggleFold(fold);
+      if (fold) this.toggleFold(fold, true);
       else this.expandWorkLog();
       return;
     }
@@ -560,6 +581,9 @@ export const INPUT_METHODS = {
     const clean = s.replace(/\r/g, "");
     this.input = this.input.slice(0, this.caret) + clean + this.input.slice(this.caret);
     this.caret += clean.length;
+    // Bracketed paste calls insert directly, bypassing editComposer. It must
+    // start the approval card's typing guard just like individual characters.
+    if (clean.length > 0) this.lastTypedAt = Date.now();
   },
 
   /** Route pasted text to whichever field is active (composer, or a key editor). */
@@ -666,28 +690,53 @@ export const INPUT_METHODS = {
    *  true when it handled the key. Shared by input mode and mid-turn type-ahead so the composer
    *  edits identically whether or not a turn is streaming; callers own redraw + side effects. */
   editComposer(this: Tui, key: Key): boolean {
+    // When the person last changed the text. An approval card reads it: a
+    // digit or an enter that lands mid-sentence belongs to the sentence, not
+    // to the card (tui.ts permKey).
+    const typed = (): true => {
+      this.lastTypedAt = Date.now();
+      return true;
+    };
+    const apply = (edit: Edit): true => {
+      this.input = edit.text;
+      this.caret = edit.caret;
+      return typed();
+    };
     switch (key.type) {
       case "char":
         this.insert(key.value);
         this.scroll = 0; // typing returns to the latest output
-        return true;
+        return typed();
+      // By character, never by code unit (./edit.ts): one Backspace after an
+      // emoji used to delete half of it and send the broken remainder.
       case "backspace":
-        if (this.caret > 0) {
-          this.input = this.input.slice(0, this.caret - 1) + this.input.slice(this.caret);
-          this.caret--;
-        }
-        return true;
+        return apply(deleteBack(this.input, this.caret));
       case "delete":
-        if (this.caret < this.input.length) {
-          this.input = this.input.slice(0, this.caret) + this.input.slice(this.caret + 1);
-        }
-        return true;
+        return apply(deleteForward(this.input, this.caret));
       case "left":
-        if (this.caret > 0) this.caret--;
+        this.caret = prevBoundary(this.input, this.caret);
         return true;
       case "right":
-        if (this.caret < this.input.length) this.caret++;
+        this.caret = nextBoundary(this.input, this.caret);
         return true;
+      // The Option/Alt chords (./keys.ts). They used to arrive as Escape and
+      // clear the whole draft.
+      case "word-left":
+        this.caret = wordLeft(this.input, this.caret);
+        return true;
+      case "word-right":
+        this.caret = wordRight(this.input, this.caret);
+        return true;
+      case "word-backspace":
+        return apply(deleteWordBack(this.input, this.caret));
+      case "word-delete":
+        return apply(deleteWordForward(this.input, this.caret));
+      case "newline":
+        // Option+Enter: the newline shift+enter is asked for, sent the one
+        // way a terminal can send it.
+        this.insert("\n");
+        this.scroll = 0;
+        return typed();
       case "home":
         this.caret = 0;
         return true;
@@ -707,8 +756,12 @@ export const INPUT_METHODS = {
         if (key.name === "b") {
           this.insert("\n");
           this.scroll = 0;
-          return true;
+          return typed();
         }
+        // ctrl+w deletes the previous word, as in every shell. With a
+        // sub-agent's transcript open the same key closes it; that is claimed
+        // first, in agentsKey, so it never reaches here then.
+        if (key.name === "w") return apply(deleteSpaceWordBack(this.input, this.caret));
         return false;
       default:
         return false;
@@ -770,7 +823,12 @@ export const INPUT_METHODS = {
         // NEXT enter sends the message instead of opening a transcript.
         if (
           focus === "row" &&
-          (key.type === "char" || key.type === "backspace" || key.type === "delete")
+          (key.type === "char" ||
+            key.type === "backspace" ||
+            key.type === "delete" ||
+            key.type === "word-backspace" ||
+            key.type === "word-delete" ||
+            key.type === "newline")
         ) {
           this.focus = "composer";
           this.refreshRung();
@@ -1015,17 +1073,26 @@ export const INPUT_METHODS = {
           this.exit(0);
           return;
         }
+        // The hint is the status line's, for as long as it is true. Printed,
+        // it stayed in the transcript forever, long after it stopped being so.
         this.sigintArmed = true;
-        this.print(`  ${faint("(ctrl-c again to exit)")}`);
+        this.scheduleDraw();
         setTimeout(() => {
           this.sigintArmed = false;
+          this.scheduleDraw();
         }, 2000);
         break;
       case "d":
         if (this.input.length === 0) this.exit(0);
         break;
       case "l":
-        this.resetTranscript();
+        // Readline's meaning: draw the screen again. It used to erase the
+        // transcript, every fold and the finished sub-agents, with nothing on
+        // screen to bring them back; /clear is the deliberate clear (founder
+        // decision 2026-10-26, docs/program/ui-decision-20261026-trust-fixes.md).
+        if (this.inline) this.renderRegion();
+        else this.viewport.invalidate();
+        this.scheduleDraw();
         break;
       case "u":
         this.input = this.input.slice(this.caret);

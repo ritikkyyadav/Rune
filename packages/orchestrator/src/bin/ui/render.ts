@@ -192,6 +192,24 @@ export function truncate(value: string, max: number): string {
 }
 
 /**
+ * `truncate`, at a word boundary when there is a good one: a description cut
+ * mid-word ("... or web sea...", "explain how this repo is wir...") reads as a
+ * typo, so what survives the cut should be words. Plain text only -- a styled
+ * value falls back to `truncate`, which keeps its escapes intact.
+ */
+export function truncateWords(value: string, max: number): string {
+  if (visLen(value) <= max) return value;
+  if (max <= 1 || value.includes("\x1b")) return truncate(value, max);
+  const room = prefixByWidth(value, max - 1);
+  const space = room.lastIndexOf(" ");
+  // A boundary in the last two fifths keeps most of the text; one earlier
+  // would throw away more than the word it saves.
+  const head =
+    space >= Math.floor(room.length * 0.6) ? room.slice(0, space).replace(/[\s,;:]+$/, "") : room;
+  return head + glyph("elision");
+}
+
+/**
  * ANSI-aware hard clamp: cut an already-STYLED line to `max` visible columns,
  * keeping its escape sequences and closing with a reset. This is the last line
  * of defense for the pinned-region contract (lines must never auto-wrap): a

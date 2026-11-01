@@ -50,9 +50,13 @@ import {
   fetchLiveModels,
 } from "./model-picker";
 import { configModeToPermissionMode } from "../../permissions";
-import { CONFIG_SETTINGS, displaySettingValue, settingChoices } from "../../config-settings";
+import {
+  CONFIG_SETTINGS,
+  settingChoices,
+  settingInWords,
+  settingLabel,
+} from "../../config-settings";
 import { runSettingsCommand } from "../../settings-command";
-import { settingsPickerChrome } from "../../first-run";
 import {
   runSandboxCommand,
   SANDBOX_MODE_CHOICES,
@@ -71,7 +75,7 @@ import {
 } from "./composer";
 import { renderStatus } from "./status";
 import * as F from "./flow";
-import { truncate, visLen } from "./render";
+import { truncate, truncateWords, visLen } from "./render";
 import { formatLoopDue, formatLoopInterval, loopPromptPreview } from "../../loop-mode";
 import {
   bold,
@@ -93,6 +97,7 @@ import {
 import { THEME_CHOICES, finishLabel, parseThemeChoice, themeChoiceIndex } from "./themes";
 import { formatCostReport, formatRunEconomics } from "../../cost-report";
 import { glyph } from "./glyphs";
+import { copyText, lastCodeBlock } from "./clipboard";
 import { saveTheme } from "./theme-store";
 import { renderWorkspaceDiff } from "./workspace-diff";
 import { buildInteractiveDirective, saveInteractiveAuto } from "./interactive";
@@ -153,6 +158,7 @@ export const COMMAND_METHODS = {
         tag: "shift+tab",
       },
       { name: "/diff", desc: "Inspect staged and uncommitted workspace changes", tag: "git" },
+      { name: "/copy", desc: "Copy the last answer's code block, or /copy all" },
       { name: "/undo", desc: "Revert the last Rune auto-commit" },
       { name: "/rewind", desc: "Roll back the conversation, the files, or both" },
       { name: "/cost", desc: "Session cost" },
@@ -269,14 +275,23 @@ export const COMMAND_METHODS = {
         // or /login (2026-09-10). Wide windows get two columns.
         const commands = this.slashCatalog();
         const groups: Array<[string, string[]]> = [
-          ["work", ["/diff", "/undo", "/rewind", "/compress", "/clear", "/cost", "/status"]],
-          ["setup", ["/model", "/login", "/connectors", "/config", "/theme"]],
+          [
+            "work",
+            ["/diff", "/copy", "/undo", "/rewind", "/compress", "/clear", "/cost", "/status"],
+          ],
+          ["setup", ["/model", "/login", "/setup", "/connectors", "/config", "/theme"]],
           ["autonomy", ["/gear", "/sandbox", "/browser", "/interactive", "/loop", "/loops"]],
           ["knowledge", ["/memory", "/notebook", "/skills", "/team"]],
           ["session", ["/sessions", "/bug", "/help", "/quit"]],
         ];
+        // "custom" is the person's own commands. A built-in this list does not
+        // place goes under "more": /setup was filed as custom for that reason.
         const placed = new Set(groups.flatMap(([, names]) => names));
-        const custom = commands.filter((item) => !placed.has(item.name)).map((i) => i.name);
+        const own = new Set(this.ctx.customCommands.map((c) => "/" + c.name));
+        const unplaced = commands.filter((item) => !placed.has(item.name)).map((i) => i.name);
+        const more = unplaced.filter((name) => !own.has(name));
+        const custom = unplaced.filter((name) => own.has(name));
+        if (more.length > 0) groups.push(["more", more]);
         if (custom.length > 0) groups.push(["custom", custom]);
         const byName = new Map(commands.map((item) => [item.name, item]));
         const nameWidth = Math.max(...commands.map((item) => item.name.length)) + 2;
@@ -326,7 +341,7 @@ export const COMMAND_METHODS = {
           // Two columns when the window can hold two descriptions side by side.
           const colWidth = Math.floor((width - 4) / 2);
           const cell = (item: SlashItem): string =>
-            `${info(item.name.padEnd(nameWidth))}${muted(truncate(item.desc, colWidth - nameWidth - 2))}`;
+            `${info(item.name.padEnd(nameWidth))}${muted(truncateWords(item.desc, colWidth - nameWidth - 2))}`;
           if (width >= 110) {
             for (let i = 0; i < items.length; i += 2) {
               const left = items[i]!;
@@ -391,6 +406,28 @@ export const COMMAND_METHODS = {
             `  ${muted("Team")}  ${text(`${team.peerCount} other instance${team.peerCount === 1 ? "" : "s"} in this repo`)} ${faint("(/team)")}`,
           );
         }
+        return true;
+      }
+      case "copy": {
+        // Code in an answer is drawn in a frame, and a terminal copies what it
+        // shows -- a wrapped command came out as two lines. This is the text
+        // exactly as the model wrote it.
+        const answer = this.lastAnswer.trim();
+        if (!answer) {
+          this.print(`  ${muted("Nothing to copy yet: no answer in this session.")}`);
+          return true;
+        }
+        const all = rest[0] === "all";
+        const block = all ? null : lastCodeBlock(answer);
+        const payload = block ?? answer;
+        const what = block ? "the last code block" : "the answer";
+        const lines = payload.split("\n").length;
+        const result = copyText(payload);
+        this.print(
+          result.confirmed
+            ? `  ${ok(glyph("verified"))} ${text(`Copied ${what}`)} ${faint(`${lines} line${lines === 1 ? "" : "s"}`)}`
+            : `  ${muted(`Sent ${what} to the terminal's clipboard (${lines} line${lines === 1 ? "" : "s"}). If nothing was copied, this terminal does not accept it; select the text instead.`)}`,
+        );
         return true;
       }
       case "cost": {
@@ -458,7 +495,7 @@ export const COMMAND_METHODS = {
             const row = engine.getProviderStatus().find((r) => r.id === id);
             if (row && !row.hasKey && !row.local) {
               this.print(
-                `  ${warn("->")} ${muted(`${id} has no key yet -- add one:`)} ${info(`/keys set ${id} <key>`)} ${muted("or")} ${info(`rune login ${id}`)}`,
+                `  ${warn("!")} ${muted(`${id} has no key yet -- add one:`)} ${info(`/keys set ${id} <key>`)} ${muted("or")} ${info("/login")}`,
               );
             }
           }
@@ -1339,14 +1376,15 @@ export const COMMAND_METHODS = {
     const defNote = def ? ` \u00b7 default ${def.provider}/${def.model}` : "";
 
     // -- Level 1: providers --
-    const provs = providerChoices(rows, customEp, process.env, getPreset);
+    const provs = providerChoices(rows, customEp, process.env, getPreset, { markActive: false });
     const typeItem: PickerItem = { label: "Type provider/model...", hint: "anything not listed" };
     const l1: PickerItem[] = [
       ...provs.map((p) => ({
         label: p.label,
         hint: stripAnsi(p.hint),
         current: p.id === current.provider,
-        tags: p.local ? ["local"] : [],
+        // "Ollama (local)" already says it.
+        tags: p.local && !/\(local\)/i.test(p.label) ? ["local"] : [],
       })),
       typeItem,
     ];
@@ -1360,8 +1398,8 @@ export const COMMAND_METHODS = {
       l1start,
       undefined,
       provs.length
-        ? "subscriptions (ChatGPT): rune login \u00b7 keys: /keys"
-        : "no providers configured yet -- add a key with /keys or sign in with rune login",
+        ? "sign in or add a key: /login"
+        : "nothing connected yet -- /login connects a model",
     );
     if (a1 == null) return;
     if (a1 >= provs.length) {
@@ -1544,58 +1582,98 @@ export const COMMAND_METHODS = {
     );
   },
 
-  async showSettings(this: Tui): Promise<void> {
+  /**
+   * `/config` with no argument: the settings a person changes, in words.
+   *
+   * The first page is the short one -- the model, keys, theme, permissions,
+   * memory, the spend cap, the sandbox, the layout -- and the harness's own
+   * dials (the controller, the evidence gate, routing, the doctrine) wait
+   * behind Advanced. It was one page of twenty-seven rows, ten visible at
+   * 80x24, saying `budget 0` for "no limit" and `shadow controller on` to
+   * someone looking for the theme.
+   */
+  async showSettings(this: Tui, advanced = false): Promise<void> {
     const engine = this.ctx.engine;
-    const shortcuts = [
-      {
-        label: "Model and reasoning",
-        hint: "model, provider and thinking depth",
-        description: "Choose the model for this session and adjust how deeply it reasons.",
-        command: "model",
-      },
-      {
-        label: "API keys and internet search",
-        hint: "manage keys \u00b7 /login to connect",
-        description: "Manage saved provider credentials and web search connections.",
-        command: "keys",
-      },
-      {
-        label: "Browser",
-        hint: engine.isBrowserEnabled() ? "on" : "off",
-        description: "Control whether the agent can use the web browser.",
-        command: "browser",
-      },
-    ];
+    const shortcuts = advanced
+      ? []
+      : [
+          {
+            label: "Model and reasoning",
+            hint: "model, provider and thinking depth",
+            description: "Choose the model for this session and adjust how deeply it reasons.",
+            command: "model",
+          },
+          {
+            label: "API keys and internet search",
+            hint: "manage keys \u00b7 /login to connect",
+            description: "Manage saved provider credentials and web search connections.",
+            command: "keys",
+          },
+          {
+            label: "Theme",
+            hint: getTheme().name,
+            description: "The colours Rune draws with.",
+            command: "theme",
+          },
+          {
+            label: "Browser",
+            hint: engine.isBrowserEnabled() ? "on" : "off",
+            description: "Control whether the agent can use the web browser.",
+            command: "browser",
+          },
+        ];
+    const settings = CONFIG_SETTINGS.filter((s) => Boolean(s.everyday) !== advanced);
+    const more = CONFIG_SETTINGS.length - settings.length;
     while (true) {
       const rows: PickerItem[] = [
         ...shortcuts,
-        ...CONFIG_SETTINGS.map((s) => {
+        ...settings.map((s) => {
           const value = engine.readConfigSetting(s.key);
           return {
-            label: s.key.replaceAll("_", " "),
-            hint: value === undefined ? "per effort" : displaySettingValue(s, value),
+            label: settingLabel(s),
+            hint: value === undefined ? "per effort" : settingInWords(s, value),
             description: s.description,
           };
         }),
+        ...(advanced
+          ? []
+          : [
+              {
+                label: "Advanced",
+                hint: `${more} more -- sub-agents, routing, the controller`,
+                description:
+                  "The harness's own dials: delegation, reasoning routing, the plan ledger, the controller.",
+              },
+            ]),
       ];
-      // The shared picker supplies the visible range and total in its heading.
-      const chrome = settingsPickerChrome(shortcuts.length);
-      const selected = await this.pick("Settings", rows, 0, undefined, chrome.footnote);
+      const title = advanced ? `Settings \u00b7 Advanced (${rows.length} rows)` : "Settings";
+      const footnote = advanced
+        ? `Up/down reaches all ${rows.length}. Changes apply now and are saved.`
+        : "Changes apply now and are saved.";
+      const selected = await this.pick(title, rows, 0, undefined, footnote);
       if (selected === null) return;
       if (selected < shortcuts.length) {
         await this.handleSlash(`/${shortcuts[selected]!.command}`);
         return;
       }
-      const setting = CONFIG_SETTINGS[selected - shortcuts.length]!;
+      // Esc from Advanced comes back to this page, not out of /config.
+      if (!advanced && selected === rows.length - 1) {
+        await this.showSettings(true);
+        continue;
+      }
+      const setting = settings[selected - shortcuts.length]!;
       const current = engine.readConfigSetting(setting.key);
       let value: string | null = null;
       if (setting.kind === "number") {
-        value = await this.promptLine(`${setting.key} (${settingChoices(setting)})`, current ?? "");
+        value = await this.promptLine(
+          `${settingLabel(setting)} (${settingChoices(setting)})`,
+          current ?? "",
+        );
       } else {
         const values = setting.kind === "boolean" ? ["true", "false"] : [...setting.values!];
         const choice = await this.pick(
-          setting.key.replaceAll("_", " "),
-          values.map((v) => ({ label: displaySettingValue(setting, v), current: v === current })),
+          settingLabel(setting),
+          values.map((v) => ({ label: settingInWords(setting, v), current: v === current })),
           Math.max(0, values.indexOf(current ?? "")),
           undefined,
           setting.description,
@@ -1696,28 +1774,53 @@ export const COMMAND_METHODS = {
    * the way you would say them, and runs the provider's own auth strategy --
    * the same one `rune login` uses, so there is one code path for real auth.
    */
-  async openLogin(this: Tui): Promise<void> {
-    const routes = routeChoices();
+  /**
+   * `/login`: what do you want to connect?
+   *
+   * `needModel` is the same picker for someone with no model at all -- a
+   * first launch, or a message sent before anything was connected. It asks
+   * only the question they have (which model, and how), leaves web search for
+   * later, and says what Esc means: nothing runs until a model is connected.
+   * The first launch used to open the six-step configuration wizard on a table
+   * of saved-against-active values and a precedence chain; Esc from it landed
+   * on a default model with no key, so the first message failed.
+   */
+  async openLogin(this: Tui, opts: { needModel?: boolean } = {}): Promise<void> {
+    const needModel = opts.needModel === true;
+    const routes = routeChoices().filter((c) => !needModel || c.id !== "search");
     const engine = this.ctx.engine;
     const connectedIds = PROVIDER_PRESETS.map((p) => p.id).filter((id) => hasStoredCredential(id));
     const searchIds = SEARCH_PROVIDER_PRESETS.filter(
       (p) => !p.keyless && this.searchConnected(p.id),
     ).map((p) => p.id);
-    this.print(
-      [
-        `  ${bold(text("Connect"))} ${faint("| a model, an API key, a local server, or web search")}`,
-        `  ${faint(connectedSummary(connectedIds, searchIds))}`,
-      ].join("\n"),
-    );
+    // The question is asked once; the picker reopening after a held message
+    // does not ask it again under the line saying why it reopened.
+    const asked = needModel && this.connectAsked === true;
+    if (needModel) this.connectAsked = true;
+    if (!asked)
+      this.print(
+        needModel
+          ? `  ${bold(text("Rune needs a model to talk to."))} ${faint("Pick one way in:")}`
+          : [
+              `  ${bold(text("Connect"))} ${faint(`${glyph("observed")} a model, an API key, a local server, or web search`)}`,
+              `  ${faint(connectedSummary(connectedIds, searchIds))}`,
+            ].join("\n"),
+      );
 
     const r = await this.pick(
-      "Connect \u00b7 what do you want to connect?",
+      needModel ? "Connect a model" : "Connect \u00b7 what do you want to connect?",
       routes.map((c) => ({ label: c.label, hint: c.hint })),
       0,
       undefined,
-      "enter choose \u00b7 esc cancel",
+      // The picker's own legend says which keys; this says what Esc means here.
+      needModel ? "nothing runs until a model is connected" : "enter choose \u00b7 esc cancel",
     );
-    if (r == null) return;
+    if (r == null) {
+      if (needModel) {
+        this.print(`  ${faint("no model yet -- /login connects one when you are ready")}`);
+      }
+      return;
+    }
     const route = routes[r]!;
 
     const targets = loginTargets(route.id, {

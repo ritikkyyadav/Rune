@@ -7,9 +7,10 @@
  * rung looked identical at four seconds and at four minutes.
  */
 
-import { describe, test, expect } from "bun:test";
+import { afterEach, beforeEach, describe, test, expect } from "bun:test";
 import { TurnRenderer } from "../../../packages/orchestrator/src/bin/ui/turn";
 import { stripAnsi } from "../../../packages/orchestrator/src/bin/ui/theme";
+import { setTermWidthOverride } from "../../../packages/orchestrator/src/bin/ui/render";
 import type { Pulse } from "../../../packages/orchestrator/src/bin/ui/pulse";
 
 function makeRenderer() {
@@ -84,6 +85,12 @@ describe("live rung liveness", () => {
 });
 
 describe("retries are never silent", () => {
+  // The rung gives its voice up below a 72-column measure, and the width is a
+  // process global another file can leave narrow: pinned here, so what is
+  // measured is the row, not the order the files ran in.
+  beforeEach(() => setTermWidthOverride(100));
+  afterEach(() => setTermWidthOverride(null));
+
   test("a retry rides the rung for as long as it lasts", () => {
     const { r, rung } = makeRenderer();
     r.onEvent({
@@ -96,16 +103,53 @@ describe("retries are never silent", () => {
       waitMs: 1000,
       reason: "overloaded",
     } as any);
-    expect(rung()).toContain("↻ 1 of 3");
+    expect(rung()).toContain("↻ retry 1");
+    // The voice says what the provider did, not that Rune is thinking.
+    expect(r.workingState().voice).toBe("the provider said 529, trying again");
+    expect(rung()).toContain("the provider said 529, trying again");
 
     r.onEvent({ type: "retry", provider: "anthropic", model: "m", attempt: 2, of: 3 } as any);
-    expect(rung()).toContain("↻ 2 of 3");
+    expect(rung()).toContain("↻ retry 2");
+    // A second ladder restarts its own count; the rung's only goes up. It
+    // used to read 2 of 3, 2 of 3, 1 of 3, 3 of 3 through one outage.
+    r.onEvent({ type: "retry", provider: "anthropic", model: "m", attempt: 1, of: 3 } as any);
+    expect(rung()).toContain("↻ retry 3");
+  });
+
+  test("a silent model is said as waiting on it, not as thinking", () => {
+    const { r, rewind } = makeRenderer();
+    rewind(5_000);
+    // The voice walk ("connecting the dots", "one thought at a time") ran
+    // through a 45-second silence; nothing was arriving, and the row said so
+    // only in the small `quiet 39s`.
+    expect(r.workingState().voice).toBe("waiting on the model");
+  });
+
+  test("a running command's silence keeps the command's own voice", () => {
+    const { r, rewind } = makeRenderer();
+    r.onEvent({ type: "tool_call_start", callId: "b1", toolName: "bash" } as any);
+    r.onEvent({
+      type: "tool_call_args_delta",
+      callId: "b1",
+      partialJson: JSON.stringify({ command: "bun test" }),
+    } as any);
+    rewind(5_000);
+    expect(r.workingState().voice).not.toBe("waiting on the model");
+  });
+
+  test("output arriving again ends the retry on the rung", () => {
+    const { r, rung } = makeRenderer();
+    r.onEvent({ type: "retry", provider: "anthropic", model: "m", attempt: 1, of: 3 } as any);
+    expect(rung()).toContain("↻");
+    r.onEvent({ type: "text_delta", text: "Recovered and answering." } as any);
+    expect(rung()).not.toContain("↻");
+    expect(rung()).not.toContain("trying again");
   });
 
   test("switching provider ends that provider's ladder", () => {
     const { r, rung } = makeRenderer();
     r.onEvent({ type: "retry", provider: "anthropic", model: "m", attempt: 2, of: 3 } as any);
-    expect(rung()).toContain("↻ 2 of 3");
+    expect(rung()).toContain("↻ retry 1");
     r.onEvent({
       type: "fallback",
       from: { provider: "anthropic", model: "m" },

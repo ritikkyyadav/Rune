@@ -15,22 +15,16 @@ describe("ui/status renderStatus", () => {
     cost: 0.42,
   };
 
-  it("opens with the SAME masthead the session opens with", () => {
-    // This card called itself "the header, expanded" while drawing a header of
-    // its own: a lowercase name inlaid into a line of repeated hyphens, which
-    // is the dash-rule texture the rest of the UI dropped, in a different case
-    // from the row pinned at the top of the same window. Two dialects, one
-    // claim of being one thing. It now calls the header's own lockup.
+  it("opens with a title, not a second masthead", () => {
+    // The card drew the header's own lockup -- R U N E and the build -- into
+    // the transcript, under the header pinned at the top of the same window
+    // (the TUI audit of 2026-10-26: "duplicate header inside the transcript").
     const lines = stripAnsi(renderStatus({ ...base, version: "0.3.0" })).split("\n");
-    const mark = lines.find((line) => line.includes("R U N E"))!;
-    // Same wordmark on the left, same build hard against the same right edge.
-    expect(mark.startsWith(`${F.MARK}R U N E`)).toBe(true);
-    expect(mark.trimEnd()).toMatch(/v0\.3\.0$/);
-    expect(mark.length).toBe(F.surfaceWidth());
-    // …carried on the header's two-tone rule, at the header's own width.
-    expect(lines[lines.indexOf(mark) + 1]).toBe(
-      stripAnsi(F.seamRule(F.surfaceWidth(), F.lockup("Rune").cells - 1)),
-    );
+    expect(lines.some((line) => line.includes("R U N E"))).toBe(false);
+    const title = lines.find((line) => line.trim().startsWith("Status"))!;
+    expect(title.startsWith(`${F.MARK}Status`)).toBe(true);
+    // The build still sits hard against the right edge.
+    expect(title.trimEnd()).toMatch(/v0\.3\.0$/);
     // And no dash rules anywhere: a dash rule reads as texture, a hairline as
     // structure, and this card was the last place still drawing them.
     expect(stripAnsi(renderStatus({ ...base }))).not.toMatch(/-{10}/);

@@ -2059,7 +2059,7 @@ export class CommandVerifier implements Verifier {
     }
 
     const now = parseBunTestRun(failed.output, bothNames(this.config.workspaceRoot));
-    if (!now) return unknown("the check's output is not a test report this can read");
+    if (!now) return unknown("could not read test results from the check's output");
     if (!attributable(now) || now.failing.length === 0) {
       return unknown("something failed that the report does not name as a test");
     }
@@ -2126,7 +2126,7 @@ export class CommandVerifier implements Verifier {
       const parsed = parseBunTestRun(output, bothNames(laid.cwd));
       if (!parsed) {
         return {
-          unknown: "the check's output on the starting tree is not a test report this can read",
+          unknown: "could not read test results from the check on the starting tree",
         };
       }
       // A file that would not load there, a total that does not add up, an

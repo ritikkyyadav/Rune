@@ -114,7 +114,7 @@ describe("a quieter workspace retains the evidence", () => {
     ]) {
       const compact = stripAnsi(renderToolActivity(v));
       expect(compact.split("\n").length).toBeLessThanOrEqual(8);
-      expect(compact).toMatch(/75 more (diff )?lines/);
+      expect(compact).toMatch(/75 more (diff |changed )?lines/);
       expect(compact).toContain("ctrl+o");
       expect(compact).toContain("+80");
       expect(stripAnsi(renderToolDetail(v)!)).toContain("line 80");

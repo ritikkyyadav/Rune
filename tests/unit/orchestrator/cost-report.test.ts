@@ -155,6 +155,6 @@ describe("status-bar summary", () => {
       { inputTokens: 1_000_000, outputTokens: 10_000 },
       { role: "primary" },
     );
-    expect(formatCostSummary(t.getBreakdown())).toBe("~$1.35 value · cache 0%");
+    expect(formatCostSummary(t.getBreakdown())).toBe("~$1.35 at list prices · cache 0%");
   });
 });

@@ -9,6 +9,8 @@ import {
   ok as green,
   positiveSurface,
   negativeSurface,
+  bandInk,
+  bandsEnabled,
 } from "./ui/theme";
 
 const MAX_DIFF_LINES = 60;
@@ -52,9 +54,15 @@ export function renderUnifiedDiff(diff: string, indent = "  "): RenderedDiff {
     if (line.startsWith("@@")) {
       rendered.push(`${indent}${cyan(line)}`);
     } else if (line.startsWith("+")) {
-      rendered.push(positiveSurface(`${indent}${green(line)}`));
+      // On a band, the band's own ink: green on the light added band read at
+      // 2.69:1 (/diff, dark theme). Where bands are off, colour carries it.
+      rendered.push(
+        positiveSurface(`${indent}${bandsEnabled() ? bandInk("ok")(line) : green(line)}`),
+      );
     } else if (line.startsWith("-")) {
-      rendered.push(negativeSurface(`${indent}${red(line)}`));
+      rendered.push(
+        negativeSurface(`${indent}${bandsEnabled() ? bandInk("danger")(line) : red(line)}`),
+      );
     } else {
       rendered.push(`${indent}${dim(line)}`);
     }

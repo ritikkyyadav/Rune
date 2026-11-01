@@ -29,7 +29,15 @@ import {
 } from "./theme";
 import { fmtTokens } from "./events";
 import { glyph } from "./glyphs";
-import { clampVisible, truncate, visLen, wrap, graphemeSpans, prefixByWidth } from "./render";
+import {
+  clampVisible,
+  truncate,
+  truncateWords,
+  visLen,
+  wrap,
+  graphemeSpans,
+  prefixByWidth,
+} from "./render";
 import * as F from "./flow";
 import { pasteChipSpans } from "./paste";
 import type { PermissionPreview, PermissionPreviewLine } from "./permission-preview";
@@ -74,6 +82,11 @@ export interface ComposerStatus {
   /** Something is typed in the field: `?` would type a `?`, not open the sheet,
    *  and mid-turn enter/esc act on the draft. */
   drafting?: boolean;
+  /** Esc was pressed once over the running turn; the next press stops it. */
+  stopArmed?: boolean;
+  /** Ctrl+C was pressed once at rest; the next press quits. Said here, for
+   *  the two seconds it is true, rather than committed to the transcript. */
+  exitArmed?: boolean;
   /** The keys are on the agents (the row, the cards, an open transcript)
    *  rather than on the field, and this is their legend. It replaces the
    *  field's own keys: from there `esc` goes back, and does nothing else. */
@@ -278,12 +291,18 @@ export function statusLine(s: ComposerStatus, width = process.stdout.columns || 
   const keys = s.focusKeys
     ? faint(s.focusKeys)
     : s.streaming
-      ? faint(s.drafting ? `enter sends${sep}esc clears` : "esc stop")
-      : s.drafting
-        ? ""
-        : [s.folds ? keyHint("ctrl+o", "open") : "", keyHint("?", "keys")]
-            .filter(Boolean)
-            .join("  ");
+      ? s.drafting
+        ? faint(`enter sends${sep}esc clears`)
+        : s.stopArmed
+          ? warn("esc again to stop")
+          : faint("esc stop")
+      : s.exitArmed
+        ? warn("ctrl+c again to exit")
+        : s.drafting
+          ? ""
+          : [s.folds ? keyHint("ctrl+o", "open") : "", keyHint("?", "keys")]
+              .filter(Boolean)
+              .join("  ");
 
   // ── The ladder: widest first; the first tier that fits the window wins. ──
   //
@@ -1318,7 +1337,7 @@ function fitHint(hint: string, budget: number): string {
   const parts = sep ? hint.split(sep) : [hint];
   while (parts.length > 1 && visLen(parts.join(sep ?? "")) > budget) parts.pop();
   const fitted = parts.join(sep ?? "");
-  return "  " + quiet(visLen(fitted) > budget ? truncate(fitted, budget) : fitted);
+  return "  " + quiet(visLen(fitted) > budget ? truncateWords(fitted, budget) : fitted);
 }
 
 /**
@@ -1460,7 +1479,7 @@ export function renderSlashPalette(
     const padded = fitted + " ".repeat(Math.max(0, nameW - visLen(fitted)));
     const name = on ? bold(text(padded)) : text(padded);
     const descMax = Math.max(8, maxWidth - nameW - 7);
-    const desc = it.desc ? "  " + quiet(truncate(it.desc, descMax)) : "";
+    const desc = it.desc ? "  " + quiet(truncateWords(it.desc, descMax)) : "";
     const row = clampVisible(`${PAD}${marker} ${name}${desc}`, maxWidth);
     return on ? F.band(row, maxWidth) : row;
   });
@@ -2025,10 +2044,13 @@ export function renderSessionsPanel(
         keyHint("tab", opts.view === "archived" ? "active" : "archived"),
       ].join(sep2);
   const footLeft = `${PAD}${keys}`;
-  const footGap = selectedId
+  // Whole or not at all: an id cut at the edge (`01a177d4-3817-...`) is one
+  // nobody can type back.
+  const idFits = selectedId && visLen(footLeft) + 2 + visLen(selectedId) <= maxWidth;
+  const footGap = idFits
     ? " ".repeat(Math.max(2, maxWidth - visLen(footLeft) - visLen(selectedId)))
     : "";
-  lines.push(clampVisible(`${footLeft}${footGap}${selectedId}`, maxWidth));
+  lines.push(clampVisible(`${footLeft}${footGap}${idFits ? selectedId : ""}`, maxWidth));
 
   return {
     lines,

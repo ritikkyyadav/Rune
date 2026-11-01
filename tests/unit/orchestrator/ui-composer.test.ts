@@ -1055,10 +1055,75 @@ describe("ui/composer — ctrl+b, the explicit newline", () => {
     // ctrl+c clears then arms then exits; ctrl+u kills to the start; ctrl+p
     // recalls history. editComposer swallowing them would be a dead keyboard.
     const c = composer("draft");
-    for (const name of ["c", "d", "u", "a", "e", "l", "p", "n", "f", "w", "r", "o"]) {
+    for (const name of ["c", "d", "u", "a", "e", "l", "p", "n", "f", "r", "o"]) {
       expect(c.key({ type: "ctrl", name })).toBe(false);
     }
     expect(c.state.input).toBe("draft");
+  });
+
+  it("ctrl+w deletes the previous word, as in every shell", () => {
+    const c = composer("run the tests now");
+    expect(c.key({ type: "ctrl", name: "w" })).toBe(true);
+    expect(c.state.input).toBe("run the tests ");
+    expect(c.key({ type: "ctrl", name: "w" })).toBe(true);
+    expect(c.state.input).toBe("run the ");
+  });
+});
+
+describe("ui/composer: Option keys and characters, not code units", () => {
+  function composer(input = "", caret = input.length) {
+    const state: Record<string, unknown> = { input, caret, scroll: 4 };
+    state.insert = INPUT_METHODS.insert.bind(state as never);
+    return {
+      state,
+      key: (k: unknown): boolean => INPUT_METHODS.editComposer.call(state as never, k as never),
+    };
+  }
+
+  it("Option+left and Option+right move by word and keep the draft", () => {
+    const c = composer("fix the flaky login test");
+    expect(c.key({ type: "word-left" })).toBe(true);
+    expect(c.state.caret).toBe("fix the flaky login ".length);
+    expect(c.key({ type: "word-left" })).toBe(true);
+    expect(c.state.caret).toBe("fix the flaky ".length);
+    expect(c.key({ type: "word-right" })).toBe(true);
+    expect(c.state.caret).toBe("fix the flaky login".length);
+    expect(c.state.input).toBe("fix the flaky login test");
+  });
+
+  it("Option+Backspace deletes one word, not the whole draft", () => {
+    const c = composer("fix the flaky login test");
+    expect(c.key({ type: "word-backspace" })).toBe(true);
+    expect(c.state.input).toBe("fix the flaky login ");
+  });
+
+  it("Option+Enter is a newline", () => {
+    const c = composer("first");
+    expect(c.key({ type: "newline" })).toBe(true);
+    for (const ch of "second") c.key({ type: "char", value: ch });
+    expect(c.state.input).toBe("first\nsecond");
+  });
+
+  it("one Backspace after an emoji removes the whole emoji", () => {
+    const c = composer("ship it \u{1F680}");
+    expect(c.key({ type: "backspace" })).toBe(true);
+    expect(c.state.input).toBe("ship it ");
+    expect(c.state.caret).toBe(8);
+  });
+
+  it("the caret steps over an emoji in one press, never into it", () => {
+    const c = composer("a\u{1F680}b", 1);
+    expect(c.key({ type: "right" })).toBe(true);
+    expect(c.state.caret).toBe(3);
+    expect(c.key({ type: "left" })).toBe(true);
+    expect(c.state.caret).toBe(1);
+  });
+
+  it("records when the person last typed, for the approval card's guard", () => {
+    const c = composer("");
+    const before = Date.now();
+    c.key({ type: "char", value: "x" });
+    expect(c.state.lastTypedAt as number).toBeGreaterThanOrEqual(before);
   });
 
   it("is not shift+enter and not ctrl+j: those are Enter at the wire", () => {

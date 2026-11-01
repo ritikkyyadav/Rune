@@ -619,7 +619,7 @@ export function hairline(width = surfaceWidth()): string {
  * critical signals; whose turn it is is not a critical signal, it is the shape
  * of the conversation, and monochrome carries shape.
  */
-export function asked(body: string): string {
+export function asked(body: string, note?: string): string {
   const width = proseWidth();
   const inner = Math.max(8, width - 2);
   const wrapped: string[] = [];
@@ -635,7 +635,18 @@ export function asked(body: string): string {
     const pad = " ".repeat(Math.max(0, bandWidth - visLen(line) - 1));
     return speakerSurface(` ${line}${pad}`);
   };
-  return ["", ...wrapped.map((line) => `${MARK}${band(line)}`)].join("\n");
+  const rows = wrapped.map((line) => `${MARK}${band(line)}`);
+  // What became of the message (a steer folded into the running task), on its
+  // own last row when it fits beside the band and on the row under it when not.
+  if (note) {
+    const last = rows.length - 1;
+    if (MARK.length + bandWidth + 2 + visLen(note) <= measure()) {
+      rows[last] = `${rows[last]}  ${faint(note)}`;
+    } else {
+      rows.push(`${MARK}${faint(note)}`);
+    }
+  }
+  return ["", ...rows].join("\n");
 }
 
 // --- The selection bar ---
@@ -772,6 +783,10 @@ export interface ToolRow {
   status?: Status;
   /** Paints the argument -- teal when it names a file the agent is changing. */
   argTone?: "muted" | "path";
+  /** The name column's width, when a list of rows is wider than a verb: the
+   *  members of a fan-out are named, and their briefs only line up as a column
+   *  when every name is padded to the longest. */
+  nameCols?: number;
 }
 
 /** A receipt that already carries colour keeps it; a plain one reads secondary. */
@@ -796,8 +811,10 @@ export function toolRow(v: ToolRow): string {
           ? `${danger(STATUS_GLYPH.fail)} `
           : status === "active"
             ? `${info(STATUS_GLYPH.active)} `
-            : `${STATUS_GLYPH.none} `;
-  const name = text(v.name.padEnd(4));
+            : status === "unproven"
+              ? `${warn(STATUS_GLYPH.unproven)} `
+              : `${STATUS_GLYPH.none} `;
+  const name = text(v.name.padEnd(Math.max(4, v.nameCols ?? 4)));
   const arg = v.arg ? `  ${(v.argTone === "path" ? info : muted)(v.arg)}` : "";
   return flowRow(`${rail()}${mark}${name}${arg}`, paintMetric(v.metric));
 }
@@ -806,10 +823,38 @@ export function toolRow(v: ToolRow): string {
  * What the work found, one line, under its call: `| + src/streaming.ts:42`.
  * Tinted only when the outcome itself is the news (a failure).
  */
-export function toolNote(detail: string, tone: "muted" | "fail" | "ok" = "muted"): string {
+export function toolNote(
+  detail: string,
+  tone: "muted" | "fail" | "ok" = "muted",
+  rows = 1,
+): string {
   const paint = tone === "fail" ? danger : tone === "ok" ? text : muted;
   const branch = tone === "fail" ? danger(glyph("gutter")) : faint(glyph("gutter"));
-  return `${rail()}${branch} ${truncate(paint(detail), railWidth() - 2)}`;
+  if (rows <= 1) return `${rail()}${branch} ${truncate(paint(detail), railWidth() - 2)}`;
+  return keepEnds(detail, railWidth() - 2, rows)
+    .map((line) => `${rail()}${branch} ${paint(line)}`)
+    .join("\n");
+}
+
+/**
+ * A message laid out in at most `rows` rows that keeps its START and its END.
+ *
+ * Cutting at the right edge kept the part that is least use: an error's head
+ * names what failed and its tail says what to do or which file -- "IO error at
+ * /private/tmp/.../1160f..." lost the file name, "switch with /mo..." lost the
+ * command. Wrapped when it fits; otherwise the first rows, then the tail of the
+ * message from a word boundary, after an elision mark.
+ */
+export function keepEnds(message: string, width: number, rows = 2): string[] {
+  const room = Math.max(8, width);
+  const lines = wrap(message, room);
+  if (lines.length <= rows) return lines;
+  const head = lines.slice(0, Math.max(1, rows - 1));
+  const tailRoom = Math.max(6, room - 2);
+  let tail = message.slice(-tailRoom);
+  const space = tail.indexOf(" ");
+  if (space > 0 && space < tailRoom / 3) tail = tail.slice(space + 1);
+  return [...head, `${glyph("elision")} ${tail}`];
 }
 
 /** A plain continuation row on the rail, already painted by the caller. */
@@ -1195,7 +1240,7 @@ export function diffRows(rows: DiffRow[], lang: CodeLang = null, opts: DiffOpts 
     const role = r.kind === "add" ? "ok" : "danger";
     const ink = bandInk(role);
     const pad = " ".repeat(Math.max(0, codeWidth - visLen(body)));
-    const laid = `${ink(String(r.line ?? "").padStart(4))} ${ink(r.kind === "add" ? "+" : "-")} ${paintCode(body, lang, ink, bandPalette(role))}${pad}`;
+    const laid = `${ink(String(r.line ?? "").padStart(4))} ${ink(r.kind === "add" ? "+" : "-")} ${paintCode(body, lang, ink, bandPalette(role), role)}${pad}`;
     return `${indent}${r.kind === "add" ? positiveSurface(laid) : negativeSurface(laid)}`;
   });
 }
@@ -1264,17 +1309,55 @@ export function parseDiff(
     }
     rows.push({ kind, line: number, text: kind === "context" ? source.slice(1) : source.slice(1) });
   }
-  if (dropped > 0) rows.push({ kind: "elide", text: `${dropped} more diff lines` });
+  if (dropped > 0) {
+    rows.push({ kind: "elide", text: `${dropped} more diff line${dropped === 1 ? "" : "s"}` });
+  }
   return { rows, added, removed, hunks };
 }
 
-/** The receipt for an edit: `+6 -1 | 1 hunk`, or `+14 | new file`. The counts
+/**
+ * The rows an edit's PREVIEW shows: the changed lines, each group led by the one
+ * line of context just above it, and nothing else.
+ *
+ * The preview took a diff's first rows in order, and a unified diff opens each
+ * hunk with three lines of context -- so five rows were spent on three lines
+ * nobody changed and one change, with the rest behind ctrl+o. The full diff,
+ * context included, is still the fold's.
+ */
+export function previewDiff(
+  raw: string,
+  limit: number,
+): { rows: DiffRow[]; added: number; removed: number; hunks: number } {
+  const full = parseDiff(raw, Number.MAX_SAFE_INTEGER);
+  const body = full.rows.filter((row) => row.kind !== "elide");
+  const rows: DiffRow[] = [];
+  let unshown = 0;
+  for (let i = 0; i < body.length; i++) {
+    const row = body[i]!;
+    const next = body[i + 1];
+    if (row.kind === "context") {
+      // Only the line that leads into a change, and only with room for the
+      // change after it.
+      if (!next || next.kind === "context" || rows.length >= limit - 1) continue;
+      rows.push(row);
+      continue;
+    }
+    if (rows.length < limit) rows.push(row);
+    else unshown++;
+  }
+  if (unshown > 0) {
+    rows.push({ kind: "elide", text: `${unshown} more changed line${unshown === 1 ? "" : "s"}` });
+  }
+  return { rows, added: full.added, removed: full.removed, hunks: full.hunks };
+}
+
+/** The receipt for an edit: `+6 -1 · 1 hunk`, or `+14 · new file`. The counts
  *  carry their own meaning, so they carry their own colour. */
 export function editMetric(added: number, removed: number, note = ""): string {
   const counts = [added > 0 ? ok(`+${added}`) : "", removed > 0 ? danger(`-${removed}`) : ""]
     .filter(Boolean)
     .join(" ");
-  return [counts || muted("no change"), note ? muted(note) : ""].filter(Boolean).join(muted(" | "));
+  return receiptOf([counts || muted("no change"), note ? muted(note) : ""]);
 }
 
 // --- Command output ---
@@ -1376,7 +1459,11 @@ export function clip(lines: string[], head = 22, tail = 8): string[] {
   // nothing to prefer, so the positional rule is still the right shape.
   if (overflowed && pool.length === 0) {
     const hidden = lines.length - head - tail;
-    return [...lines.slice(0, head), `${glyph("elision")} ${hidden} lines`, ...lines.slice(-tail)];
+    return [
+      ...lines.slice(0, head),
+      `${glyph("elision")} ${hidden} line${hidden === 1 ? "" : "s"}`,
+      ...lines.slice(-tail),
+    ];
   }
   const kept = new Set<number>();
   for (const { index } of pool.slice(-budget)) kept.add(index);
@@ -1584,8 +1671,11 @@ export function ask(block: AskBlock): string[] {
 export const ASK_TRAILING_ROWS = 1;
 
 /** The answer, echoed back so scrollback records what was decided. */
-export function answered(index: number, label: string): string {
-  return `\n${MARK}${info(glyph("selection"))} ${info(String(index + 1))}   ${text(label)}`;
+export function answered(index: number, label: string, question?: string): string {
+  // The question it answers, above it: on its own, `> 1   Yes, keep a backup
+  // table` was an answer with nothing left on screen saying to what.
+  const asked = question ? `\n${MARK}${faint(truncate(question, measure() - MARK.length))}` : "";
+  return `${asked}\n${MARK}${info(glyph("selection"))} ${info(String(index + 1))}   ${text(label)}`;
 }
 
 // --- Notes ---
@@ -1603,7 +1693,15 @@ export function note(
 ): string[] {
   const paint = tone === "fail" ? danger : tone === "ok" ? ok : warn;
   const mark = tone === "fail" ? glyph("failure") : tone === "ok" ? glyph("verified") : "!";
-  const lines = ["", `${MARK}${paint(mark)} ${bold(text(truncate(headline, measure() - 4)))}`];
+  // The headline wraps: a provider error's last words are usually the way out
+  // ("...or switch with /model"), and a one-line cut took exactly those.
+  const head = keepEnds(headline, measure() - 4, 3);
+  const lines = [
+    "",
+    ...head.map((part, i) =>
+      i === 0 ? `${MARK}${paint(mark)} ${bold(text(part))}` : `${BODY}${bold(text(part))}`,
+    ),
+  ];
   if (body) {
     lines.push("");
     for (const part of wrap(body, proseWidth())) lines.push(`${BODY}${text(part)}`);

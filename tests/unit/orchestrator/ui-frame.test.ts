@@ -565,17 +565,17 @@ describe("the workspace split", () => {
 });
 
 describe("too small to be told the truth in", () => {
-  it("refuses at 59x16 and 60x15, and draws at 60x16", () => {
-    expect(regionsAt(59, 16).refused).toBe(true);
-    expect(regionsAt(60, 15).refused).toBe(true);
-    expect(regionsAt(60, 16).refused).toBe(false);
+  it("refuses at 59x12 and 60x11, and draws at 60x12", () => {
+    expect(regionsAt(59, 12).refused).toBe(true);
+    expect(regionsAt(60, 11).refused).toBe(true);
+    expect(regionsAt(60, 12).refused).toBe(false);
   });
 
   it("says the size it needs, the size it has, and the way out", () => {
     const block = V.refusalRows(44, 12);
     expect(block).toHaveLength(3);
     expect(block[0]).toBe("R U N E");
-    expect(block[1]).toContain("60x16");
+    expect(block[1]).toContain("60x12");
     expect(block[1]).toContain("44x12");
     expect(block[2]).toContain("--inline");
     // Every row fits the window it is refusing to draw in -- a refusal that

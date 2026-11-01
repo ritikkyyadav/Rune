@@ -24,7 +24,7 @@
 // by real bytes, and the `quiet 31s` word beside the row stops when the output
 // stops.
 
-import { faint, quiet, text } from "./theme";
+import { danger, faint, quiet, text, warn } from "./theme";
 import { TERMINAL_GLYPH_MODE, glyph, type GlyphMode } from "./glyphs";
 import { graphemeSpans, prefixByWidth, termWidth, visLen } from "./render";
 
@@ -432,6 +432,43 @@ export function stagedRow(
   const parts = [text(stage), fit.voice && quiet(fit.voice), fit.fact && quiet(fit.fact)];
   if (clock) parts.push(faint(clock));
   return `${mark} ${parts.filter(Boolean).join(faint(sep(opts.mode)))}`;
+}
+
+// ─── The rest row ───
+
+/** How a finished turn's ending is inked on the rest row: state colour only. */
+export type RestTone = "text" | "warn" | "danger";
+
+/**
+ * How a turn ended, in the words of the row that stays on screen after it.
+ *
+ * Produced by the turn's renderer (turn.ts `restOutcome`) from the same facts
+ * as the transcript's closing row. The row used to say `done` after every
+ * turn: after checks that failed, a provider that returned HTTP 500 a dozen
+ * times, a rejected key, a rate limit, and a run the person stopped.
+ */
+export interface RestOutcome {
+  word: string;
+  tone: RestTone;
+}
+
+export const REST_DONE: RestOutcome = { word: "done", tone: "text" };
+
+/**
+ * The row at rest: `▁▁▁▁▁▁▁▁▁▁▁▁ checks failing · 23s`. The mark is the
+ * caller's (flat and dim), the ending is the only inked word, and the clock is
+ * how long the turn took.
+ */
+export function restRow(
+  mark: string,
+  outcome: RestOutcome,
+  elapsedMs?: number,
+  mode?: GlyphMode,
+): string {
+  const paint = outcome.tone === "danger" ? danger : outcome.tone === "warn" ? warn : text;
+  const word = paint(outcome.word);
+  if (elapsedMs == null) return `${mark} ${word}`;
+  return `${mark} ${word}${faint(sep(mode))}${faint(elapsedWord(elapsedMs))}`;
 }
 
 /** The row's separator: the grammar's own middot, spaced. */

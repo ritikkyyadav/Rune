@@ -188,18 +188,14 @@ describe("permission card v2", () => {
     expect(out).not.toContain("$ ");
   });
 
-  test("`a` resolves to allow-for-session in the key reducer (y/n unchanged)", () => {
-    expect(permissionKeyAction({ type: "char", value: "a" }, 0).decision).toEqual({
+  test("letters never answer the card (founder decision 2026-10-26)", () => {
+    // `a` used to grant the session; a sentence typed as the card opened
+    // ("build it as json") did exactly that on its first `a`.
+    for (const value of ["a", "A", "y", "n"]) {
+      expect(permissionKeyAction({ type: "char", value }, 0).decision).toBeUndefined();
+    }
+    expect(permissionKeyAction({ type: "char", value: "2" }, 0).decision).toEqual({
       kind: "allow_session",
-    });
-    expect(permissionKeyAction({ type: "char", value: "A" }, 2).decision).toEqual({
-      kind: "allow_session",
-    });
-    expect(permissionKeyAction({ type: "char", value: "y" }, 2).decision).toEqual({
-      kind: "allow_once",
-    });
-    expect(permissionKeyAction({ type: "char", value: "n" }, 0).decision).toEqual({
-      kind: "deny",
     });
   });
 });

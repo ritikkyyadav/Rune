@@ -140,8 +140,65 @@ describe("ui/keys SS3 arrows", () => {
     expect(keys.map((k) => k.type)).toEqual(["up", "up", "up"]);
     expect(arrowRun(keys)).toBe(3);
   });
-  it("swallows F1-F4 and still treats a bare ESC O as Escape + text", () => {
+  it("swallows F1-F4 and any other SS3 final instead of reading Escape + text", () => {
     expect(types("\x1bOP")).toEqual([]);
-    expect(types("\x1bOx")).toEqual(["esc", "char", "char"]);
+    // An application-keypad key (`ESC O x` is keypad 8 under DECKPAM) is not
+    // Escape followed by two typed letters.
+    expect(types("\x1bOx")).toEqual([]);
+    expect(types("\x1bOxa")).toEqual(["char"]);
+  });
+});
+
+// Option/Alt chords. Terminals send them as ESC + key (macOS Terminal's
+// default Option+left is `ESC b`) or as xterm-modified CSI. Read as Escape,
+// every one of them cleared the draft at rest and interrupted a running turn.
+describe("ui/keys Option and Alt chords", () => {
+  it("reads ESC b / ESC f / ESC d as readline's word moves and word delete", () => {
+    expect(types("\x1bb")).toEqual(["word-left"]);
+    expect(types("\x1bf")).toEqual(["word-right"]);
+    expect(types("\x1bd")).toEqual(["word-delete"]);
+    expect(types("\x1bB\x1bF")).toEqual(["word-left", "word-right"]);
+  });
+
+  it("reads ESC DEL and ESC BS as delete-word-back, ESC Enter as a newline", () => {
+    expect(types("\x1b\x7f")).toEqual(["word-backspace"]);
+    expect(types("\x1b\b")).toEqual(["word-backspace"]);
+    expect(types("\x1b\r")).toEqual(["newline"]);
+    expect(types("\x1b\n")).toEqual(["newline"]);
+  });
+
+  it("never reads an unbound Option chord as Escape, and never types its letter", () => {
+    for (const chord of ["\x1bx", "\x1bq", "\x1b.", "\x1b1", "\x1bZ"]) {
+      expect(types(chord)).toEqual([]);
+    }
+    // ...and what follows it in the same read still arrives.
+    expect(parseKeys("\x1bxhi")).toEqual([
+      { type: "char", value: "h" },
+      { type: "char", value: "i" },
+    ]);
+    // A chord on an astral character consumes the whole code point.
+    expect(types("\x1b\u{1F680}a")).toEqual(["char"]);
+  });
+
+  it("keeps a lone ESC, and a double ESC, as Escape", () => {
+    expect(types("\x1b")).toEqual(["esc"]);
+    expect(types("\x1b\x1b")).toEqual(["esc", "esc"]);
+    expect(types("a\x1b")).toEqual(["char", "esc"]);
+  });
+
+  it("reads xterm-modified arrows: alt, ctrl or meta move by word; shift is plain", () => {
+    expect(types("\x1b[1;3D\x1b[1;3C")).toEqual(["word-left", "word-right"]);
+    expect(types("\x1b[1;5D\x1b[1;5C")).toEqual(["word-left", "word-right"]);
+    expect(types("\x1b[1;9D")).toEqual(["word-left"]);
+    expect(types("\x1b[1;2D\x1b[1;2C")).toEqual(["left", "right"]);
+    expect(types("\x1b[1;3H\x1b[1;3F")).toEqual(["home", "end"]);
+    expect(types("\x1b[3;3~\x1b[3;5~")).toEqual(["word-delete", "word-delete"]);
+    expect(types("\x1b[3;2~")).toEqual(["delete"]);
+    // Modified up/down are not gestures here; they stay consumed.
+    expect(types("\x1b[1;3A\x1b[1;5B")).toEqual([]);
+  });
+
+  it("is not a wheel burst: word moves are not arrows", () => {
+    expect(arrowRun(parseKeys("\x1bb\x1bb"))).toBe(0);
   });
 });

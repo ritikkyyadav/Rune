@@ -42,6 +42,13 @@ export interface ToolActivityView {
   success: boolean;
   error?: string;
   durationMs?: number;
+  /**
+   * For a delegation: the member's own name, and the column its siblings'
+   * names are padded to. Without it the row is named by the tool's verb, and
+   * a fan-out of two read as two rows called `scout` -- one of which was
+   * called `mapper` everywhere else on the screen.
+   */
+  agent?: { name: string; cols?: number };
 }
 
 /** One replayed transcript line. Structurally compatible with the engine's
@@ -68,6 +75,22 @@ const firstLine = (v: string): string => v.split("\n")[0] ?? "";
 let workspaceRoot: string | null = null;
 export function setActivityWorkspaceRoot(root: string | null): void {
   workspaceRoot = root ? root.replace(/\/+$/, "") : null;
+}
+
+/**
+ * Absolute paths inside the workspace, said relative to it, in any text: a
+ * tool's error message names the file the way the filesystem does, and a long
+ * temp or home prefix pushed the file name -- the useful part -- off the row.
+ * The `/private` twin covers macOS, where /tmp and /var are links into it.
+ */
+export function relativizePaths(message: string): string {
+  if (!workspaceRoot) return message;
+  let out = message;
+  const roots = [workspaceRoot];
+  if (/^\/(tmp|var|etc)\//.test(workspaceRoot)) roots.push(`/private${workspaceRoot}`);
+  if (workspaceRoot.startsWith("/private/")) roots.push(workspaceRoot.slice("/private".length));
+  for (const root of roots) out = out.split(`${root}/`).join("");
+  return out;
 }
 
 /** Looser shortening for the bare-path file listing: workspace-relative paths
@@ -338,7 +361,7 @@ export function runningLabel(toolName: string): string {
 /** Commands whose result is evidence, rather than merely another action.
  *  Defined beside the check log (brief.ts) since the loop and the engine
  *  judge evidence by it too; re-exported here for the UI's existing imports. */
-import { isVerificationCommand, type ClaimRung } from "../../brief";
+import { isVerificationCommand } from "../../brief";
 export { isVerificationCommand };
 
 /** `840ms` / `2.6s` / `2m 58s` -- a duration only when the harness actually
@@ -408,16 +431,10 @@ const DETAIL_TAIL = 60;
  * Six body rows leave room for the explanation in a 24-row terminal. */
 const CHANGE_PREVIEW_ROWS = 6;
 
-/**
- * The rung a call that merely produced quotable output sits at.
- *
- * Typed against the ledger's own union so this cannot drift into a word the
- * ledger does not award. A receipt says `observed` and never more: `verified`
- * costs a test that failed on the parent commit (brief.ts), and a box that
- * spent that word on a file it read would read more certain than the ledger it
- * is supposed to agree with.
- */
-const OBSERVED: ClaimRung = "observed";
+// A box's receipt says what the call produced -- lines, a diff's counts -- and
+// not the evidence rung it sits on. The rungs are real and kept in the
+// session's ledger (brief.ts); the founder's rule of 2026-09-16 keeps them out
+// of the TUI, and `observed` in every box footer was the one place they leaked.
 
 /**
  * A file's opening, ready for a box body.
@@ -465,7 +482,7 @@ function boxDiff(rows: F.DiffRow[], path: string): string[] {
 function changePreview(rows: F.DiffRow[], path: string): string[] {
   return boxDiff(
     rows.map((row) =>
-      row.kind === "elide" && /more (diff )?lines?/.test(row.text)
+      row.kind === "elide" && /more (diff |changed )?lines?/.test(row.text)
         ? { ...row, text: `${row.text} ${glyph("observed")} ctrl+o` }
         : row,
     ),
@@ -495,19 +512,17 @@ function writeRows(content: string, limit: number): F.DiffRow[] {
  * first substantive sentence of what it said -- not a summary of the summary,
  * just its opening, which is where a scout puts its finding.
  *
- * The two banner cases lead instead of the prose, because when a report is
- * marked unverified the fact that it is unverified IS the news about it. Both
- * are rendered in the failure tone: they are the two states that must not slide
- * past as ordinary output.
+ * The provenance banner leads instead of the prose, because when a report is
+ * marked unverified the fact that it is unverified IS the news about it, and it
+ * is rendered in the failure tone so it cannot slide past as ordinary output.
+ * An INCOMPLETE report never reaches here: its row says what happened
+ * (incompleteDelegation).
  */
 function delegationTakeaway(result: string): { text: string; tone: "muted" | "fail" } | null {
   const body = result.trim();
   if (!body || looksLikeJson(body)) return null;
   if (body.startsWith("[PROVENANCE")) {
     return { text: "came back on a fallback model -- re-check before relying on it", tone: "fail" };
-  }
-  if (body.startsWith("INCOMPLETE")) {
-    return { text: truncate(firstLine(body), 120), tone: "fail" };
   }
   for (const raw of body.split("\n")) {
     if (raw.trimStart().startsWith("#")) continue; // a section heading names nothing
@@ -524,10 +539,47 @@ function delegationTakeaway(result: string): { text: string; tone: "muted" | "fa
   return null;
 }
 
+/**
+ * What an INCOMPLETE report means, in the row's own words.
+ *
+ * subagent-result.ts opens such a report with one of four causes. The row now
+ * says which (`stopped early`, `ran out of turns`) and that nothing came
+ * back, beside the suspected mark: the call returned, but what it was sent for
+ * did not. Before, the banner's own sentence was the note under the row, cut
+ * off at the screen's edge mid-word ("No findings were writ...").
+ */
+function incompleteDelegation(body: string): { outcome: string; reason?: string } | null {
+  if (!body.startsWith("INCOMPLETE")) return null;
+  if (/\bwas aborted\b/.test(body)) return { outcome: "stopped early" };
+  if (/\bran out of turns\b/.test(body)) return { outcome: "ran out of turns" };
+  const error =
+    /\bhit an error and stopped \(([\s\S]*?)\)\.(?:\s+(?:No findings|What follows)|\s*$)/.exec(
+      body,
+    );
+  if (error) return { outcome: "stopped on an error", reason: error[1]!.trim() };
+  if (/\bended without writing a summary\b/.test(body))
+    return { outcome: "ended without a report" };
+  return { outcome: "came back empty" };
+}
+
 /** A failed call, in one row and one reason. Nothing is hidden and nothing is
  *  padded: the row says which call, the note says what the tool actually said. */
+/** The reason the engine gives a call the person declined on the approval card
+ *  (engine.ts: `reason: "User denied"`). */
+const DECLINED_BY_PERSON = /^User denied\b/;
+
 function failedCall(v: ToolActivityView, name: string): string {
-  const reason = firstLine(v.error ?? "failed").trim() || "failed";
+  const reason = relativizePaths(firstLine(v.error ?? "failed").trim()) || "failed";
+  // A "No" on the approval card is the person's decision, not a failure: it
+  // was drawn as a red cross over "User denied", the same row as a crash.
+  if (DECLINED_BY_PERSON.test(reason)) {
+    return F.toolRow({
+      name,
+      arg: compactTarget(v),
+      status: "none",
+      metric: "skipped, you said no",
+    });
+  }
   // The ledger declining a claim, a question the user did not answer, a
   // citation with nothing behind it: the harness talking, not the tree
   // breaking. One quiet row and the reason, in the neutral tone.
@@ -539,7 +591,9 @@ function failedCall(v: ToolActivityView, name: string): string {
       status: harness ? "none" : "fail",
       metric: harness ? "" : elapsed(v.durationMs),
     }),
-    F.toolNote(reason, harness ? "muted" : "fail"),
+    // Two rows, keeping both ends: the head names what failed, the tail where
+    // and what to do about it (F.keepEnds).
+    F.toolNote(reason, harness ? "muted" : "fail", 2),
   ].join("\n");
 }
 
@@ -567,13 +621,15 @@ function quotable(result: string): string {
   return firstLine(body).trim();
 }
 
-/** The first answer in an ask_user result: the whole reply for one question,
- *  the first `A:` line for several. */
-function firstAnswer(result: string): string {
+/** Every answer in an ask_user result, in order (ask-user.ts writes several
+ *  as `Q: ...` / `A: ...` pairs). The row used to keep only the first. */
+function answersOf(result: string): string[] {
   const body = bodyOf(result).trim();
-  if (!body || looksLikeJson(body)) return "";
-  const multi = /^A:\s*(.+)$/m.exec(body);
-  return firstLine(multi ? multi[1]! : body).trim();
+  if (!body || looksLikeJson(body)) return [];
+  const multi = [...body.matchAll(/^A:\s*(.+)$/gm)].map((m) => firstLine(m[1]!).trim());
+  if (multi.length > 0) return multi.filter(Boolean);
+  const one = firstLine(body).trim();
+  return one ? [one] : [];
 }
 
 /**
@@ -598,7 +654,7 @@ export function renderToolActivity(v: ToolActivityView): string {
         name,
         arg: listingPath(s(out?.path ?? v.args.path)),
         metric: F.receiptOf([
-          partial ? `lines ${offset + 1}-${offset + shown}` : total != null ? `${total} lines` : "",
+          partial ? `lines ${offset + 1}-${offset + shown}` : total != null ? lineCount(total) : "",
           elapsed(v.durationMs),
         ]),
       });
@@ -667,7 +723,7 @@ export function renderToolActivity(v: ToolActivityView): string {
       return F.box(
         { verb: name, arg: listingPath(path), argTone: "path" },
         body ? changePreview(writeRows(body, CHANGE_PREVIEW_ROWS - 1), path) : [],
-        { status: "none", parts: [OBSERVED, F.editMetric(added, 0, "new file")] },
+        { status: "none", parts: [F.editMetric(added, 0, "new file")] },
         { rows: CHANGE_PREVIEW_ROWS },
       ).join("\n");
     }
@@ -685,18 +741,15 @@ export function renderToolActivity(v: ToolActivityView): string {
         const applied = Number(out?.edits_applied ?? 0);
         return F.box({ verb: name, arg: listingPath(path), argTone: "path" }, [], {
           status: "none",
-          parts: [
-            OBSERVED,
-            applied > 0 ? `${applied} edit${applied === 1 ? "" : "s"} applied` : "no change",
-          ],
+          parts: [applied > 0 ? `${applied} edit${applied === 1 ? "" : "s"} applied` : "no change"],
         }).join("\n");
       }
-      const diff = F.parseDiff(raw, CHANGE_PREVIEW_ROWS - 1);
+      const diff = F.previewDiff(raw, CHANGE_PREVIEW_ROWS - 1);
       const hunkNote = diff.hunks > 0 ? `${diff.hunks} hunk${diff.hunks === 1 ? "" : "s"}` : "";
       return F.box(
         { verb: name, arg: listingPath(path), argTone: "path" },
         changePreview(diff.rows, path),
-        { status: "none", parts: [OBSERVED, F.editMetric(diff.added, diff.removed, hunkNote)] },
+        { status: "none", parts: [F.editMetric(diff.added, diff.removed, hunkNote)] },
         { rows: CHANGE_PREVIEW_ROWS },
       ).join("\n");
     }
@@ -710,7 +763,7 @@ export function renderToolActivity(v: ToolActivityView): string {
       if (files.length === 0) {
         return F.box({ verb: name, arg: listingPath(s(v.args.path)), argTone: "path" }, [], {
           status: "none",
-          parts: [OBSERVED],
+          parts: ["no change"],
         }).join("\n");
       }
       const rows: string[] = [];
@@ -719,7 +772,7 @@ export function renderToolActivity(v: ToolActivityView): string {
         const raw = s(file.diff);
         const action = s(file.action);
         const diff = raw
-          ? F.parseDiff(raw, CHANGE_PREVIEW_ROWS - 1)
+          ? F.previewDiff(raw, CHANGE_PREVIEW_ROWS - 1)
           : { rows: [], added: 0, removed: 0, hunks: 0 };
         const hunkNote =
           action === "deleted"
@@ -733,7 +786,7 @@ export function renderToolActivity(v: ToolActivityView): string {
           ...F.box(
             { verb: name, arg: listingPath(path), argTone: "path" },
             changePreview(diff.rows, path),
-            { status: "none", parts: [OBSERVED, F.editMetric(diff.added, diff.removed, hunkNote)] },
+            { status: "none", parts: [F.editMetric(diff.added, diff.removed, hunkNote)] },
             { rows: CHANGE_PREVIEW_ROWS },
           ),
         );
@@ -819,7 +872,7 @@ export function renderToolActivity(v: ToolActivityView): string {
       return F.toolRow({
         name,
         arg: s(v.args.url ?? v.args.uri ?? ""),
-        metric: F.receiptOf([`${fetched} lines`, elapsed(v.durationMs)]),
+        metric: F.receiptOf([lineCount(fetched), elapsed(v.durationMs)]),
       });
     }
 
@@ -846,11 +899,18 @@ export function renderToolActivity(v: ToolActivityView): string {
       const report = bodyOf(v.result ?? "");
       const changed = /worker changed (\d+) files?/.exec(report)?.[1];
       const steps = /\(sub-agent made (\d+) tool calls?/.exec(report)?.[1];
+      // Back without what it was sent for: the row says so in words and wears
+      // the suspected tilde -- never a tick, and never the banner's sentence.
+      const incomplete = incompleteDelegation(report);
       const rows = [
         F.toolRow({
-          name,
+          name: v.agent?.name || name,
+          nameCols: v.agent?.cols,
           arg: brief,
+          status: incomplete ? "unproven" : undefined,
           metric: F.receiptOf([
+            incomplete?.outcome ?? "",
+            incomplete ? (v.toolName === "worker" ? "no report" : "no findings") : "",
             changed ? `${changed} files` : steps ? `${steps} steps` : "",
             elapsed(v.durationMs),
           ]),
@@ -858,10 +918,15 @@ export function renderToolActivity(v: ToolActivityView): string {
       ];
       // What came BACK. Without this a three-minute scout left one row naming
       // what it was asked and nothing at all about what it found -- the whole
-      // investigation reduced to a duration. The banner cases lead instead,
-      // because a report that has to be re-checked is the news about it.
-      const takeaway = delegationTakeaway(report);
-      if (takeaway) rows.push(F.toolNote(takeaway.text, takeaway.tone));
+      // investigation reduced to a duration. The provenance banner leads
+      // instead, because a report that has to be re-checked is the news about
+      // it; an error that cut the member off is said in full, ends kept.
+      if (incomplete?.reason) {
+        rows.push(F.toolNote(relativizePaths(incomplete.reason), "fail", 2));
+      } else if (!incomplete) {
+        const takeaway = delegationTakeaway(report);
+        if (takeaway) rows.push(F.toolNote(takeaway.text, takeaway.tone));
+      }
       return rows.join("\n");
     }
 
@@ -881,16 +946,28 @@ export function renderToolActivity(v: ToolActivityView): string {
 
     case "ask_user": {
       const questions = questionsOf(v.args);
-      const answer = firstAnswer(v.result);
+      const answers = answersOf(v.result);
       const rows = [
         F.toolRow({
           name,
           arg: truncate(questions[0] ?? "a question", 60),
           metric:
-            questions.length > 1 ? `${questions.length} questions` : answer ? "" : "no answer",
+            questions.length > 1
+              ? `${questions.length} questions`
+              : answers.length > 0
+                ? ""
+                : "no answer",
         }),
       ];
-      if (answer) rows.push(F.toolNote(`answered ${answer}`));
+      // One question: its answer. Several: each answer beside its own
+      // question -- the row used to keep the first answer and drop the rest.
+      if (questions.length > 1 && answers.length > 1) {
+        answers.forEach((answer, i) => {
+          rows.push(F.toolNote(F.receiptOf([truncate(questions[i] ?? "", 48), answer])));
+        });
+      } else if (answers[0]) {
+        rows.push(F.toolNote(`answered ${answers[0]}`));
+      }
       return rows.join("\n");
     }
 
@@ -965,7 +1042,7 @@ export function renderToolActivity(v: ToolActivityView): string {
       return F.toolRow({
         name,
         arg: `${paths.length || heads} file${(paths.length || heads) === 1 ? "" : "s"}`,
-        metric: lines > 0 && heads > 0 ? `${group(lines)} lines` : "",
+        metric: lines > 0 && heads > 0 ? lineCount(lines) : "",
       });
     }
 
@@ -1139,7 +1216,7 @@ export function renderToolDetail(v: ToolActivityView, previewRows = DETAIL_HEAD)
             ? all
             : [
                 ...all.slice(0, previewRows),
-                `${glyph("elision")} ${all.length - previewRows} more lines`,
+                `${glyph("elision")} ${lineCount(all.length - previewRows, "more ")}`,
               ]
           : F.clip(all, previewRows, tail);
       return F.box(
@@ -1170,7 +1247,7 @@ export function renderToolDetail(v: ToolActivityView, previewRows = DETAIL_HEAD)
       return F.box(
         { verb: "edit", arg: listingPath(path), argTone: "path" },
         boxDiff(full.rows, path),
-        { status: "none", parts: [OBSERVED, F.editMetric(full.added, full.removed, hunkNote)] },
+        { status: "none", parts: [F.editMetric(full.added, full.removed, hunkNote)] },
         { rows: previewRows + 1 },
       ).join("\n");
     }
@@ -1182,7 +1259,7 @@ export function renderToolDetail(v: ToolActivityView, previewRows = DETAIL_HEAD)
       return F.box(
         { verb: VERB.write_file!, arg: listingPath(path), argTone: "path" },
         boxDiff(writeRows(body, previewRows), path),
-        { status: "none", parts: [OBSERVED, F.editMetric(total, 0, "new file")] },
+        { status: "none", parts: [F.editMetric(total, 0, "new file")] },
         { rows: previewRows + 1 },
       ).join("\n");
     }
@@ -1212,7 +1289,7 @@ export function renderToolDetail(v: ToolActivityView, previewRows = DETAIL_HEAD)
           ...F.box(
             { verb: "edit", arg: listingPath(path), argTone: "path" },
             boxDiff(full.rows, path),
-            { status: "none", parts: [OBSERVED, F.editMetric(full.added, full.removed, note)] },
+            { status: "none", parts: [F.editMetric(full.added, full.removed, note)] },
             { rows: previewRows + 1 },
           ),
         );
@@ -1237,12 +1314,11 @@ export function renderToolDetail(v: ToolActivityView, previewRows = DETAIL_HEAD)
         F.boxOutput(full),
         {
           parts: [
-            OBSERVED,
             total != null && shown != null && shown < total
               ? `lines ${offset + 1}-${offset + shown}`
               : total != null
-                ? `${total} lines`
-                : `${nonEmptyLines(v.result).length} lines`,
+                ? lineCount(total)
+                : lineCount(nonEmptyLines(v.result).length),
             elapsed(v.durationMs),
           ],
         },
@@ -1303,6 +1379,11 @@ function group(n: number): string {
   return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
+/** `1 line`, `24 lines`, `1,204 lines` -- the row said `1 lines`. */
+function lineCount(n: number, lead = ""): string {
+  return `${lead}${group(n)} line${n === 1 ? "" : "s"}`;
+}
+
 /** How long a run of chamber-eligible calls has to get before it is worth more
  *  as one row than as a list. Two paths are worth naming; twelve are one fact. */
 export const CHAMBER_AT = 3;
@@ -1347,7 +1428,7 @@ export function renderChamberHead(views: ToolActivityView[]): string {
   const { phrase, lines } = chamberPhrase(views);
   return F.flowRow(
     F.railRow(`${info(glyph("selection"))} ${muted(phrase)}`),
-    lines > 0 ? faint(`${group(lines)} lines`) : "",
+    lines > 0 ? faint(lineCount(lines)) : "",
   );
 }
 
