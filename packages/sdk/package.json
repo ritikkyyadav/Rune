@@ -12,10 +12,10 @@
     "websocket",
     "jsonrpc"
   ],
-  "homepage": "https://github.com/ritikkyyadav/Rune/tree/main/packages/sdk",
+  "homepage": "https://github.com/ritikkyyadav/Will/tree/main/packages/sdk",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ritikkyyadav/Rune.git",
+    "url": "git+https://github.com/ritikkyyadav/Will.git",
     "directory": "packages/sdk"
   },
   "main": "./dist/index.js",

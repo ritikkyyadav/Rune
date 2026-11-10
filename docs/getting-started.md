@@ -26,11 +26,11 @@ The installers download the latest public GitHub release and verify each asset a
 You can also use the repository URLs directly:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/ritikkyyadav/Rune/main/scripts/web-install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ritikkyyadav/Will/main/scripts/web-install.sh | bash
 ```
 
 ```powershell
-irm https://raw.githubusercontent.com/ritikkyyadav/Rune/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/ritikkyyadav/Will/main/scripts/install.ps1 | iex
 ```
 
 ### From source
@@ -38,8 +38,8 @@ irm https://raw.githubusercontent.com/ritikkyyadav/Rune/main/scripts/install.ps1
 Install [Bun](https://bun.sh) and [Rust](https://rustup.rs), then run:
 
 ```sh
-gh repo clone ritikkyyadav/Rune
-cd Rune
+gh repo clone ritikkyyadav/Will
+cd Will
 bash scripts/install.sh
 export PATH="$HOME/.rune/bin:$PATH"
 will

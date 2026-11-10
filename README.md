@@ -5,7 +5,7 @@
 Work on your codebase with the model you choose. Will brings file edits, shell commands,
 checks, and resumable sessions into one workspace.
 
-[Get started](#install) · [Documentation](#documentation) · [Releases](https://github.com/ritikkyyadav/Rune/releases) · [Report an issue](https://github.com/ritikkyyadav/Rune/issues)
+[Get started](#install) · [Documentation](#documentation) · [Releases](https://github.com/ritikkyyadav/Will/releases) · [Report an issue](https://github.com/ritikkyyadav/Will/issues)
 
 <p>
   <a href="docs/assets/readme/will-session-120x32.jpg"><picture><source media="(max-width: 640px)" srcset="docs/assets/readme/will-session-80x22.jpg"><img src="docs/assets/readme/will-session-120x32.jpg" alt="Will v1.4.17 in the white terminal and matte light theme, editing a CLI and running its tests" width="100%"></picture></a>
@@ -16,9 +16,13 @@ checks, and resumable sessions into one workspace.
 
 ## Install
 
-Will is the new name for Will. Existing sessions, sign-ins, settings, themes, and
+Will is the new name for Rune. Existing sessions, sign-ins, settings, themes, and
 integrations use the same storage and identifiers. Installers provide `will` and
 keep `rune` as a compatible command. See [rename compatibility](docs/will-rename.md).
+
+The rename is available on `main`. The current v1.4.17 release binaries still display
+Rune; [build from source](docs/getting-started.md#from-source) to use Will until the
+next release.
 
 **macOS and Linux**
 
@@ -81,7 +85,7 @@ Session data is stored locally. Telemetry is off by default.
 
 ## Latest release
 
-[**v1.4.17**](https://github.com/ritikkyyadav/Rune/releases/tag/v1.4.17) makes the interface
+[**v1.4.17**](https://github.com/ritikkyyadav/Will/releases/tag/v1.4.17) makes the interface
 stop destroying work and stop saying `done` when it is not: Option keys and a stray Esc no longer
 erase a draft or stop a run, typing cannot approve a command, each turn ends with how it actually
 ended, sub-agents are named and watched as they work, and a first launch asks which model.

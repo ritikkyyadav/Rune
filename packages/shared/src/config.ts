@@ -805,7 +805,7 @@ export interface RuneConfig {
   update?: {
     /** Daily startup check for a newer release. Default true. */
     check?: boolean;
-    /** GitHub repo the releases come from. Default ritikkyyadav/Rune. */
+    /** GitHub repo the releases come from. Default ritikkyyadav/Will. */
     repo?: string;
   };
   /**

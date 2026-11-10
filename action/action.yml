@@ -76,7 +76,7 @@ runs:
       run: |
         set -euo pipefail
         if [ -n "${RUNE_VERSION}" ]; then
-          echo "installing rune ${RUNE_VERSION}"
+          echo "installing Will ${RUNE_VERSION}"
           gh release download "${RUNE_VERSION}" \
             --repo "${GITHUB_REPOSITORY}" \
             --pattern "rune-*-$(uname -s | tr '[:upper:]' '[:lower:]')-*" \
@@ -85,7 +85,7 @@ runs:
           mv "${RUNNER_TEMP}"/rune/rune-* "${RUNNER_TEMP}/rune/rune"
           echo "rune-cmd=${RUNNER_TEMP}/rune/rune" >> "$GITHUB_OUTPUT"
         else
-          echo "building rune from ${RUNE_SOURCE}"
+          echo "building Will from ${RUNE_SOURCE}"
           ( cd "${RUNE_SOURCE}" && bun install --frozen-lockfile )
           # The native tool executor. Everything the agent does to a file or a
           # shell goes through it, so a review without it is a review that

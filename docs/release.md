@@ -171,10 +171,10 @@ Pick one:
 1. Settings → General → Danger Zone → Change visibility → Public.
 2. Confirm the release assets are reachable anonymously:
    ```bash
-   curl -fsSLI https://github.com/ritikkyyadav/Rune/releases/latest/download/SHA256SUMS
+   curl -fsSLI https://github.com/ritikkyyadav/Will/releases/latest/download/SHA256SUMS
    ```
 3. Replace `<url>` in the README with
-   `https://raw.githubusercontent.com/ritikkyyadav/Rune/main/scripts` and check the one-liner from a
+   `https://raw.githubusercontent.com/ritikkyyadav/Will/main/scripts` and check the one-liner from a
    machine that is not signed in.
 
 A `LICENSE` file (Apache-2.0) is already in the tree, added under the D1 default. Drop that commit if
@@ -259,7 +259,7 @@ Build provenance is free and needs no secret: `actions/attest-build-provenance` 
 release and ties the bytes to this workflow, this commit and this runner.
 
 ```bash
-gh attestation verify rune-linux-x64 --repo ritikkyyadav/Rune
+gh attestation verify rune-linux-x64 --repo ritikkyyadav/Will
 ```
 
 ### D1d — External validation

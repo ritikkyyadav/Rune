@@ -24,7 +24,7 @@
   Where the binaries go (default: %LOCALAPPDATA%\Rune\bin).
 
 .PARAMETER Repo
-  GitHub repo hosting the releases (default: ritikkyyadav/Rune).
+  GitHub repo hosting the releases (default: ritikkyyadav/Will).
 
 .PARAMETER SkipTools
   Install rune.exe alone. File, search and shell tools will not work.
@@ -47,7 +47,7 @@
 param(
   [string] $Version = $(if ($env:RUNE_VERSION) { $env:RUNE_VERSION } else { 'latest' }),
   [string] $InstallDir = $(if ($env:RUNE_INSTALL_DIR) { $env:RUNE_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'Rune\bin' }),
-  [string] $Repo = $(if ($env:RUNE_REPO) { $env:RUNE_REPO } else { 'ritikkyyadav/Rune' }),
+  [string] $Repo = $(if ($env:RUNE_REPO) { $env:RUNE_REPO } else { 'ritikkyyadav/Will' }),
   [switch] $SkipTools,
   [switch] $NoPath,
   [switch] $Uninstall

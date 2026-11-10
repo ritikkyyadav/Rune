@@ -196,15 +196,15 @@ are not the model's.
 
 ## The GitHub Action
 
-`action/` is a composite action in the `savoir/rune-action` shape. It installs
+`action/` is a composite action in this repository. It installs
 Will — a pinned release when one is named, otherwise a build from the checkout
 — runs one prompt over the pull request diff, and posts **one** comment with
 the review and the audit of the run that produced it.
 
 ```yaml
-- uses: savoir/rune-action@v1
+- uses: ./action
   with:
-    version: v0.3.0 # omit to build from the checkout
+    source-path: . # build from the Will checkout
     gear: "3"
     prompt: "" # empty runs the default review prompt
   env:
