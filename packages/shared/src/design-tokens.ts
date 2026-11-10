@@ -313,7 +313,7 @@ export type RuneAccentName = "rune";
 export const RUNE_ACCENT_NAMES: readonly RuneAccentName[] = ["rune"] as const;
 
 export const RUNE_ACCENT_LABELS: Record<RuneAccentName, string> = {
-  rune: "Rune mono",
+  rune: "Will mono",
 };
 
 /** Raw CSS custom-property values for one ground. */

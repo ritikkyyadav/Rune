@@ -281,7 +281,7 @@ export function setConnectorOption(
   workspaceRoot: string,
 ): string {
   const entry = entryFor(row);
-  if (!entry || !editable(row)) throw new Error(`${row.name} has no settings Rune can change`);
+  if (!entry || !editable(row)) throw new Error(`${row.name} has no settings Will can change`);
   if (!(entry.options ?? []).some((o) => o.id === optionId)) {
     throw new Error(`${entry.label} has no setting "${optionId}"`);
   }

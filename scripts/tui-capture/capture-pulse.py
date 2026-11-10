@@ -312,7 +312,7 @@ def main(outdir):
         mock_profile(mock.port)
         s = rig.Session(rows=40, cols=120)
         try:
-            s.wait_for(["r u n e"], timeout=90)
+            s.wait_for(["w i l l"], timeout=90)
             s.pump(1.0)
             s.send("explain how the frame is composed", settle=0.5)
             s.send(CR, settle=0.5)

@@ -79,7 +79,7 @@ async function capture(fn: () => Promise<void> | void): Promise<string> {
   return buf;
 }
 
-describe("rune use", () => {
+describe("will use", () => {
   it("writes the active provider + default model to model.json", async () => {
     await capture(() => runUse(["openrouter"]));
     // The catalog default tracks OpenRouter's live free tier (qwen3-coder:free
@@ -106,12 +106,12 @@ describe("rune use", () => {
 
   it("prints usage when no provider is given", async () => {
     const out = await capture(() => runUse([]));
-    expect(out).toMatch(/rune use <provider>/);
+    expect(out).toMatch(/will use <provider>/);
     expect(process.exitCode).toBe(1);
   });
 });
 
-describe("rune providers", () => {
+describe("will providers", () => {
   it("lists every provider with its auth method + credential backend", async () => {
     const out = await capture(() => runProviders());
     expect(out).toMatch(/Providers/);
@@ -165,7 +165,7 @@ describe("rune models", () => {
   });
 });
 
-describe("rune login --migrate", () => {
+describe("will login --migrate", () => {
   it("copies legacy secrets.json keys into the credential store", async () => {
     setProviderKey("openrouter", "sk-or-legacy-abcdef");
     const out = await capture(() => runLogin([], { migrate: true }));
@@ -176,7 +176,7 @@ describe("rune login --migrate", () => {
 
   it("prints usage for `login` with no provider on a non-TTY", async () => {
     const out = await capture(() => runLogin([], {}));
-    expect(out).toMatch(/rune login/);
+    expect(out).toMatch(/will login/);
     expect(out).toMatch(/Models:/);
     expect(out).toMatch(/Search:/);
   });

@@ -495,7 +495,7 @@ describe("shared/system-memory — the three modes", () => {
 // ─── The sidecar's mode is a control, so it is signed ───
 //
 // V8 critical 1's other half. `system-memory.json` sits in an ordinary
-// directory outside the workspace, and `mode` decides whether Rune reads,
+// directory outside the workspace, and `mode` decides whether Will reads,
 // writes and injects memory at all — so a `cat >` that set `"mode": "auto"`
 // turned memory back on for every future session. The three authenticated
 // fields carry an HMAC made with `~/.rune/memory/.key`, which is written 0600
@@ -643,7 +643,7 @@ describe("shared/system-memory — the memory key is not a file a run can read",
     // dialog. `-T ""` emptied that list and asked for the login password on
     // every read of every session — the regression this pins.
     expect(write.args).not.toContain("-T");
-    expect(write.args[write.args.indexOf("-l") + 1]).toBe("Rune memory key");
+    expect(write.args[write.args.indexOf("-l") + 1]).toBe("Will memory key");
     expect(write.args[write.args.indexOf("-a") + 1]).toMatch(/^memory-key\.v2:[0-9a-f]{16}$/);
     // …and the secret is an argv element of `security`, never a file.
     expect(loadMemorySecret(false, dir)).toBe(hex);

@@ -181,7 +181,7 @@ def walk(outdir, rows, cols, port):
     # column is defined as what a brand-new process reads.
     s = rig.Session(rows=rows, cols=cols)
     try:
-        s.wait_for(["r u n e"], timeout=90)
+        s.wait_for(["w i l l"], timeout=90)
         s.pump(1.0)
         s.send("/setup", settle=0.5)
         s.send(CR, settle=1.6)

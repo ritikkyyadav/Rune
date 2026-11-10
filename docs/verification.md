@@ -1,6 +1,6 @@
 # Verification
 
-Rune runs the project's own checks after the agent claims it is done, and again
+Will runs the project's own checks after the agent claims it is done, and again
 at every plan step that wrote files, and feeds any failure back so the agent
 self-corrects. This page says what it detects, what it refuses to guess, and how
 to override it.
@@ -64,7 +64,7 @@ nothing at all, which is how a repo with real projects in it verified as
 
 ## The step check
 
-At a `todo_write` that closes a step which wrote files no check covered, Rune
+At a `todo_write` that closes a step which wrote files no check covered, Will
 runs the **compile-class tier only** — typecheck and build, never the test suite
 — on a one-minute clock. A failure refuses the completion with the output; a
 pass becomes the step's receipt. `[verify] perStep = false` turns it off.
@@ -105,7 +105,7 @@ and the clock because it read both directly; checks the model ran through `bash`
 carry neither, because a tool result has a success flag and no exit code, and a
 fabricated `exit 0` beside a failure would be worse than no number.
 
-`rune audit last` prints them:
+`will audit last` prints them:
 
 ```
   Checks  3 runs · 2 passed · 1 failed
@@ -116,7 +116,7 @@ fabricated `exit 0` beside a failure would be worse than no number.
 
 ## What a check leaves in the tree
 
-A check Rune chose to run leaves the tree as it found it. Cargo's and Python's
+A check Will chose to run leaves the tree as it found it. Cargo's and Python's
 generated state is sent elsewhere through the environment when the project has
 none of its own yet (`CARGO_TARGET_DIR`, `PYTHONPYCACHEPREFIX` and the like — a
 `target/` that already exists is used as it is). A JavaScript build has no such
@@ -132,7 +132,7 @@ Only these, and only in a git repository:
   there, it keeps whatever the check put in it;
 - never installed dependencies (`node_modules`, `.venv`, `venv`, `vendor`,
   `Pods`, `*.egg-info`), environment files (`.env*`), an editor's or another
-  agent's folder (`.idea`, `.vscode`, `.claude`), `.DS_Store`, or Rune's own
+  agent's folder (`.idea`, `.vscode`, `.claude`), `.DS_Store`, or Will's own
   `.rune/`;
 - never a new file git does **not** ignore. That is a visible change, and it is
   left for you to see.
@@ -149,9 +149,9 @@ slower without the build it would have reused, set `keepGenerated = true`.
 
 ## What a check is started with
 
-A check is the project's, not the session's. It is started with the environment Rune
+A check is the project's, not the session's. It is started with the environment Will
 itself was started with — `PATH`, the toolchain's own variables, a `DATABASE_URL` the
-project's tests read — **less Rune's own state**:
+project's tests read — **less Will's own state**:
 
 - the variables that say where this session keeps its home, database, configuration,
   preferences, memory, logs and control socket, and the ones that name or unlock the
@@ -160,10 +160,10 @@ project's tests read — **less Rune's own state**:
   more; the list is `SESSION_STATE_ENV` in `check-env.ts`) are removed;
 - `RUNE_HOME` is set to an empty directory that goes when the session does;
 - `RUNE_CREDENTIAL_BACKEND` and `RUNE_MEMORY_KEY_BACKEND` are `file`, so nothing a check
-  starts reaches the operating system's keychain through Rune.
+  starts reaches the operating system's keychain through Will.
 
 For almost every project this changes nothing: nothing in a Go module reads
-`RUNE_DB_PATH`. It matters for a project that reads Rune's variables — Rune's own
+`RUNE_DB_PATH`. It matters for a project that reads Will's variables — Will's own
 repository, or anything that starts the CLI or the SDK in its tests. Measured
 2026-10-14 on a recorded run of such a project: the agent ran the unit suite in its own
 shell, which starts a command with a cleared environment — 5,002 tests, 52 s, green. The
@@ -213,10 +213,10 @@ a row it is not started again: the result is the same "did not finish, nothing m
 without the wait, and the report says `not started` and when it last ran. Twice, because
 once can be the machine — asleep, or busy — and a check should not be taken away for a day
 on one bad run. Raising `timeoutSecs` above the limit it failed under runs it again; so does
-a day passing; and a command that finishes once is forgotten. The record is kept in the Rune
+a day passing; and a command that finishes once is forgotten. The record is kept in the Will
 home (`verify-slow.json`), never in the workspace; deleting that file forgets everything. On
 a project whose suite takes longer than the limit this was two minutes at the end of every
-turn. (On Rune's own repository at the commits the recorded runs used, the suite was not
+turn. (On Will's own repository at the commits the recorded runs used, the suite was not
 longer than the limit: it took 52 s. It did not finish because of what it was started
 with — see "What a check is started with".)
 
@@ -227,7 +227,7 @@ for those files; red is a failed check like any other, and is handed back to be 
 The verification as a whole stays `inconclusive`: a part passing is not the whole passing.
 Nothing is run in its place when the change touched no test file, for a check that is not
 the test suite, or for a suite under another runner — vitest, jest and the rest take file
-arguments differently, and a guess there would be a red of Rune's own making.
+arguments differently, and a guess there would be a red of Will's own making.
 
 ## Configuration
 

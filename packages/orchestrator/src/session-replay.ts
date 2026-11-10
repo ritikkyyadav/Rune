@@ -51,7 +51,7 @@ interface CompactionPayload {
  */
 export function unansweredCall(toolName: string): string {
   return (
-    `No result was recorded: the previous Rune run ended before ${toolName || "this tool"} returned. ` +
+    `No result was recorded: the previous Will run ended before ${toolName || "this tool"} returned. ` +
     "It may not have run, or it may have run in part or in full. Before repeating it, check " +
     "the state it would have changed; repeat it only if that shows it did not happen."
   );

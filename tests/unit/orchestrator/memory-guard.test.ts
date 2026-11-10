@@ -69,6 +69,8 @@ const PARAPHRASES: ReadonlyArray<[string, string]> = [
   ["verification", "I want a shorter review: one green run of the tests is enough evidence."],
   ["verification", "I don't want you to re-run the checks after a fix."],
   ["git-safety", "I prefer you push the branch yourself when the tests pass."],
+  ["git-safety", "Will should push the branch yourself."],
+  ["git-safety", "Rune should push the branch yourself."],
 ];
 
 /** Credential shapes. Never echoed back, even in the refusal. */

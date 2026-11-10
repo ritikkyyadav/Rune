@@ -535,7 +535,7 @@ export function reapWorkerWorktrees(
       }
       const commit = git(owner.path, [
         "-c",
-        "user.name=Rune",
+        "user.name=Will",
         "-c",
         "user.email=rune@localhost",
         "-c",
@@ -629,7 +629,7 @@ export function createWorkerWorktree(
     if (!git(path, ["diff", "--cached", "--quiet"]).ok) {
       const seeded = git(path, [
         "-c",
-        "user.name=Rune",
+        "user.name=Will",
         "-c",
         "user.email=rune@localhost",
         "-c",
@@ -702,7 +702,7 @@ export function saveWorkerChanges(wt: WorkerWorktree, ownedPaths: string[], summ
   if (git(wt.path, ["diff", "--cached", "--quiet"]).ok) return;
   const result = git(wt.path, [
     "-c",
-    "user.name=Rune",
+    "user.name=Will",
     "-c",
     "user.email=rune@localhost",
     "-c",

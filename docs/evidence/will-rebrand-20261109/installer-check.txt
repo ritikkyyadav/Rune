@@ -1,0 +1,28 @@
+  [1mWill installer[0m
+  [90mplatform : darwin-arm64[0m
+  [90mrelease  : v0.0.0-fixture[0m
+  [90minstall  : /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/will-install-check-9gtjuqk0/bin with spaces[0m
+
+  [32m✓[0m verified rune-darwin-arm64
+  [32m✓[0m verified rune-tools-darwin-arm64
+  [32m✓[0m Installed: /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/will-install-check-9gtjuqk0/bin with spaces/rune
+  [32m✓[0m Installed: /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/will-install-check-9gtjuqk0/bin with spaces/rune-tools
+
+  Add Will to your PATH:
+    [36mexport PATH="/var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/will-install-check-9gtjuqk0/bin with spaces:$PATH"[0m   [90m# add to your shell profile[0m
+
+  Open a new terminal, then run: [1mwill[0m
+  [90mFree to start: the first screen lists the free routes first — OpenRouter, Google or a local Ollama.[0m
+  [90mLater: `will upgrade --check` tells you when a newer release exists.[0m
+
+
+  [1mWill uninstaller[0m
+  [32m✓[0m removed /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/will-install-check-9gtjuqk0/bin with spaces/will
+  [32m✓[0m removed /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/will-install-check-9gtjuqk0/bin with spaces/rune
+  [32m✓[0m removed /var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/will-install-check-9gtjuqk0/bin with spaces/rune-tools
+
+  Your data is untouched: [36m/var/folders/y7/k0gslbts1s95qmyx2zdjqb240000gn/T/will-install-check-9gtjuqk0/home/.rune[0m still holds sessions, config and credentials.
+  Remove it yourself if you mean to: [36mrm -rf ~/.rune[0m
+
+
+PASS: both aliases execute; uninstall removes both; existing config and session bytes are unchanged.

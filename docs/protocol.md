@@ -1,4 +1,4 @@
-# The Rune protocol
+# The Will protocol
 
 **`@rune/protocol` · PROTOCOL_VERSION 1.0.0**
 
@@ -24,12 +24,12 @@ The same frames serve over three transports. Only the framing differs.
 | Transport   | Framing                            | Who uses it                           |
 | ----------- | ---------------------------------- | ------------------------------------- |
 | stdio       | one JSON object per line on stdout | the desktop sidecar (`engine-host`)   |
-| unix socket | one JSON object per line           | `rune detach` / `rune attach`         |
-| websocket   | one JSON object per message        | `rune serve`, the web client, the SDK |
+| unix socket | one JSON object per line           | `will detach` / `will attach`         |
+| websocket   | one JSON object per message        | `will serve`, the web client, the SDK |
 
 Stream frames broadcast to every connected client; responses go only to the
 client that asked. Dropping a client never stops the engine — that is the point
-of socket mode, and `rune serve` keeps it.
+of socket mode, and `will serve` keeps it.
 
 ## Envelope
 
@@ -177,7 +177,7 @@ recovering only by guessing.
 Not every persisted row is an event. `contract`, `brief`, `verdict`, `cost`,
 `task_state` and — from M2 — `shadow_decision`, `shadow_capped` and
 `shadow_summary` are rows of their own: records a surface never renders,
-written for `rune audit` and for replay's own reconstruction. `replayEvents`
+written for `will audit` and for replay's own reconstruction. `replayEvents`
 skips them by its documented default, and they are deliberately NOT in
 `RUN_TRACE_EVENTS`, which is an allow-list over `AgentTurnEvent` bound by the
 drift law below ("the three persistence sets name nothing that is not an
@@ -220,7 +220,7 @@ having to have watched it happen. See [`decision-record.md`](decision-record.md)
 
 ## Auth
 
-`rune serve` binds **loopback only** by default.
+`will serve` binds **loopback only** by default.
 
 - A **bearer token** is minted to `~/.rune/serve.json` (0600) and is required on
   every connection. Send it as `Authorization: Bearer <token>`, as the
@@ -244,14 +244,14 @@ loop, so one process runs one turn). Three things end a host's life:
   `[serve] idleHostSecs` — ten minutes by default. A turn in flight is never
   idle however long it runs, and neither is a session someone still has open.
   The supervisor sweeps once a minute.
-- **The server stops.** `rune serve` stops the hosts it started (SIGTERM, then
+- **The server stops.** `will serve` stops the hosts it started (SIGTERM, then
   SIGKILL after a three-second drain). `--keep-hosts` restores the older
   behaviour of leaving them running, and is what the detached server behind a
-  bare `rune` uses so a session survives the app being restarted.
+  bare `will` uses so a session survives the app being restarted.
 - **The supervisor dies without warning.** Hosts started by a supervisor carry
   `--parent-pid` and poll it every fifteen seconds; a `kill -9` on the server
   therefore costs you the engines within one poll rather than forever. Hosts
-  started for `--keep-hosts`, and by `rune detach`, carry no parent and are not
+  started for `--keep-hosts`, and by `will detach`, carry no parent and are not
   affected.
 
 Before P10.0 none of this ran: the window was thirty minutes, shutdown
@@ -260,14 +260,14 @@ machine in a day.
 
 ---
 
-## `rune attach ws://host:port` — the terminal as a remote client
+## `will attach ws://host:port` — the terminal as a remote client
 
 The same `RuneClient` the SDK uses, in the CLI:
 
 ```bash
 export RUNE_SERVE_TOKEN=…                       # preferred: --token lands in shell history
-rune attach ws://192.168.1.9:7788               # stream what the server is doing; Ctrl+C detaches
-rune attach ws://192.168.1.9:7788 "say ok"      # run one turn and wait for it
+will attach ws://192.168.1.9:7788               # stream what the server is doing; Ctrl+C detaches
+will attach ws://192.168.1.9:7788 "say ok"      # run one turn and wait for it
 ```
 
 The five round-trips come with the client, which is the difference between a
@@ -278,7 +278,7 @@ machine. The token is taken from `--token`, then `RUNE_SERVE_TOKEN`, then
 minted for this machine's server is not a credential for someone else's.
 
 `tests/integration/serve-remote-attach.test.ts` is the gate, and it is two
-processes: `rune serve --host 127.0.0.1` on one side, the real `rune attach`
+processes: `will serve --host 127.0.0.1` on one side, the real `will attach`
 CLI on the other with a `RUNE_HOME` of its own so it cannot find a token lying
 about on this machine. It asserts the turn's events reach the second process,
 that the token source is named while the token itself never appears in output a
@@ -312,12 +312,12 @@ it would put a sub-agent's sub-agent on the lead's status line).
 
 Recursion stops at one level, which is what keeps the frame bounded.
 
-## `rune -P --stream-json`
+## `will -P --stream-json`
 
 Every event as NDJSON on stdout, one JSON object per line, the envelope LAST:
 
 ```bash
-rune -P "say ok" --stream-json
+will -P "say ok" --stream-json
 {"type":"text_delta","text":"ok"}
 {"type":"usage","inputTokens":0,"outputTokens":0,...}
 {"type":"turn_complete","stopReason":"end_turn","totalTurns":1}
@@ -349,12 +349,12 @@ tarball, unpacks it where no workspace can rescue it, imports it and typechecks
 a consumer against its declarations. Publishing to npm is a founder action
 (D1); nothing in this repo publishes.
 
-Two runnable examples live in `examples/sdk/`. With no `rune serve` running
+Two runnable examples live in `examples/sdk/`. With no `will serve` running
 they stand one up against a fake model, so both work on a fresh clone with no
 API key:
 
 ```bash
-bun run examples/sdk/run-task.ts     # runs a prompt, then prints `rune audit` for it
+bun run examples/sdk/run-task.ts     # runs a prompt, then prints `will audit` for it
 bun run examples/sdk/policy-bot.ts   # answers permission requests from an allow/deny policy
 ```
 

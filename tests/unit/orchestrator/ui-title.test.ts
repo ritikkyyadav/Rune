@@ -1,7 +1,7 @@
 /**
  * The pane title.
  *
- * This is the only moving thing Warp will render for Rune — it badges agent
+ * This is the only moving thing Warp will render for Will — it badges agent
  * panes, and it decides what an agent pane is from a list `rune` is not on. So
  * the assertions here are about the ways a title can quietly stop being worth
  * anything: it stops moving when work is happening, it goes on moving when
@@ -105,7 +105,7 @@ describe("what the tab says", () => {
         const text = title(working(p), "utf8", strip);
         expect(text[0]).toBe("[");
         expect(text[pillChars(strip) - 1]).toBe("]");
-        expect(text.slice(pillChars(strip))).toBe(" Rune - Atlas");
+        expect(text.slice(pillChars(strip))).toBe(" Will - Atlas");
       }
     }
   });
@@ -206,13 +206,13 @@ describe("what the tab says", () => {
     // The whole argument of pulse.ts, carried onto the tab: a mark that keeps
     // moving through a wedged tool call is worse than a tab that says nothing.
     const stalled = title(working(0.6, 31_000));
-    expect(stalled).toBe("[-  ] Rune - quiet 31s");
+    expect(stalled).toBe("[-  ] Will - quiet 31s");
     // it is the same wherever the car had got to
     expect(title(working(0.95, 31_000))).toBe(stalled);
     expect(smooth(working(0.6, 31_000))).toBe(smooth(working(0.1, 31_000)));
     expect(carOf(smooth(working(0.6, 31_000)))).toBe(PARKED);
     expect(place(smooth(working(0.6, 31_000)))).toBe(0);
-    expect(smooth(working(0.6, 31_000))).toEndWith(" Rune - quiet 31s");
+    expect(smooth(working(0.6, 31_000))).toEndWith(" Will - quiet 31s");
     // and it is a shape no moving frame has, so a glance cannot mistake it
     for (const strip of ["cells", "smooth"] as const) {
       for (const mode of ["utf8", "ascii"] as const) {
@@ -244,12 +244,12 @@ describe("what the tab says", () => {
   });
 
   test("waiting on a person is stated, not implied by a stopped car", () => {
-    expect(title({ kind: "waiting" })).toBe("? Rune - waiting for you");
+    expect(title({ kind: "waiting" })).toBe("? Will - waiting for you");
   });
 
   test("idle carries the project, and nothing that suggests work", () => {
-    expect(title({ kind: "idle" })).toBe("Rune - Atlas");
-    expect(titleText({ kind: "idle" }, "", "utf8", "smooth")).toBe("Rune");
+    expect(title({ kind: "idle" })).toBe("Will - Atlas");
+    expect(titleText({ kind: "idle" }, "", "utf8", "smooth")).toBe("Will");
   });
 
   const everyState: TitleState[] = [
@@ -540,7 +540,7 @@ describe("what the turn hands the tab", () => {
 
 describe("the wire format", () => {
   test("is OSC 0, BEL-terminated", () => {
-    const seq = titleSeq("Rune - Atlas");
+    const seq = titleSeq("Will - Atlas");
     expect(seq.startsWith("\x1b]0;")).toBe(true);
     expect(seq.endsWith("\x07")).toBe(true);
   });
@@ -548,7 +548,7 @@ describe("the wire format", () => {
   test("a title can never terminate its own sequence", () => {
     // Project names come off the filesystem, so a control character is reachable
     // here. Unlike warp.ts there is no JSON layer to neutralise one.
-    const seq = titleSeq("Rune \x07 \x1b]0;evil");
+    const seq = titleSeq("Will \x07 \x1b]0;evil");
     expect(seq.split("\x07")).toHaveLength(2); // exactly one, the terminator
     expect(seq).not.toContain("\x1b]0;evil");
   });

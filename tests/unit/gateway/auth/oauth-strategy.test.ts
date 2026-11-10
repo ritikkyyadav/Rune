@@ -267,7 +267,7 @@ describe("OAuthStrategy.authenticate (fake IdP, real loopback)", () => {
     );
     await expect(
       strat.authenticate(ctx({ openBrowser: browserThatApproves() })),
-    ).rejects.toMatchObject({ name: "AuthError", recovery: "run: rune login openrouter" });
+    ).rejects.toMatchObject({ name: "AuthError", recovery: "run: will login openrouter" });
   });
 });
 

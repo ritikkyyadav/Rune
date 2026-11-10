@@ -74,7 +74,7 @@ describe("team tool — actions against a live bus", () => {
     const tool = createTeamTool({ getBus: () => mine });
     let out = await tool.execute(input({ action: "status" }));
     expect(out.success).toBe(true);
-    expect(out.result).toContain("No other Rune instances");
+    expect(out.result).toContain("No other Will instances");
 
     const peer = open();
     peer.setIntent("migrating the DB layer");

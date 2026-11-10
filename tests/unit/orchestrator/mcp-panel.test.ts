@@ -82,11 +82,11 @@ describe("/mcp — the remedy", () => {
   });
 
   it("names the login command for an unauthorized connector", () => {
-    expect(mcpRemedy(server({ name: "notion", needsAuth: true }))).toBe("rune mcp login notion");
+    expect(mcpRemedy(server({ name: "notion", needsAuth: true }))).toBe("will mcp login notion");
   });
 
   it("sends a down connector to the doctor", () => {
-    expect(mcpRemedy(server({ ready: false, lastError: "boom" }))).toBe("rune mcp doctor");
+    expect(mcpRemedy(server({ ready: false, lastError: "boom" }))).toBe("will mcp doctor");
   });
 });
 
@@ -164,7 +164,7 @@ describe("/mcp — the grammar law", () => {
     expect(real).toContain("connected");
     expect(real).toContain("14 tools");
     expect(real).toContain("needs login");
-    expect(real).toContain("rune mcp login notion");
+    expect(real).toContain("will mcp login notion");
     expect(real).toContain("/mcp reconnect <server>");
     // The count in the head is the pair of numbers the panel exists to give.
     expect(real).toContain("1/2 connected");

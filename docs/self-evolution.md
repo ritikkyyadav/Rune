@@ -1,6 +1,6 @@
 # Self-evolution
 
-Rune was self-healing long before it was self-improving. Provider health,
+Will was self-healing long before it was self-improving. Provider health,
 model-rot retirement, quota auto-resume, compaction self-heal, the loop
 breakers — all of it reacts inside a run. But the record those runs left
 behind (1,790 incidents under 292 fingerprints, a notebook of command facts,
@@ -30,7 +30,7 @@ reversible in one command.
 ## The retro
 
 Every run ends with a retro: a zero-model-call pass over the run's own
-session log — the same rows `rune audit` reads — that states what happened in
+session log — the same rows `will audit` reads — that states what happened in
 numbers and extracts the lessons a rule can vouch for. It is written as a
 `retro` event in the session, so it survives with the record.
 
@@ -53,8 +53,8 @@ A/B arm, or null for an ordinary session). The session row's `system_prompt_hash
 doctrine digest. Before this, a measured difference between two runs could not be attributed to the
 configuration that caused it, which is the difference between a measurement and an anecdote.
 
-`rune audit` prints it as one line under **Retro**. Sessions that predate the
-organ are derived after the fact by `rune evolve`, and marked so.
+`will audit` prints it as one line under **Retro**. Sessions that predate the
+organ are derived after the fact by `will evolve`, and marked so.
 
 ## The lessons
 
@@ -89,7 +89,7 @@ are the evidence ladder, and each rung costs more than the last.
 | `active`    | ≥5 injections with a win rate above the ambient baseline | yes, and it reaches the playbook    |
 | `retired`   | decayed, disused, contradicted, or turned off            | no; kept and inspectable            |
 
-- **Candidates are stored and never injected.** `rune evolve backfill` — which
+- **Candidates are stored and never injected.** `will evolve backfill` — which
   finally reads history back into the notebook, the thing `recordLessons`'s one
   call site never did — writes only candidates. Reconstructing a lesson from a
   log is not the same as having watched it hold.
@@ -106,11 +106,11 @@ are the evidence ladder, and each rung costs more than the last.
   every run.
 - **A re-learned retired lesson comes back as a candidate**, not where it left
   off. It was retired because it stopped being true.
-- **A lesson a person disabled stays disabled.** `rune evolve lessons --disable
+- **A lesson a person disabled stays disabled.** `will evolve lessons --disable
 <id>` retires it for good: a later run that re-learns it adds to its record
   and never re-injects it, no rule can move it up the ladder, and the playbook
   is re-rendered at once rather than after the next run. `--enable <id>` puts
-  it back at `candidate`. Both land in the evolve ledger. (`rune notebook rm`
+  it back at `candidate`. Both land in the evolve ledger. (`will notebook rm`
   deletes the row, so the next run that re-learns it starts over — that is
   forgetting, not a decision.)
 - **A trial measures sessions the lesson did not come from.** A session in a
@@ -160,8 +160,8 @@ means the lesson climbed the same ladder as every other.
 **And it is inert until you enable it once.**
 
 ```bash
-rune evolve playbook              # where it stands
-rune evolve playbook --enable     # turn learned skills on, once
+will evolve playbook              # where it stands
+will evolve playbook --enable     # turn learned skills on, once
 ```
 
 A skill can direct multi-step behaviour, so a machine writing one and having it
@@ -183,8 +183,8 @@ always written.
 ## The scorecard
 
 ```bash
-rune evolve scorecard            # per model, last 30 days
-rune evolve scorecard --by workspace --days 90
+will evolve scorecard            # per model, last 30 days
+will evolve scorecard --by workspace --days 90
 ```
 
 Per model or per workspace, from retros: runs, finished rate, runs ended with
@@ -220,7 +220,7 @@ review; that is the intended cost.
 ## Tuning: proposals that name a variant
 
 ```bash
-rune evolve tune
+will evolve tune
 ```
 
 Rule-based proposals from the scorecard, each with its signal, its confidence,
@@ -235,7 +235,7 @@ and — where the allowlist can express it — the variant id to run:
 | ≥ 30% of completed steps unproven       | no variant — the step check is a `verify.*` gate                       |
 | verification failing more than passing  | no variant — which commands verify _this_ project is a human judgement |
 | ≥ 40% of runs ending with steps open    | no variant — `[subagents] mode` is outside the allowlist               |
-| ≥ 2 runs halted by the supervisor       | **no variant, by design** — read `rune audit`                          |
+| ≥ 2 runs halted by the supervisor       | **no variant, by design** — read `will audit`                          |
 
 The first four rules are new, and they are the point of the rewrite: the
 original four keyed on `unproven`, `stalled` and `open_steps`, which have zero
@@ -250,13 +250,13 @@ supervisor-halt rule is null _permanently_: no variant may touch Auto mode, and
 a tuner that offered one would be proposing a mutation.
 
 Nothing is applied by itself. A proposal that names a variant is one command
-from evidence — `rune evolve ab <variant>` — and one more from being applied.
+from evidence — `will evolve ab <variant>` — and one more from being applied.
 
 ## The paired A/B
 
 ```bash
-rune evolve ab doctrine_full          # control, then treatment, on the same tasks
-rune evolve ab doctrine_full --real   # the same against a live model
+will evolve ab doctrine_full          # control, then treatment, on the same tasks
+will evolve ab doctrine_full --real   # the same against a live model
 ```
 
 Control first and unconditionally, then treatment: same task set, same order,
@@ -296,7 +296,7 @@ a win and not a loss. A regression is never inconclusive; harm seen on both
 arms' scored rows is an answer.
 
 Every measurement records what it cost to take (`learningCostUsd`: both arms,
-excluded rows included), the checkout's revision and the Rune version. `rune
+excluded rows included), the checkout's revision and the Will version. `will
 evolve status` totals the learning spend. Learning is not free, and a loop that
 hid its own spend could not be weighed against what it found.
 
@@ -309,11 +309,11 @@ cheaply and deterministically, on every change. Finding an improvement needs
 ## Promote, revert, and the refusals
 
 ```bash
-rune evolve promote doctrine_full     # only on a passing A/B for this exact config
-rune evolve revert                    # undo the newest promotion
-rune evolve why doctrine_full         # hypothesis, every measurement, what happened
-rune evolve yardstick --bless         # anchor the eval suite (a human act)
-rune evolve resume                    # clear a halt (also a human act)
+will evolve promote doctrine_full     # only on a passing A/B for this exact config
+will evolve revert                    # undo the newest promotion
+will evolve why doctrine_full         # hypothesis, every measurement, what happened
+will evolve yardstick --bless         # anchor the eval suite (a human act)
+will evolve resume                    # clear a halt (also a human act)
 ```
 
 A promotion writes the variant's lines into `~/.rune/config.toml` inside a
@@ -339,12 +339,12 @@ It refuses on these grounds, each named after a failure:
 - **The yardstick moved.** `tests/eval/**` is digested and a promotion is
   refused when that digest differs from the one a human blessed. A loop that can
   edit the eval suite and then promote on the result is grading its own exam.
-  Blessing is `rune evolve yardstick --bless` and has no automatic caller.
+  Blessing is `will evolve yardstick --bless` and has no automatic caller.
 - **A promotion already happened inside 24 hours.** Two changes at once cannot
   be attributed to either.
 - **Two consecutive reverts.** A loop that promotes changes a human keeps
   undoing has a broken fitness function, and the answer to a broken measurement
-  is to stop measuring, not to measure harder. `rune evolve resume` clears it.
+  is to stop measuring, not to measure harder. `will evolve resume` clears it.
 
 Everything lands in `~/.rune/evolve-ledger.jsonl` — one JSON row per
 measurement, promotion, revert and halt, append-only, readable with `tail`. A
@@ -357,16 +357,16 @@ the history disagreeing.
 ## The gardener
 
 ```bash
-rune evolve gardener            # candidates + the brief, dry run
-rune evolve gardener --run      # a detached run in a worktree of Rune's own repository
+will evolve gardener            # candidates + the brief, dry run
+will evolve gardener --run      # a detached run in a worktree of Will's own repository
 ```
 
-The black box holds fingerprints that are defects in Rune itself — crashes,
+The black box holds fingerprints that are defects in Will itself — crashes,
 unhandled rejections, dirty exits, a corrupted store, a malformed completion
 the salvage could not read. The gardener reads them (crash-class fingerprints
 seen three times or more), writes a brief for the top one — the evidence, the
 latest stack, the recent contexts — and, with `--run`, starts a detached run
-on that brief in an isolated `git worktree` of Rune's own repository.
+on that brief in an isolated `git worktree` of Will's own repository.
 
 The brief's rules are the boundary:
 
@@ -394,8 +394,8 @@ the dry run and the brief are what ship verified.
 ## Where the loop stands
 
 ```bash
-rune evolve            # status: measured runs, what is learned, playbook, gardener candidates, proposals
-rune evolve lessons    # what Rune knows about this repository
+will evolve            # status: measured runs, what is learned, playbook, gardener candidates, proposals
+will evolve lessons    # what Will knows about this repository
 ```
 
 Applied by itself: retro → notebook → playbook. Proposals only: tune. A
@@ -407,7 +407,7 @@ Every refusal above is a red-then-green test
 (`tests/unit/evolve/phase6-evidence.test.ts`); an independent adversarial pass
 mutation-tested them and found three adjacent gaps, all closed (a bare `500` in
 ordinary text read as a status; a pitfall built from an error that advised
-`unsandboxed: true`; `rune notebook rm` quietly undoing a disable). Trials are
+`unsandboxed: true`; `will notebook rm` quietly undoing a disable). Trials are
 keyed on the harness's release line, so a minor release restarts them. The mock
 A/B runs end to end against a scratch home, but no variant has a live
 measurement and no lesson has finished a controlled trial, so there is **no

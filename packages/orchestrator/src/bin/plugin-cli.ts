@@ -56,7 +56,7 @@ const say = (line = ""): void => {
 function usage(): void {
   say();
   say(
-    `${accent("rune plugin")} ${dim("— install a bundle of skills, commands, connectors, hooks and tools")}`,
+    `${accent("will plugin")} ${dim("— install a bundle of skills, commands, connectors, hooks and tools")}`,
   );
   say();
   say(`${text("Commands")}`);
@@ -102,7 +102,7 @@ function indexRefOf(values: Record<string, unknown>): string | undefined {
 function indexStaleness(load: PluginIndexLoad): string {
   if (!load.stale) return "";
   if (load.originKind === "cache") return warn(" · offline, last fetched copy");
-  if (load.originKind === "bundled") return warn(" · offline, the copy shipped with Rune");
+  if (load.originKind === "bundled") return warn(" · offline, the copy shipped with Will");
   return warn(" · not current");
 }
 
@@ -243,14 +243,14 @@ async function cmdSearch(args: string[], values: Record<string, unknown>): Promi
   for (const entry of hits) {
     const fits = entryFitsThisGear(entry);
     say(
-      `    ${accent(entry.name.padEnd(24))} ${dim(`v${entry.version}`)} ${fits ? "" : danger(`needs Rune ${entry.runeVersion}`)}`,
+      `    ${accent(entry.name.padEnd(24))} ${dim(`v${entry.version}`)} ${fits ? "" : danger(`needs Will ${entry.runeVersion}`)}`,
     );
     say(`      ${faint(entry.description)}`);
     say(`      ${capabilityLine(entry)}`);
     say(`      ${faint(entry.maintainer)}`);
   }
   say();
-  say(`  ${text("Install")}  ${accent(`rune plugin add ${hits[0]!.name}`)}`);
+  say(`  ${text("Install")}  ${accent(`will plugin add ${hits[0]!.name}`)}`);
   say();
   return 0;
 }
@@ -283,7 +283,7 @@ async function resolveThroughIndex(
 async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<number> {
   const spec = args[0];
   if (!spec) {
-    say(`  ${danger(glyph("failure"))} usage: rune plugin add <name|path|git-url|npm-package>`);
+    say(`  ${danger(glyph("failure"))} usage: will plugin add <name|path|git-url|npm-package>`);
     return 1;
   }
   const workspaceRoot = workspaceOf(values);
@@ -300,7 +300,7 @@ async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<
     if (resolved) {
       if (!entryFitsThisGear(resolved.entry)) {
         say(
-          `  ${danger(glyph("failure"))} ${accent(resolved.entry.name)} needs Rune ${resolved.entry.runeVersion}, this is ${RUNE_VERSION}`,
+          `  ${danger(glyph("failure"))} ${accent(resolved.entry.name)} needs Will ${resolved.entry.runeVersion}, this is ${RUNE_VERSION}`,
         );
         say();
         return 1;
@@ -363,7 +363,7 @@ async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<
   }
   if (!satisfiesRuneVersion(RUNE_VERSION, manifest.runeVersion)) {
     say(
-      `  ${danger(glyph("failure"))} ${accent(name)} needs Rune ${manifest.runeVersion}, this is ${RUNE_VERSION}`,
+      `  ${danger(glyph("failure"))} ${accent(name)} needs Will ${manifest.runeVersion}, this is ${RUNE_VERSION}`,
     );
     cleanup();
     say();
@@ -454,7 +454,7 @@ async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<
 function cmdRemove(args: string[], values: Record<string, unknown>): number {
   const name = args[0];
   if (!name) {
-    say(`  ${danger(glyph("failure"))} usage: rune plugin remove <name>`);
+    say(`  ${danger(glyph("failure"))} usage: will plugin remove <name>`);
     return 1;
   }
   const dest = join(pluginsRoot(workspaceOf(values)), name);
@@ -471,7 +471,7 @@ function cmdToggle(args: string[], values: Record<string, unknown>, enabled: boo
   const name = args[0];
   if (!name) {
     say(
-      `  ${danger(glyph("failure"))} usage: rune plugin ${enabled ? "enable" : "disable"} <name>`,
+      `  ${danger(glyph("failure"))} usage: will plugin ${enabled ? "enable" : "disable"} <name>`,
     );
     return 1;
   }
@@ -503,7 +503,7 @@ function cmdList(values: Record<string, unknown>): number {
   say();
   if (plugins.length === 0 && errors.length === 0) {
     say(`  ${dim("No plugins installed.")}`);
-    say(`  ${text("Add one")}  ${accent("rune plugin add ./my-plugin")}`);
+    say(`  ${text("Add one")}  ${accent("will plugin add ./my-plugin")}`);
     say();
     return 0;
   }

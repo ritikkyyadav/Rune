@@ -1,3 +1,5 @@
+import { PRODUCT_NAME } from "@rune/shared";
+
 // ─── OAuth 2.1 for MCP connectors ───
 //
 // Every remote connector in the vendored catalog — Notion, Slack, Linear,
@@ -254,7 +256,7 @@ export async function registerClient(
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({
-        client_name: opts.clientName ?? "Rune",
+        client_name: opts.clientName ?? PRODUCT_NAME,
         redirect_uris: [redirectUri],
         grant_types: ["authorization_code", "refresh_token"],
         response_types: ["code"],
@@ -549,7 +551,7 @@ export class McpOAuth {
       let registeredFor = this.configuredClientId ? undefined : stored?.redirectUri;
       if (!clientId && as.registration_endpoint) {
         const reg = await registerClient(as.registration_endpoint, loop.redirectUri, {
-          clientName: "Rune",
+          clientName: PRODUCT_NAME,
           scope: scope || undefined,
         });
         clientId = reg?.clientId;

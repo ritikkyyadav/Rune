@@ -1,7 +1,7 @@
-// ─── `rune mcp` and the checked directory ───
+// ─── `will mcp` and the checked directory ───
 //
 // The shell command and `/connectors` write the same files and the same
-// keychain accounts; these drive `runMcp`, the function `rune mcp` dispatches
+// keychain accounts; these drive `runMcp`, the function `will mcp` dispatches
 // to, with the terminal's token prompt replaced by a value handed in.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -52,12 +52,12 @@ afterEach(() => {
 const printed = () => output.join("");
 const store = () => new FileCredentialStore({ ...process.env, RUNE_HOME: home });
 
-describe("services Rune cannot connect to", () => {
+describe("services Will cannot connect to", () => {
   test("are refused with the reason, and nothing is written", async () => {
     for (const name of ["slack", "gmail"]) {
       output.length = 0;
       expect(await runMcp(["add", name], { workspace, scope: "user" })).toBe(1);
-      expect(printed()).toContain("cannot be connected from Rune");
+      expect(printed()).toContain("cannot be connected from Will");
     }
     expect(printed()).toContain("Anthropic for Claude");
     expect(existsSync(join(home, "mcp.json"))).toBe(false);
@@ -71,7 +71,7 @@ describe("a checked service", () => {
     expect(file).toContain("${keychain:mcp-token:github}");
     expect(file).toContain("https://api.githubcopilot.com/mcp/");
     expect(printed()).toContain("checked 2026-10-26");
-    expect(printed()).toContain("rune mcp login github");
+    expect(printed()).toContain("will mcp login github");
     expect(printed()).toContain("github.com/settings/personal-access-tokens");
   });
 
@@ -104,7 +104,7 @@ describe("a checked service", () => {
   test("a vendor that reviews apps is named before the sign-in", async () => {
     expect(await runMcp(["add", "vercel"], { workspace, scope: "user" })).toBe(0);
     expect(printed()).toContain("only lets AI apps it has reviewed");
-    expect(printed()).toContain("rune mcp login vercel");
+    expect(printed()).toContain("will mcp login vercel");
   });
 });
 
@@ -113,7 +113,7 @@ describe("the catalog listing", () => {
     expect(await runMcp(["list"], { workspace, catalog: true })).toBe(0);
     const text = printed();
     const checked = text.indexOf("Checked");
-    const closed = text.indexOf("Not available from Rune");
+    const closed = text.indexOf("Not available from Will");
     const bundled = text.indexOf("Bundled catalog");
     expect(checked).toBeGreaterThan(-1);
     expect(closed).toBeGreaterThan(checked);

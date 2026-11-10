@@ -1,4 +1,4 @@
-# Releasing Rune
+# Releasing Will
 
 Everything a release needs is automated. What is _not_ automated is anything that requires an
 account, a credential, or a decision only the founder can make — those are listed at the bottom, by
@@ -61,10 +61,10 @@ The tag push runs `.github/workflows/release.yml`, which:
 
 ---
 
-## `rune serve --check`
+## `will serve --check`
 
 The gate that would have caught the P10.9a defect. It runs **from the artifact**, which is the
-point: every gate before it ran Rune from source with `bun`, where
+point: every gate before it ran Will from source with `bun`, where
 `engine-host.ts` is a file that exists. It asserts, in order:
 
 1. the server comes up and mints a token;
@@ -73,8 +73,8 @@ point: every gate before it ran Rune from source with `bun`, where
 3. shutdown leaves no host behind.
 
 ```bash
-rune serve --check          # the installed binary
-rune serve --check --port N # pin the port instead of taking an ephemeral one
+will serve --check          # the installed binary
+will serve --check --port N # pin the port instead of taking an ephemeral one
 ```
 
 It uses a throwaway `RUNE_HOME` and workspace, so it never touches real sessions.
@@ -141,11 +141,11 @@ back. `--path` opts into the write; `--no-path` forbids it.
 ### Updating
 
 ```bash
-rune upgrade --check    # is there a newer release?
-rune upgrade            # download, verify, install; keeps one .backup
+will upgrade --check    # is there a newer release?
+will upgrade            # download, verify, install; keeps one .backup
 ```
 
-Rune looks at the latest release at most once a day in the background and the only result is one line
+Will looks at the latest release at most once a day in the background and the only result is one line
 at startup. Nothing is ever replaced without the command being typed. `[update] check = false` in
 `~/.rune/config.toml` turns the background look off entirely.
 
@@ -204,7 +204,7 @@ push to another repository, because that needs a token this workflow should not 
 Verify with:
 
 ```bash
-brew install --build-from-source savoir/tap/rune && rune --version && rune tools-smoke
+brew install --build-from-source savoir/tap/rune && will --version && will tools-smoke
 ```
 
 ### D1c — Signing secrets
@@ -265,7 +265,7 @@ gh attestation verify rune-linux-x64 --repo ritikkyyadav/Rune
 ### D1d — External validation
 
 Two named people, on two machines that are not yours, install from the public one-liner, run
-`rune tools-smoke` and one real task, and write down what happened. Record each in
+`will tools-smoke` and one real task, and write down what happened. Record each in
 `docs/validation.md` with date, OS, version and outcome. This is the 25% of the maturity score
 currently sitting at 0.5, and no amount of engineering moves it.
 
@@ -274,7 +274,7 @@ currently sitting at 0.5, and no amount of engineering moves it.
 ## Windows caveats
 
 There is no OS sandbox on Windows. 1st and 2nd gear behave exactly as they do elsewhere; 3rd and 4th
-rune run shell commands without the containment macOS and Linux provide. `install.ps1` says this out
+will run shell commands without the containment macOS and Linux provide. `install.ps1` says this out
 loud after installing. WSL2 is the answer for anyone who needs the sandbox. A native Windows sandbox
 is deferred (program decision D4).
 

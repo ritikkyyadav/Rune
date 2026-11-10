@@ -1284,7 +1284,7 @@ export function tuneProposals(rows: ScoreRow[], opts: { minRuns?: number } = {})
         key: row.key,
         signal: `${row.halted} of ${row.runs} runs were halted by the supervisor`,
         proposal:
-          "The supervisor is stopping sessions. This is NOT a tuning question — no variant may touch Auto mode — read `rune audit` for the halt reasons and the false-positive rate in docs/auto-mode.md before changing anything.",
+          "The supervisor is stopping sessions. This is NOT a tuning question — no variant may touch Auto mode — read `will audit` for the halt reasons and the false-positive rate in docs/auto-mode.md before changing anything.",
         variant: null,
         config: "(none — the safety layer is outside the allowlist by design)",
         confidence: "medium",
@@ -1366,7 +1366,7 @@ export function gardenerBrief(fp: GardenerFingerprint, samples: GardenerSample[]
     })
     .join("\n");
   const lines = [
-    "You are working on Rune's own source, in this repository. Fix ONE recurring harness defect, evidenced by Rune's black box.",
+    "You are working on Will's own source, in this repository. Fix ONE recurring harness defect, evidenced by Will's black box.",
     "",
     `Fingerprint ${fp.fingerprint} · class ${fp.class} · component ${fp.component}`,
     `Seen ${fp.count}× (first ${fp.firstSeen.slice(0, 10)}, last ${fp.lastSeen.slice(0, 10)}) across versions ${fp.versions.join(", ") || "?"}.`,

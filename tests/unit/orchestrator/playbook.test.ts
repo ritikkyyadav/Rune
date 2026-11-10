@@ -131,6 +131,20 @@ describe("writePlaybook", () => {
     expect(again.changed).toBe(false);
   });
 
+  test("a Rune playbook keeps its notes and does not report the rename as new learning", () => {
+    const first = writePlaybook(dir, recurring)!;
+    const original = readFileSync(first.path, "utf8")
+      .replace("Learned by Will from ", "Learned by Rune from ")
+      .replace("## Notes\n", "## Notes\n\nKeep my deployment instructions.\n");
+    writeFileSync(first.path, original);
+    const next = writePlaybook(dir, recurring)!;
+    expect(next.changed).toBe(false);
+    const text = readFileSync(first.path, "utf8");
+    expect(text).toContain("Learned by Will from ");
+    expect(text).toContain("Keep my deployment instructions.");
+    expect(text.split("<!-- rune:learned:start -->")).toHaveLength(2);
+  });
+
   test("a new session over the same lessons refreshes the count silently", () => {
     writePlaybook(dir, recurring);
     const moreSessions = [
@@ -139,7 +153,7 @@ describe("writePlaybook", () => {
     const again = writePlaybook(dir, moreSessions)!;
     expect(again.changed).toBe(false);
     expect(again.sessions).toBe(3);
-    expect(readFileSync(again.path, "utf8")).toContain("Learned by Rune from 3 sessions");
+    expect(readFileSync(again.path, "utf8")).toContain("Learned by Will from 3 sessions");
   });
 
   test("a person's edits outside the markers survive a rewrite", () => {

@@ -1,5 +1,5 @@
 /**
- * `rune serve`, driven the way a real client drives it.
+ * `will serve`, driven the way a real client drives it.
  *
  * This is the acceptance test for Phase 2: a client that is NOT the terminal
  * runs a whole turn over a websocket — a turn that stops twice for a human —
@@ -178,7 +178,7 @@ async function freePort(): Promise<number> {
 }
 
 /**
- * Stop a `rune serve` and everything it started.
+ * Stop a `will serve` and everything it started.
  *
  * The supervisor stops its session hosts in its SIGTERM handler, so it needs
  * the signal AND the time to run the handler. SIGKILL is the backstop for a
@@ -206,7 +206,7 @@ export async function stopServe(
   clearTimeout(timer);
 }
 
-describe("rune serve (websocket transport, real engine, fake model)", () => {
+describe("will serve (websocket transport, real engine, fake model)", () => {
   let dir: string;
   let runeHome: string;
   let model: ReturnType<typeof Bun.serve> | null = null;
@@ -231,7 +231,7 @@ describe("rune serve (websocket transport, real engine, fake model)", () => {
   });
 
   /**
-   * Start the fake model and `rune serve` against it.
+   * Start the fake model and `will serve` against it.
    *
    * The provider is `custom` — the user-defined OpenAI-compatible endpoint,
    * configured entirely from `secrets.json`. That is what lets the spawned
@@ -301,7 +301,7 @@ describe("rune serve (websocket transport, real engine, fake model)", () => {
     while (Date.now() < deadline && !existsSync(tokenPath)) {
       await new Promise((r) => setTimeout(r, 20));
     }
-    if (!existsSync(tokenPath)) throw new Error("rune serve never wrote its token file");
+    if (!existsSync(tokenPath)) throw new Error("will serve never wrote its token file");
     const cfg = JSON.parse(readFileSync(tokenPath, "utf8")) as { token: string; port: number };
     return { url: `ws://127.0.0.1:${cfg.port}`, token: cfg.token };
   }
@@ -576,14 +576,14 @@ describe("rune serve (websocket transport, real engine, fake model)", () => {
   );
 
   test.skipIf(!HAS_RUST_BIN)(
-    "rune serve --status reports the live server",
+    "will serve --status reports the live server",
     async () => {
       await start([sseText("ok")]);
       const status = Bun.spawnSync(["bun", CLI, "serve", "--status"], {
         env: { ...process.env, RUNE_HOME: runeHome },
       });
       const out = status.stdout.toString();
-      expect(out).toContain("rune serve");
+      expect(out).toContain("will serve");
       expect(out).toContain("remote settings refused");
       expect(out).toContain("listening");
     },

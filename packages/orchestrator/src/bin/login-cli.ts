@@ -159,7 +159,7 @@ export async function runLogin(
       log(
         `${faint("Set as active — model")} ${info(preset.defaultModel)}${faint(
           `. Switch anytime with`,
-        )} ${info("rune use <provider>")}`,
+        )} ${info("will use <provider>")}`,
       );
     }
   } catch (err) {
@@ -262,7 +262,7 @@ export async function runLogout(
 ): Promise<void> {
   const providerId = positionals[0];
   if (!providerId) {
-    log(warn("Usage: ") + info("rune logout <provider>"));
+    log(warn("Usage: ") + info("will logout <provider>"));
     log(faint("Models: ") + PROVIDER_PRESETS.map((p) => p.id).join(", "));
     log(
       faint("Search: ") +
@@ -304,7 +304,7 @@ export async function runLogout(
   } else {
     log(
       faint(
-        `No env/config key remains — ${info(`rune login ${providerId}`)}${faint(" to sign in again.")}`,
+        `No env/config key remains — ${info(`will login ${providerId}`)}${faint(" to sign in again.")}`,
       ),
     );
   }
@@ -360,22 +360,22 @@ async function pickProvider(): Promise<string | undefined> {
 }
 
 function printUsage(): void {
-  log(bold(text("rune login")) + faint(" — authenticate a provider"));
+  log(bold(text("will login")) + faint(" — authenticate a provider"));
   log();
   log(
-    `${info("rune login <provider>")}             ${faint("sign in (API key, or OAuth where supported)")}`,
+    `${info("will login <provider>")}             ${faint("sign in (API key, or OAuth where supported)")}`,
   );
   log(
-    `${info("rune login <provider> --method oauth")} ${faint("force a method: api_key | oauth | device | local")}`,
+    `${info("will login <provider> --method oauth")} ${faint("force a method: api_key | oauth | device | local")}`,
   );
   log(
-    `${info("rune login <provider> --no-browser")}  ${faint("print the OAuth URL instead of opening a browser")}`,
+    `${info("will login <provider> --no-browser")}  ${faint("print the OAuth URL instead of opening a browser")}`,
   );
   log(
-    `${info("rune login --migrate")}               ${faint("move legacy secrets.json keys into the OS keychain")}`,
+    `${info("will login --migrate")}               ${faint("move legacy secrets.json keys into the OS keychain")}`,
   );
   log(
-    `${info("rune login <engine>")}               ${faint("connect a web-search engine (tavily, exa, brave, serper, …)")}`,
+    `${info("will login <engine>")}               ${faint("connect a web-search engine (tavily, exa, brave, serper, …)")}`,
   );
   log();
   log(faint("Models: ") + PROVIDER_PRESETS.map((p) => p.id).join(", "));

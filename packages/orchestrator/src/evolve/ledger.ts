@@ -161,7 +161,7 @@ export function promotionEvidence(
   if (pairRows.length === 0) {
     return {
       measurement: null,
-      refusal: `no passing A/B in the ledger for ${variant} at this exact configuration (control ${key.control} → treatment ${key.treatment}). Run \`rune evolve ab ${variant} --real\` first; a measurement of an older shape of this variant is evidence about a different change.`,
+      refusal: `no passing A/B in the ledger for ${variant} at this exact configuration (control ${key.control} → treatment ${key.treatment}). Run \`will evolve ab ${variant} --real\` first; a measurement of an older shape of this variant is evidence about a different change.`,
     };
   }
 
@@ -194,7 +194,7 @@ export function promotionEvidence(
     const unlabelled = current.some((e) => e.mode === undefined);
     return {
       measurement: null,
-      refusal: `${variant} has no live measurement at this configuration: ${unlabelled ? "a row that does not say how it was measured cannot count, and " : ""}mock replays a script rather than reasoning, so it can show harm, never lift. Promotion needs \`rune evolve ab ${variant} --real\`.`,
+      refusal: `${variant} has no live measurement at this configuration: ${unlabelled ? "a row that does not say how it was measured cannot count, and " : ""}mock replays a script rather than reasoning, so it can show harm, never lift. Promotion needs \`will evolve ab ${variant} --real\`.`,
     };
   }
 
@@ -210,7 +210,7 @@ export function promotionEvidence(
   if (!win) {
     return {
       measurement: null,
-      refusal: `no conclusive live measurement of ${variant} yet: ${live.length} run${live.length === 1 ? " was" : "s were"} inconclusive. Run \`rune evolve ab ${variant} --real\` again.`,
+      refusal: `no conclusive live measurement of ${variant} yet: ${live.length} run${live.length === 1 ? " was" : "s were"} inconclusive. Run \`will evolve ab ${variant} --real\` again.`,
     };
   }
   return { measurement: win, refusal: null };

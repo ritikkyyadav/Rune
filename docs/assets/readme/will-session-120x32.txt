@@ -1,0 +1,36 @@
+# frame: hero-120x32-settled
+# terminal: 32 rows x 120 cols (real pty, alt screen)
+# ------------------------------------------------------------
+#0.........1.........2.........3.........4.........5.........6.........7.........8.........9.........0.........1.........
+ 1|
+ 2|  W I L L   ~/code/lantern                                                                                      v1.4.17
+ 3|  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ 4|  ◇ package.json carries the version, so the flag reads it from there.
+ 5|  ┌ edit  src/cli.js ───────────────────────────────────────────────────────────────────────────────────────────────┐
+ 6|  │    4   function parseArgs(argv) {                                                                               │
+ 7|  │    5 -   const args = { command: null, json: false };                                                           │
+ 8|  │    5 +   const args = { command: null, json: false, version: false };                                           │
+ 9|  │    6     for (const arg of argv.slice(2)) {                                                                     │
+10|  │    7 -     if (arg === "--json") args.json = true;                                                              │
+11|  │    … 6 more changed lines · ctrl+o                                                                              │
+12|  └ · +7 -2 · 2 hunks ──────────────────────────────────────────────────────────────────────────────────────────────┘
+13|
+14|  ◇ Running the suite and the flag itself.
+15|  ┌ run   node --test test/cli.test.js && node src/cli.js --version ────────────────────────────────────────────────┐
+16|  │ ✔ --version sets the version flag (0.553292ms)                                                                  │
+17|  │ ✔ a command without --version is unaffected (0.056167ms)                                                        │
+18|  │ ℹ tests 2                                                                                                       │
+19|  │ ℹ suites 0                                                                                                      │
+20|  │ … 6 more lines                                                                                                  │
+21|  │ 0.3.2                                                                                                           │
+22|  └ ✓ exit 0 · 242ms ───────────────────────────────────────────────────────────────────────────────────────────────┘
+23|
+24|  ◇ --version and -v now print the version from package.json, and two tests cover the parser. Both tests pass and the
+25|    flag prints 0.3.2.
+26|
+27|    │ ✓ check  npm test
+28|  ▁▁▁▁▁▁▁▁▁▁▁▁ done · 19s
+29|  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+30|  › describe a change, or / for commands
+31|  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+32|  ››› 3rd gear · edits + sandboxed shell · 2 files edited                            mock-small   ctrl+o open  ? keys

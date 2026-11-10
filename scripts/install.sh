@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────
-#  Rune — Install Script
+#  Will — Install Script
 #  Builds a standalone compiled CLI and its native Rust tools,
-#  then installs both into ~/.rune/bin/ and exposes them as `rune`.
+#  then installs both into ~/.rune/bin/ and exposes `will` and `rune`.
 #  An old ~/.gear (or ~/.alan) data dir is moved to ~/.rune once (symlink left
 #  behind); the pre-rename launchers and binaries (gear, alan, berne, elio) are
 #  removed from ~/.rune/bin.
@@ -56,7 +56,7 @@ echo ""
 . "$RUNE_ROOT/scripts/version.sh"
 BUILD_VERSION="$(rune_version)"
 
-echo "  $(bold '  Rune Installer')  $(dim "v$BUILD_VERSION")"
+echo "  $(bold '  Will Installer')  $(dim "v$BUILD_VERSION")"
 echo "  $(dim '──────────────────────────────────────')"
 echo "  $(dim "Repo root: $RUNE_ROOT")"
 echo ""
@@ -108,7 +108,7 @@ INSTALL_DIR="$HOME/.rune/bin"
 mkdir -p "$INSTALL_DIR"
 
 # ─── Install provenance guard ───
-# Multiple Rune worktrees share one ~/.rune/bin. A later install from an older
+# Multiple Will worktrees share one ~/.rune/bin. A later install from an older
 # or divergent worktree used to silently replace a fixed binary (the exact
 # regression that put the pre-context-economics build back on PATH). A clean
 # fast-forward is safe; dirty cross-worktree and non-fast-forward installs need
@@ -185,7 +185,7 @@ if [ -f "$INSTALLED_META" ] && [ "${RUNE_ALLOW_NON_FF_INSTALL:-0}" != "1" ]; the
      git -C "$RUNE_ROOT" cat-file -e "$INSTALLED_COMMIT^{commit}" 2>/dev/null && \
      ! git -C "$RUNE_ROOT" merge-base --is-ancestor "$INSTALLED_COMMIT" "$CANDIDATE_COMMIT"; then
     echo ""
-    echo "  $(red '✗') Refusing a non-fast-forward Rune install."
+    echo "  $(red '✗') Refusing a non-fast-forward Will install."
     echo "    installed commit: $(dim "$INSTALLED_COMMIT")"
     echo "    candidate commit: $(dim "$CANDIDATE_COMMIT")"
     echo "    The candidate does not contain the currently installed build's commit."
@@ -209,7 +209,7 @@ elif command -v bun &>/dev/null; then
   BUN="$(command -v bun)"
 else
   echo "  $(red '✗') Bun not found. Install it first: https://bun.sh"
-  echo "     or run: $(bold 'rune setup')"
+  echo "     or run: $(bold 'will setup')"
   exit 1
 fi
 echo "  $(green '✓') Bun: $(dim "$BUN")"
@@ -219,7 +219,7 @@ if command -v cargo &>/dev/null; then
   CARGO="$(command -v cargo)"
 else
   echo "  $(red '✗') Rust/cargo not found. Install it first: https://rustup.rs"
-  echo "     or run: $(bold 'rune setup')"
+  echo "     or run: $(bold 'will setup')"
   exit 1
 fi
 echo "  $(green '✓') Cargo: $(dim "$CARGO")"
@@ -267,6 +267,16 @@ cp "$TOOLS_SRC" "$TOOLS_DST"
 chmod +x "$TOOLS_DST"
 echo "  $(green '✓') rune-tools staged"
 
+# Bun appends the application to its runtime executable. Re-sign the final
+# staged bytes so macOS verifies the compiled CLI before it reaches PATH.
+if [ "$(uname -s)" = "Darwin" ]; then
+  for artifact in "$CLI_OUT" "$TOOLS_DST"; do
+    codesign --force --sign - "$artifact"
+    codesign --verify --strict "$artifact"
+  done
+  echo "  $(green '✓') macOS signatures verified"
+fi
+
 # Bind the provenance record to the exact staged bytes. Verification can now
 # distinguish "built from this worktree" from "this is the same artifact the
 # installer promoted" without relying on mtimes or filenames.
@@ -279,14 +289,14 @@ META
 
 # ─── 4a. Prove the STAGED pair before promoting it ───
 # The defect this closes was found by installing and then using the binary,
-# because every gate before it ran Rune from source with `bun` — where
-# `engine-host.ts` is a file that exists. `rune serve --check` runs the served
+# because every gate before it ran Will from source with `bun` — where
+# `engine-host.ts` is a file that exists. `will serve --check` runs the served
 # path against the artifact: one session over the websocket, one completed
 # turn, and no host left behind. Build → verify → promote, so a binary that
 # cannot host a session never lands on PATH.
 if [ "${RUNE_SKIP_SERVE_CHECK:-0}" != "1" ]; then
   echo ""
-  echo "  $(dim '...') Proving the staged binary hosts a session (rune serve --check)"
+  echo "  $(dim '...') Proving the staged binary hosts a session (will serve --check)"
   # Under a scratch home: the smoke is a proof about the binary, not an event
   # in the founder's record, and without this it appended one line to the
   # founder's audit.jsonl on every install (found by the third verifier pass).
@@ -307,12 +317,12 @@ fi
 LAUNCHER_OUT="$STAGE_DIR/rune"
 cat > "$LAUNCHER_OUT" <<'WRAPPER'
 #!/usr/bin/env bash
-# Rune launcher: points the compiled CLI at rune-tools and loads saved keys.
+# Will launcher: points the compiled CLI at rune-tools and loads saved keys.
 
 # Stale working-directory self-heal: if this shell's cwd was deleted, moved
 # (e.g. to Trash), or replaced while the tab sat in it, getcwd() fails and the
 # Bun runtime dies at startup with a cryptic "Unexpected" / "low max file
-# descriptors" error before Rune ever runs. Re-resolve $PWD by its path: if
+# descriptors" error before Will ever runs. Re-resolve $PWD by its path: if
 # the folder exists (again), re-enter it fresh; if it is really gone, say
 # exactly what happened and how to fix it.
 if ! pwd -P >/dev/null 2>&1; then
@@ -320,7 +330,7 @@ if ! pwd -P >/dev/null 2>&1; then
     echo "  ! This terminal's working directory was stale (deleted or replaced) — re-entered $PWD" >&2
   else
     echo "" >&2
-    echo "  ✗ Rune can't start: this terminal's working directory no longer exists." >&2
+    echo "  ✗ Will can't start: this terminal's working directory no longer exists." >&2
     echo "    It was deleted, moved to Trash, or replaced while this shell was inside it." >&2
     echo "    Fix: cd to an existing folder and retry — e.g.  cd ~  then cd back to your project." >&2
     echo "" >&2
@@ -342,14 +352,14 @@ if [ -f "$META_FILE" ]; then
     CURRENT_COMMIT="$(git -C "$RUNE_SOURCE_ROOT" rev-parse HEAD 2>/dev/null || true)"
     if [ -n "${RUNE_SOURCE_COMMIT:-}" ] && [ -n "$CURRENT_COMMIT" ] && \
        [ "$CURRENT_COMMIT" != "$RUNE_SOURCE_COMMIT" ]; then
-      echo "  ! This rune build came from commit ${RUNE_SOURCE_COMMIT:0:8}, but its source worktree is now ${CURRENT_COMMIT:0:8}." >&2
+      echo "  ! This Will build came from commit ${RUNE_SOURCE_COMMIT:0:8}, but its source worktree is now ${CURRENT_COMMIT:0:8}." >&2
       echo "    Rebuild:  cd $RUNE_SOURCE_ROOT && ./scripts/install.sh" >&2
     fi
     NEWER="$(find "$RUNE_SOURCE_ROOT/packages" -name '*.ts' \
       -not -path '*/node_modules/*' -not -path '*/dist/*' \
       -newer "$RUNE_BIN_DIR/rune-compiled" -print -quit 2>/dev/null)"
     if [ -n "$NEWER" ]; then
-      echo "  ! This rune build is older than its source tree — changes there are NOT live." >&2
+      echo "  ! This Will build is older than its source tree — changes there are NOT live." >&2
       echo "    Rebuild:  cd $RUNE_SOURCE_ROOT && ./scripts/install.sh" >&2
     fi
   fi
@@ -407,6 +417,10 @@ mv "$CLI_OUT" "$INSTALL_DIR/rune-compiled"
 mv "$TOOLS_DST" "$INSTALL_DIR/rune-tools"
 mv "$STAGE_DIR/rune-compiled.meta" "$INSTALL_DIR/rune-compiled.meta"
 mv "$LAUNCHER_OUT" "$INSTALL_DIR/rune"
+
+# One implementation, two commands: existing scripts and future upgrades keep
+# targeting rune, while the public command always follows that same artifact.
+ln -sfn rune "$INSTALL_DIR/will"
 
 if [ "$INSTALL_FILE_GUARD" = "macos-uchg" ]; then
   chflags uchg \
@@ -511,8 +525,8 @@ echo ""
 # Skip the PATH lecture when ~/.rune/bin is already on PATH (re-installs).
 case ":$PATH:" in
   *":$HOME/.rune/bin:"*)
-    echo "  $(green '✓') ~/.rune/bin is already on your PATH — just type: $(bold 'rune')"
-    echo "  $(dim '  (running terminals keep the old binary; start a fresh tab or rerun gear)')"
+    echo "  $(green '✓') ~/.rune/bin is already on your PATH — just type: $(bold 'will')"
+    echo "  $(dim '  (running terminals keep the old binary; start a fresh tab or rerun will)')"
     echo ""
     ;;
   *)
@@ -530,7 +544,7 @@ case ":$PATH:" in
     echo ""
     echo "  $(dim '  Then reload your shell: source ~/.zshrc (or open a new terminal)')"
     echo ""
-    echo "  $(dim '  After that, simply type:') $(bold 'rune')"
+    echo "  $(dim '  After that, simply type:') $(bold 'will')"
     echo ""
     ;;
 esac

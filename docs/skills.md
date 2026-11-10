@@ -1,7 +1,7 @@
 # Skills
 
 A skill is a folder with a `SKILL.md` in it. The file holds instructions you
-want Rune to follow — a checklist, a house style, a runbook — and Rune loads it
+want Will to follow — a checklist, a house style, a runbook — and Will loads it
 only when it is needed.
 
 A skill is **not** a program. Nothing in it is executed by installing it or by
@@ -46,7 +46,7 @@ Then, in a session:
 
 That is the whole mechanism. A copy of the file above ships at
 [`examples/skills/release-checklist`](../examples/skills/release-checklist), so
-`rune skill add ./examples/skills/release-checklist` gets you a working one
+`will skill add ./examples/skills/release-checklist` gets you a working one
 without any typing.
 
 ---
@@ -58,12 +58,12 @@ without any typing.
 | `<workspace>/.rune/skills/<name>/SKILL.md` | this repository — commit it, and your team gets it   |
 | `~/.rune/skills/<name>/SKILL.md`           | you — available in every workspace                   |
 | `<workspace>/.rune/plugins/<p>/skills/…`   | shipped by a plugin (see [plugins.md](./plugins.md)) |
-| the bundled catalog                        | ships with Rune                                      |
+| the bundled catalog                        | ships with Will                                      |
 
 A name present in both your workspace and your home resolves to the
 **workspace** copy: a repository's own instructions beat your personal default.
 
-`.rune/skills/playbook/SKILL.md` is written by Rune itself from what it has
+`.rune/skills/playbook/SKILL.md` is written by Will itself from what it has
 learned in this repository, using exactly the format above. It is one more
 skill; you can read it, edit it, delete it or commit it. See
 [self-evolution.md](./self-evolution.md).
@@ -75,7 +75,7 @@ skill; you can read it, edit it, delete it or commit it. See
 ```markdown
 ---
 name: release-checklist # optional; the folder name is used when it is absent
-description: One line. This is what Rune reads to decide the skill applies. # required by `rune skill add`
+description: One line. This is what Will reads to decide the skill applies. # required by `will skill add`
 argument-hint: <version> # optional; shown in the command palette
 ---
 
@@ -106,9 +106,9 @@ loaded into the prompt.
 ## Commands
 
 ```
-rune skill add <path> [--user] [--name N] [--force]   copy a skill folder into place
-rune skill list                                        what is installed, and from where
-rune skill remove <name> [--user]                      delete one
+will skill add <path> [--user] [--name N] [--force]   copy a skill folder into place
+will skill list                                        what is installed, and from where
+will skill remove <name> [--user]                      delete one
 ```
 
 `add` takes the folder or the `SKILL.md` inside it. Without `--user` it installs
@@ -133,7 +133,7 @@ In a session:
 
 ## Two ways a skill gets used
 
-**Rune chooses it.** Every skill's name and description ride in the system
+**Will chooses it.** Every skill's name and description ride in the system
 prompt. When a request matches, the model calls the `skill` tool, which returns
 the body. This is the ordinary path, and it costs one catalog line per skill
 until something matches.
@@ -148,19 +148,19 @@ loses a name is still listed by `/skills` and still loadable by the agent.
 
 ---
 
-## What Rune will and will not do to a skill
+## What Will will and will not do to a skill
 
 Reading a skill is ordinary work: Auto mode treats a `read_file` of a `SKILL.md`
 like any other read, because reading the instructions you gave it is how it
 finds out what you asked for.
 
-**Writing** one is not. `.rune/skills` is part of Rune's own control surface, so
+**Writing** one is not. `.rune/skills` is part of Will's own control surface, so
 a model-authored write there trips the guardrail breaker and needs your explicit
 confirmation — the same treatment as `.rune/hooks.json` or `.rune/config.toml`.
 That is deliberate: a skill can direct multi-step behaviour, so an agent that
 could write one silently could grant itself a standing instruction.
 
-The playbook Rune writes for itself goes to `PENDING.md`, which the loader does
+The playbook Will writes for itself goes to `PENDING.md`, which the loader does
 not read, until you enable learned skills once.
 
 ---

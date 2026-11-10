@@ -3,7 +3,7 @@ use std::io::{self, Read};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "rune-tools", version, about = "Rune built-in tool executor")]
+#[command(name = "rune-tools", version, about = "Will built-in tool executor")]
 struct Cli {
     /// Workspace root directory
     #[arg(long, default_value = ".")]

@@ -122,7 +122,7 @@ const bearer = (noun: string, createAt: string, optional = false): DirectoryAuth
 const OAUTH: DirectoryAuth = { kind: "oauth" };
 
 const REVIEWED_ONLY = (vendor: string) =>
-  `${vendor} only lets AI apps it has reviewed sign in, and Rune is not on its list yet. ` +
+  `${vendor} only lets AI apps it has reviewed sign in, and Will is not on its list yet. ` +
   `If ${vendor}'s page refuses the sign-in, that is why; nothing on your side is wrong.`;
 
 export const CONNECTOR_DIRECTORY: readonly DirectoryEntry[] = [
@@ -502,7 +502,7 @@ export const CONNECTOR_DIRECTORY: readonly DirectoryEntry[] = [
 
 const PARTNER_ONLY = (vendor: string) =>
   `${vendor}'s sign-in accepts only apps ${vendor} registered itself (it offers no ` +
-  `self-registration), and Rune has none yet. With your own ${vendor} app, add it by URL ` +
+  `self-registration), and Will has none yet. With your own ${vendor} app, add it by URL ` +
   `and set "oauth": { "clientId": "…" } in mcp.json.`;
 
 export const CLAUDE_ONLY_REASON =

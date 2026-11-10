@@ -1,6 +1,6 @@
 # Providers
 
-What Rune can talk to, how each host handles prompt caching, and what has
+What Will can talk to, how each host handles prompt caching, and what has
 actually been measured rather than assumed.
 
 The provider list itself lives in one place — `packages/shared/src/providers.ts`
@@ -14,7 +14,7 @@ decisions behind rows that were removed.
 ## The roster (2026-09-06)
 
 Thirty-seven model providers and twelve web-search engines, connected from one
-place: `/login` in the terminal, or `rune login <id>` from a shell. The connect
+place: `/login` in the terminal, or `will login <id>` from a shell. The connect
 flow asks what you _have_ — a subscription, an API key, a machine running a
 model, or a search engine — and names products the way you would say them.
 
@@ -35,7 +35,7 @@ for adding the next host:
 1. **Seed lists are short and prefer stable aliases** (`mistral-medium-latest`,
    `qwen-plus`). None of those ids completed a live call from this machine (no
    credential here), so live discovery is the source of truth: `/model` lists
-   what the account can actually see and `rune models <id> --refresh` re-asks
+   what the account can actually see and `will models <id> --refresh` re-asks
    the host.
 2. **No `tiers` block.** A tier table names ids the summarizer and the scout
    sub-agents run unattended; on a host whose lineup nobody here has verified,
@@ -53,7 +53,7 @@ endpoint, MiniMax's `.minimaxi.com` host, SiliconFlow's `.cn`) take the other
 base URL with `/keys url <id> <baseUrl>` — the override `buildGateway` honours
 for every OpenAI-compatible preset; the key is the same on both doors.
 `--provider <id>` accepts any preset now (it used to accept six, and
-`rune --provider mistral` silently booted into openrouter — the same rot the
+`will --provider mistral` silently booted into openrouter — the same rot the
 sticky-model gate had), and a key pasted through `/login` reaches the live
 gateway immediately: the engine adopts the credential before the model
 switch, where it used to fail with "provider not registered" until a restart.
@@ -78,14 +78,14 @@ order, and walk down the list on failure; keyless DuckDuckGo always closes it.
 | `searxng`    | `SEARXNG_URL`                            | self-hosted; the instance must allow JSON output |
 | `duckduckgo` | —                                        | built in, HTML scraping, rate-limited            |
 
-Connecting an engine (`/login` → Web search, or `rune login exa`) puts the key
+Connecting an engine (`/login` → Web search, or `will login exa`) puts the key
 in the OS keychain under the same `provider:<id>` account a model provider
 uses, runs **one real search** as the verification — a revoked key passes a
 format check and fails a search — and, on success, makes that engine answer
 first (remembered in `~/.rune/prefs.json`). `[search] provider` in
 `config.toml` outranks the remembered choice; `RUNE_SEARCH_BACKEND` outranks
-both. `rune providers` reads both rosters back on one screen, and
-`rune logout <id>` forgets either kind.
+both. `will providers` reads both rosters back on one screen, and
+`will logout <id>` forgets either kind.
 
 The nine engines added on 2026-09-06 have their request shapes pinned by tests
 with `fetch` stubbed (`tests/unit/tool-registry/search.test.ts`); none has
@@ -177,7 +177,7 @@ below its actual window.
 
 ## Measured cache behaviour
 
-Every row below is a real pair of requests through Rune's own adapters
+Every row below is a real pair of requests through Will's own adapters
 (`scripts/verify-cache.ts --provider <id>`): one turn to write the prefix, one
 to read it back, on a ~4.8k-token prefix unique to each run so a previous run's
 warm cache cannot flatter the result. **Rows that say "not measured" were not
@@ -193,8 +193,8 @@ Measured **2026-09-02**.
 | `google`                    | `gemini-2.5-flash`        | implicit                                  | input 5099, cached 0           | input 15, cached 5085                   | **99.7%**                                  | works, with no cache handle                                                                                                                     |
 | `ollama-turbo`              | `gpt-oss:20b`             | was "implicit"                            | input 4301, cached 0           | input 4301, cached 0                    | **none**                                   | no cache observable → policy corrected to `none`                                                                                                |
 | `codex`                     | `gpt-5.6-sol`             | server-side, loop ends on tool output     | turn 2: input 740, cached 1536 | turn 4: input 740, cached 2688          | **78%, extending**                         | works when every request ends on `function_call_output` (`scripts/verify-codex-tail-cache.ts`, 2026-09-10, effort low)                          |
-| `codex`                     | `gpt-5.6-sol`             | server-side, trailing user message        | turn 2: cached 0 or 1408       | turn 4: cached 0–1536, prompt 3311–3478 | **stalls**                                 | the shape Rune sent until 2026-09-10; Pilot H read 12,160 cached against 14,927–18,212 prompts for nine completions, Pilot G 10,496 for sixteen |
-| `codex`                     | `gpt-5.6-sol`             | server-side, tail folded into tool output | turn 2: cached 1536            | turn 3: cached 2176 of 2897             | **extending** (3 of 4 turns, unpaused run) | the shape Rune sends now; run 4 (paused, 5 turns) lost to a 429 on its last request, re-run when quota allows                                   |
+| `codex`                     | `gpt-5.6-sol`             | server-side, trailing user message        | turn 2: cached 0 or 1408       | turn 4: cached 0–1536, prompt 3311–3478 | **stalls**                                 | the shape Will sent until 2026-09-10; Pilot H read 12,160 cached against 14,927–18,212 prompts for nine completions, Pilot G 10,496 for sixteen |
+| `codex`                     | `gpt-5.6-sol`             | server-side, tail folded into tool output | turn 2: cached 1536            | turn 3: cached 2176 of 2897             | **extending** (3 of 4 turns, unpaused run) | the shape Will sends now; run 4 (paused, 5 turns) lost to a 429 on its last request, re-run when quota allows                                   |
 | `ollama` (local)            | —                         | KV cache                                  | —                              | —                                       | not measured                               | no local runtime on this machine                                                                                                                |
 | `anthropic`                 | `claude-haiku-4-5`        | native `cache_control`                    | —                              | —                                       | not measured                               | no credential                                                                                                                                   |
 | `openai`                    | `gpt-4o-mini`             | `prompt-cache-key`                        | —                              | —                                       | not measured                               | no credential                                                                                                                                   |
@@ -279,7 +279,7 @@ would have to be invented, and a guessed wire shape is exactly what "do not
 guess an API" forbids — it would fail as a 400 at best and silently do nothing
 at worst.
 
-**So it is skipped, and the deterministic equivalent already ships.** Rune's own
+**So it is skipped, and the deterministic equivalent already ships.** Will's own
 first compaction tier is the same idea, run client-side: old tool-result bodies
 are replaced in place, the blocks survive so no `tool_use`/`tool_result` pair is
 ever orphaned, and (since P10.8) a head-and-tail excerpt is kept so a stripped
@@ -315,13 +315,13 @@ parser would have drifted by the next model release.
 
 **None of them stores a credential.** They authenticate with the machine's own
 cloud chain — the same one `aws`, `gcloud` and `az` read — under a new auth
-method, `chain`. `rune login bedrock` therefore reports rather than prompts: it
+method, `chain`. `will login bedrock` therefore reports rather than prompts: it
 says whether the chain resolves and, when it does not, exactly which command
 fixes it. A tool asking someone to paste a long-lived cloud credential into its
 keychain would defeat the reason the route exists.
 
 ```
-$ rune providers
+$ will providers
   ●  AWS Bedrock            chain    signed in · profile default
 ```
 
@@ -332,8 +332,8 @@ Anthropic models through the Bedrock Messages API.
 ```bash
 export AWS_PROFILE=work            # or AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
 export AWS_REGION=us-east-1
-rune login bedrock                 # reports what the chain resolved; stores nothing
-rune use bedrock
+will login bedrock                 # reports what the chain resolved; stores nothing
+will use bedrock
 ```
 
 ```toml
@@ -342,7 +342,7 @@ region = "eu-central-1"
 inferenceProfile = "eu"   # "us" | "eu" | "apac" | "none"; defaults to the region's family
 ```
 
-| Piece             | What Rune does                                                                                                                                                      |
+| Piece             | What Will does                                                                                                                                                      |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Endpoint**      | `POST /model/{modelId}/invoke-with-response-stream` on `bedrock-runtime.<region>.amazonaws.com` (`/invoke` when not streaming)                                      |
 | **Body**          | the Anthropic Messages body with `model` and `stream` removed (the path says both) and `anthropic_version: "bedrock-2023-05-31"` added                              |
@@ -352,12 +352,12 @@ inferenceProfile = "eu"   # "us" | "eu" | "apac" | "none"; defaults to the regio
 | **Errors**        | AWS answers `{"message": …}` with the class in `x-amzn-errortype`; both are re-shaped into Anthropic's error envelope so a 403 does not surface as an empty string  |
 | **`countTokens`** | estimated locally — Bedrock has no count-tokens endpoint, and a 404 per measurement is worse than an estimate                                                       |
 | **`healthCheck`** | "do credentials resolve", never a real completion. A probe that spends money is a bill, not a probe                                                                 |
-| **Discovery**     | `rune models bedrock` calls ListFoundationModels on the control plane                                                                                               |
+| **Discovery**     | `will models bedrock` calls ListFoundationModels on the control plane                                                                                               |
 
 **IMDS is deliberately not in the chain.** The instance metadata service is the
 SDKs' last rung, and off EC2 it is a request to a link-local address that never
-answers — a timeout plus retries on every cold start. Rune resolves credentials
-on the _no-credential_ path too (`rune providers` has to print an honest row),
+answers — a timeout plus retries on every cold start. Will resolves credentials
+on the _no-credential_ path too (`will providers` has to print an honest row),
 so the probe is omitted. Anything running on EC2 with an instance role can
 export the standard variables or name a profile; containers are covered by the
 container-credentials rung, which is the case that matters in CI.
@@ -365,7 +365,7 @@ container-credentials rung, which is the case that matters in CI.
 **Model ids are inference profiles, in three shapes.** Most Anthropic models on
 Bedrock are not invokable by their bare foundation-model id; they need a
 geography prefix (`us.anthropic.claude-haiku-4-5-20251001-v1:0`) and a `us.` id
-is rejected outside US regions. Rune ships one catalogue of `us.` ids and
+is rejected outside US regions. Will ships one catalogue of `us.` ids and
 rewrites the prefix to match the configured region, so an account in Frankfurt
 reaches `eu.` models without a second copy of every row in the picker. The
 other two shapes are left alone on purpose: a `global.` GLOBAL inference
@@ -392,7 +392,7 @@ so nothing here has made a live Bedrock call. What _is_ proven, by
 - the event-stream decoder against recorded frames, including a frame split
   across reads and a corrupted checksum, with CRC-32 checked against the
   universal `crc32("123456789") == 0xCBF43926`;
-- the request Rune builds — path, body, signed headers, no `x-api-key` — and a
+- the request Will builds — path, body, signed headers, no `x-api-key` — and a
   recorded response streaming back through the Anthropic parser with its usage
   and cache counters intact;
 - the credential chain, rung by rung, against injected files and fetch.
@@ -409,8 +409,8 @@ families, because Vertex does.
 ```bash
 gcloud auth application-default login   # or GOOGLE_APPLICATION_CREDENTIALS=key.json
 export GOOGLE_CLOUD_PROJECT=my-project
-rune login vertex
-rune use vertex
+will login vertex
+will use vertex
 ```
 
 ```toml
@@ -419,7 +419,7 @@ project = "my-project"
 location = "us-east5"     # or "global"
 ```
 
-| Piece             | What Rune does                                                                                                                                                                      |
+| Piece             | What Will does                                                                                                                                                                      |
 | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Routing**       | by model id: `claude…` → the Anthropic publisher, `gemini…` → Google's. Anything else is a 404 that says so rather than a guess that 404s somewhere confusing                       |
 | **Anthropic**     | `POST …/publishers/anthropic/models/{model}:streamRawPredict`, body carrying `anthropic_version: "vertex-2023-10-16"` and no `model`                                                |
@@ -427,18 +427,18 @@ location = "us-east5"     # or "global"
 | **Auth**          | `Authorization: Bearer` from ADC — a service-account JSON exchanged via a signed RS256 JWT, the gcloud ADC file's refresh token, or the metadata server                             |
 | **Streaming**     | already SSE. Nothing to decode; this route is simpler than Bedrock by exactly one decoder                                                                                           |
 | **Model ids**     | the current Anthropic line is addressed by its plain id (`claude-sonnet-5`); only legacy rows still carry `@<version>`, e.g. `claude-haiku-4-5@20251001`. Gemini keeps its plain id |
-| **Discovery**     | `rune models vertex` lists BOTH publishers, adding the `@version` suffix Anthropic ids need to be invokable                                                                         |
+| **Discovery**     | `will models vertex` lists BOTH publishers, adding the `@version` suffix Anthropic ids need to be invokable                                                                         |
 | **`healthCheck`** | "is there a project and does ADC resolve" — both things a user can act on, neither costing a token                                                                                  |
 
 **The token is a header, never a query parameter.** AI Studio takes `?key=`;
-Vertex takes a bearer. Rune's Google adapter now decides between the two from
+Vertex takes a bearer. Will's Google adapter now decides between the two from
 its auth mode rather than always appending the key — a short-lived OAuth token
 in a query string would be written into every access log between here and
 Google.
 
 **The metadata rung is bounded to one second** and honours Google's own
 `NO_GCE_CHECK` opt-out. Off GCE that address does not answer, and
-`rune providers` asks this question on the no-credential path.
+`will providers` asks this question on the no-credential path.
 
 **Two failures are turned into messages you can act on.** No credential is a 401
 naming `gcloud auth application-default login`; no project is a 400 naming
@@ -460,8 +460,8 @@ The same OpenAI models on an Azure resource, addressed by **deployment name**.
 ```bash
 export AZURE_OPENAI_ENDPOINT=https://my-resource.openai.azure.com
 export AZURE_OPENAI_API_KEY=...       # or AZURE_OPENAI_AD_TOKEN for Entra ID
-rune login azure-openai
-rune use azure-openai
+will login azure-openai
+will use azure-openai
 ```
 
 ```toml
@@ -475,14 +475,14 @@ apiVersion = "2024-10-21"
 "gpt-5.4-mini" = "cheap-chat"
 ```
 
-| Piece               | What Rune does                                                                                                                                                                  |
+| Piece               | What Will does                                                                                                                                                                  |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Endpoint**        | `POST {endpoint}/openai/deployments/{deployment}/chat/completions?api-version=…`                                                                                                |
 | **Deployments**     | the catalogue lists MODEL ids (what a person picks); `[providers.azure-openai.deployments]` maps each to a deployment, defaulting to the id itself                              |
 | **`api-version`**   | a **GA** version by default, never a preview — previews are withdrawn on a schedule, and a withdrawn default breaks every user at once                                          |
 | **Auth**            | `api-key: <resource key>`, or `Authorization: Bearer` from `AZURE_OPENAI_AD_TOKEN`. The SDK's own placeholder header is stripped, so only one is sent                           |
 | **Everything else** | inherited from `OpenAIProvider`: tool calls, vision, the reasoning-family parameter swap (gpt-5 and later, o-series), `prompt_cache_key`, the usage trailer, the reasoning dial |
-| **Discovery**       | `rune models azure-openai` lists the deployments the RESOURCE has — a different question from "what does Azure offer", and the useful one                                       |
+| **Discovery**       | `will models azure-openai` lists the deployments the RESOURCE has — a different question from "what does Azure offer", and the useful one                                       |
 
 **The endpoint is normalized.** Pasting the full chat-completions URL out of the
 portal gives you the origin rather than a doubled `/openai` path and a 404 on a
@@ -506,7 +506,7 @@ it. `RUNE_LIVE_AZURE_OPENAI=1` runs that.
 
 ## Live model discovery
 
-`rune models <provider>` asks the provider's own list endpoint what it serves,
+`will models <provider>` asks the provider's own list endpoint what it serves,
 because a hand-maintained catalogue rots and this repo has lost runs to exactly
 that: `qwen3-coder:480b` and its announced successor both 410'd on the same day,
 and two OpenRouter `:free` ids were withdrawn to paid without notice. Live
@@ -530,7 +530,7 @@ The result is **cached for an hour** in `~/.rune/model-cache.json`. An hour is
 chosen against the failure it protects against: model catalogues change on the
 order of weeks, so a stale row costs one confusing `/model` pick that the next
 refresh fixes, while an uncached list costs a network round trip every time
-someone opens a picker. `rune models <provider> --refresh` forces a call.
+someone opens a picker. `will models <provider> --refresh` forces a call.
 
 The cache holds **model ids and labels only** — no credential, no endpoint,
 nothing account-specific beyond which models that account can see — and a
@@ -606,7 +606,7 @@ other: `custom` has no preset — it is the escape hatch for a provider this
 catalogue does not know — so the startup gate treats "is it usable?" as "is a
 base URL and a key configured?" rather than looking it up. Both entry points
 (the terminal and the engine host) ask the same question, so a session opened
-by `rune serve` or the desktop resumes on the same endpoint the terminal does.
+by `will serve` or the desktop resumes on the same endpoint the terminal does.
 
 ---
 
@@ -636,7 +636,7 @@ id any table names must be a model that provider's preset actually offers.**
 Two different questions — how much rate-limit headroom a provider has (for
 fallback ordering) and who pays for a token (for the meter) — that must not
 contradict each other about the same account. `ollama-turbo` was ranked `free`
-capacity and billed as `subscription` at the same time. The ids Rune ships for
+capacity and billed as `subscription` at the same time. The ids Will ships for
 Ollama Cloud are the ones verified on the **default, no-subscription plan**
 (subscription-gated models are deliberately omitted because they 403), so both
 now say free.
@@ -645,7 +645,7 @@ now say free.
 
 ## The reasoning-depth dial, per provider
 
-Rune has shipped a depth dial that went nowhere **twice**: Codex ran at the
+Will has shipped a depth dial that went nowhere **twice**: Codex ran at the
 server default because `reasoning.effort` was never sent while "max" sat in the
 picker looking selectable, and Gemini dropped `thinking.effort` inside its
 adapter, so `/effort high` on a Gemini session changed nothing. Both were
@@ -690,7 +690,7 @@ unrecognized model gets the plain text.
 
 ## Reading a cache number in the product
 
-Every cost surface — `/cost`, the status line, and `rune audit` — renders a
+Every cost surface — `/cost`, the status line, and `will audit` — renders a
 hit rate through **one** function, `formatCacheRate` in
 `packages/orchestrator/src/cost-report.ts`. Its whole job is the rule:
 
@@ -705,7 +705,7 @@ because that is the axis the answer varies on: a run that fell back from a
 caching provider to one with none reports a blended rate describing neither,
 and the blend is always the flattering number.
 
-`rune audit` on a real session:
+`will audit` on a real session:
 
 ```
   Cost  $10.0320 list · $0.0000 paid (subscription) · 3,980,405 in · 114,441 out

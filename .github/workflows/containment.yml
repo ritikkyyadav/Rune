@@ -153,7 +153,7 @@ jobs:
         run: |
           set -euo pipefail
           "$HOME/.rune/bin/rune" --version | tee rune-version.out
-          grep -F "Rune v${EXPECTED_VERSION}" rune-version.out
+          grep -F "Will v${EXPECTED_VERSION}" rune-version.out
 
       - name: rune doctor runs clean on a first-ever install
         env:

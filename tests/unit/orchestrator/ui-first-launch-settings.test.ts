@@ -126,7 +126,7 @@ describe("a first launch asks which model, and nothing runs without one", () => 
   it("offers the three ways to a model, and Esc says what it means", async () => {
     const { t, printed, picks } = loginRig(null);
     await COMMAND_METHODS.openLogin.call(t, { needModel: true });
-    expect(printed[0]).toContain("Rune needs a model to talk to.");
+    expect(printed[0]).toContain("Will needs a model to talk to.");
     expect(picks[0]!.rows.map((r) => r.label)).toEqual(["Subscription", "API key", "Offline"]);
     expect(picks[0]!.footnote).toContain("nothing runs until a model is connected");
     expect(printed.at(-1)).toContain("/login connects one when you are ready");

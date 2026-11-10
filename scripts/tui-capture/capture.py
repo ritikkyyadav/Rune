@@ -338,7 +338,7 @@ CR = b"\r"
 
 def start(rows, cols, **env_extra):
     s = Session(rows=rows, cols=cols, **env_extra)
-    s.wait_for(["r u n e"], timeout=90)
+    s.wait_for(["w i l l"], timeout=90)
     s.pump(1.0)
     return s
 

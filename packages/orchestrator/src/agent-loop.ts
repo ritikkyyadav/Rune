@@ -491,7 +491,7 @@ const DEFAULT_CONFIG: AgentLoopConfig = {
   maxTokens: 32000,
   maxTurns: 50,
   maxConsecutiveErrors: 3,
-  systemPrompt: "You are Rune, an expert software engineering assistant.",
+  systemPrompt: "You are Will, an expert software engineering assistant.",
 };
 
 // ─── Agent State ───
@@ -5437,7 +5437,7 @@ export class AgentLoop {
         );
         this.closeUnexecutedToolCalls(
           pendingToolCalls,
-          "Rune stopped this repeated call after the loop detector's corrective nudge did not help.",
+          "Will stopped this repeated call after the loop detector's corrective nudge did not help.",
         );
         yield {
           type: "error",

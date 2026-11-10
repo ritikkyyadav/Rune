@@ -248,7 +248,7 @@ export function searchScreen(
     title: `Connectors${DOT}"${query}"${DOT}${hits.length} found`,
     items,
     choices: [...hits],
-    footnote: "not checked: Rune has not looked at its address or sign-in",
+    footnote: "not checked: Will has not looked at its address or sign-in",
   };
 }
 
@@ -382,7 +382,7 @@ export function detailScreen(row: ConnectorRow, signedIn: boolean): ConnectorScr
             : "Managed by /browser",
         hint:
           row.source === "plugin"
-            ? `rune plugin disable ${row.plugin ?? ""}`.trim()
+            ? `will plugin disable ${row.plugin ?? ""}`.trim()
             : "/browser off removes it",
       },
       { kind: "managed" },

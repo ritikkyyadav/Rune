@@ -43,9 +43,9 @@ function mark(word: McpHealthWord): string {
 export function mcpRemedy(server: McpServerStatus): string | null {
   const word = mcpHealthWord(server);
   if (word === "connected" || word === "connecting") return null;
-  if (word === "needs login") return `rune mcp login ${server.name}`;
+  if (word === "needs login") return `will mcp login ${server.name}`;
   if (word === "degraded") return `/mcp reconnect ${server.name}`;
-  return `rune mcp doctor`;
+  return `will mcp doctor`;
 }
 
 /**
@@ -69,7 +69,7 @@ export function mcpPanel(servers: McpServerStatus[]): string {
     return [
       head,
       flowRow(`${BODY}${quiet("None configured.")}`),
-      flowRow(`${BODY}${faint("add one")}  ${info("rune mcp add notion")}`),
+      flowRow(`${BODY}${faint("add one")}  ${info("will mcp add notion")}`),
     ].join("\n");
   }
 

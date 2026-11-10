@@ -5,8 +5,8 @@
  *   • the stored token is ignored: nothing resolves it, nothing registers it;
  *   • they are told why, once per process, and what to use instead;
  *   • the token is never deleted behind their back;
- *   • `rune logout anthropic` is what removes it;
- *   • `rune login anthropic --method oauth` is refused by name, with the reason.
+ *   • `will logout anthropic` is what removes it;
+ *   • `will login anthropic --method oauth` is refused by name, with the reason.
  *
  * Background: docs/program/compliance-subscription-routes.md.
  */
@@ -28,7 +28,7 @@ import { PROVIDER_PRESETS } from "../../../packages/shared/src/providers";
 
 const noEnv = {} as NodeJS.ProcessEnv;
 
-/** A stored Claude subscription session, as an older Rune wrote it. */
+/** A stored Claude subscription session, as an older Will wrote it. */
 const LEGACY_BLOB = JSON.stringify({
   secret: "sk-ant-oat01-legacy",
   refreshToken: "sk-ant-ort01-legacy",
@@ -121,7 +121,7 @@ describe("the notice", () => {
     expect(line).toContain("API key");
     expect(line).toContain("Bedrock");
     expect(line).toContain("Vertex");
-    expect(line).toContain("rune logout anthropic");
+    expect(line).toContain("will logout anthropic");
     // Once per process.
     expect(await retiredOAuthNotices(store, seen)).toEqual([]);
     // Never deleted automatically.
@@ -145,14 +145,14 @@ describe("the notice", () => {
 });
 
 describe("the CLI", () => {
-  test("`rune logout anthropic` removes the stored token", async () => {
+  test("`will logout anthropic` removes the stored token", async () => {
     const { store, has } = fakeStore({ [oauthAccount("anthropic")]: LEGACY_BLOB });
     const out = await captureStdout(() => runLogout(["anthropic"], { store }));
     expect(has(oauthAccount("anthropic"))).toBe(false);
     expect(out).toContain("Logged out");
   });
 
-  test("`rune login anthropic --method oauth` is refused with the reason", async () => {
+  test("`will login anthropic --method oauth` is refused with the reason", async () => {
     // No stored token, so the refusal is the only thing that can say it.
     const { store } = fakeStore();
     const out = await captureStdout(() => runLogin(["anthropic"], { method: "oauth" }, { store }));

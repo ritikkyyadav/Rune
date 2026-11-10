@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────
-#  Rune — one-line web installer  (curl | bash)
+#  Will — one-line web installer  (curl | bash)
 #  Downloads the prebuilt standalone CLI + native tools executor for this
 #  machine, VERIFIES them against the release's SHA256SUMS, and installs them
 #  to ~/.rune/bin. No Bun, no source, no build step.
@@ -143,11 +143,11 @@ write_path() {
 
 # ─── Uninstall ───
 if [ "$MODE" = "uninstall" ]; then
-  say "$(c 1 'Rune uninstaller')"
+  say "$(c 1 'Will uninstaller')"
   removed=0
-  for name in rune rune-compiled rune-tools rune-compiled.meta \
+  for name in will rune rune-compiled rune-tools rune-compiled.meta \
               rune.backup rune-tools.backup rune-compiled.backup; do
-    if [ -e "$INSTALL_DIR/$name" ]; then
+    if [ -e "$INSTALL_DIR/$name" ] || [ -L "$INSTALL_DIR/$name" ]; then
       # A guarded install marks its artifacts immutable on macOS.
       command -v chflags >/dev/null 2>&1 && chflags nouchg "$INSTALL_DIR/$name" 2>/dev/null || true
       rm -f "$INSTALL_DIR/$name"
@@ -198,7 +198,7 @@ else
   base="https://github.com/$REPO/releases/download/$VERSION"
 fi
 
-say "$(c 1 'Rune installer')"
+say "$(c 1 'Will installer')"
 say "$(c 90 "platform : $os-$arch")"
 say "$(c 90 "release  : $VERSION")"
 say "$(c 90 "install  : $INSTALL_DIR")"
@@ -275,7 +275,7 @@ mkdir -p "$INSTALL_DIR"
 # A source install (scripts/install.sh) marks its files immutable on macOS —
 # the `uchg` flag — so a stray `cp` cannot break the code signature. `mv` over
 # such a file fails with "Operation not permitted", which is what the founder
-# saw the first time this command ran on a machine that had built Rune from
+# saw the first time this command ran on a machine that had built Will from
 # source. Clear the flag on whatever this install replaces or retires; a fresh
 # machine has nothing to clear.
 if command -v chflags >/dev/null 2>&1; then
@@ -286,6 +286,7 @@ fi
 chmod +x "$STAGE/$asset"
 rm -f "$INSTALL_DIR/rune"
 mv "$STAGE/$asset" "$INSTALL_DIR/rune"
+ln -sfn rune "$INSTALL_DIR/will"
 say "$(c 32 ✓) Installed: $INSTALL_DIR/rune"
 if [ "$want_tools" = "1" ]; then
   chmod +x "$STAGE/$tools_asset"
@@ -328,7 +329,7 @@ elif [ "$PATH_MODE" = "yes" ]; then
   write_path
 elif [ "$PATH_MODE" = "no" ]; then
   echo ""
-  say "Add Rune to your PATH:"
+  say "Add Will to your PATH:"
   say "  $(c 36 "export PATH=\"$INSTALL_DIR:\$PATH\"")   $(c 90 '# add to your shell profile')"
 elif [ -t 0 ]; then
   echo ""
@@ -348,10 +349,10 @@ fi
 
 echo ""
 if already_on_path; then
-  say "Then run: $(c 1 rune)"
+  say "Then run: $(c 1 will)"
 else
-  say "Open a new terminal, then run: $(c 1 rune)"
+  say "Open a new terminal, then run: $(c 1 will)"
 fi
 say "$(c 90 'Free to start: the first screen lists the free routes first — OpenRouter, Google or a local Ollama.')"
-say "$(c 90 'Later: `rune upgrade --check` tells you when a newer release exists.')"
+say "$(c 90 'Later: `will upgrade --check` tells you when a newer release exists.')"
 echo ""

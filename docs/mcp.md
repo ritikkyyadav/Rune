@@ -1,6 +1,6 @@
 # MCP quickstart
 
-Rune talks to outside services over the
+Will talks to outside services over the
 [Model Context Protocol](https://modelcontextprotocol.io). A connector is an MCP
 server — a local subprocess over stdio, or a remote HTTP endpoint — and its
 tools become tools the agent can call.
@@ -10,7 +10,7 @@ stream, scopes, plugins and the rest of the protocol surface, see
 [connectors.md](./connectors.md).
 
 **Every config below says whether it has been run against the real thing.**
-Rune's MCP client is four thousand lines and was, until 2026-09-08, tested only
+Will's MCP client is four thousand lines and was, until 2026-09-08, tested only
 against mocks this repository also wrote. What has since been driven live is
 recorded in [evidence/mcp-live-20260908.md](./evidence/mcp-live-20260908.md);
 what has not is marked unverified here rather than quietly implied to work.
@@ -20,12 +20,12 @@ what has not is marked unverified here rather than quietly implied to work.
 ## In one minute
 
 ```bash
-rune mcp add "npx -y @modelcontextprotocol/server-filesystem ." --name files
-rune mcp doctor          # did it start? how many tools? what is wrong?
-rune                     # then /mcp in the session
+will mcp add "npx -y @modelcontextprotocol/server-filesystem ." --name files
+will mcp doctor          # did it start? how many tools? what is wrong?
+will                     # then /mcp in the session
 ```
 
-`rune mcp add` writes the entry; nothing else is needed. Config lives in two
+`will mcp add` writes the entry; nothing else is needed. Config lives in two
 files, both with the same shape:
 
 |                              |                                           |
@@ -62,7 +62,7 @@ without taking the connector down.
 
 **Use an absolute path, and check it.** The path is the one thing here that is
 easy to get wrong and silent when you do — the server exits and all you see is
-that a process exited. `rune mcp doctor` checks it for you before spawning
+that a process exited. `will mcp doctor` checks it for you before spawning
 anything, and suggests the directory you probably meant.
 
 Two more that need nothing but `npx`, both verified the same day:
@@ -81,7 +81,7 @@ Two more that need nothing but `npx`, both verified the same day:
 
 `server-everything` is the protocol's own reference server — resources, prompts,
 progress notifications, images, structured content. It is the fastest way to see
-what a rich connector looks like inside Rune.
+what a rich connector looks like inside Will.
 
 ### 2. GitHub — **unverified: needs a token**
 
@@ -98,7 +98,7 @@ what a rich connector looks like inside Rune.
 }
 ```
 
-Then `export GITHUB_TOKEN=ghp_…` before starting Rune. `${VAR}` is expanded from
+Then `export GITHUB_TOKEN=ghp_…` before starting Will. `${VAR}` is expanded from
 the environment at discovery; an unset one is warned about rather than sent as
 an empty header, because a silently-empty `Authorization` is worse than a loud
 failure.
@@ -129,8 +129,8 @@ cover it.
 ```
 
 ```bash
-rune mcp add notion      # resolves the URL from the bundled catalog
-rune mcp login notion    # browser, PKCE, token to the OS keychain
+will mcp add notion      # resolves the URL from the bundled catalog
+will mcp login notion    # browser, PKCE, token to the OS keychain
 ```
 
 `"oauth": {}` is the normal case: client registration, scopes and endpoints are
@@ -158,7 +158,7 @@ command that fixes each one that is not up:
     ◇ memory  connected · stdio · 9 tools
     ◇ notion  needs login · http · 0 tools
       MCP HTTP 401 unauthorized
-      fix  rune mcp login notion
+      fix  will mcp login notion
     reconnect one  /mcp reconnect <server>
 ```
 
@@ -174,7 +174,7 @@ answering), **degraded** (up, but pings are failing), **connecting** (still
 handshaking — not a problem yet), **needs login** (401, and a token would fix
 it), **down** (there is a reason, and it is printed underneath).
 
-**`rune mcp doctor`** is the headless version. It checks the config first —
+**`will mcp doctor`** is the headless version. It checks the config first —
 without spawning anything — then starts every connector and reports real health,
 exiting non-zero when any of them needs attention:
 
@@ -185,10 +185,10 @@ exiting non-zero when any of them needs attention:
         fix: did you mean /Users/you/Project/thing
 ```
 
-**`rune doctor`** carries one MCP line, and never starts a server:
+**`will doctor`** carries one MCP line, and never starts a server:
 
 ```
-  ✓ mcp: 3 connectors configured, none misconfigured — live health: rune mcp doctor
+  ✓ mcp: 3 connectors configured, none misconfigured — live health: will mcp doctor
 ```
 
 ---
@@ -196,7 +196,7 @@ exiting non-zero when any of them needs attention:
 ## Transports
 
 You configure a URL or a command. Which protocol dialect a remote server speaks
-is Rune's problem, not yours.
+is Will's problem, not yours.
 
 | Dialect                       | When                                  | Verified live |
 | ----------------------------- | ------------------------------------- | ------------- |
@@ -204,7 +204,7 @@ is Rune's problem, not yours.
 | Streamable HTTP (2025-03-26+) | `url` is set — tried first            | yes           |
 | SSE pair (2024-11-05)         | the URL answers 404/405/406 to a POST | yes           |
 
-The fallback is automatic and reported: `/mcp` and `rune mcp doctor` print the
+The fallback is automatic and reported: `/mcp` and `will mcp doctor` print the
 dialect actually in use, so a connector quietly running on the older protocol is
 visible rather than inferred.
 
@@ -212,10 +212,10 @@ visible rather than inferred.
 
 ## When it does not work
 
-1. **`rune mcp doctor`** first. A misconfigured entry is named before anything is
+1. **`will mcp doctor`** first. A misconfigured entry is named before anything is
    spawned, with the corrected path or the missing command.
 2. **Absolute paths.** `.` in `args` resolves against the server's working
-   directory, not yours. `rune mcp add` writes what you typed.
+   directory, not yours. `will mcp add` writes what you typed.
 3. **`npx` on PATH.** Every server above is a Node package; the first run
    downloads it and needs the network.
 4. **One connector never stops the others**, and never stops the session. An

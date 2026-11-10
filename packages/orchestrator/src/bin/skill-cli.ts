@@ -32,7 +32,7 @@ const say = (line = ""): void => {
 
 function usage(): void {
   say();
-  say(`${accent("rune skill")} ${dim("— add the instructions you want Rune to follow")}`);
+  say(`${accent("will skill")} ${dim("— add the instructions you want Will to follow")}`);
   say();
   say(`${text("Commands")}`);
   say(`  ${accent("add")} <path> ${dim("[--user] [--name N] [--force]")}`);
@@ -68,7 +68,7 @@ function listSkills(workspaceRoot: string): number {
     say(`  ${faint(`Workspace: ${workspaceSkillsDir(workspaceRoot)}`)}`);
     say(`  ${faint(`You:       ${userSkillsDir()}`)}`);
     say();
-    say(`  ${faint("Add one with")} ${accent("rune skill add <path>")}${faint(".")}`);
+    say(`  ${faint("Add one with")} ${accent("will skill add <path>")}${faint(".")}`);
     say();
     return 0;
   }
@@ -116,7 +116,7 @@ export async function runSkill(args: string[], values: Record<string, unknown>):
     const name = args[1];
     if (!name) {
       say();
-      say(`${danger(glyph("failure"))} ${text("rune skill remove <name>")}`);
+      say(`${danger(glyph("failure"))} ${text("will skill remove <name>")}`);
       say();
       return 1;
     }
@@ -127,7 +127,7 @@ export async function runSkill(args: string[], values: Record<string, unknown>):
     const source = args[1];
     if (!source) {
       say();
-      say(`${danger(glyph("failure"))} ${text("rune skill add <path> [--user]")}`);
+      say(`${danger(glyph("failure"))} ${text("will skill add <path> [--user]")}`);
       say();
       return 1;
     }

@@ -143,7 +143,7 @@ describe("Engine memory (end-to-end, fake provider)", () => {
     second.close();
 
     const firstRequest = bodies[0]!;
-    expect(firstRequest).toContain("What Rune remembers about you");
+    expect(firstRequest).toContain("What Will remembers about you");
     expect(firstRequest).toContain("no, always run typecheck before you claim a fix");
     expect(firstRequest).toContain("the current request outranks all of it");
     // The block names the runtime, not its own prose, as what holds the
@@ -160,7 +160,7 @@ describe("Engine memory (end-to-end, fake provider)", () => {
 
     expect(existsSync(join(home, "memory", "entries"))).toBe(false);
     expect(new MemoryStore(join(home, "memory")).all()).toHaveLength(0);
-    expect(bodies.join("\n")).not.toContain("What Rune remembers about you");
+    expect(bodies.join("\n")).not.toContain("What Will remembers about you");
   }, 30_000);
 
   // ── The regression gate ──

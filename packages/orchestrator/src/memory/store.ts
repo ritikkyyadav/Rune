@@ -656,8 +656,8 @@ function sanitize(
       refusal: {
         rule: "integrity",
         reason: keyGone
-          ? `entry ${raw.id} cannot be verified: this store has no key — quarantined, not deleted (\`rune memory resign\` after you have read it)`
-          : `entry ${raw.id} does not carry this store's current signature — quarantined, not deleted (\`rune memory resign\` after you have read it; a key that was lost or rotated cannot be recovered)`,
+          ? `entry ${raw.id} cannot be verified: this store has no key — quarantined, not deleted (\`will memory resign\` after you have read it)`
+          : `entry ${raw.id} does not carry this store's current signature — quarantined, not deleted (\`will memory resign\` after you have read it; a key that was lost or rotated cannot be recovered)`,
       },
     };
   }

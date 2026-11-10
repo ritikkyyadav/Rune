@@ -1,6 +1,6 @@
 # Connectors
 
-Rune talks to outside services over the [Model Context Protocol](https://modelcontextprotocol.io).
+Will talks to outside services over the [Model Context Protocol](https://modelcontextprotocol.io).
 A connector is an MCP server: a local subprocess (stdio) or a remote HTTP
 endpoint. This page is what you need to connect one, what it costs, and what
 happens when it breaks.
@@ -25,7 +25,7 @@ it applies in every project or this one), then the ways to add one:
 
 **Checked means looked at by hand.** Each service on the shelves was checked on 2026-10-26 from
 outside, with no credentials: its address answered, and for a browser sign-in its published
-metadata offered what Rune's flow needs (resource metadata or the 2025-03-26 fallback,
+metadata offered what Will's flow needs (resource metadata or the 2025-03-26 fallback,
 authorization-server metadata, self-registration, PKCE S256). The list is in
 `packages/tool-registry/src/mcp/directory.ts`, each entry with the date it was checked. Search
 results from the bundled catalog and the registry are labelled "not checked", because they were not.
@@ -37,16 +37,16 @@ results from the bundled catalog and the registry are labelled "not checked", be
 - a no-sign-in service connects at once.
 
 The connector is started from its entry before the flow returns, so its tools are in the next
-request without restarting Rune.
+request without restarting Will.
 
 **Each connector's settings:** reconnect, sign in again, replace its token, sign out, the
 vendor's own settings (Supabase read-only and one project, GitHub read-only: they live in the
 address, where the vendor puts them), turn off and on, every project or this one only, its tools,
 and remove (which forgets its sign-in unless an entry of the same name in the other file still
-uses it). A plugin's connector and the built-in browser are managed where they come from: `rune
+uses it). A plugin's connector and the built-in browser are managed where they come from: `will
 plugin disable` and `/browser off`.
 
-**Services Rune cannot connect to** are listed with the reason rather than offered:
+**Services Will cannot connect to** are listed with the reason rather than offered:
 
 | Service                                       | Why                                                        |
 | --------------------------------------------- | ---------------------------------------------------------- |
@@ -56,13 +56,13 @@ plugin disable` and `/browser off`.
 With your own app at one of the first four, add it by address and set `"oauth": { "clientId":
 "…" }`.
 
-**Vercel and Figma review the apps they let sign in.** Rune follows their sign-in exactly, but
-neither has Rune on its list yet, so their page may refuse it; `/connectors` says so before the
+**Vercel and Figma review the apps they let sign in.** Will follows their sign-in exactly, but
+neither has Will on its list yet, so their page may refuse it; `/connectors` says so before the
 browser opens. ([Vercel's list](https://vercel.com/docs/agent-resources/vercel-mcp), [Figma's
 list](https://help.figma.com/hc/en-us/articles/32132100833559-Guide-to-the-Figma-MCP-server).)
 
 **Proved live, 2026-10-26.** DeepWiki, Microsoft Learn, AWS Knowledge and Context7 (no key)
-connected through Rune's own discovery with 3, 3, 5 and 2 tools; the sign-in discovery found
+connected through Will's own discovery with 3, 3, 5 and 2 tools; the sign-in discovery found
 Vercel, Supabase, Atlassian and Linear ready for self-registration and GitHub not, which is why
 GitHub takes a token.
 
@@ -75,7 +75,7 @@ A connector is not free. Every tool it exposes ships its full JSON schema on
 you are paying for forty schemas per turn whether or not the run ever touches
 one.
 
-Rune defers them. A deferred tool is registered and callable; it is simply
+Will defers them. A deferred tool is registered and callable; it is simply
 advertised as one catalog line instead of a full schema:
 
 ```
@@ -113,7 +113,7 @@ no connectors pays nothing for the mechanism.
 schema tokens: before=9601 after=968 reduction=89.9%
 ```
 
-`rune audit` reports the same number for a real session:
+`will audit` reports the same number for a real session:
 
 ```
   Schema tokens  968 per request · 12 advertised · 40 deferred · 89% below 9,601 eager
@@ -128,7 +128,7 @@ schema tokens: before=9601 after=968 reduction=89.9%
 
 Every remote connector in the vendored catalog — Notion, Slack, Linear,
 Atlassian, GitHub, PagerDuty, Datadog, Google Calendar, Gmail — is
-OAuth-protected. Rune speaks the MCP authorization spec (2025-06-18) and the
+OAuth-protected. Will speaks the MCP authorization spec (2025-06-18) and the
 RFCs it cites:
 
 | Step                                                                   | Spec          |
@@ -141,11 +141,11 @@ RFCs it cites:
 | resource indicator, so the token is audience-bound to that one server  | RFC 8707      |
 
 The redirect is captured on an ephemeral `127.0.0.1` loopback — the same engine
-`rune login` uses for Anthropic, Codex, OpenRouter and Copilot.
+`will login` uses for Anthropic, Codex, OpenRouter and Copilot.
 
 **Where tokens live.** Under `mcp:<server>` in the OS credential store: macOS
 Keychain, libsecret on Linux, DPAPI on Windows, and a `0600` file only when
-none of those is reachable (Rune says so when it falls back).
+none of those is reachable (Will says so when it falls back).
 
 **Pasted tokens.** A service that signs in with a token instead (GitHub, Render)
 keeps it under `mcp-token:<server>`, and its entry names the account rather than
@@ -164,25 +164,25 @@ connector reads as needing a sign-in and nothing is sent: an empty `Bearer `
 would only earn a 401 that looks like an outage.
 
 **Older servers, and signing in again.** A server built to the 2025-03-26 spec
-publishes no resource metadata; its sign-in is at its own origin, and Rune looks
+publishes no resource metadata; its sign-in is at its own origin, and Will looks
 there (sending no resource indicator, which such a server predates). Before a
-sign-in Rune asks the server for its 401 challenge, the first place the spec says
-to look. A client Rune registered is registered for that sign-in's loopback
-port, and the next sign-in listens on another, so Rune registers again when the
+sign-in Will asks the server for its 401 challenge, the first place the spec says
+to look. A client Will registered is registered for that sign-in's loopback
+port, and the next sign-in listens on another, so Will registers again when the
 port differs; a fixed `callbackPort` keeps one client.
 
 **When a token expires.** The transport refreshes and retries once, silently.
 You do not see it.
 
 **When a refresh fails.** The _connector_ becomes unavailable — never the
-session. Its tools stop being advertised, the status line shows it, `rune mcp
+session. Its tools stop being advertised, the status line shows it, `will mcp
 doctor` names it, and the model is told once. The rest of the run continues as
 if the connector were simply absent. This is the case that used to take the
 whole session down.
 
 ```
-rune mcp login notion       # runs the flow
-rune mcp logout notion      # forgets the token
+will mcp login notion       # runs the flow
+will mcp logout notion      # forgets the token
 ```
 
 **Opting out.** An entry that already carries its own `Authorization` header is
@@ -199,23 +199,23 @@ the browser click replaced by a direct fetch of the authorization URL.
 
 ---
 
-## `rune mcp`
+## `will mcp`
 
 ```
-rune mcp add <name|url|command> [--scope user|workspace] [--header K=V] [--env K=V] [--name N]
-rune mcp remove <name> [--scope …]
-rune mcp list [--catalog]
-rune mcp login <name>
-rune mcp logout <name>
-rune mcp enable <name> / disable <name>
-rune mcp doctor
+will mcp add <name|url|command> [--scope user|workspace] [--header K=V] [--env K=V] [--name N]
+will mcp remove <name> [--scope …]
+will mcp list [--catalog]
+will mcp login <name>
+will mcp logout <name>
+will mcp enable <name> / disable <name>
+will mcp doctor
 ```
 
-No Engine boot and no provider validation — like `rune doctor`, this is instant.
+No Engine boot and no provider validation — like `will doctor`, this is instant.
 `list` and `doctor` do start the servers, because reporting real health is their
 whole job.
 
-**Resolving a name.** `rune mcp add notion` consults three sources, in order:
+**Resolving a name.** `will mcp add notion` consults three sources, in order:
 
 1. The checked directory (`/connectors`' shelves). A closed name (`slack`,
    `gmail`) is refused here, with the reason.
@@ -239,7 +239,7 @@ vendored files) is reported as such rather than written out as a broken server.
 | `~/.rune/mcp.json`           | user — connectors you have everywhere     |
 | `<workspace>/.rune/mcp.json` | workspace — connectors this project needs |
 
-Workspace wins on collision, and `rune mcp list` says which file each entry came
+Workspace wins on collision, and `will mcp list` says which file each entry came
 from and whether it shadows the other. The narrower scope is the more deliberate
 one.
 
@@ -248,13 +248,13 @@ without losing configuration that took a sign-in to produce.
 
 **`remove` keeps the token.** Deleting a credential is not something a `remove`
 should do silently; the command says the token is still there and names
-`rune mcp logout`.
+`will mcp logout`.
 
 ## `[mcp]` in config.toml
 
 ```toml
 [mcp]
-defaultScope = "workspace"   # where `rune mcp add` writes without --scope
+defaultScope = "workspace"   # where `will mcp add` writes without --scope
 timeoutSecs  = 30            # per-request tools/call timeout
 registry     = true          # consult the public MCP registry when resolving
 deferTools   = true          # false ships every schema on every request (pre-P4.1)
@@ -274,10 +274,10 @@ One event now has three consumers:
 | Surface                 | What it shows                                                                                                              |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | TUI status line         | a `notice`, through the same flow grammar every other harness message uses — no new dialect                                |
-| `rune status` / desktop | `mcp.down` names each unusable connector and why (`needs-auth` or `down`), never a bare count                              |
+| `will status` / desktop | `mcp.down` names each unusable connector and why (`needs-auth` or `down`), never a bare count                              |
 | the model               | one harness note, **once per session**: "these connectors are configured but unavailable — do not plan around their tools" |
 
-`rune mcp doctor` prints the same, plus the command that fixes each one.
+`will mcp doctor` prints the same, plus the command that fixes each one.
 
 The note is said once. Repeating it every turn would train the model to skim
 harness notes, which costs more than the connector did.
@@ -292,7 +292,7 @@ Events: `server-ready`, `server-down`, `server-needs-auth`, `server-restarted`,
 
 ## The rest of the protocol
 
-Rune used to speak four methods: `initialize`, `tools/list`, `tools/call`,
+Will used to speak four methods: `initialize`, `tools/list`, `tools/call`,
 `ping`. Everything else was answered `-32601`.
 
 **Resources** — the documents, pages and records a server exposes read-only —
@@ -320,7 +320,7 @@ and a trailing multi-word argument does not need quoting.
 `ask_user` round-trip the harness already owns, so a connector's question lands
 in the same picker as the agent's own. One question surface, not two. With no
 handler wired (headless, CI) the connector is declined promptly rather than
-blocked on a person who is not there. Rune declares the `elicitation` capability
+blocked on a person who is not there. Will declares the `elicitation` capability
 on `initialize`, because a server reading an empty capabilities object never
 asks and the feature is dead however well the handler works.
 
@@ -366,12 +366,12 @@ A plugin is one installable bundle of the four extension kinds:
 ```
 
 ```
-rune plugin search fmt                    what exists, per the index
-rune plugin add rune-example-skills       a name, resolved through the index
-rune plugin add ./my-plugin              a local path
-rune plugin add https://github.com/…      a git repository
-rune plugin add @scope/rune-plugin-x      an npm package
-rune plugin list / remove / enable / disable
+will plugin search fmt                    what exists, per the index
+will plugin add rune-example-skills       a name, resolved through the index
+will plugin add ./my-plugin              a local path
+will plugin add https://github.com/…      a git repository
+will plugin add @scope/rune-plugin-x      an npm package
+will plugin list / remove / enable / disable
 ```
 
 The index (`plugins/index.json`, or `[extensions] index` / `RUNE_PLUGIN_INDEX`
@@ -383,7 +383,7 @@ build when the network is unreachable. Full reference: [plugins.md](plugins.md).
 Plugins existed as this convention with no way to get a directory there, and
 `PluginDiscovery.errors` were computed on every scan and shown nowhere — so an
 installed-but-refused plugin looked exactly like one nobody had installed.
-`rune plugin list` prints the refusals, and so does the status line.
+`will plugin list` prints the refusals, and so does the status line.
 
 **Plugins ship five kinds** (D6 v2): skills, commands, MCP servers, hooks — all
 declarative — and **executable tools**, which are subprocesses under the OS
@@ -397,7 +397,7 @@ install script runs. The protocol and the capability manifest are in
 | Field         | What it does                                                                                                                                                                                                                                                      |
 | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `runeVersion` | semver range; a plugin that does not fit is refused with a reason, rather than loaded and left to fail somewhere less legible. An unparseable range is treated as satisfied — our limitation should not become the author's problem                               |
-| `permissions` | `hosts`, `paths`, `blockingHooks`. **Disclosure, not enforcement** — printed at install and in `list`, and said to be unenforced. A hook is a shell command the plugin asked Rune to run and an MCP server a process it asked Rune to start; neither is contained |
+| `permissions` | `hosts`, `paths`, `blockingHooks`. **Disclosure, not enforcement** — printed at install and in `list`, and said to be unenforced. A hook is a shell command the plugin asked Will to run and an MCP server a process it asked Will to start; neither is contained |
 | `tools`       | executable tool servers (D6 v2). The one block that **is** enforced: each is a subprocess under the OS sandbox with the capability it declares, refused where no sandbox exists. See [plugins.md](plugins.md)                                                     |
 | `integrity`   | `sha256` over the tree. A digest that no longer matches means the files changed since installation, and the plugin is refused: a plugin contributes hooks that run shell commands, and "probably fine" is not a standard to run someone else's commands under     |
 | `source`      | where it came from                                                                                                                                                                                                                                                |

@@ -280,7 +280,7 @@ function cmdTune(sm: SessionManager, opts: Record<string, string | true>): numbe
   const proposals = tuneProposals(rows, { minRuns: num(opts["min-runs"], 5) });
   say();
   say(
-    `  ${accent("Tuning proposals")} ${dim("·")} from ${c.samples.length} runs over ${days} days ${dim("·")} ${dim("never applied by themselves — each one that names a variant is measurable with rune evolve ab")}`,
+    `  ${accent("Tuning proposals")} ${dim("·")} from ${c.samples.length} runs over ${days} days ${dim("·")} ${dim("never applied by themselves — each one that names a variant is measurable with will evolve ab")}`,
   );
   say();
   if (proposals.length === 0) {
@@ -304,7 +304,7 @@ function cmdTune(sm: SessionManager, opts: Record<string, string | true>): numbe
       // A proposal that names a variant is one command from evidence. That is
       // the whole change: before, `config` was a TOML line to retype by hand,
       // which is why 128 measured runs produced no change at all.
-      say(`    ${dim("measure")}   ${info(`rune evolve ab ${p.variant}`)} ${dim(`→ ${p.config}`)}`);
+      say(`    ${dim("measure")}   ${info(`will evolve ab ${p.variant}`)} ${dim(`→ ${p.config}`)}`);
     } else {
       say(
         `    ${dim("config")}    ${info(p.config)} ${dim("· no variant: outside the allowlist")}`,
@@ -336,7 +336,7 @@ function lessonToggle(
   const e = store.getByPrefix(shortId);
   if (!e) {
     say(
-      `  ${danger("!")} no single lesson matches "${shortId}" — rune evolve lessons --all lists ids.`,
+      `  ${danger("!")} no single lesson matches "${shortId}" — will evolve lessons --all lists ids.`,
     );
     say();
     return 2;
@@ -364,7 +364,7 @@ function lessonToggle(
   say(
     dim(
       action === "disable"
-        ? `  Retired for good: re-learning adds to its record and never re-injects it. Undo: rune evolve lessons --enable ${e.id.slice(-8)}`
+        ? `  Retired for good: re-learning adds to its record and never re-injects it. Undo: will evolve lessons --enable ${e.id.slice(-8)}`
         : "  Back at candidate: it earns trial and active again like any new lesson.",
     ),
   );
@@ -385,7 +385,7 @@ function cmdLessons(workspaceRoot: string, opts: Record<string, string | true>):
       if (opts[action] === undefined) continue;
       if (typeof opts[action] !== "string") {
         say(
-          dim(`  Usage: rune evolve lessons --${action} <id>   (ids: rune evolve lessons --all)`),
+          dim(`  Usage: will evolve lessons --${action} <id>   (ids: will evolve lessons --all)`),
         );
         return 2;
       }
@@ -402,7 +402,7 @@ function cmdLessons(workspaceRoot: string, opts: Record<string, string | true>):
     if (entries.length === 0) {
       say(
         dim(
-          "  Nothing learned here yet. Rune writes a lesson when a run verifies a command, hits the same failure twice, or fixes a command by changing its arguments.",
+          "  Nothing learned here yet. Will writes a lesson when a run verifies a command, hits the same failure twice, or fixes a command by changing its arguments.",
         ),
       );
     }
@@ -445,7 +445,7 @@ function cmdLessons(workspaceRoot: string, opts: Record<string, string | true>):
       say(
         `  ${text("Playbook")}  ${
           draft
-            ? `${warn(PLAYBOOK_PENDING_REL)} ${dim("· drafted and inert — rune evolve playbook --enable")}`
+            ? `${warn(PLAYBOOK_PENDING_REL)} ${dim("· drafted and inert — will evolve playbook --enable")}`
             : dim(
                 `not written yet — appears once a lesson reaches ${"active"} and learned skills are enabled`,
               )
@@ -454,7 +454,7 @@ function cmdLessons(workspaceRoot: string, opts: Record<string, string | true>):
     }
     say(
       dim(
-        "  manage: rune evolve lessons --disable <id> (for good) · --enable <id> · rune notebook show <id>",
+        "  manage: will evolve lessons --disable <id> (for good) · --enable <id> · will notebook show <id>",
       ),
     );
     say();
@@ -531,7 +531,7 @@ async function cmdGardener(
     if (opts.run !== true) {
       say(
         dim(
-          `  dry run. \`rune evolve gardener --run\` starts a detached run on this brief in an isolated worktree of Rune's own repository — it commits on its branch and never pushes; you review the branch.`,
+          `  dry run. \`will evolve gardener --run\` starts a detached run on this brief in an isolated worktree of Will's own repository — it commits on its branch and never pushes; you review the branch.`,
         ),
       );
       say();
@@ -539,7 +539,7 @@ async function cmdGardener(
     }
     if (!isRuneRepo(workspaceRoot)) {
       say(
-        `  ${danger("!")} --run needs Rune's own repository as the workspace (run it there, or pass -w <path>).`,
+        `  ${danger("!")} --run needs Will's own repository as the workspace (run it there, or pass -w <path>).`,
       );
       say();
       return 2;
@@ -607,7 +607,7 @@ function cmdStatus(
       const live = existsSync(join(workspaceRoot, PLAYBOOK_REL));
       const draft = existsSync(join(workspaceRoot, PLAYBOOK_PENDING_REL));
       say(
-        `  ${text("Here")}      ${here.length} entr${here.length === 1 ? "y" : "ies"} ${dim(`(${hereStages.active} active)`)} ${dim("·")} playbook ${live ? ok(PLAYBOOK_REL) : draft ? warn(`${PLAYBOOK_PENDING_REL} — inert, rune evolve playbook --enable`) : dim("not yet written")}`,
+        `  ${text("Here")}      ${here.length} entr${here.length === 1 ? "y" : "ies"} ${dim(`(${hereStages.active} active)`)} ${dim("·")} playbook ${live ? ok(PLAYBOOK_REL) : draft ? warn(`${PLAYBOOK_PENDING_REL} — inert, will evolve playbook --enable`) : dim("not yet written")}`,
       );
     } finally {
       nb.close();
@@ -621,7 +621,7 @@ function cmdStatus(
     try {
       const cands = gardenerCandidates(bb.top({ limit: 400, sinceDays: 60 }));
       say(
-        `  ${text("Gardener")}  ${cands.length} harness defect${cands.length === 1 ? "" : "s"} with evidence ${dim("·")} ${cands.length > 0 ? `${warn(cands[0].class)} ${dim(`${cands[0].count}×`)}` : ok("none")} ${dim("· rune evolve gardener")}`,
+        `  ${text("Gardener")}  ${cands.length} harness defect${cands.length === 1 ? "" : "s"} with evidence ${dim("·")} ${cands.length > 0 ? `${warn(cands[0].class)} ${dim(`${cands[0].count}×`)}` : ok("none")} ${dim("· will evolve gardener")}`,
       );
     } finally {
       bb.close();
@@ -632,7 +632,7 @@ function cmdStatus(
 
   const proposals = tuneProposals(scorecard(c.samples, "model"));
   say(
-    `  ${text("Tuning")}    ${proposals.length} proposal${proposals.length === 1 ? "" : "s"} ${dim("· printed by rune evolve tune, measurable with rune evolve ab")}`,
+    `  ${text("Tuning")}    ${proposals.length} proposal${proposals.length === 1 ? "" : "s"} ${dim("· printed by will evolve tune, measurable with will evolve ab")}`,
   );
 
   // ── The A/B ledger: the last measured lift, with its date ──
@@ -653,7 +653,7 @@ function cmdStatus(
     );
   } else {
     say(
-      `  ${text("Last A/B")}  ${dim("none run — rune evolve ab <variant>; bare `rune evolve ab` lists them")}`,
+      `  ${text("Last A/B")}  ${dim("none run — will evolve ab <variant>; bare `will evolve ab` lists them")}`,
     );
   }
   say(
@@ -670,7 +670,7 @@ function cmdStatus(
       "  applied by itself: retro → notebook (candidates) · measured then promoted: variants, lessons, the playbook · a person on the merge: gardener",
     ),
   );
-  say(dim("  rune evolve scorecard · lessons · tune · ab · promote · revert · why · playbook"));
+  say(dim("  will evolve scorecard · lessons · tune · ab · promote · revert · why · playbook"));
   say();
   return 0;
 }
@@ -762,7 +762,7 @@ async function cmdAb(
       say(`  ${text(v.padEnd(16))} ${dim(variantOf(v).summary)}`);
     }
     say();
-    say(dim(`  Usage: rune evolve ab <variant>   ${id ? `("${id}" is not one of them)` : ""}`));
+    say(dim(`  Usage: will evolve ab <variant>   ${id ? `("${id}" is not one of them)` : ""}`));
     say();
     return id ? 2 : 0;
   }
@@ -770,9 +770,9 @@ async function cmdAb(
   const repoRoot = findRepoRoot(workspaceRoot) ?? findRepoRoot(process.cwd());
   if (!repoRoot) {
     say(
-      `  ${danger("!")} no eval suite here. \`rune evolve ab\` runs tests/eval against two configurations,`,
+      `  ${danger("!")} no eval suite here. \`will evolve ab\` runs tests/eval against two configurations,`,
     );
-    say(`    so it needs a Rune checkout as the workspace (run it there, or pass -w <path>).`);
+    say(`    so it needs a Will checkout as the workspace (run it there, or pass -w <path>).`);
     say();
     return 2;
   }
@@ -868,10 +868,10 @@ async function cmdAb(
         : ok("recorded: mock WIN — shows no harm, cannot promote")
       : warn("recorded: no change");
   say(`  ${recorded} ${dim("· ledger")} ${info(ledgerPath(runeHome(opts)))}`);
-  if (c.win && c.mode === "real") say(`  ${dim("next")}      ${info(`rune evolve promote ${id}`)}`);
+  if (c.win && c.mode === "real") say(`  ${dim("next")}      ${info(`will evolve promote ${id}`)}`);
   if (c.win && c.mode === "mock") {
     say(
-      `  ${dim("next")}      ${info(`rune evolve ab ${id} --real`)} ${dim("· only a live run can show lift")}`,
+      `  ${dim("next")}      ${info(`will evolve ab ${id} --real`)} ${dim("· only a live run can show lift")}`,
     );
   }
   say();
@@ -887,7 +887,7 @@ function cmdPromote(
   const id = rest[1];
   say();
   if (!id) {
-    say(dim("  Usage: rune evolve promote <variant>"));
+    say(dim("  Usage: will evolve promote <variant>"));
     say();
     return 2;
   }
@@ -912,7 +912,7 @@ function cmdPromote(
   say();
   say(`  ${dim("config")}   ${result.configPath}`);
   say(`  ${dim("ledger")}   ${ledgerPath(home)}`);
-  say(`  ${dim("undo")}     ${info("rune evolve revert")}`);
+  say(`  ${dim("undo")}     ${info("will evolve revert")}`);
   say();
   return 0;
 }
@@ -937,7 +937,7 @@ function cmdRevert(rest: string[], opts: Record<string, string | true>): number 
   if (result.halted) {
     say();
     say(`  ${danger("HALTED")}  ${text(result.haltReason ?? "two consecutive reverts")}`);
-    say(`  ${dim("resume")}   ${info("rune evolve resume")}`);
+    say(`  ${dim("resume")}   ${info("will evolve resume")}`);
   }
   say();
   return 0;
@@ -966,7 +966,7 @@ function cmdYardstick(workspaceRoot: string, opts: Record<string, string | true>
   say(`  ${accent("Yardstick")} ${dim("· the eval suite promotions are measured against")}`);
   say();
   if (!hash) {
-    say(dim("  No tests/eval here — run this from a Rune checkout."));
+    say(dim("  No tests/eval here — run this from a Will checkout."));
     say();
     return 2;
   }
@@ -994,7 +994,7 @@ function cmdYardstick(workspaceRoot: string, opts: Record<string, string | true>
   } else {
     say(ok("  Unchanged since it was blessed."));
   }
-  say(dim("  bless it: rune evolve yardstick --bless"));
+  say(dim("  bless it: will evolve yardstick --bless"));
   say();
   return 0;
 }
@@ -1017,7 +1017,7 @@ function cmdWhy(
   const subject = rest[1];
   say();
   if (!subject) {
-    say(dim("  Usage: rune evolve why <variant|lesson-id>"));
+    say(dim("  Usage: will evolve why <variant|lesson-id>"));
     say();
     return 2;
   }
@@ -1042,7 +1042,7 @@ function cmdWhy(
     if (!printed && entries.length === 0) {
       say(`  ${danger("!")} nothing known about "${subject}".`);
       say(dim(`     variants: ${VARIANT_IDS.join(", ")}`));
-      say(dim("     lessons:  rune evolve lessons"));
+      say(dim("     lessons:  will evolve lessons"));
       say();
       return 2;
     }
@@ -1221,7 +1221,7 @@ function cmdBackfill(
         "  None of them is injected yet. A candidate becomes a trial by being learned again, in a second session, from a real run.",
       ),
     );
-    say(dim(`  see: rune evolve lessons --all   ·   workspace ${workspaceRoot}`));
+    say(dim(`  see: will evolve lessons --all   ·   workspace ${workspaceRoot}`));
     say();
     return 0;
   } finally {
@@ -1255,7 +1255,7 @@ function cmdPlaybook(workspaceRoot: string, opts: Record<string, string | true>)
       );
       say(
         dim(
-          "  Undo with `rune evolve playbook --disable`; the file stays for you to read or delete.",
+          "  Undo with `will evolve playbook --disable`; the file stays for you to read or delete.",
         ),
       );
     } else {
@@ -1287,7 +1287,7 @@ function cmdPlaybook(workspaceRoot: string, opts: Record<string, string | true>)
       "  Only ACTIVE lessons reach it: controlled outcomes for the current advice revision, with a cost-per-success gate.",
     ),
   );
-  say(dim(`  enable: rune evolve playbook --enable`));
+  say(dim(`  enable: will evolve playbook --enable`));
   say();
   return 0;
 }
@@ -1328,7 +1328,7 @@ export async function runEvolve(args: string[], values: Record<string, unknown>)
     if (sub === "backfill") return cmdBackfill(sm, workspaceRoot, opts);
     say(
       dim(
-        "  Usage: rune evolve [status|scorecard|lessons|tune|ab|promote|revert|why|yardstick|playbook|backfill|resume|gardener]",
+        "  Usage: will evolve [status|scorecard|lessons|tune|ab|promote|revert|why|yardstick|playbook|backfill|resume|gardener]",
       ),
     );
     say(

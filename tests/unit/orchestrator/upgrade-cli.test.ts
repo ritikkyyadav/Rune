@@ -1,5 +1,5 @@
 /**
- * `rune upgrade` — the update story, with GitHub replaced by a function.
+ * `will upgrade` — the update story, with GitHub replaced by a function.
  *
  * Two properties matter more than any feature here:
  *
@@ -16,6 +16,7 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -145,7 +146,7 @@ describe("parseChecksums", () => {
   });
 });
 
-describe("rune upgrade", () => {
+describe("will upgrade", () => {
   test("--check reports the newer release and installs nothing", async () => {
     const dir = tempDir();
     const r = fakeRelease({ tag: "v0.4.0", suffix: "linux-x64" });
@@ -160,8 +161,8 @@ describe("rune upgrade", () => {
       }),
     );
     expect(code).toBe(0);
-    expect(lines.join("\n")).toContain("Rune v0.4.0 is available");
-    expect(lines.join("\n")).toContain("rune upgrade");
+    expect(lines.join("\n")).toContain("Will v0.4.0 is available");
+    expect(lines.join("\n")).toContain("will upgrade");
     expect(existsSync(join(dir, "bin"))).toBe(false);
     // Only the release metadata was fetched — no asset download at all.
     expect(r.calls.every((u) => u.includes("api.github.com"))).toBe(true);
@@ -199,11 +200,61 @@ describe("rune upgrade", () => {
     expect(code).toBe(0);
     expect(readFileSync(join(bin, "rune"), "utf8")).toBe(r.cli);
     expect(readFileSync(join(bin, "rune-tools"), "utf8")).toBe(r.tools);
+    expect(readFileSync(join(bin, "will"), "utf8")).toBe(r.cli);
     // Recoverable: the previous build is still there.
     expect(readFileSync(join(bin, "rune.backup"), "utf8")).toBe("OLD CLI");
     expect(readFileSync(join(bin, "rune-tools.backup"), "utf8")).toBe("OLD TOOLS");
     // Nothing half-written is left behind.
     expect(existsSync(join(bin, "rune.new"))).toBe(false);
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "will forwards arguments and follows a rollback",
+    async () => {
+      const dir = tempDir();
+      const bin = join(dir, "bin with spaces");
+      mkdirSync(bin);
+      writeFileSync(join(bin, "rune"), '#!/bin/sh\nprintf "old\\n"\n', { mode: 0o755 });
+      const release = fakeRelease({
+        tag: "v0.4.0",
+        suffix: "linux-x64",
+        cli: '#!/bin/sh\nprintf "%s\\n" "$@"\nexit 7\n',
+      });
+      const options = env({
+        installDir: bin,
+        statePath: join(dir, "state.json"),
+        fetch: release.fetcher,
+      });
+      expect(await runUpgrade([], options)).toBe(0);
+      const invoked = spawnSync(join(bin, "will"), ["two words", "--help"], { encoding: "utf8" });
+      expect(invoked.status).toBe(7);
+      expect(invoked.stdout).toBe("two words\n--help\n");
+      expect(await runUpgrade(["--rollback"], options)).toBe(0);
+      expect(spawnSync(join(bin, "will"), [], { encoding: "utf8" }).stdout).toBe("old\n");
+    },
+  );
+
+  test("Windows upgrades and rolls back the executable used by will.cmd", async () => {
+    const dir = tempDir();
+    const bin = join(dir, "bin with spaces");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "rune.exe"), "OLD CLI");
+    writeFileSync(join(bin, "rune-tools.exe"), "OLD TOOLS");
+    const release = fakeRelease({ tag: "v0.4.0", suffix: "windows-x64.exe" });
+    const options = env({
+      installDir: bin,
+      statePath: join(dir, "state.json"),
+      fetch: release.fetcher,
+      platform: "win32",
+    });
+    expect(await runUpgrade([], options)).toBe(0);
+    expect(readFileSync(join(bin, "rune.exe"), "utf8")).toBe(release.cli);
+    expect(readFileSync(join(bin, "rune-tools.exe"), "utf8")).toBe(release.tools);
+    expect(readFileSync(join(bin, "will.cmd"), "utf8")).toContain('"%~dp0rune.exe" %*');
+    expect(existsSync(join(bin, "rune"))).toBe(false);
+    expect(await runUpgrade(["--rollback"], options)).toBe(0);
+    expect(readFileSync(join(bin, "rune.exe"), "utf8")).toBe("OLD CLI");
+    expect(readFileSync(join(bin, "rune-tools.exe"), "utf8")).toBe("OLD TOOLS");
   });
 
   test("a source install keeps its wrapper: rune-compiled is what gets replaced", async () => {
@@ -350,9 +401,9 @@ describe("the daily check", () => {
     const line = cachedUpdateNag(
       env({ installDir: join(dir, "bin"), statePath, version: "0.3.0" }),
     );
-    expect(line).toContain("Rune v0.9.0 is available");
+    expect(line).toContain("Will v0.9.0 is available");
     expect(line).toContain("you have v0.3.0");
-    expect(line).toContain("rune upgrade");
+    expect(line).toContain("will upgrade");
   });
 
   test("says nothing when the cache is empty, stale-but-equal, or older", () => {
@@ -405,7 +456,7 @@ describe("the daily check", () => {
     const lines: string[] = [];
     const code = await runUpgrade(["--check"], { ...off, log: (l) => lines.push(l) });
     expect(code).toBe(0);
-    expect(lines.join("\n")).toContain("Rune v9.9.9 is available");
+    expect(lines.join("\n")).toContain("Will v9.9.9 is available");
   });
 
   test("being offline is silent and still records the attempt", async () => {
@@ -431,7 +482,7 @@ describe("the daily check", () => {
 //
 // scripts/install.sh sets macOS's `uchg` on what it installs; a rename over
 // such a file is EPERM. The web installer hit it on the founder's machine on
-// 2026-09-16, and `rune upgrade` promotes with the same rename.
+// 2026-09-16, and `will upgrade` promotes with the same rename.
 import { spawnSync as spawnSyncForFlag } from "node:child_process";
 import {
   mkdtempSync as mkdtempForFlag,
@@ -466,7 +517,7 @@ describe("clearImmutable", () => {
 
 /**
  * R7 of docs/program/rune-reliability-plan-20261014.md. On 15 October
- * `rune upgrade` failed twice with ECONNRESET on a Mac waking for seconds at a
+ * `will upgrade` failed twice with ECONNRESET on a Mac waking for seconds at a
  * time: one fetch into memory, and a dropped connection ended it.
  */
 describe("a download that survives a dropped connection", () => {
@@ -574,7 +625,7 @@ describe("a download that survives a dropped connection", () => {
   });
 });
 
-describe("rune upgrade --rollback, --to, --channel", () => {
+describe("will upgrade --rollback, --to, --channel", () => {
   test("--rollback swaps with the backup, and again swaps back", async () => {
     const dir = tempDir();
     const bin = join(dir, "bin");

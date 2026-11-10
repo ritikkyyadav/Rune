@@ -159,13 +159,13 @@ export const COMMAND_METHODS = {
       },
       { name: "/diff", desc: "Inspect staged and uncommitted workspace changes", tag: "git" },
       { name: "/copy", desc: "Copy the last answer's code block, or /copy all" },
-      { name: "/undo", desc: "Revert the last Rune auto-commit" },
+      { name: "/undo", desc: "Revert the last Will auto-commit" },
       { name: "/rewind", desc: "Roll back the conversation, the files, or both" },
       { name: "/cost", desc: "Session cost" },
       { name: "/status", desc: "Session status" },
       { name: "/loop", desc: "Repeat a prompt while this session stays open" },
       { name: "/loops", desc: "List and manage this session's loops" },
-      { name: "/team", desc: "Other Rune instances here: status, send, claim, intent" },
+      { name: "/team", desc: "Other Will instances here: status, send, claim, intent" },
       {
         name: "/connectors",
         desc: "Connect services: GitHub, Vercel, Supabase, Linear and more",
@@ -184,7 +184,7 @@ export const COMMAND_METHODS = {
       { name: "/bug", desc: "Flag a problem and record the flight trail" },
       { name: "/clear", desc: "Clear the screen" },
       { name: "/help", desc: "Show commands" },
-      { name: "/quit", desc: "Exit Rune" },
+      { name: "/quit", desc: "Exit Will" },
     ];
     const custom: SlashItem[] = this.ctx.customCommands.map((c) => ({
       name: "/" + c.name,
@@ -205,7 +205,7 @@ export const COMMAND_METHODS = {
           return true;
         }
         if (this.ctx.firstRun.done()) {
-          this.print(`  ${warn("Setup has already closed; restart Rune and run /setup again.")}`);
+          this.print(`  ${warn("Setup has already closed; restart Will and run /setup again.")}`);
           return true;
         }
         this.mode = "setup";
@@ -232,7 +232,7 @@ export const COMMAND_METHODS = {
         const entries = engine.getNotebookEntries(10);
         if (entries.length === 0) {
           this.print(
-            `  ${muted("Notebook is empty for this workspace -- Rune fills it as it verifies how your repos work.")}`,
+            `  ${muted("Notebook is empty for this workspace -- Will fills it as it verifies how your repos work.")}`,
           );
         } else {
           this.print(
@@ -242,7 +242,7 @@ export const COMMAND_METHODS = {
                 (e) =>
                   `    ${info(e.id.slice(-8))} ${muted(`[${e.scope}]`)} ${text(e.body.slice(0, 90))}`,
               ),
-              `    ${muted("manage: rune notebook [show <id>|rm <id>|export]")}`,
+              `    ${muted("manage: will notebook [show <id>|rm <id>|export]")}`,
             ].join("\n"),
           );
         }
@@ -263,8 +263,8 @@ export const COMMAND_METHODS = {
         });
         this.print(
           id
-            ? `  ${text("* Logged with the current flight trail.")} ${muted(`rune incidents show ${id.slice(-8)}`)}`
-            : `  ${muted("Could not record -- see rune doctor.")}`,
+            ? `  ${text("* Logged with the current flight trail.")} ${muted(`will incidents show ${id.slice(-8)}`)}`
+            : `  ${muted("Could not record -- see will doctor.")}`,
         );
         return true;
       }
@@ -609,7 +609,7 @@ export const COMMAND_METHODS = {
             ...(catalog.total
               ? catalog.plugins.flatMap(groupRows)
               : [
-                  `    ${muted("None found. Add one with ")}${info("rune skill add <path>")}${muted(".")}`,
+                  `    ${muted("None found. Add one with ")}${info("will skill add <path>")}${muted(".")}`,
                 ]),
             `  ${faint("Skills load automatically when a request matches \u00b7 run one with /<name> \u00b7 search with /skills <keywords>")}`,
           ].join("\n"),
@@ -691,7 +691,7 @@ export const COMMAND_METHODS = {
           const remembered = loadPrefs().gear;
           if (remembered) {
             this.print(
-              `  ${faint(`startup rune: ${modeInfo(remembered as never).label} -- /mode default to change it`)}`,
+              `  ${faint(`startup gear: ${modeInfo(remembered as never).label} -- /mode default to change it`)}`,
             );
           }
         }
@@ -896,7 +896,7 @@ export const COMMAND_METHODS = {
             this.print(
               `  ${ok(glyph("verified"))} ${muted(`autonomous dashboards ${on ? "on" : "off"}`)} ${faint(
                 on
-                  ? "-- Rune builds one when an answer is data-heavy"
+                  ? "-- Will builds one when an answer is data-heavy"
                   : "-- dashboards only when you ask (/interactive)",
               )}`,
             );
@@ -1113,14 +1113,14 @@ export const COMMAND_METHODS = {
             [
               `  ${bold(text("Memory"))} ${info("off")}`,
               `  ${muted("Nothing is read, written or remembered between sessions.")}`,
-              `  ${faint("turn it on: /memory auto (Rune decides when to update) \u00b7 /memory manual (only /memory update)")}`,
+              `  ${faint("turn it on: /memory auto (Will decides when to update) \u00b7 /memory manual (only /memory update)")}`,
             ].join("\n"),
           );
           return true;
         }
         const last = mem.meta.updatedAt ? this.relTime(mem.meta.updatedAt) : "never";
         const refreshed = mem.meta.lastRefresh
-          ? `${this.relTime(mem.meta.lastRefresh.at)} (${mem.meta.lastRefresh.origin === "agent" ? "by Rune" : "by you"})`
+          ? `${this.relTime(mem.meta.lastRefresh.at)} (${mem.meta.lastRefresh.origin === "agent" ? "by Will" : "by you"})`
           : mem.meta.lastReflectedAt
             ? this.relTime(mem.meta.lastReflectedAt)
             : "never";
@@ -1190,7 +1190,7 @@ export const COMMAND_METHODS = {
               ...(learned.length
                 ? learned
                 : [
-                    `  ${muted("Empty -- Rune hasn't learned anything about you yet.")}`,
+                    `  ${muted("Empty -- Will hasn't learned anything about you yet.")}`,
                     `  ${faint("It learns from what you say and what checks prove, at the end of each run.")}`,
                   ]),
               `  ${faint("Seed it: /memory update \u00b7 note: /memory add <...> \u00b7 mode: /memory off|auto|manual")}`,
@@ -1459,7 +1459,7 @@ export const COMMAND_METHODS = {
       if (row.source === "oauth" || row.source === "keychain") {
         if (account?.kind === "key" || account?.kind === "env") {
           this.print(
-            `  ${faint(`note: the signed-in ${row.source} credential wins on the wire --`)} ${info(`rune logout ${chosen.id}`)} ${faint("to use API keys")}`,
+            `  ${faint(`note: the signed-in ${row.source} credential wins on the wire --`)} ${info(`will logout ${chosen.id}`)} ${faint("to use API keys")}`,
           );
         }
       } else if (account?.kind === "env" && accounts.some((x) => x.kind === "key")) {
@@ -1612,7 +1612,7 @@ export const COMMAND_METHODS = {
           {
             label: "Theme",
             hint: getTheme().name,
-            description: "The colours Rune draws with.",
+            description: "The colours Will draws with.",
             command: "theme",
           },
           {
@@ -1800,7 +1800,7 @@ export const COMMAND_METHODS = {
     if (!asked)
       this.print(
         needModel
-          ? `  ${bold(text("Rune needs a model to talk to."))} ${faint("Pick one way in:")}`
+          ? `  ${bold(text("Will needs a model to talk to."))} ${faint("Pick one way in:")}`
           : [
               `  ${bold(text("Connect"))} ${faint(`${glyph("observed")} a model, an API key, a local server, or web search`)}`,
               `  ${faint(connectedSummary(connectedIds, searchIds))}`,

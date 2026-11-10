@@ -106,7 +106,7 @@ describe("rune audit --record", () => {
     expect(out).toContain("**confirmed**");
     expect(out).toContain("restore the (customer_id, created_at) index");
     // …and none of the audit page's own sections.
-    expect(out).not.toContain("Rune audit");
+    expect(out).not.toContain("Will audit");
     expect(out).not.toContain("Context");
   });
 

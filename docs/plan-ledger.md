@@ -1,9 +1,9 @@
 # The plan is a ledger
 
-Rune keeps a task spine outside the conversation: the goal, the plan, the
+Will keeps a task spine outside the conversation: the goal, the plan, the
 files touched, the verification state. It is re-shown to the model every
 request, survives compaction and resume, and is rendered to the session's
-mission file — kept under the Rune home (`sessions/<id>/mission.md`), and read
+mission file — kept under the Will home (`sessions/<id>/mission.md`), and read
 by the model at the name `.rune/mission.md`. This page describes the rules
 that make a step on that plan mean something.
 
@@ -31,7 +31,7 @@ A completion with **nothing** behind it is refused once. The tool result
 names the step and the reason, and the plan does not move. Re-submitting the
 same completion is accepted, but the step is marked **unproven** — in the
 task-state block the model reads, in the live checklist (a `~` where a tick
-would be), in `mission.md`, and in `rune audit`. The harness cannot know
+would be), in `mission.md`, and in `will audit`. The harness cannot know
 whether a thinking-only step needed a tool, so it never deadlocks the model;
 it makes the claim visible instead of green.
 
@@ -89,7 +89,7 @@ holding several projects, the check runs the one whose files the step touched.
 A toolchain that is not installed is recorded as skipped, not as a failure. See
 [`docs/verification.md`](verification.md).
 
-The receipt names the command, its exit code and its duration, and `rune audit`
+The receipt names the command, its exit code and its duration, and `will audit`
 prints them under **Checks**. The counter used to be all there was, so a page
 whose purpose is evidence could say a step had been checked without being able
 to say by what.
@@ -196,7 +196,7 @@ under **How we got here**, and reconstructs on replay — ids included, so a
 resumed run cannot mint an `h1` that already exists. See
 [`decision-record.md`](decision-record.md) for the artifact it all ends in.
 
-## The log and `rune audit`
+## The log and `will audit`
 
 The spine now carries its own log: plans recorded, steps closed (with their
 receipts), steps closed unproven, steps dropped, checks run, boundaries
@@ -204,7 +204,7 @@ crossed, gates that refused a finish, handoffs. It renders into
 `.rune/mission.md` under **Log**.
 
 ```bash
-rune audit last
+will audit last
 ```
 
 prints one page for a session: goal, plan with receipts and unproven marks,

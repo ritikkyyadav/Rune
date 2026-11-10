@@ -381,7 +381,7 @@ export function discoverPlugins(workspaceRoot: string): PluginDiscovery {
     }
     if (!satisfiesRuneVersion(RUNE_VERSION, manifest.runeVersion)) {
       out.errors.push(
-        `plugin "${dirName}": needs Rune ${manifest.runeVersion}, this is ${RUNE_VERSION} — not loaded`,
+        `plugin "${dirName}": needs Will ${manifest.runeVersion}, this is ${RUNE_VERSION} — not loaded`,
       );
       continue;
     }

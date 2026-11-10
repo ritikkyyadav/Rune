@@ -20,7 +20,7 @@ import { join, relative } from "node:path";
 export const SPILL_KEEP = 50;
 
 const IGNORE =
-  "# Rune keeps long tool output here so it can be read back in pieces. Never tracked.\n*\n";
+  "# Will keeps long tool output here so it can be read back in pieces. Never tracked.\n*\n";
 
 /**
  * Save `text` as `<dir>/<name>.txt` and return its path relative to

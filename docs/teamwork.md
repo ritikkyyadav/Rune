@@ -1,10 +1,10 @@
-# Teamwork — many sub-agents, and many Rune instances
+# Teamwork — many sub-agents, and many Will instances
 
 Two different kinds of parallelism, one doctrine: **the model provides intelligence, the
 harness provides reliability.**
 
-- **Delegation** — one Rune session fanning work out to sub-agents it spawns (`task`, `worker`).
-- **Teamwork** — several independent Rune processes working in the same repository, seeing
+- **Delegation** — one Will session fanning work out to sub-agents it spawns (`task`, `worker`).
+- **Teamwork** — several independent Will processes working in the same repository, seeing
   each other through a shared local bus (`team`, `/team`).
 
 This is not a distributed system, and it is not agents "talking" to each other over a network.
@@ -36,7 +36,7 @@ contain the delegation tools, and its permission gate refuses every tool outside
 Both tools accept two optional arguments so the lead agent can match cost to difficulty:
 
 - **`tier`** — `light` · `standard` · `heavy`. Resolved through the same `[tiers]` table the
-  rest of Rune uses (`resolveModelTier`), so `[tiers] heavy = "anthropic/claude-opus-4-8"`
+  rest of Will uses (`resolveModelTier`), so `[tiers] heavy = "anthropic/claude-opus-4-8"`
   routes heavy sub-agents there while light scouts stay on a cheap model. Resolution happens at
   **call** time, so a `/model` switch or a key edit mid-session is picked up.
 - **`effort`** — `quick` · `standard` · `thorough`. A budget preset (turns + output tokens):
@@ -126,7 +126,7 @@ The worktree is seeded from the lead's **working tree**, not from HEAD. Branchin
 commit would hide the lead's uncommitted work, which is exactly the context a worker was dispatched
 to build on — a worker that cannot see the interface the lead just wrote will re-invent it. The seed
 is `git diff HEAD --binary` applied into the new checkout, deliberately **not** `git stash`: a stash
-is repository-global state shared with every other worktree and every other Rune session on the
+is repository-global state shared with every other worktree and every other Will session on the
 machine, so a stash/pop pair here would race anything else running, and a crash between the two
 would strand the user's work in a stash entry they never made. Untracked files are not carried —
 that set is unbounded (build output, `node_modules`, caches) and a worker that needs one can be told
@@ -230,9 +230,9 @@ rather than as an absence.
 
 ---
 
-## Part 2 — Teamwork (multiple Rune instances)
+## Part 2 — Teamwork (multiple Will instances)
 
-Running `rune` twice in one repository used to produce two blind processes: worker ownership
+Running `will` twice in one repository used to produce two blind processes: worker ownership
 lived in memory, so two instances could write the same file, and neither could tell the other
 anything. The team layer is that gap closed.
 
@@ -320,7 +320,7 @@ config through, which defaults to on.
 
 ### What this is not
 
-- **Not a lock.** `warn` mode is advisory by design — Rune does not stop you editing your own
+- **Not a lock.** `warn` mode is advisory by design — Will does not stop you editing your own
   repository. `block` is available where you want a hard refusal.
 - **Not remote.** The bus is a local file. Instances on different machines do not see each other.
 - **Not a scheduler.** There IS a task queue now (see The shared ledger, below): an instance can

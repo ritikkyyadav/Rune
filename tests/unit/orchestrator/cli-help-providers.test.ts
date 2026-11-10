@@ -44,6 +44,6 @@ describe("rune --help, the -p line", () => {
     expect(named + more).toBe(PROVIDER_PRESETS.length);
 
     // And it points at the command that prints the whole list.
-    expect(line).toContain("rune providers");
+    expect(line).toContain("will providers");
   }, 30_000);
 });

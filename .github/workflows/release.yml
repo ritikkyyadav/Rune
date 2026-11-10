@@ -406,7 +406,7 @@ jobs:
       - name: Smoke the Linux pair end-to-end
         run: |
           chmod +x dist/rune-linux-x64 dist/rune-tools-linux-x64
-          RUNE_TOOLS_BIN=dist/rune-tools-linux-x64 dist/rune-linux-x64 --version | grep -E "Rune v"
+          RUNE_TOOLS_BIN=dist/rune-tools-linux-x64 dist/rune-linux-x64 --version | grep -E "Will v"
           # Not just "it starts": the pair must execute real tools together.
           RUNE_TOOLS_BIN="$PWD/dist/rune-tools-linux-x64" dist/rune-linux-x64 tools-smoke
           # And not just "it runs tools": it must host a session. One turn over
@@ -420,10 +420,10 @@ jobs:
           EXPECTED: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
-          # `rune --version` prints "Rune v<version>". A release whose binary
+          # `rune --version` prints "Will v<version>". A release whose binary
           # disagrees with its tag is the exact failure four hand-maintained
           # version copies used to ship; it is now a hard stop.
-          reported="$(dist/rune-linux-x64 --version | sed -n 's/^Rune v//p' | head -1)"
+          reported="$(dist/rune-linux-x64 --version | sed -n 's/^Will v//p' | head -1)"
           echo "tag/input: $EXPECTED"
           echo "binary   : $reported"
           if [ "$reported" != "$EXPECTED" ]; then
@@ -492,6 +492,7 @@ jobs:
               # The CLI is useless without its native executor: file, search and
               # shell tools all run through rune-tools.
               bin.install stable.url.split("/").last => "rune"
+              bin.install_symlink "rune" => "will"
               resource("rune-tools").stage do
                 bin.install Dir["*"].first => "rune-tools"
               end
@@ -499,13 +500,13 @@ jobs:
 
             def caveats
               <<~EOS
-                Rune reads RUNE_TOOLS_BIN, falling back to the rune-tools beside it.
-                Check the install with:  rune doctor && rune tools-smoke
+                Will reads RUNE_TOOLS_BIN, falling back to the rune-tools beside it.
+                Check the install with:  will doctor && will tools-smoke
               EOS
             end
 
             test do
-              assert_match "Rune v#{version}", shell_output("#{bin}/rune --version")
+              assert_match "Will v#{version}", shell_output("#{bin}/rune --version")
             end
           end
           RUBY
@@ -540,11 +541,11 @@ jobs:
             EDIT_NOTES=()
             if [ -f "docs/releases/$TAG.md" ]; then EDIT_NOTES=(--notes-file "docs/releases/$TAG.md"); fi
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
-              --title "Rune $TAG" --latest $PRERELEASE "${EDIT_NOTES[@]}"
+              --title "Will $TAG" --latest $PRERELEASE "${EDIT_NOTES[@]}"
           else
             gh release create "$TAG" dist/* \
               --repo "$GITHUB_REPOSITORY" \
-              --title "Rune $TAG" \
+              --title "Will $TAG" \
               --latest \
               $PRERELEASE \
               "${NOTES[@]}"
@@ -637,7 +638,7 @@ jobs:
           export RUNE_SMOKE_HOME="$RUNNER_TEMP/rune-home"
           export RUNE_HOME="$RUNE_SMOKE_HOME"
           mkdir -p "$RUNE_SMOKE_HOME"
-          "$BIN/rune" --version | grep -E "Rune v[0-9]"
+          "$BIN/rune" --version | grep -E "Will v[0-9]"
           "$BIN/rune" doctor
           "$BIN/rune" tools-smoke
           # The path a user actually takes: a prompt in, an answer out, through
@@ -660,7 +661,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $env:RUNE_HOME | Out-Null
           $v = & $rune --version
           Write-Host $v
-          if ($v -notmatch 'Rune v\d') { throw "unexpected --version output: $v" }
+          if ($v -notmatch 'Will v\d') { throw "unexpected --version output: $v" }
           & $rune doctor
           if ($LASTEXITCODE -ne 0) { throw "rune doctor exited $LASTEXITCODE" }
           & $rune tools-smoke

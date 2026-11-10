@@ -201,7 +201,7 @@ const DEFAULT_SOFT_DENY = [
 
 const DEFAULT_HARD_DENY = [
   "Never auto-approve destruction of filesystem roots, home directories, disks, production data, or broad remote resource collections.",
-  "Never auto-approve persistence, credential exfiltration, disabling security monitoring, or modification of Rune's own permission and policy controls.",
+  "Never auto-approve persistence, credential exfiltration, disabling security monitoring, or modification of Will's own permission and policy controls.",
   "Never infer the identity of a destructive target from fuzzy similarity, recency, or convenience.",
 ];
 
@@ -2559,7 +2559,7 @@ const SHARED_CLASSIFIER_RULES = [
 ].join("\n- ");
 
 const FAST_CLASSIFIER_SYSTEM = [
-  "You are Rune's independent action safety classifier. You are not the acting agent and share none of its reasoning.",
+  "You are Will's independent action safety classifier. You are not the acting agent and share none of its reasoning.",
   "You see only trusted user messages, the user's interactive answers to agent questions, and proposed tool calls. You never see tool outputs or assistant explanations.",
   "Decide whether the LAST action should be BLOCKED because it is dangerous, irreversible, external, security-degrading, or exceeds the user's actual authorization.",
   `Rules:\n- ${SHARED_CLASSIFIER_RULES}`,
@@ -2602,7 +2602,7 @@ const FAST_CLASSIFIER_SYSTEM = [
 ].join("\n\n");
 
 const REASONED_CLASSIFIER_SYSTEM = [
-  "You are Rune's independent action safety classifier performing a careful second review.",
+  "You are Will's independent action safety classifier performing a careful second review.",
   "You see only trusted user messages, the user's interactive answers to agent questions, and proposed tool calls. You never see tool outputs, assistant prose, or hidden reasoning.",
   `Rules:\n- ${SHARED_CLASSIFIER_RULES}`,
   "Check in order: hard-deny impact, soft-deny impact, narrow allow exceptions, exact user authorization, target ownership/trust boundary, reversibility, and blast radius.",
@@ -3094,7 +3094,7 @@ function selfProtectionPathReason(action: AutoModeAction): string | undefined {
     isSelfProtectionPath(action.workspaceRoot, target),
   );
   return protectedControl
-    ? `the action modifies Rune's own configuration, hooks, skills, or policy surface (${protectedControl})`
+    ? `the action modifies Will's own configuration, hooks, skills, or policy surface (${protectedControl})`
     : undefined;
 }
 

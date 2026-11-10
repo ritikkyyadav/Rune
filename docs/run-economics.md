@@ -2,7 +2,7 @@
 
 A free tier is not priced in dollars. It is priced in **requests per minute**.
 
-That one sentence is why this page exists. Rune's meter could tell you what a
+That one sentence is why this page exists. Will's meter could tell you what a
 session cost and what it would have cost metered, and both answers were `$0.00`
 and correct — the founder's account has no credits and every route it uses is
 free or subscription-backed. Meanwhile, measured on 2026-09-07 across 666
@@ -22,7 +22,7 @@ route the price of a completion is not money, it is **one of the requests the
 work needed**. So the questions that decide whether a task finishes are:
 
 1. How many completions did this task take?
-2. How many of them were the **work**, and how many were Rune's own overhead?
+2. How many of them were the **work**, and how many were Will's own overhead?
 3. How much **fresh** (uncached) input did each one carry?
 
 None of them had an answer. Every completion looked alike in the ledger, so the
@@ -85,7 +85,7 @@ as a zero it did not earn.
 
 ## Reading the numbers
 
-`/cost` inside a session, `rune cost [session|last]` outside one. The money
+`/cost` inside a session, `will cost [session|last]` outside one. The money
 readout is unchanged and still printed first; these lines are appended.
 
 Real output, from a seeded six-completion session:
@@ -112,7 +112,7 @@ Real output, from a seeded six-completion session:
             anthropic  3  (0 governance)
            openrouter  3  (3 governance)
 
-  per-turn detail: rune audit 01a07fdc
+  per-turn detail: will audit 01a07fdc
 ```
 
 The tail is per provider: how many calls went where, and how many of those were
@@ -136,7 +136,7 @@ Three rules the readout keeps:
 - **Unpriced models are named.** If a model has no `MODEL_PRICING` row, the list
   estimate understates by its tokens and the readout says so.
 
-`rune cost` is headless — no Engine, no provider, `~/.rune/rune.db` opened
+`will cost` is headless — no Engine, no provider, `~/.rune/rune.db` opened
 read-only — because the question is usually asked _after_ a run died, and the
 process holding the live ledger is the one that died.
 
@@ -151,7 +151,7 @@ The 2026-09-08 live run measured what a completion is actually made of, and the
 answer was that almost none of it was the work: **96% of every prompt was fixed
 overhead** — 38.4 KB of doctrine and 41.8 KB of tool schemas against 3.4 KB of
 conversation — re-read on all twelve completions, because the route it ran on
-does not cache. That is what makes a free tier rate-limit Rune.
+does not cache. That is what makes a free tier rate-limit Will.
 
 ### What is sent when
 
@@ -317,7 +317,7 @@ and the default is unchanged until a comparison on live runs says otherwise.
 
 Turn 1 of a request carries the opening doctrine (read-back, ambiguity, plan-first) and
 turn 2 onward a shorter working one — about 700 tokens less on every later completion.
-On a host that caches nothing that is a pure saving, and it is what Rune does there.
+On a host that caches nothing that is a pure saving, and it is what Will does there.
 
 On a host that caches a stable prefix (`cachesStablePrefix`: `anthropic`, `codex`, and
 every host whose policy below is not `none`), the opening doctrine is kept for the whole
@@ -376,7 +376,7 @@ There is one now: it is the `doctrine` line of the composition row. Switch
 (`agent-loop-composition.test.ts`), so the claim is measured rather than
 commented.
 
-## `[routing] helper` — where Rune's own calls go
+## `[routing] helper` — where Will's own calls go
 
 ```toml
 [routing]
@@ -553,12 +553,12 @@ missing meter as zero would fail every build after it shipped.
 
 | claim                                                        | how                                                                                                                                                 |
 | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| roles and composition reach the cost row and the session log | unit tests, a live mock eval run showing 0.25/task, and the `rune cost` output above                                                                |
-| `rune cost` renders a real session log end to end            | run, on a seeded database — the output above is verbatim                                                                                            |
+| roles and composition reach the cost row and the session log | unit tests, a live mock eval run showing 0.25/task, and the `will cost` output above                                                                |
+| `will cost` renders a real session log end to end            | run, on a seeded database — the output above is verbatim                                                                                            |
 | the parts always sum to the total                            | unit test over a real `AgentLoop` request                                                                                                           |
 | the plan ledger is not filed under conversation              | unit test (with-plan vs without-plan)                                                                                                               |
 | the JIT doctrine's effect is visible                         | unit test on the doctrine bytes                                                                                                                     |
-| the advertised tool surface is half what it was              | offline probe (52.8%), the product's own `rune audit` line on a live run (50%), and unit tests on the core/catalogued split                         |
+| the advertised tool surface is half what it was              | offline probe (52.8%), the product's own `will audit` line on a live run (50%), and unit tests on the core/catalogued split                         |
 | a catalogued tool stays reachable                            | unit tests: naming it promotes it, calling it executes AND promotes it, `load_tools` returns the exact schema                                       |
 | the doctrine phase changes once per request, not per turn    | unit tests on `renderDoctrine`, and the live `fixed overhead 62.4KB → 56.0KB` line on two providers                                                 |
 | fresh tokens per completion fell on a live free route        | one headless run, same task/route/model as the 2026-09-08 baseline: 18.2k → 12.8k                                                                   |

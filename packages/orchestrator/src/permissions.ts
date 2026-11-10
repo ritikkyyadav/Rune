@@ -325,7 +325,7 @@ export class PermissionBroker {
    */
   setMode(mode: PermissionModeInput): { ok: boolean; reason?: string } {
     const canonical = configModeToPermissionMode(mode);
-    if (!canonical) return { ok: false, reason: `unknown rune "${mode}"` };
+    if (!canonical) return { ok: false, reason: `unknown gear "${mode}"` };
     if (isPermissionModeForbidden(this.orgPolicy, canonical)) {
       return {
         ok: false,

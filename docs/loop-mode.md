@@ -1,6 +1,6 @@
 # Session loop mode
 
-`/loop` runs a prompt repeatedly inside the current Rune terminal conversation. It is intended for
+`/loop` runs a prompt repeatedly inside the current Will terminal conversation. It is intended for
 short-lived polling: babysitting CI, checking a deployment, watching review comments, or continuing
 maintenance while the session stays open.
 
@@ -16,7 +16,7 @@ maintenance while the session stays open.
   one minute round up to one minute.
 - A prompt without an interval creates an adaptive loop. Each iteration can choose a delay from one
   minute to one hour based on what it observed, or stop itself when the objective is genuinely done.
-- A bare `/loop` uses `.rune/loop.md`, then `~/.rune/loop.md`, then Rune's bounded maintenance prompt.
+- A bare `/loop` uses `.rune/loop.md`, then `~/.rune/loop.md`, then Will's bounded maintenance prompt.
   A fixed cadence can still use the default prompt, for example `/loop 15m`.
 - A custom slash command can be the prompt: `/loop 20m /review-pr 1234` re-expands that command on
   every iteration. Built-in terminal-control commands are delivered as plain text and cannot

@@ -208,14 +208,14 @@ export function preflightServer(name: string, config: McpServerConfig): McpPrefl
         problems.push({
           kind: "url-invalid",
           problem: `${name}: "${config.url}" is not an http(s) URL`,
-          fix: `rune mcp add https://… --name ${name}`,
+          fix: `will mcp add https://… --name ${name}`,
         });
       }
     } catch {
       problems.push({
         kind: "url-invalid",
         problem: `${name}: "${config.url}" is not a URL`,
-        fix: `rune mcp add https://… --name ${name}`,
+        fix: `will mcp add https://… --name ${name}`,
       });
     }
     return problems;

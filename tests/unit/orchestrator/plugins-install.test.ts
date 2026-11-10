@@ -151,12 +151,12 @@ describe("rune plugin add, from a local path", () => {
     expect(text).toContain("must equal the directory name");
   });
 
-  test("a plugin that needs a newer Rune is refused at install time", async () => {
+  test("a plugin that needs a newer Will is refused at install time", async () => {
     buildSourcePlugin({ runeVersion: ">=99.0.0" });
     output.length = 0;
     const code = await runPlugin(["add", source, "--name", "demo"], { workspace, name: "demo" });
     expect(code).toBe(1);
-    expect(printed()).toContain("needs Rune >=99.0.0");
+    expect(printed()).toContain("needs Will >=99.0.0");
     expect(discoverPlugins(workspace).plugins).toEqual([]);
   });
 

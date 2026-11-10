@@ -1,7 +1,7 @@
 {
   "name": "@rune/sdk",
   "version": "1.4.17",
-  "description": "Drive a Rune agent session over the Rune protocol \u2014 from Node, Bun, a browser, an editor extension or a CI step.",
+  "description": "Drive a Will agent session over the existing Rune protocol \u2014 from Node, Bun, a browser, an editor extension or a CI step.",
   "license": "Apache-2.0",
   "type": "module",
   "keywords": [

@@ -80,7 +80,7 @@ function sevPaint(severity: string, s: string): string {
 // ─── doctor ───
 
 export function runDoctor(): void {
-  console.log(`\n  ${dim("§ RUNE DOCTOR")}\n`);
+  console.log(`\n  ${dim("§ WILL DOCTOR")}\n`);
 
   // Auto mode's own false-positive record, read from the session log.
   //
@@ -163,7 +163,7 @@ export function runDoctor(): void {
         console.log(`  ${ok("✓")} sentinels: ${live} live session${live === 1 ? "" : "s"} running`);
       if (stale > 0)
         console.log(
-          `  ${warn("!")} sentinels: ${stale} leftover from dead processes — next \`rune\` run files dirty-exit incident${stale === 1 ? "" : "s"}`,
+          `  ${warn("!")} sentinels: ${stale} leftover from dead processes — next \`will\` run files dirty-exit incident${stale === 1 ? "" : "s"}`,
         );
     }
   }
@@ -187,7 +187,7 @@ export function runDoctor(): void {
   }
 
   console.log(
-    `\n  ${dim("browse:")} ${info("rune incidents")} ${dim("·")} ${info("rune incidents top")} ${dim("·")} ${info("rune incidents show <id>")}\n`,
+    `\n  ${dim("browse:")} ${info("will incidents")} ${dim("·")} ${info("will incidents top")} ${dim("·")} ${info("will incidents show <id>")}\n`,
   );
   store?.close();
 }
@@ -212,7 +212,7 @@ function doctorInstall(): void {
     } else {
       for (const b of broken) {
         console.log(
-          `  ${danger(glyph("failure"))} signature: ${b.p} ${faint(b.v!.detail)} ${dim("— reinstall it:")} ${info("rune upgrade --to " + PRODUCT_VERSION)}`,
+          `  ${danger(glyph("failure"))} signature: ${b.p} ${faint(b.v!.detail)} ${dim("— reinstall it:")} ${info("will upgrade --to " + PRODUCT_VERSION)}`,
         );
       }
     }
@@ -221,7 +221,7 @@ function doctorInstall(): void {
   const backup = backupInfo(bin);
   console.log(
     backup
-      ? `  ${ok("✓")} rollback: ${info("rune upgrade --rollback")} ${dim(`goes back to the build of ${new Date(backup.mtimeMs).toISOString().slice(0, 16).replace("T", " ")}`)}`
+      ? `  ${ok("✓")} rollback: ${info("will upgrade --rollback")} ${dim(`goes back to the build of ${new Date(backup.mtimeMs).toISOString().slice(0, 16).replace("T", " ")}`)}`
       : `  ${dim("·")} rollback: no .backup kept beside this build`,
   );
   // Old builds kept by source installs.
@@ -230,7 +230,7 @@ function doctorInstall(): void {
     const plan = planBuildPrune(builds, KEEP_OLD_BUILDS);
     console.log(
       `  ${warn("!")} old builds: ${builds.length} kept in ${faint(bin)}, ${fmtBytes(builds.reduce((n, b) => n + b.bytes, 0))} ` +
-        `${dim("— reclaimable:")} ${fmtBytes(plan.bytes)} ${dim("·")} ${info("rune doctor prune-backups")} ${dim("(dry run; --apply removes all but the newest " + KEEP_OLD_BUILDS + ")")}`,
+        `${dim("— reclaimable:")} ${fmtBytes(plan.bytes)} ${dim("·")} ${info("will doctor prune-backups")} ${dim("(dry run; --apply removes all but the newest " + KEEP_OLD_BUILDS + ")")}`,
     );
   } else if (builds.length > 0) {
     console.log(`  ${ok("✓")} old builds: ${builds.length} kept`);
@@ -281,7 +281,7 @@ export function runBuildPrune(args: string[]): number {
       `  ${warn("!")} would remove ${plan.remove.length} install${plan.remove.length === 1 ? "" : "s"} ` +
         `(${plan.remove.reduce((n, b) => n + b.files.length, 0)} files), ${fmtBytes(plan.bytes)}, ` +
         `the oldest from ${new Date(Number(oldest.stamp) * 1000).toISOString().slice(0, 10)} ` +
-        `${dim("— nothing was deleted.")} ${info("rune doctor prune-backups --apply")}\n`,
+        `${dim("— nothing was deleted.")} ${info("will doctor prune-backups --apply")}\n`,
     );
     return 0;
   }
@@ -339,7 +339,7 @@ function doctorCheckpoints(): void {
       console.log(
         `    ${dim("reclaimable:")} ${report.reclaimableRows} superseded or orphaned row` +
           `${report.reclaimableRows === 1 ? "" : "s"}, ${fmtBytes(report.reclaimableBytes)} ` +
-          `${dim("—")} ${info("rune doctor prune-checkpoints")} ${dim("(dry run; --apply removes them)")}`,
+          `${dim("—")} ${info("will doctor prune-checkpoints")} ${dim("(dry run; --apply removes them)")}`,
       );
     }
   } catch {
@@ -398,7 +398,7 @@ export function runCheckpointPrune(args: string[]): number {
 `
         : `  ${warn("!")} would remove ${result.removedRows} row` +
             `${result.removedRows === 1 ? "" : "s"}, ${fmtBytes(result.removedBytes)} ` +
-            `${dim("— nothing was deleted.")} ${info("rune doctor prune-checkpoints --apply")}
+            `${dim("— nothing was deleted.")} ${info("will doctor prune-checkpoints --apply")}
 `,
     );
     return 0;
@@ -450,13 +450,13 @@ function doctorMcp(): void {
   }
   const active = servers.filter((s) => s.config.enabled !== false);
   if (active.length === 0) {
-    console.log(`  ${dim("mcp: no connectors configured")} ${faint("— rune mcp add notion")}`);
+    console.log(`  ${dim("mcp: no connectors configured")} ${faint("— will mcp add notion")}`);
     return;
   }
   const broken = active.flatMap((s) => preflightServer(s.name, s.config));
   if (broken.length === 0) {
     console.log(
-      `  ${ok("✓")} mcp: ${active.length} connector${active.length === 1 ? "" : "s"} configured, none misconfigured ${faint("— live health: rune mcp doctor")}`,
+      `  ${ok("✓")} mcp: ${active.length} connector${active.length === 1 ? "" : "s"} configured, none misconfigured ${faint("— live health: will mcp doctor")}`,
     );
     return;
   }
@@ -635,7 +635,7 @@ function doctorBrowser(): void {
   const runnable = probe.chromium.length > 0;
   if (!enabled) {
     console.log(
-      `  ${dim("\u00b7")} browser: off by config ${faint(`(${parts.join("; ")})`)} ${dim("\u2014")} ${info("/browser on")} ${dim("or")} ${info("rune --browser")}`,
+      `  ${dim("\u00b7")} browser: off by config ${faint(`(${parts.join("; ")})`)} ${dim("\u2014")} ${info("/browser on")} ${dim("or")} ${info("will --browser")}`,
     );
     return;
   }
@@ -679,12 +679,12 @@ export function runIncidents(positionals: string[], values: Record<string, unkno
             `           ${faint(r.message.replace(/\s+/g, " ").slice(0, 96))}`,
         );
       }
-      console.log(`\n  ${dim("details:")} ${info("rune incidents show <id>")}\n`);
+      console.log(`\n  ${dim("details:")} ${info("will incidents show <id>")}\n`);
     }
   } else if (sub === "show") {
     const prefix = positionals[2];
     if (!prefix) {
-      console.log(dim("  Usage: rune incidents show <id-prefix>"));
+      console.log(dim("  Usage: will incidents show <id-prefix>"));
     } else {
       const r = store.getByPrefix(prefix);
       if (!r) {
@@ -726,7 +726,7 @@ export function runIncidents(positionals: string[], values: Record<string, unkno
     );
   } else {
     console.log(
-      dim("  Usage: rune incidents [list|show <id>|top [--by-version]|export [--out <path>]]"),
+      dim("  Usage: will incidents [list|show <id>|top [--by-version]|export [--out <path>]]"),
     );
   }
   store.close();
@@ -758,7 +758,7 @@ function printIncident(r: IncidentRecord): void {
     for (const [k, v] of ctx) console.log(`    ${faint(`${k}: ${String(v)}`)}`);
   }
   if (r.trail.length > 0) {
-    console.log(`\n  ${dim("trail (what Rune did leading up to this)")}`);
+    console.log(`\n  ${dim("trail (what Will did leading up to this)")}`);
     for (const t of r.trail) {
       console.log(
         `    ${dim(String(t.seq).padStart(3))} ${info(t.kind.padEnd(16))} ${faint(t.summary)}`,

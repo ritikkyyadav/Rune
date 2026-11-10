@@ -1,3 +1,5 @@
+export { PRODUCT_NAME, PRODUCT_COMMAND, LEGACY_PRODUCT_COMMAND } from "./brand.js";
+
 // (protocol.ts — a JSON-RPC wire spec nothing ever imported — was removed in
 // the phase-0 stabilization; the real host wire format lives in host-client.ts.)
 export {

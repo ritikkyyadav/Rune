@@ -55,9 +55,9 @@ export function makeDeviceStrategy(providerId: string): AuthenticationStrategy |
 export const RETIRED_OAUTH_NOTICES: Readonly<Record<string, string>> = {
   anthropic:
     "The Claude subscription sign-in is retired: Anthropic's terms do not permit third-party " +
-    "apps to use Claude.ai login or Free/Pro/Max plan credentials, so Rune ignores the token " +
-    "stored for it. Run `rune logout anthropic` to remove it, then use an Anthropic API key " +
-    "(`rune login anthropic`), Bedrock or Vertex.",
+    "apps to use Claude.ai login or Free/Pro/Max plan credentials, so Will ignores the token " +
+    "stored for it. Run `will logout anthropic` to remove it, then use an Anthropic API key " +
+    "(`will login anthropic`), Bedrock or Vertex.",
 };
 
 /** Retired routes already announced in this process. */

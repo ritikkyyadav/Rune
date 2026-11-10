@@ -975,7 +975,7 @@ function parseToml(text: string, file?: string): Record<string, unknown> {
       if (file && !tomlWarned.has(`${file}\n${reason}`)) {
         tomlWarned.add(`${file}\n${reason}`);
         console.warn(
-          `rune: ${file} is not valid TOML (${reason}); reading it line by line, which skips values written over several lines`,
+          `will: ${file} is not valid TOML (${reason}); reading it line by line, which skips values written over several lines`,
         );
       }
     }
@@ -1204,7 +1204,7 @@ export function loadConfig(workspaceRoot?: string): RuneConfig {
   // Env overrides
   applyEnvOverrides(merged);
 
-  for (const warning of narrowHandEditedShapes(merged)) console.warn(`rune: ${warning}`);
+  for (const warning of narrowHandEditedShapes(merged)) console.warn(`will: ${warning}`);
 
   return merged as unknown as RuneConfig;
 }

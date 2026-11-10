@@ -107,7 +107,7 @@ describe("ASCII rung", () => {
         // The header carries arbitrary data in two fields now — the directory
         // coordinate and the worktree clause — and both are transliterated. This
         // proves non-ASCII DATA is folded, not merely that glyphs have twins.
-        header({ name: "Rune", version: "0.3.0", workspace: "Jos\u00e9", worktree: "leave 東京 alone" }),
+        header({ name: "Will", version: "0.3.0", workspace: "Jos\u00e9", worktree: "leave 東京 alone" }),
         said("Checked \u201cJos\u00e9\u201d \u2014 no change to 東京."),
         toolRow({ name: "test", arg: "suite", status: "pass", metric: "3 passed" }),
       ].join("\\n");
@@ -134,7 +134,7 @@ describe("ASCII rung", () => {
     expect(stdout).toContain("3 passed");
   });
 
-  test("the actual Rune CLI help is seven-bit and escape-free", () => {
+  test("the actual Will CLI help is seven-bit and escape-free", () => {
     const cli = join(ROOT, "packages/orchestrator/src/bin/rune-cli.ts");
     const run = Bun.spawnSync([process.execPath, cli, "--help"], {
       cwd: ROOT,
@@ -157,7 +157,7 @@ describe("ASCII rung", () => {
     // scripts/version.sh exists to end. What matters is that the banner
     // carries the product label the build was stamped with.
     expect(stdout).toContain(`${PRODUCT_LABEL} -- AI coding agent`);
-    expect(stdout).toMatch(/Rune v\d+\.\d+\.\d+/);
+    expect(stdout).toMatch(/Will v\d+\.\d+\.\d+/);
     expect(stdout).toContain("Usage:");
     expect(stdout).toContain("Shift+Tab shifts up: 1st -> 2nd -> 3rd -> 4th -> auto");
   });

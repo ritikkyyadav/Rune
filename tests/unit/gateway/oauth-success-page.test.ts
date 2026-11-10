@@ -83,7 +83,7 @@ describe("the page you land on after signing in", () => {
   test("states success and names the connected account without a logo", () => {
     const html = successPage("ChatGPT Plus / Pro");
     expect(html).toContain("Logged in<span>successfully.</span>");
-    expect(html).toContain("<strong>ChatGPT Plus / Pro</strong> is now connected to Rune");
+    expect(html).toContain("<strong>ChatGPT Plus / Pro</strong> is now connected to Will");
     expect(html).not.toContain("<svg");
     expect(html).not.toContain("<img");
   });

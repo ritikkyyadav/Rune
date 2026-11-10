@@ -476,7 +476,7 @@ function scanControlSegments(parts: string[]): boolean {
 const CONTROL_MUTATION_RE =
   /\b(?:sed|perl|awk|tee|truncate|install|dd|mv|cp|rm|chmod|chown|ln|python3?|ruby|node|bun)\b|>>?/;
 const RUNE_CONFIG_WRITE_RE =
-  /\b(?:rune|gear|alan)\s+config\s+(?:set|unset|edit|write)\b|\b(?:rune|gear|alan)\s+(?:policy|sandbox)\s+(?:set|off|disable)\b/i;
+  /\b(?:will|rune|gear|alan)\s+config\s+(?:set|unset|edit|write)\b|\b(?:will|rune|gear|alan)\s+(?:policy|sandbox)\s+(?:set|off|disable)\b/i;
 
 /**
  * The reason a bash command counts as a guardrail change, or undefined.
@@ -487,14 +487,14 @@ export function shellGuardrailChange(action: AutoModeAction): string | undefined
     const command = String(action.args.command ?? "");
     if (command) {
       if (RUNE_CONFIG_WRITE_RE.test(command)) {
-        return "the action changes Rune's own configuration, policy, or sandbox switch through the CLI";
+        return "the action changes Will's own configuration, policy, or sandbox switch through the CLI";
       }
       if (CONTROL_MUTATION_RE.test(command)) {
         const target = commandPaths(command).find((p) =>
           isSelfProtectionPath(action.workspaceRoot, p),
         );
         if (target) {
-          return `the action edits Rune's own configuration, hooks, skills, or policy surface through the shell (${target})`;
+          return `the action edits Will's own configuration, hooks, skills, or policy surface through the shell (${target})`;
         }
       }
     }
@@ -507,7 +507,7 @@ export function shellGuardrailChange(action: AutoModeAction): string | undefined
   // more specific, reason.
   const secret = targetPaths(action).find((p) => isSecretControlPath(action.workspaceRoot, p));
   return secret
-    ? `the action reaches Rune's own credential store — the provider keys, the memory signing key, or a private key (${secret})`
+    ? `the action reaches Will's own credential store — the provider keys, the memory signing key, or a private key (${secret})`
     : undefined;
 }
 

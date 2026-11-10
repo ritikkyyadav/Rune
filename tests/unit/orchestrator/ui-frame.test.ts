@@ -574,7 +574,7 @@ describe("too small to be told the truth in", () => {
   it("says the size it needs, the size it has, and the way out", () => {
     const block = V.refusalRows(44, 12);
     expect(block).toHaveLength(3);
-    expect(block[0]).toBe("R U N E");
+    expect(block[0]).toBe("W I L L");
     expect(block[1]).toContain("60x12");
     expect(block[1]).toContain("44x12");
     expect(block[2]).toContain("--inline");
@@ -644,7 +644,7 @@ describe("composeFrame with a band", () => {
     const r = regionsAt(120, 40, 4);
     const frame = V.composeFrame({
       rows: 40,
-      header: ["", "  R U N E", "  ───"],
+      header: ["", "  W I L L", "  ───"],
       transcript: ["ignored"],
       footer: ["  ◆ 1st gear"],
       scroll: 0,
@@ -659,7 +659,7 @@ describe("composeFrame with a band", () => {
       },
     });
     expect(frame.rows).toHaveLength(40);
-    expect(frame.rows[1]).toBe("  R U N E");
+    expect(frame.rows[1]).toBe("  W I L L");
     expect(frame.rows[3]).toContain("first");
     expect(frame.rows[39]).toBe("  ◆ 1st gear");
     // The caret is absolute in this mode: the composer is inside the band, not

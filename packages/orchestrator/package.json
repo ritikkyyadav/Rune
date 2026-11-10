@@ -5,6 +5,7 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "bin": {
+    "will": "src/bin/rune-cli.ts",
     "rune": "src/bin/rune-cli.ts"
   },
   "scripts": {

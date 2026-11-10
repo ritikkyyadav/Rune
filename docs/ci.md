@@ -1,17 +1,17 @@
-# Rune in CI
+# Will in CI
 
 One prompt in, an answer and an exit code out. No terminal, no cursor
 addressing, nothing to answer.
 
 ```bash
-rune -P "run the tests and fix what fails" --stream-json --gear 3 --workspace .
+will -P "run the tests and fix what fails" --stream-json --gear 3 --workspace .
 ```
 
 That is the CI form, and every part of it is load-bearing:
 
 | Flag            | Why                                                                                                                                                         |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `-P "<prompt>"` | headless: stdout is the answer, progress goes to stderr, so `rune -P … > out.txt` captures the answer alone                                                 |
+| `-P "<prompt>"` | headless: stdout is the answer, progress goes to stderr, so `will -P … > out.txt` captures the answer alone                                                 |
 | `--stream-json` | every event as NDJSON while it happens, the envelope last. Without it a run reports one envelope after minutes of silence and "working" looks like "wedged" |
 | `--gear 3`      | workspace edits plus a **sandboxed** shell. `4` is full autonomy and skips the permission engine — see below                                                |
 | `--workspace .` | the directory the agent may touch, stated rather than inherited from `cwd`                                                                                  |
@@ -95,10 +95,10 @@ same thing in the words the exit code is chosen by.
 | ------------------------------------ | ------------------------ | ---- | ----------------------------------------------------------------------------------------------------------- |
 | `end_turn`                           | `success`                | 0    | Read `verdict` for whether the task was met                                                                 |
 | `open_steps`                         | `error_open_steps`       | 1    | The loop stopped the run with its own planned steps open, after refusing the finish once; resume or re-plan |
-| `max_turns`, `max_tokens`            | `error_max_turns`, `…`   | 4    | Continue with `rune resume`, or raise the limit                                                             |
+| `max_turns`, `max_tokens`            | `error_max_turns`, `…`   | 4    | Continue with `will resume`, or raise the limit                                                             |
 | `budget`                             | `error_budget`           | 4    | Raise the budget, or switch to a priced model                                                               |
 | `quota_wall`                         | `error_quota`            | 5    | The provider's usage cap: wait until `resumeAt` (epoch ms), or let `--resume-until` wait for you            |
-| `provider_lost`                      | `error_provider`         | 5    | The provider stopped answering after the retries; try again later, `rune resume` continues from the handoff |
+| `provider_lost`                      | `error_provider`         | 5    | The provider stopped answering after the retries; try again later, `will resume` continues from the handoff |
 | `halted`                             | `error_halted`           | 1    | The run read instructions flagged as injected and a safety block stopped it; read what it read first        |
 | `aborted`                            | `error_cancelled`        | 130  | Cancelled; the partial work is kept                                                                         |
 | `stalled`, `loop_detected`, `barren` | `error_during_execution` | 1    | Nothing was progressing; resume with a different approach                                                   |
@@ -139,7 +139,7 @@ model asks for.
 One JSON object per line, the envelope **last**:
 
 ```bash
-$ rune -P "say ok" --stream-json
+$ will -P "say ok" --stream-json
 {"type":"text_delta","text":"ok"}
 {"type":"usage","inputTokens":812,"outputTokens":3,...}
 {"type":"turn_complete","stopReason":"end_turn","totalTurns":1}
@@ -155,7 +155,7 @@ The envelope carries `sessionId`, which is what makes the run auditable
 afterwards:
 
 ```bash
-rune audit <sessionId>          # the plan with its evidence, every safety decision, the cost
+will audit <sessionId>          # the plan with its evidence, every safety decision, the cost
 ```
 
 `--json` on its own keeps the indented envelope a person reads. `--stream-json`
@@ -164,7 +164,7 @@ NDJSON and a line-by-line consumer would choke on it.
 
 ## Credentials
 
-Rune reads provider keys from the environment, under each provider's own
+Will reads provider keys from the environment, under each provider's own
 conventional name — no Rune-specific rename, so a runner that already has a key
 for something else needs no new secret:
 
@@ -190,14 +190,14 @@ Behaviour is tuned with `RUNE_*`. The ones a CI job usually wants:
 | `RUNE_ROUNDTRIP_TIMEOUT_MS` | how long a permission or question waits before the unattended policy applies |
 | `RUNE_TELEMETRY`            | opt-in diagnostics. Off by default; leave it off                             |
 
-`rune doctor` reports what is missing, and `rune tools-smoke` proves the tool
+`will doctor` reports what is missing, and `will tools-smoke` proves the tool
 executor works end to end. Run both in a job that is failing for reasons that
 are not the model's.
 
 ## The GitHub Action
 
 `action/` is a composite action in the `savoir/rune-action` shape. It installs
-Rune — a pinned release when one is named, otherwise a build from the checkout
+Will — a pinned release when one is named, otherwise a build from the checkout
 — runs one prompt over the pull request diff, and posts **one** comment with
 the review and the audit of the run that produced it.
 
@@ -251,7 +251,7 @@ bun action/review.ts --dry-run --mock \
 
 `--mock` (or `RUNE_REVIEW_PROVIDER=mock`) makes `review.ts` start its own
 provider: Ollama reads its base URL from `OLLAMA_HOST` and authenticates
-nothing, so a thirty-line server is a complete provider as far as Rune is
+nothing, so a thirty-line server is a complete provider as far as Will is
 concerned. Everything else is real — the diff, the session, the turn, the audit,
 the comment.
 
@@ -284,14 +284,14 @@ Both modes write the **same** comment, found by the same HTML marker, so the
 first real review replaces the dry run in place rather than starting a second
 thread under it.
 
-## `rune pr <n>`
+## `will pr <n>`
 
 For working a pull request locally rather than in CI:
 
 ```bash
-rune pr 12            # fetch the head into its own worktree and start a session on it
-rune pr 12 --review   # frame the session as a review rather than as work
-rune pr 12 --brief    # print the brief and stop
+will pr 12            # fetch the head into its own worktree and start a session on it
+will pr 12 --review   # frame the session as a review rather than as work
+will pr 12 --brief    # print the brief and stop
 ```
 
 It fetches `refs/pull/<n>/head` with plain git — a ref every GitHub remote
@@ -304,7 +304,7 @@ written by the reviewer is already a reading.
 The title and body come from `gh pr view` when the CLI is authenticated, and
 from the REST API otherwise. That fallback reads **`GITHUB_API_URL`**, the
 variable every Actions runner sets and which names the Enterprise Server API
-root on a self-hosted one, so `rune pr` works on GHES with nothing to configure.
+root on a self-hosted one, so `will pr` works on GHES with nothing to configure.
 Both calls time out at 30 s: a GitHub that accepts a connection and never
 answers used to hang the command with nothing on screen.
 
@@ -316,7 +316,7 @@ PATH, and the REST fallback against a fake API at `GITHUB_API_URL`) and asserts
 the worktree, the branch, the brief, and that the working tree it was run from
 is untouched.
 
-It found one defect: **re-running `rune pr <n>` after the author pushed used to
+It found one defect: **re-running `will pr <n>` after the author pushed used to
 fail outright.** Git refuses to update a branch that is checked out in a
 worktree, so the fetch died with "refusing to fetch into branch" before the code
 that exists to move the worktree to the new head could run — the second run, the

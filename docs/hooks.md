@@ -1,6 +1,6 @@
 # Hooks
 
-A hook is a shell command Rune runs around a tool call or a session. Formatters,
+A hook is a shell command Will runs around a tool call or a session. Formatters,
 linters, guards, notifications — anything you want to happen every time, without
 asking the model to remember.
 
@@ -21,7 +21,7 @@ cat > .rune/hooks.json <<'JSON'
 JSON
 ```
 
-Start a session, let Rune edit a file, and the command's output comes back to
+Start a session, let Will edit a file, and the command's output comes back to
 the agent as part of the tool result. That is the whole mechanism.
 
 A worked config with all four events is
@@ -190,10 +190,10 @@ hook that vetoes stops the rest of that event's hooks from running.
 A plugin may ship its own `hooks.json` ([plugins.md](./plugins.md)). Those are
 appended **after** yours for each event, so your hooks always run first. A
 plugin that declares `permissions.blockingHooks` is telling you it wants to be
-able to stop a tool call; `rune plugin list` shows that before and after
+able to stop a tool call; `will plugin list` shows that before and after
 installation.
 
-A hook is a shell command you asked Rune to run. It is not sandboxed and it is
+A hook is a shell command you asked Will to run. It is not sandboxed and it is
 not reviewed by Auto mode — installing a plugin with hooks is trusting its
 author with your shell. Read them.
 

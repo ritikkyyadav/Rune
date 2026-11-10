@@ -26,7 +26,7 @@ const say = (s = ""): void => {
 
 function usage(): void {
   say(`
-  ${text("rune workflow")} ${dim("<file.workflow.json>")}
+  ${text("will workflow")} ${dim("<file.workflow.json>")}
 
   Run a deterministic multi-agent workflow: a node list executed in topological
   waves, resumable from the last completed node, each node's result cached by
