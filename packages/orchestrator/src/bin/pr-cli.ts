@@ -229,7 +229,7 @@ export function selfCommand(dir = import.meta.dir, execPath = process.execPath):
 export async function runPr(args: string[], values: Record<string, unknown>): Promise<number> {
   const number = Number(args[0]);
   if (!Number.isInteger(number) || number <= 0) {
-    say(`  ${danger("!")} usage: ${info("rune pr <number>")} ${muted("[--review] [--brief]")}`);
+    say(`  ${danger("!")} usage: ${info("will pr <number>")} ${muted("[--review] [--brief]")}`);
     return 1;
   }
 

@@ -348,7 +348,7 @@ def run(outdir, rows, cols, tag, title):
     s = colour_session(rows, cols)
     marks = []
     try:
-        s.wait_for(["rune"], timeout=90)
+        s.wait_for(["will"], timeout=90)
         s.pump(1.0)
         s.send(PROMPT, settle=0.6)
         save(s, outdir, "%s-typed" % tag, title)
@@ -395,7 +395,7 @@ def main(outdir):
                 # the first run's edits and fail its scripted replacements.
                 scratch_project(mock.port)
                 tag = "hero-%dx%d" % (cols, rows)
-                run(outdir, rows, cols, tag, "Rune — ~/code/lantern")
+                run(outdir, rows, cols, tag, "Will — ~/code/lantern")
                 edited = Path(rig.WORK, "src", "cli.js").read_text()
                 assert "--version" in edited
                 assert Path(rig.WORK, "test", "cli.test.js").is_file()

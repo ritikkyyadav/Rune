@@ -254,7 +254,7 @@ export class OAuthStrategy implements AuthenticationStrategy {
         providerId: ctx.providerId,
         method: this.method,
         message: `OAuth login failed: ${errMsg(err)}`,
-        recovery: `run: rune login ${ctx.providerId}`,
+        recovery: `run: will login ${ctx.providerId}`,
       });
     }
   }
@@ -315,7 +315,7 @@ export class OAuthStrategy implements AuthenticationStrategy {
         providerId: ctx.providerId,
         method: this.method,
         message: `${ctx.preset.label} sign-in needs an interactive terminal to paste the code.`,
-        recovery: `run: rune login ${ctx.providerId}`,
+        recovery: `run: will login ${ctx.providerId}`,
       });
     }
     const { verifier, challenge } = generatePkce();
@@ -332,7 +332,7 @@ export class OAuthStrategy implements AuthenticationStrategy {
         providerId: ctx.providerId,
         method: this.method,
         message: "No authorization code entered.",
-        recovery: `run: rune login ${ctx.providerId}`,
+        recovery: `run: will login ${ctx.providerId}`,
       });
     }
     // A pasted value may be `code#state`; split it. Lenient state check: verify only
@@ -367,7 +367,7 @@ export class OAuthStrategy implements AuthenticationStrategy {
       providerId: ctx.providerId,
       method: this.method,
       message: "OAuth state mismatch — aborting (possible CSRF).",
-      recovery: `run: rune login ${ctx.providerId}`,
+      recovery: `run: will login ${ctx.providerId}`,
     });
   }
 

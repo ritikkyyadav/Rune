@@ -177,7 +177,7 @@ export function modeInfo(mode?: string): ModeInfo {
         // behaviour, and 1st gear is literally "every action asks first"; this
         // is its opposite, said the same way.
         desc: "never asks first",
-        detail: "Rune acts without permission prompts; the OS sandbox is unchanged (see /sandbox).",
+        detail: "Will acts without permission prompts; the OS sandbox is unchanged (see /sandbox).",
         paint: warn,
         loud: true,
       };
@@ -196,7 +196,7 @@ export function modeInfo(mode?: string): ModeInfo {
         // The sentence still exists in `detail`, where /status and the mode
         // switch can spell it out on request.
         detail:
-          "Rune acts without permission prompts inside the sandbox; a watcher above it stops work that did not come from you.",
+          "Will acts without permission prompts inside the sandbox; a watcher above it stops work that did not come from you.",
         paint: warn,
         loud: false,
       };
@@ -206,7 +206,7 @@ export function modeInfo(mode?: string): ModeInfo {
         label: "1st gear",
         arrows: ladder(1),
         desc: "every action asks first",
-        detail: "Rune asks before writing or running.",
+        detail: "Will asks before writing or running.",
         paint: quiet,
         loud: false,
       };
@@ -588,7 +588,7 @@ export function browserModeBanner(enabled: boolean): string {
     ? stateBanner(
         glyph("verified"),
         "browser on",
-        "Rune can drive a headless, isolated browser (Playwright MCP) -- navigate, read, fill, click. First use fetches @playwright/mcp, and a managed Chromium if none is installed.",
+        "Will can drive a headless, isolated browser (Playwright MCP) -- navigate, read, fill, click. First use fetches @playwright/mcp, and a managed Chromium if none is installed.",
         "(/browser off to disable)",
         ok,
       )
@@ -1724,7 +1724,7 @@ export function renderMemoryPanel(
   const lines: string[] = [];
 
   lines.push(
-    `${PAD}${bold(text("System memory"))}   ${faint("a guide Rune tailors to -- it never overrides what you ask")}`,
+    `${PAD}${bold(text("System memory"))}   ${faint("a guide Will tailors to -- it never overrides what you ask")}`,
   );
   const empty = !v.content.trim();
   lines.push(
@@ -1737,7 +1737,7 @@ export function renderMemoryPanel(
   lines.push("");
 
   if (empty) {
-    lines.push(`${PAD}${muted("Rune hasn't learned about you yet.")}`);
+    lines.push(`${PAD}${muted("Will hasn't learned about you yet.")}`);
     lines.push(
       `${PAD}${faint("Refresh to learn from recent sessions, add a note, or write it yourself.")}`,
     );

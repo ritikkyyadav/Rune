@@ -223,7 +223,7 @@ describe("MCP OAuth 2.1 flow", () => {
 
     const result = await client.callTool("search", { query: "revoked" });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("rune mcp login mocknotion");
+    expect(result.content[0].text).toContain("will mcp login mocknotion");
     expect(client.needsAuthentication).toBe(true);
     expect(events.some((e) => e.type === "server-needs-auth")).toBe(true);
     // The tools are gone, the process is fine.

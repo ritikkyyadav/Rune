@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────
-#  Rune — Release builder
+#  Will — Release builder
 #  Compiles the CLI into self-contained, standalone executables for each
 #  platform via `bun build --compile`, so end users can download ONE file and
 #  run it — no Bun, no source tree, no install step required.
@@ -37,7 +37,7 @@ BUN="${BUN:-$( [ -x "$HOME/.bun/bin/bun" ] && echo "$HOME/.bun/bin/bun" || comma
 . "$ROOT/scripts/version.sh"
 BUILD_VERSION="$(rune_version)"
 
-echo "  Rune release builder"
+echo "  Will release builder"
 echo "  ─────────────────────"
 echo "  entry   : $ENTRY"
 echo "  out     : $OUT"

@@ -30,7 +30,7 @@ def main(out):
             RUNE_TERMINAL_BACKGROUND="#0e1016", RUNE_TERMINAL_FOREGROUND="#d6dae3")
         session.screen = ColorScreen(40, 120)
         session.stream = ColorStream(session.screen)
-        session.wait_for(["r u n e"], timeout=30)
+        session.wait_for(["w i l l"], timeout=30)
         session.send(hero.PROMPT)
         session.send(rig.CR)
         deadline = time.monotonic() + 60

@@ -48,7 +48,7 @@ import { validateAgainstSchema } from "./validate";
  * TUI's status line, a headless run's log and the model's tool results.
  */
 export function signInHint(serverName: string): string {
-  return `/connectors ${serverName} in a session, or rune mcp login ${serverName}`;
+  return `/connectors ${serverName} in a session, or will mcp login ${serverName}`;
 }
 
 /** A JSON-RPC error returned by the server (the server is alive — it answered). */

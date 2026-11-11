@@ -169,7 +169,7 @@ export class CloudChainStrategy implements AuthenticationStrategy {
       });
     }
     ctx.log?.(`Found ${ctx.preset.label} credentials: ${cred.meta?.detail ?? "resolved"}`);
-    ctx.log?.("Nothing was stored — Rune reads your cloud credentials at request time.");
+    ctx.log?.("Nothing was stored — Will reads your cloud credentials at request time.");
     return cred;
   }
 

@@ -655,7 +655,7 @@ export async function runAcp(values: Record<string, unknown> = {}): Promise<void
     typeof values.workspace === "string"
       ? values.workspace
       : (process.env.RUNE_WORKSPACE ?? process.cwd());
-  process.stderr.write(`rune acp — ACP ${ACP_PROTOCOL_VERSION}, workspace ${workspace}\n`);
+  process.stderr.write(`will acp — ACP ${ACP_PROTOCOL_VERSION}, workspace ${workspace}\n`);
   const server = new AcpServer(workspace);
   // Both ways out: the editor closes our stdin, or it signals us. Either way
   // the session engines this process spawned go with it.

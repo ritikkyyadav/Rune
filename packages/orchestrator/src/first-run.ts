@@ -87,7 +87,7 @@ export const SETUP_STEPS: readonly SetupStep[] = [
     id: "provider",
     label: "provider",
     question: "Which provider?",
-    hint: "the host Rune sends work to",
+    hint: "the host Will sends work to",
     tomlPath: "llm.defaultProvider",
     empty: "not chosen",
   },

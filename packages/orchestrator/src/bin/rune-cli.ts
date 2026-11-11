@@ -313,7 +313,7 @@ function providerHelpSummary(): string {
   const shown = 6;
   const lead = ids.slice(0, shown).join("|");
   const rest = ids.length - shown;
-  return rest > 0 ? `${lead} and ${rest} more — see \`rune providers\`` : lead;
+  return rest > 0 ? `${lead} and ${rest} more — see \`will providers\`` : lead;
 }
 
 if (values.help) {
@@ -321,39 +321,39 @@ if (values.help) {
     terminalText(
       `\n  ${PRODUCT_LABEL} — AI coding agent\n\n` +
         `  Usage:\n` +
-        `    rune                          Start the console — offers to resume recent work\n` +
-        `    rune --new                    Skip the picker and start a fresh session\n` +
-        `    rune resume [sessionId]       Resume a session (no id → interactive picker)\n` +
-        `    rune list [--all]             List stored sessions (--all includes archived)\n` +
-        `    rune export <sessionId>       Export a session transcript\n` +
-        `    rune detach "<prompt>"        Start a background run that survives this terminal (--worktree isolates it)\n` +
-        `    rune attach [session|latest]  Reattach to a detached run — replay, live-stream, Ctrl+C detaches again\n` +
-        `    rune attach ws://host:port    Attach to a remote \`rune serve\` (--token or RUNE_SERVE_TOKEN, --prompt runs a turn)\n` +
-        `    rune serve [--status]         The engine as a server for \`rune attach ws://\` and the SDK; --status describes a running one (--keep-hosts leaves session engines up)\n` +
-        `    rune serve --check            Prove THIS binary can host a session: one turn over the socket, no host left behind\n` +
-        `    rune pr <n> [--review]        Check a pull request out into its own worktree and start on it (--brief prints the brief)\n` +
-        `    rune acp                      Agent Client Protocol server on stdio — for Zed and other ACP editors (docs/editors.md)\n` +
-        `    rune login [provider]         Authenticate a provider — API key, or OAuth where supported (--method, --no-browser, --migrate)\n` +
-        `    rune logout <provider>        Remove a provider's stored key/OAuth from the secure store\n` +
-        `    rune providers                List providers, their auth method, and credential status\n` +
-        `    rune use <provider> [model]   Set the active provider (+ model) for new sessions\n` +
-        `    rune models [provider]        List a provider's models (live discovery, static fallback)\n` +
-        `    rune doctor                   Health: incidents, crash sentinel, provider routes + quota windows, rune-tools, build freshness\n` +
-        `    rune upgrade [--check]        Install the latest release (checksum-verified); --check only reports\n` +
+        `    will                          Start the console — offers to resume recent work\n` +
+        `    will --new                    Skip the picker and start a fresh session\n` +
+        `    will resume [sessionId]       Resume a session (no id → interactive picker)\n` +
+        `    will list [--all]             List stored sessions (--all includes archived)\n` +
+        `    will export <sessionId>       Export a session transcript\n` +
+        `    will detach "<prompt>"        Start a background run that survives this terminal (--worktree isolates it)\n` +
+        `    will attach [session|latest]  Reattach to a detached run — replay, live-stream, Ctrl+C detaches again\n` +
+        `    will attach ws://host:port    Attach to a remote \`will serve\` (--token or RUNE_SERVE_TOKEN, --prompt runs a turn)\n` +
+        `    will serve [--status]         The engine as a server for \`will attach ws://\` and the SDK; --status describes a running one (--keep-hosts leaves session engines up)\n` +
+        `    will serve --check            Prove THIS binary can host a session: one turn over the socket, no host left behind\n` +
+        `    will pr <n> [--review]        Check a pull request out into its own worktree and start on it (--brief prints the brief)\n` +
+        `    will acp                      Agent Client Protocol server on stdio — for Zed and other ACP editors (docs/editors.md)\n` +
+        `    will login [provider]         Authenticate a provider — API key, or OAuth where supported (--method, --no-browser, --migrate)\n` +
+        `    will logout <provider>        Remove a provider's stored key/OAuth from the secure store\n` +
+        `    will providers                List providers, their auth method, and credential status\n` +
+        `    will use <provider> [model]   Set the active provider (+ model) for new sessions\n` +
+        `    will models [provider]        List a provider's models (live discovery, static fallback)\n` +
+        `    will doctor                   Health: incidents, crash sentinel, provider routes + quota windows, rune-tools, build freshness\n` +
+        `    will upgrade [--check]        Install the latest release (checksum-verified); --check only reports\n` +
         `      --channel stable            The newest release that has been out seven days\n` +
         `      --to <version>              Install that release, older or newer\n` +
         `      --rollback                  Swap back to the build kept as .backup (again to undo)\n` +
-        `    rune tools-smoke              Verify the native tool executor end to end (write/read/edit/bash)\n` +
-        `    rune incidents [sub]          Browse recorded failures — list | show <id> | top [--by-version] | export\n` +
-        `    rune audit [session|last]     One page on a session: plan with evidence, log, safety decisions, held steps, cost\n` +
+        `    will tools-smoke              Verify the native tool executor end to end (write/read/edit/bash)\n` +
+        `    will incidents [sub]          Browse recorded failures — list | show <id> | top [--by-version] | export\n` +
+        `    will audit [session|last]     One page on a session: plan with evidence, log, safety decisions, held steps, cost\n` +
         `                                  --record prints the Decision Record instead: objective, decision, how we got here\n` +
-        `    rune cost [session|last]      Run economics: completions split work vs governance, fresh tokens per call, cache ratio, list estimate\n` +
-        `    rune evolve [sub]             Self-evolution — status | scorecard [--by model|workspace] [--days N] | lessons | tune | gardener [--run]\n` +
-        `    rune memory [sub]             What Rune remembers about you — show | forget <id> | pin <id> | clear\n` +
+        `    will cost [session|last]      Run economics: completions split work vs governance, fresh tokens per call, cache ratio, list estimate\n` +
+        `    will evolve [sub]             Self-evolution — status | scorecard [--by model|workspace] [--days N] | lessons | tune | gardener [--run]\n` +
+        `    will memory [sub]             What Will remembers about you — show | forget <id> | pin <id> | clear\n` +
         `                                  restore [--from <stamp>] puts a kept copy of your profile back; backups lists them\n` +
-        `    rune notebook [sub]           Learned tactics notebook — list | show <id> | rm <id> | export\n` +
-        `    rune skill [sub]              Your own skills — add <path> [--user] | list | remove <name>\n` +
-        `    rune telemetry [sub]          Opt-in diagnostics — status | on | off | preview | reset (off by default)\n\n` +
+        `    will notebook [sub]           Learned tactics notebook — list | show <id> | rm <id> | export\n` +
+        `    will skill [sub]              Your own skills — add <path> [--user] | list | remove <name>\n` +
+        `    will telemetry [sub]          Opt-in diagnostics — status | on | off | preview | reset (off by default)\n\n` +
         `  Export options:\n` +
         `    --format md|json             Output format (default: md)\n` +
         `    --sign                       Sign the export with Ed25519\n` +
@@ -511,7 +511,7 @@ if (command === "memory") {
 
   if (isWithdrawnCadence(sub)) {
     out(`  ${MEMORY_CADENCE_REFUSAL}`);
-    out("  rune memory off | auto | manual");
+    out("  will memory off | auto | manual");
     process.exit(1);
   }
   {
@@ -557,7 +557,7 @@ if (command === "memory") {
 
   if (sub === "forget") {
     if (!arg) {
-      out("  usage: rune memory forget <id>");
+      out("  usage: will memory forget <id>");
       process.exit(1);
     }
     out(store.remove(arg) ? `  forgotten: ${arg}` : `  no memory with id ${arg}`);
@@ -565,7 +565,7 @@ if (command === "memory") {
   }
   if (sub === "pin" || sub === "unpin") {
     if (!arg) {
-      out(`  usage: rune memory ${sub} <id>`);
+      out(`  usage: will memory ${sub} <id>`);
       process.exit(1);
     }
     const entry = store.setPinned(arg, sub === "pin");
@@ -597,7 +597,7 @@ if (command === "memory") {
       for (const q of held) out(`    ${q.id}  ${q.rule}  ${q.path}`);
       out("");
       out("  read them first — they are plain JSON — then:");
-      out("  rune memory resign <id> [<id>…]   |   rune memory resign --all");
+      out("  will memory resign <id> [<id>…]   |   will memory resign --all");
       out("");
       process.exit(0);
     }
@@ -622,7 +622,7 @@ if (command === "memory") {
       if (!backups.length) out("  No kept copies of the profile yet.");
       for (const b of backups) out(`  ${b.stamp}  ${b.bytes} bytes  ${b.path}`);
       out("");
-      out("  rune memory restore [--from <stamp|path>]");
+      out("  will memory restore [--from <stamp|path>]");
       out("");
       process.exit(0);
     }
@@ -648,8 +648,8 @@ if (command === "memory") {
   if (mode === "off") {
     out("");
     out("  Nothing is read, written or remembered between sessions.");
-    out("  turn it on:  rune memory auto   (Rune decides when to update)");
-    out("               rune memory manual (only `rune memory update` changes it)");
+    out("  turn it on:  will memory auto   (Will decides when to update)");
+    out("               will memory manual (only `will memory update` changes it)");
     out("");
     process.exit(0);
   }
@@ -663,16 +663,16 @@ if (command === "memory") {
   const held = store.quarantined();
   if (held.length) {
     out(
-      `  ${held.length} entr${held.length === 1 ? "y is" : "ies are"} quarantined and NOT deleted — \`rune memory resign\` lists them`,
+      `  ${held.length} entr${held.length === 1 ? "y is" : "ies are"} quarantined and NOT deleted — \`will memory resign\` lists them`,
     );
     out("");
   }
   if (promoted.length === 0) {
     if (mode === "manual") {
-      out("  Nothing yet. In manual mode Rune learns only when you ask it to:");
-      out("  `rune memory update` (or /memory update in a session).");
+      out("  Nothing yet. In manual mode Will learns only when you ask it to:");
+      out("  `will memory update` (or /memory update in a session).");
     } else {
-      out("  Nothing yet. Rune learns from what you say and what checks prove,");
+      out("  Nothing yet. Will learns from what you say and what checks prove,");
       out("  at the end of each run — never from its own account of what it did.");
     }
   }
@@ -708,10 +708,10 @@ if (command === "memory") {
     );
   }
   out("");
-  out("  rune memory show | forget <id> | pin <id> | unpin <id> | clear");
-  out("  rune memory update [focus] | rune memory off | auto | manual");
-  out("  rune memory restore [--from <stamp|path>] | rune memory backups");
-  out("  rune memory resign [<id>… | --all]   (after a lost or rotated key)");
+  out("  will memory show | forget <id> | pin <id> | unpin <id> | clear");
+  out("  will memory update [focus] | will memory off | auto | manual");
+  out("  will memory restore [--from <stamp|path>] | will memory backups");
+  out("  will memory resign [<id>… | --all]   (after a lost or rotated key)");
   out("");
   process.exit(0);
 }
@@ -1051,12 +1051,12 @@ function applyTerminalTheme(): void {
 // NO — a bare Enter, a pipe, or any non-"yes" answer leaves telemetry off.
 async function askTelemetryConsent(): Promise<boolean> {
   process.stdout.write(
-    `\n  ${bold(text("Help improve Rune?"))}\n` +
+    `\n  ${bold(text("Help improve Will?"))}\n` +
       `  ${dim("Send anonymous, redacted diagnostics — crash/error reports and a daily usage")}\n` +
       `  ${dim("heartbeat — so bugs get fixed before the next release. Off unless you say yes.")}\n\n` +
       `  ${faint("· No file contents, prompts, IP address, or device id — ever.")}\n` +
-      `  ${faint("· Inspect the exact payloads any time:")} ${info("rune telemetry preview")}\n` +
-      `  ${faint("· Change your mind any time:")} ${info("rune telemetry on|off")}\n\n`,
+      `  ${faint("· Inspect the exact payloads any time:")} ${info("will telemetry preview")}\n` +
+      `  ${faint("· Change your mind any time:")} ${info("will telemetry on|off")}\n\n`,
   );
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   try {
@@ -1077,18 +1077,18 @@ async function main() {
   // Rename migration: RUNE_* env → RUNE_*, ~/.alan → ~/.rune (once, with a note).
   adoptLegacyEnv();
   const homeMigrationNote = migrateLegacyHome();
-  if (homeMigrationNote) console.error(`  ${dim(`rune: ${homeMigrationNote}`)}`);
+  if (homeMigrationNote) console.error(`  ${dim(`will: ${homeMigrationNote}`)}`);
   // Staying current: one line, from cache, never a network wait at startup.
   // The refresh that feeds it runs detached below, after the one-shot check.
   const { cachedUpdateNag, refreshUpdateCheck } = await import("./upgrade-cli");
   const updateNag = cachedUpdateNag();
-  if (updateNag) console.error(`  ${dim(`rune: ${updateNag}`)}`);
+  if (updateNag) console.error(`  ${dim(`will: ${updateNag}`)}`);
   const dataDir = ensureDataDir();
   const toolsLookup = await findToolsBinary();
   const toolsBinary = toolsLookup.path;
   if (!toolsLookup.found) {
     console.error(
-      `  ${vermillion("⚠")} ${dim("rune-tools binary not found — set RUNE_TOOLS_BIN, re-run scripts/install.sh, or `cargo build --release -p rune-tools`; file and shell tools will fail until then (`rune doctor` shows what was searched).")}`,
+      `  ${vermillion("⚠")} ${dim("rune-tools binary not found — set RUNE_TOOLS_BIN, re-run scripts/install.sh, or `cargo build --release -p rune-tools`; file and shell tools will fail until then (`will doctor` shows what was searched).")}`,
     );
   }
   const workspaceRoot = (values.workspace as string | undefined) ?? process.cwd();
@@ -1113,7 +1113,7 @@ async function main() {
   // taken, so the last prompt arrives with a sentence saying what it is.
   if (!oneShotCommand && process.stdin.isTTY && memoryKeyNeedsRepair()) {
     console.error(
-      `  ${dim("rune: macOS will ask for your login password once more, for Rune's memory key — allow it, and it won't ask again")}`,
+      `  ${dim("will: macOS will ask for your login password once more, for Will's memory key — allow it, and it won't ask again")}`,
     );
     loadMemorySecret(false);
   }
@@ -1183,8 +1183,8 @@ async function main() {
       `\n  ${vermillion("✗")} ${bold(`Unknown --provider "${cliProvider}".`)}\n` +
         (near.length
           ? `  ${dim("Did you mean:")} ${near.join(", ")}\n`
-          : `  ${dim("Run `rune login` to see the providers this build knows.")}\n`) +
-        `  ${dim("`rune --provider <id>` takes a registry id;")} ${dim("`rune -p` is the same flag.")}\n\n`,
+          : `  ${dim("Run `will login` to see the providers this build knows.")}\n`) +
+        `  ${dim("`will --provider <id>` takes a registry id;")} ${dim("`will -p` is the same flag.")}\n\n`,
     );
     process.exit(1);
   }
@@ -1195,7 +1195,7 @@ async function main() {
   // and one that explains itself.
   if (selection.unknownSaved) {
     process.stderr.write(
-      `  ${dim(`Provider "${selection.unknownSaved}" is no longer in this build's registry; using ${selection.provider}. Run \`rune login\` to pick another.`)}\n`,
+      `  ${dim(`Provider "${selection.unknownSaved}" is no longer in this build's registry; using ${selection.provider}. Run \`will login\` to pick another.`)}\n`,
     );
   }
 
@@ -1490,11 +1490,11 @@ async function main() {
       }
       if (archivedCount > 0) {
         console.log(
-          `\n  ${dim(`+ ${archivedCount} archived/deleted — `)}${dim("rune list --all")}`,
+          `\n  ${dim(`+ ${archivedCount} archived/deleted — `)}${dim("will list --all")}`,
         );
       }
       console.log(
-        `\n  ${dim("Resume: ")}${cyanotype("rune resume")}${dim(" (picker) or ")}${cyanotype("rune resume <id>")}\n`,
+        `\n  ${dim("Resume: ")}${cyanotype("will resume")}${dim(" (picker) or ")}${cyanotype("will resume <id>")}\n`,
       );
     }
     engine.close();
@@ -1505,7 +1505,7 @@ async function main() {
     const sessionId = positionals[1];
     if (!sessionId) {
       process.stderr.write(
-        `  ${vermillion("✕")} Usage: rune export <sessionId> [--format md|json] [--sign] [--out <path>]\n`,
+        `  ${vermillion("✕")} Usage: will export <sessionId> [--format md|json] [--sign] [--out <path>]\n`,
       );
       engine.close();
       process.exit(1);
@@ -2256,13 +2256,13 @@ async function main() {
     ["/providers", "List providers"],
     ["/keys", "Manage API keys"],
     ["/mcp", "MCP connectors — health, tool count · reconnect <server>"],
-    ["/team", "Other Rune instances in this repo — status · send · claim"],
+    ["/team", "Other Will instances in this repo — status · send · claim"],
     ["/skills", "Browse & search skills"],
     ["/research", "Research — propose a plan, then a cited report"],
     ["/deepresearch", "Deep research — multi-round, long-form"],
     ["/cost", "Session cost"],
     ["/compress", "Summarize & shrink context"],
-    ["/undo", "Revert the last Rune auto-commit ([git] autoCommit)"],
+    ["/undo", "Revert the last Will auto-commit ([git] autoCommit)"],
     ["/interactive", "Live dashboard from the last report (auto on|off · open)"],
     ["/memory", "System memory — your evergreen profile (update/add/edit/cadence)"],
     ["/notebook", "Learned tactics active for this workspace"],
@@ -2272,7 +2272,7 @@ async function main() {
     ["/browser", "Agent web browser — on | off (Playwright, headless)"],
     ["/rewind", "Roll back the conversation"],
     ["/help", "Show all commands"],
-    ["/quit", "Exit Rune"],
+    ["/quit", "Exit Will"],
   ];
 
   function commandReferenceRows(commands: [string, string][]): string[] {
@@ -2502,7 +2502,7 @@ async function main() {
     const mem = engine.getSystemMemory();
     if (mem.mode !== "off" && !mem.content.trim()) {
       process.stdout.write(
-        `  ${faint("tip: Rune can learn your style over time —")} ${info("/memory")}\n`,
+        `  ${faint("tip: Will can learn your style over time —")} ${info("/memory")}\n`,
       );
     }
     // The cadence is withdrawn: a user who had chosen one hears it once, here,
@@ -2724,14 +2724,14 @@ async function main() {
           const back = who ? await engine.reconnectMcpServer(who) : false;
           process.stdout.write(
             who
-              ? `  ${back ? ok(glyph("verified")) : warn(glyph("retry"))} ${text(who)} ${muted(back ? "reconnected" : "did not come back — rune mcp doctor")}\n\n`
+              ? `  ${back ? ok(glyph("verified")) : warn(glyph("retry"))} ${text(who)} ${muted(back ? "reconnected" : "did not come back — will mcp doctor")}\n\n`
               : `  ${muted("usage: /connectors reconnect <server>")}\n\n`,
           );
         } else {
           const { mcpPanel } = await import("./ui/mcp-panel");
           process.stdout.write(`${mcpPanel(await engine.listMcpServers())}\n\n`);
           process.stdout.write(
-            `  ${muted("connect one:")} ${text("rune mcp add github")} ${muted("from a shell, or /connectors in the full-screen session")}\n\n`,
+            `  ${muted("connect one:")} ${text("will mcp add github")} ${muted("from a shell, or /connectors in the full-screen session")}\n\n`,
           );
         }
         showPrompt();
@@ -2761,7 +2761,7 @@ async function main() {
         );
         if (total === 0) {
           process.stdout.write(
-            `    ${muted("None found. Add one with ")}${info("rune skill add <path>")}${muted(".")}\n\n`,
+            `    ${muted("None found. Add one with ")}${info("will skill add <path>")}${muted(".")}\n\n`,
           );
         } else {
           // Where each of YOUR skills came from — the loader files both
@@ -2921,7 +2921,7 @@ async function main() {
         const printTable = () => {
           process.stdout.write(
             `  ${bold(text("API keys"))} ${faint("· saved to ~/.rune/secrets.json, applied live")}\n` +
-              `  ${faint("· OAuth & OS-keychain storage:")} ${info("rune login <provider>")} ${faint("· status:")} ${info("rune providers")}\n\n`,
+              `  ${faint("· OAuth & OS-keychain storage:")} ${info("will login <provider>")} ${faint("· status:")} ${info("will providers")}\n\n`,
           );
           for (const r of engine.getProviderStatus()) {
             const hasKey = r.hasKey;
@@ -3153,7 +3153,7 @@ async function main() {
             process.stdout.write(
               `  ${green("✓")} ${text(`autonomous dashboards ${on ? "on" : "off"}`)} ${faint(
                 on
-                  ? "— Rune builds one when an answer is data-heavy"
+                  ? "— Will builds one when an answer is data-heavy"
                   : "— dashboards only when you ask (/interactive)",
               )}\n\n`,
             );
@@ -3206,7 +3206,7 @@ async function main() {
         const entries = engine.getNotebookEntries(10);
         if (entries.length === 0) {
           process.stdout.write(
-            `  ${dim("Notebook is empty for this workspace — Rune fills it as it verifies how your repos work.")}\n\n`,
+            `  ${dim("Notebook is empty for this workspace — Will fills it as it verifies how your repos work.")}\n\n`,
           );
         } else {
           process.stdout.write(`\n  ${dim("§ NOTEBOOK — active for this workspace")}\n\n`);
@@ -3216,7 +3216,7 @@ async function main() {
             );
           }
           process.stdout.write(
-            `\n  ${dim("manage: rune notebook [show <id>|rm <id>|export]")}\n\n`,
+            `\n  ${dim("manage: will notebook [show <id>|rm <id>|export]")}\n\n`,
           );
         }
         showPrompt();
@@ -3240,8 +3240,8 @@ async function main() {
           });
           process.stdout.write(
             id
-              ? `  ${green("✦")} ${text("Logged with the current flight trail.")} ${faint(`· rune incidents show ${id.slice(-8)}`)}\n\n`
-              : `  ${dim("Could not record — see rune doctor.")}\n\n`,
+              ? `  ${green("✦")} ${text("Logged with the current flight trail.")} ${faint(`· will incidents show ${id.slice(-8)}`)}\n\n`
+              : `  ${dim("Could not record — see will doctor.")}\n\n`,
           );
         }
         showPrompt();
@@ -3403,7 +3403,7 @@ async function main() {
             `  ${dim("Nothing is read, written or remembered between sessions.")}\n`,
           );
           process.stdout.write(
-            `  ${faint("turn it on: /memory auto (Rune decides when to update) · /memory manual (only /memory update)")}\n\n`,
+            `  ${faint("turn it on: /memory auto (Will decides when to update) · /memory manual (only /memory update)")}\n\n`,
           );
           showPrompt();
           return;
@@ -3413,7 +3413,7 @@ async function main() {
         );
         const last = mem.meta.updatedAt ? relTime(mem.meta.updatedAt) : "never";
         const refreshed = mem.meta.lastRefresh
-          ? `${relTime(mem.meta.lastRefresh.at)} (${mem.meta.lastRefresh.origin === "agent" ? "by Rune" : "by you"})`
+          ? `${relTime(mem.meta.lastRefresh.at)} (${mem.meta.lastRefresh.origin === "agent" ? "by Will" : "by you"})`
           : mem.meta.lastReflectedAt
             ? relTime(mem.meta.lastReflectedAt)
             : "never";
@@ -3424,7 +3424,7 @@ async function main() {
         if (migrated) process.stdout.write(`  ${dim(migrated.note)}\n`);
         process.stdout.write("\n");
         if (!mem.content.trim()) {
-          process.stdout.write(`  ${dim("Empty — Rune hasn't built your profile yet.")}\n`);
+          process.stdout.write(`  ${dim("Empty — Will hasn't built your profile yet.")}\n`);
           process.stdout.write(
             `  ${dim("Seed it with ")}${info("/memory update")}${dim(", jot a note with ")}${info("/memory add <…>")}${dim(".")}\n\n`,
           );
@@ -3480,7 +3480,7 @@ async function main() {
             }
             provs.forEach((p, i) => process.stdout.write(formatProviderLine(i + 1, p) + "\n"));
             process.stdout.write(`    ${warn("[t]")} ${faint("type provider/model directly")}\n\n`);
-            process.stdout.write(`  ${faint("subscriptions (ChatGPT):")} ${info("rune login")}\n`);
+            process.stdout.write(`  ${faint("subscriptions (ChatGPT):")} ${info("will login")}\n`);
 
             const a1 = (await ask(`  ${info("›")} `)).toLowerCase();
             if (a1 === "t" || a1 === "c") {
@@ -3533,7 +3533,7 @@ async function main() {
               if (row.source === "oauth" || row.source === "keychain") {
                 if (account.kind === "key" || account.kind === "env") {
                   process.stdout.write(
-                    `  ${dim(`note: the signed-in ${row.source} credential wins on the wire —`)} ${info(`rune logout ${chosen.id}`)} ${dim("to use API keys")}\n`,
+                    `  ${dim(`note: the signed-in ${row.source} credential wins on the wire —`)} ${info(`will logout ${chosen.id}`)} ${dim("to use API keys")}\n`,
                   );
                 }
               } else if (account.kind === "env" && accounts.some((x) => x.kind === "key")) {
@@ -4021,7 +4021,7 @@ async function main() {
                     .replace(/^-+|-+$/g, "")
                     .slice(0, 50) || "research";
                 const file = join(dir, `${new Date().toISOString().slice(0, 10)}-${slug}.md`);
-                const body = `# Research: ${plan.question}\n\n_Generated by Rune · ${new Date().toISOString()}_\n\n${report.markdown}\n`;
+                const body = `# Research: ${plan.question}\n\n_Generated by Will · ${new Date().toISOString()}_\n\n${report.markdown}\n`;
                 writeFileSync(file, body);
                 const shown = file.startsWith(workspaceRoot)
                   ? file.slice(workspaceRoot.length).replace(/^[/\\]/, "")

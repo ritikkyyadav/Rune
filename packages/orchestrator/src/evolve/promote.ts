@@ -90,8 +90,8 @@ export function renderConfigBlock(promotions: LedgerEntry[]): string {
   const lines: string[] = [START];
   if (promotions.length === 0) return "";
   lines.push(
-    `# ${promotions.length} promotion${promotions.length === 1 ? "" : "s"} from measured A/B wins. \`rune evolve revert\` removes the newest;`,
-    "# `rune evolve why <variant>` prints the evidence. Anything you write ABOVE the",
+    `# ${promotions.length} promotion${promotions.length === 1 ? "" : "s"} from measured A/B wins. \`will evolve revert\` removes the newest;`,
+    "# `will evolve why <variant>` prints the evidence. Anything you write ABOVE the",
     "# start marker is kept untouched; settings here win, because they come last.",
   );
   // Oldest first, so the newest promotion's values land last and win.
@@ -148,7 +148,7 @@ export function promote(variant: string, env: PromoteEnv = {}): PromoteResult {
 
   const halt = haltState(entries);
   if (halt.halted) {
-    refusals.push(`the loop is halted: ${halt.reason}. Clear it with \`rune evolve resume\`.`);
+    refusals.push(`the loop is halted: ${halt.reason}. Clear it with \`will evolve resume\`.`);
   }
 
   const pair = { control: configHash({}), treatment: configHash(variantConfig(id)) };
@@ -169,11 +169,11 @@ export function promote(variant: string, env: PromoteEnv = {}): PromoteResult {
       // Wherever `promote` runs: outside a checkout the current digest is
       // unknown, and "unknown" must not read as "nothing to check".
       refusals.push(
-        `the yardstick${env.yardstick ? ` at ${env.yardstick}` : ""} has never been blessed. Run \`rune evolve yardstick --bless\` once, in a checkout, to anchor it.`,
+        `the yardstick${env.yardstick ? ` at ${env.yardstick}` : ""} has never been blessed. Run \`will evolve yardstick --bless\` once, in a checkout, to anchor it.`,
       );
     } else if (env.yardstick && env.yardstick !== env.blessedYardstick) {
       refusals.push(
-        `the yardstick moved: tests/eval/** is at ${env.yardstick}, last blessed at ${env.blessedYardstick}. A loop that edits the eval suite and then promotes on the result is grading its own exam — re-baseline with \`rune evolve yardstick --bless\`.`,
+        `the yardstick moved: tests/eval/** is at ${env.yardstick}, last blessed at ${env.blessedYardstick}. A loop that edits the eval suite and then promotes on the result is grading its own exam — re-baseline with \`will evolve yardstick --bless\`.`,
       );
     }
   }

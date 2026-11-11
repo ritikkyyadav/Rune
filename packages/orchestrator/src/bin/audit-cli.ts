@@ -387,7 +387,7 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
   try {
     const id = resolveSession(sm, args[0]);
     if (!id) {
-      say(dim("  No session found. Usage: rune audit [sessionId|last]"));
+      say(dim("  No session found. Usage: will audit [sessionId|last]"));
       return 1;
     }
     const session = sm.getSession(id)!;
@@ -427,7 +427,7 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
     // ── Header ──
     say();
     say(
-      `  ${accent("Rune audit")} ${dim("·")} ${info(id)}${session.title ? `  ${text(session.title.slice(0, 70))}` : ""}`,
+      `  ${accent("Will audit")} ${dim("·")} ${info(id)}${session.title ? `  ${text(session.title.slice(0, 70))}` : ""}`,
     );
     say(
       `  ${dim(session.workspaceRoot)} ${dim("·")} ${text(session.model)}${session.provider ? dim(` on ${session.provider}`) : ""} ${dim("·")} ${dim(`${shortTs(session.createdAt)} → ${shortTs(session.updatedAt)}`)} ${dim("·")} ${dim(`${num(rows.length)} events`)}`,
@@ -999,7 +999,7 @@ export async function runAudit(args: string[], values: Record<string, unknown>):
       }
     }
     say();
-    say(dim(`  full record: rune export ${id} --format md`));
+    say(dim(`  full record: will export ${id} --format md`));
     say();
     return 0;
   } finally {

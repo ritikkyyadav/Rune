@@ -1,6 +1,6 @@
 # Getting started
 
-Rune is a coding agent that runs in your terminal. It stores sessions locally and works with
+Will is a coding agent that runs in your terminal. It stores sessions locally and works with
 hosted providers or local models through Ollama.
 
 ## Installation
@@ -26,11 +26,11 @@ The installers download the latest public GitHub release and verify each asset a
 You can also use the repository URLs directly:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/ritikkyyadav/Rune/main/scripts/web-install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ritikkyyadav/Will/main/scripts/web-install.sh | bash
 ```
 
 ```powershell
-irm https://raw.githubusercontent.com/ritikkyyadav/Rune/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/ritikkyyadav/Will/main/scripts/install.ps1 | iex
 ```
 
 ### From source
@@ -38,15 +38,15 @@ irm https://raw.githubusercontent.com/ritikkyyadav/Rune/main/scripts/install.ps1
 Install [Bun](https://bun.sh) and [Rust](https://rustup.rs), then run:
 
 ```sh
-gh repo clone ritikkyyadav/Rune
-cd Rune
+gh repo clone ritikkyyadav/Will
+cd Will
 bash scripts/install.sh
 export PATH="$HOME/.rune/bin:$PATH"
-rune
+will
 ```
 
-Add the PATH line to `~/.zshrc` or `~/.bashrc` if required. The source installer compiles Rune
-and its native tools into `~/.rune/bin`. It runs `rune serve --check` before promoting the
+Add the PATH line to `~/.zshrc` or `~/.bashrc` if required. The source installer compiles Will
+and its native tools into `~/.rune/bin`. It runs `will serve --check` before promoting the
 staged build.
 
 To run directly from the checkout:
@@ -54,16 +54,16 @@ To run directly from the checkout:
 ```sh
 bun install
 cargo build --release -p rune-tools
-./bin/rune
+./bin/will
 ```
 
 ### Check, update, or uninstall
 
 ```sh
-rune --version
-rune doctor
-rune tools-smoke
-rune upgrade
+will --version
+will doctor
+will tools-smoke
+will upgrade
 ```
 
 To uninstall, pass `--uninstall` to the POSIX installer or `-Uninstall` to the PowerShell
@@ -72,7 +72,7 @@ PATH behavior, signature verification, and Homebrew.
 
 ## First session
 
-Open a project and run `rune`. Setup walks you through choosing a provider and model.
+Open a project and run `will`. Setup walks you through choosing a provider and model.
 Describe the change you want, then review the edits and checks in the session.
 
 | Command    | Purpose                          |
@@ -93,10 +93,10 @@ controls; see [permissions](auto-mode.md) and [sandbox behavior](sandbox.md).
 To match the README screenshots:
 
 ```sh
-RUNE_THEME=rune-light RUNE_FINISH=matte rune
+RUNE_THEME=rune-light RUNE_FINISH=matte will
 ```
 
-Or choose Light and Matte in `/theme`. Rune saves both choices. You can set defaults in
+Or choose Light and Matte in `/theme`. Will saves both choices. You can set defaults in
 `~/.rune/config.toml` or the workspace's `.rune/config.toml`:
 
 ```toml
@@ -113,7 +113,7 @@ configuration defaults.
 Use `/login` for hosted providers. For a local Ollama server, after downloading a model:
 
 ```sh
-rune -p ollama -m llama3
+will -p ollama -m llama3
 ```
 
 Hosted credentials can also be supplied through provider environment variables such as
@@ -124,9 +124,9 @@ See the [provider reference](providers.md) for supported routes and setup.
 ## Sessions and automation
 
 ```sh
-rune --list
-rune --resume <session-id>
-rune -P "Explain how this project is structured"
+will --list
+will --resume <session-id>
+will -P "Explain how this project is structured"
 ```
 
 Use `--stream-json` for structured headless output. See [CI](ci.md) and

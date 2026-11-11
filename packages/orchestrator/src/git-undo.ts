@@ -110,7 +110,7 @@ export function undoLastRuneCommit(root: string): UndoResult {
   if (!isManagedCommitSubject(subject.out)) {
     return {
       ok: false,
-      reason: `HEAD is not a Rune-managed commit ("${subject.out.slice(0, 60)}") — nothing to undo`,
+      reason: `HEAD is not a Will-managed commit ("${subject.out.slice(0, 60)}") — nothing to undo`,
     };
   }
 
@@ -128,7 +128,7 @@ export function undoLastRuneCommit(root: string): UndoResult {
   if (!parent.ok)
     return {
       ok: false,
-      reason: "the Rune-managed commit is the only commit — cannot reset past it",
+      reason: "the Will-managed commit is the only commit — cannot reset past it",
     };
 
   const sha = git(root, ["rev-parse", "HEAD"]).out;

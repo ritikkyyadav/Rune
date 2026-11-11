@@ -207,7 +207,7 @@ export function runMissionsCommand(
         : [];
       if (match.length !== 1) {
         out(
-          `  ${danger("!")} ${id ? `no single plan matches "${id}"` : "usage: rune missions cancel <session-id>"}`,
+          `  ${danger("!")} ${id ? `no single plan matches "${id}"` : "usage: will missions cancel <session-id>"}`,
         );
         return 2;
       }
@@ -222,7 +222,7 @@ export function runMissionsCommand(
       return 0;
     }
     if (sub !== undefined && sub !== "list") {
-      out(dim("  Usage: rune missions [list | run | cancel <session-id>]"));
+      out(dim("  Usage: will missions [list | run | cancel <session-id>]"));
       return 2;
     }
     const plans = store.list();
@@ -230,7 +230,7 @@ export function runMissionsCommand(
     if (plans.length === 0) {
       out(
         dim(
-          '  No missions. Opt a headless run in with: rune -P "…" --resume-until 8h [--resume-budget 2]',
+          '  No missions. Opt a headless run in with: will -P "…" --resume-until 8h [--resume-budget 2]',
         ),
       );
       out("");
@@ -263,7 +263,7 @@ export function runMissionsCommand(
     }
     out("");
     out(
-      dim("  rune missions run (in a workspace) continues what is due · rune missions cancel <id>"),
+      dim("  will missions run (in a workspace) continues what is due · will missions cancel <id>"),
     );
     out("");
     return 0;

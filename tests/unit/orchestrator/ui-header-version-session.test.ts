@@ -23,7 +23,7 @@ describe("the header's version is the product number, not the build marker", () 
   });
 
   test("the pinned header reads v0.1.1 for a dev build", () => {
-    const row = strip(header({ name: "Rune", version: "0.1.1-dev+6b9afcf", workspace: "~/x" }));
+    const row = strip(header({ name: "Will", version: "0.1.1-dev+6b9afcf", workspace: "~/x" }));
     expect(row).toContain("v0.1.1");
     expect(row).not.toContain("dev");
     expect(row).not.toContain("6b9afcf");
@@ -35,7 +35,7 @@ describe("the session's tail: off the header, on the way out", () => {
   const id = "0192a7b3-4c5d-7e6f-8a9b-0c1d2e3f4a5b";
 
   test("the header carries the version and nothing after it (2026-09-26)", () => {
-    const block = strip(header({ name: "Rune", version: "0.1.1", workspace: "~/x", session: id }));
+    const block = strip(header({ name: "Will", version: "0.1.1", workspace: "~/x", session: id }));
     const row = block.split("\n").filter((line) => line.trim())[0]!;
     expect(sessionTail(id)).toBe("2e3f4a5b");
     expect(block).not.toContain("2e3f4a5b");
@@ -45,7 +45,7 @@ describe("the session's tail: off the header, on the way out", () => {
   test("the exit line offers the session back by its tail, never the head", () => {
     const line = strip(farewell(id));
     expect(line).toContain("Goodbye.");
-    expect(line).toContain("rune resume 2e3f4a5b");
+    expect(line).toContain("will resume 2e3f4a5b");
     // Never the head: two sessions opened in the same minute share it.
     expect(line).not.toContain("0192a7b3");
     // A discarded session is not offered back.

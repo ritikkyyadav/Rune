@@ -528,7 +528,7 @@ describe("memory/store — the key is gone", () => {
     expect(held.every((q) => q.rule === "integrity")).toBe(true);
     // The person is told which of the two things happened, and the move.
     expect(held[0]!.reason).toContain("no key");
-    expect(held[0]!.reason).toContain("rune memory resign");
+    expect(held[0]!.reason).toContain("will memory resign");
     // Every file is still there to `cat`.
     expect(readdirSync(join(dir, "entries")).length).toBe(5);
     // …and `/memory` reads the diary, so it says so without being asked twice.
@@ -561,7 +561,7 @@ describe("memory/store — the key is gone", () => {
     expect(readdirSync(join(dir, "entries")).length).toBe(6);
   });
 
-  it("`rune memory resign` brings back exactly what the person named", () => {
+  it("`will memory resign` brings back exactly what the person named", () => {
     const ids = seedFive();
     rmSync(join(dir, ".key"));
     forgetMemorySecretCache();

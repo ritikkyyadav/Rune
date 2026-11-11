@@ -1,5 +1,5 @@
-name: "Rune"
-description: "Run Rune on a pull request and post one comment with the review and its audit."
+name: "Will"
+description: "Run Will on a pull request and post one comment with the review and its audit."
 author: "Savoir"
 branding:
   icon: "git-pull-request"
@@ -8,28 +8,28 @@ branding:
 inputs:
   prompt:
     description: >-
-      What to ask Rune. Empty runs the default review prompt: read the diff,
+      What to ask Will. Empty runs the default review prompt: read the diff,
       keep a plan ledger, and separate what was verified from what was only
       inspected.
     required: false
     default: ""
   gear:
-    description: "Rune to run in — 1 guided, 2 workspace edits, 3 + sandboxed shell, 4 full autonomy."
+    description: "Gear to run in — 1 guided, 2 workspace edits, 3 + sandboxed shell, 4 full autonomy."
     required: false
     default: "3"
   version:
     description: >-
-      The Rune release to install (e.g. v0.3.0). Empty builds from the
+      The Will release to install (e.g. v0.3.0). Empty builds from the
       repository checked out at `source-path`, which is what this repo does
       because it IS the source.
     required: false
     default: ""
   source-path:
-    description: "Path to a Rune checkout to build from when `version` is empty."
+    description: "Path to a Will checkout to build from when `version` is empty."
     required: false
     default: "."
   workspace:
-    description: "The directory Rune works in."
+    description: "The directory Will works in."
     required: false
     default: "."
   pr:
@@ -64,9 +64,9 @@ runs:
 
     # A pinned release when one is named, and the checkout otherwise. The second
     # path is not a fallback for this repo — it is the normal case here, because
-    # a repo reviewing its own pull requests should review them with the Rune in
+    # a repo reviewing its own pull requests should review them with the Will in
     # the pull request, not with the last one that shipped.
-    - name: Install Rune
+    - name: Install Will
       id: install
       shell: bash
       env:
@@ -76,7 +76,7 @@ runs:
       run: |
         set -euo pipefail
         if [ -n "${RUNE_VERSION}" ]; then
-          echo "installing rune ${RUNE_VERSION}"
+          echo "installing Will ${RUNE_VERSION}"
           gh release download "${RUNE_VERSION}" \
             --repo "${GITHUB_REPOSITORY}" \
             --pattern "rune-*-$(uname -s | tr '[:upper:]' '[:lower:]')-*" \
@@ -85,7 +85,7 @@ runs:
           mv "${RUNNER_TEMP}"/rune/rune-* "${RUNNER_TEMP}/rune/rune"
           echo "rune-cmd=${RUNNER_TEMP}/rune/rune" >> "$GITHUB_OUTPUT"
         else
-          echo "building rune from ${RUNE_SOURCE}"
+          echo "building Will from ${RUNE_SOURCE}"
           ( cd "${RUNE_SOURCE}" && bun install --frozen-lockfile )
           # The native tool executor. Everything the agent does to a file or a
           # shell goes through it, so a review without it is a review that

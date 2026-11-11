@@ -1,3 +1,5 @@
+import { PRODUCT_NAME } from "./brand.js";
+
 // ─── The pane title: the one moving thing a terminal will actually show us ───
 //
 // Warp gives a branded icon and a live status badge to the CLI agents it knows,
@@ -367,19 +369,19 @@ export function titleText(
   mode: GlyphMode = TERMINAL_GLYPH_MODE,
   strip: TitleStrip = TERMINAL_TITLE_STRIP,
 ): string {
-  const name = project ? `Rune - ${project}` : "Rune";
+  const name = project ? `${PRODUCT_NAME} - ${project}` : PRODUCT_NAME;
   // A seven-bit terminal has no hair space to measure a road in.
   const road: TitleStrip = mode === "ascii" ? "cells" : strip;
   switch (state.kind) {
     case "idle":
       return name;
     case "waiting":
-      return "? Rune - waiting for you";
+      return `? ${PRODUCT_NAME} - waiting for you`;
     case "working": {
       // Past the threshold the block stops and the wait is stated. Below it, the
       // ragged gaps between token bursts are not worth reporting.
       if (state.quietMs >= TITLE_QUIET_AFTER_MS) {
-        return `${parkedPill(road)} Rune - quiet ${Math.floor(state.quietMs / 1000)}s`;
+        return `${parkedPill(road)} ${PRODUCT_NAME} - quiet ${Math.floor(state.quietMs / 1000)}s`;
       }
       return `${pill(pillStop(state.phase, road), mode, road)} ${name}`;
     }

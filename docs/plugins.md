@@ -25,9 +25,9 @@ Install the two examples that ship with the repository and look at what each
 one contributed:
 
 ```bash
-rune plugin add ./examples/plugins/rune-example-skills   # a SKILL.md, no code
-rune plugin add ./examples/plugins/rune-example-tools    # two sandboxed programs
-rune plugin list
+will plugin add ./examples/plugins/rune-example-skills   # a SKILL.md, no code
+will plugin add ./examples/plugins/rune-example-tools    # two sandboxed programs
+will plugin list
 ```
 
 Then, in a session, `/skills` lists `release-notes` attributed to
@@ -37,24 +37,24 @@ under the capability its manifest declared, and each confined to that capability
 by the operating system.
 
 Writing one is the same three steps in reverse: make a directory, put a
-`plugin.json` in it naming what it contributes, and `rune plugin add ./that-dir`.
+`plugin.json` in it naming what it contributes, and `will plugin add ./that-dir`.
 The manifest's `name` must equal the directory name. Uninstall with
-`rune plugin remove <name>`; keep it on disk but inert with
-`rune plugin disable <name>`.
+`will plugin remove <name>`; keep it on disk but inert with
+`will plugin disable <name>`.
 
 ---
 
 ## The index
 
-`rune plugin add ./path` has always worked. What did not exist was a way to
+`will plugin add ./path` has always worked. What did not exist was a way to
 **ask what exists** — so the index is one versioned JSON document, served raw
-from the repository, that `rune plugin search` reads and `rune plugin add
+from the repository, that `will plugin search` reads and `will plugin add
 <name>` resolves through.
 
 ```
-rune plugin search                    everything
-rune plugin search fmt                name, description and capability match
-rune plugin add rune-example-skills    resolved through the index, digest-checked
+will plugin search                    everything
+will plugin search fmt                name, description and capability match
+will plugin add rune-example-skills    resolved through the index, digest-checked
 ```
 
 ### The entry
@@ -105,7 +105,7 @@ manifest: sha256 over every file's workspace-relative path and bytes, sorted,
 with `plugin.json`'s own `integrity` field blanked first.
 
 It is verified against the **staged** tree, before installation. That timing is
-not incidental: `rune plugin add` stamps `name` and `source` into the manifest
+not incidental: `will plugin add` stamps `name` and `source` into the manifest
 and then recomputes the digest, so an installed tree legitimately hashes
 differently from the published one. There is exactly one moment where the two
 are comparable, and the check happens there. A mismatch prints both digests and
@@ -176,7 +176,7 @@ the index has no such name, the old npm path still applies.
 `permissions` is **disclosure, not enforcement**, and the CLI says so when it
 prints it: it tells you a bundle's hooks want to block tool calls and its
 connectors want three hosts, before you enable it. A hook is a shell command
-the plugin asked Rune to run and an MCP server is a process it asked Rune to
+the plugin asked Will to run and an MCP server is a process it asked Will to
 start; neither is contained, and a declaration is not a sandbox.
 
 `tools` is the exception, and the whole point of D6 v2: those declarations
@@ -196,7 +196,7 @@ once they run under one.
 A declared tool is a **program** — any language — spawned as a subprocess,
 wrapped by Seatbelt (macOS) or bubblewrap (Linux) with exactly the capability
 its manifest entry declares, speaking line-delimited JSON on stdio. Nothing is
-loaded into the Rune process; there is no path from a plugin's bytes to this
+loaded into the Will process; there is no path from a plugin's bytes to this
 process's heap.
 
 ```json
@@ -279,9 +279,9 @@ dead network.
 ### The protocol
 
 One JSON object per line, both directions. `stdout` is the channel; `stderr` is
-a diagnostic that Rune drains and keeps the tail of, never a result.
+a diagnostic that Will drains and keeps the tail of, never a result.
 
-**Tool → Rune**
+**Tool → Will**
 
 ```jsonc
 // first, immediately on start — before anything is asked of it
@@ -294,7 +294,7 @@ a diagnostic that Rune drains and keeps the tail of, never a result.
 {"type":"log","level":"info","message":"…"}          // debug log, never model context
 ```
 
-**Rune → tool**
+**Will → tool**
 
 ```jsonc
 {"type":"hello","protocol":1,"rune":"0.3.0","plugin":"acme","workspaceRoot":"/ws"}
@@ -322,7 +322,7 @@ allowUnsandboxedTools = ["acme-tools"]   # or true, for every plugin
 ```
 
 Turning it on means a third party's program runs with your full access and its
-declared capability is not enforced. Rune says so three times over: a
+declared capability is not enforced. Will says so three times over: a
 `[SECURITY]` log line, a startup notice, and the words "NOT sandboxed" in the
 tool description the model reads. A plan that could not be determined at all
 (no `rune-tools`, a parse failure) lands on the same side as "there is no
@@ -375,9 +375,9 @@ needs to earn its trust.
 Each installs from a local path and is listed in `plugins/index.json`:
 
 ```
-rune plugin add ./examples/plugins/rune-example-skills
-rune plugin add ./examples/plugins/rune-example-connector
-rune plugin add ./examples/plugins/rune-example-tools
+will plugin add ./examples/plugins/rune-example-skills
+will plugin add ./examples/plugins/rune-example-connector
+will plugin add ./examples/plugins/rune-example-tools
 ```
 
 The third one's programs deliberately validate **nothing** — `files.py` opens
@@ -391,11 +391,11 @@ permitted` while the same tools succeed inside their declared scope.
 
 ## Housekeeping
 
-`rune plugin list` prints what loaded **and what was refused**. Refusals used to
+`will plugin list` prints what loaded **and what was refused**. Refusals used to
 be computed on every scan and shown nowhere, so an installed-but-refused plugin
 looked exactly like one nobody had installed.
 
-`rune plugin disable <name>` keeps the bundle and stops its contributions.
+`will plugin disable <name>` keeps the bundle and stops its contributions.
 Because the manifest is part of the hashed tree, toggling recomputes the digest.
 
 `invalidatePlugins()` re-scans and re-runs every loader without a restart. All
@@ -406,7 +406,7 @@ partial refresh leaves a bundle half-installed.
 
 ## What is verified
 
-- `tests/integration/plugin-examples.test.ts` — `rune plugin add` run against
+- `tests/integration/plugin-examples.test.ts` — `will plugin add` run against
   both `examples/plugins/rune-example-skills` and
   `examples/plugins/rune-example-tools` in a temp workspace: name, `source` and
   integrity digest are stamped and re-verify; a directory that is not a plugin

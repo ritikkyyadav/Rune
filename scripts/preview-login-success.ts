@@ -8,9 +8,9 @@ const server = Bun.serve({
     const path = new URL(request.url).pathname;
     if (path === "/mobile") {
       return new Response(
-        '<!doctype html><meta charset="utf-8"><title>Rune mobile preview</title>' +
+        '<!doctype html><meta charset="utf-8"><title>Will mobile preview</title>' +
           "<style>body{margin:0}iframe{display:block;width:390px;height:844px;border:0}</style>" +
-          '<iframe title="Rune sign-in completion" src="/auth/callback"></iframe>',
+          '<iframe title="Will sign-in completion" src="/auth/callback"></iframe>',
         { headers: { "content-type": "text/html; charset=utf-8" } },
       );
     }
@@ -25,4 +25,4 @@ const server = Bun.serve({
     });
   },
 });
-console.log(`Rune login completion preview: http://127.0.0.1:${server.port}`);
+console.log(`Will login completion preview: http://127.0.0.1:${server.port}`);

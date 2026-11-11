@@ -38,7 +38,7 @@ export const MEMORY_UPDATE_TOOL_SCHEMA: ToolSchema = {
   name: "memory_update",
   version: "0.1.0",
   description:
-    "Refresh Rune's long-term profile of this user from recent sessions. Memory is in auto " +
+    "Refresh Will's long-term profile of this user from recent sessions. Memory is in auto " +
     "mode, so you decide when this is worth doing: call it when this session taught you " +
     "something durable about how the person works that a future session should already know. " +
     "Do NOT call it for ordinary task facts, for anything the user asked you to forget, or " +

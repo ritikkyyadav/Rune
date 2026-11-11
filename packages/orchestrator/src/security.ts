@@ -229,7 +229,7 @@ const INJECTION_PATTERNS: InjectionPattern[] = [
   // sandbox." — never "rules cannot bypass the classifier" in a design doc.
   {
     pattern:
-      /(?:^|[.!?:]\s*|\n\s*|\b(?:please|now|then|and|first|immediately|you\s+(?:must|should|need\s+to|have\s+to|will|can\s+now|may\s+now))\s+)(?:bypass|disable|override|turn\s+off|switch\s+off|circumvent)\s+(?:the\s+|all\s+|any\s+|your\s+|its\s+|rune['’]s\s+)?(?:safety|security|permission|policy|classifier|guardrail|sandbox|content\s+filter|safeguard|restriction)s?\b/i,
+      /(?:^|[.!?:]\s*|\n\s*|\b(?:please|now|then|and|first|immediately|you\s+(?:must|should|need\s+to|have\s+to|will|can\s+now|may\s+now))\s+)(?:bypass|disable|override|turn\s+off|switch\s+off|circumvent)\s+(?:the\s+|all\s+|any\s+|your\s+|its\s+|(?:rune|will)['’]s\s+)?(?:safety|security|permission|policy|classifier|guardrail|sandbox|content\s+filter|safeguard|restriction)s?\b/i,
     name: "safety_bypass",
     confidence: "high",
     family: "override",

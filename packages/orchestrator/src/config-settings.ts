@@ -103,7 +103,7 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
       "3d": "auto",
     },
     description:
-      "What Rune remembers between sessions. off = nothing is read or written · auto = Rune " +
+      "What Will remembers between sessions. off = nothing is read or written · auto = Will " +
       "decides when to update its memory · manual = only /memory update changes it. There is " +
       "no schedule: no value of this refreshes memory on a clock.",
     nameAliases: ["memory mode", "long-term memory", "remember", "profile"],
@@ -227,7 +227,7 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
       auto: "Auto mode -- a reviewer checks risky steps",
     },
     description:
-      "Which gear Rune runs in: 1 = guided (asks before writes and commands); 2 = workspace " +
+      "Which gear Will runs in: 1 = guided (asks before writes and commands); 2 = workspace " +
       "file edits proceed; 3 = also sandboxed commands and confined delegation; 4 = full " +
       "autonomy, never asks first; auto = a separate classifier reviews risky actions.",
     kind: "enum",
@@ -517,7 +517,7 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     kind: "text",
     placeholder: "auto | off | model | provider/model",
     description:
-      "Which model answers Rune's OWN calls — the compaction summarizer, the intent read, the " +
+      "Which model answers Will's OWN calls — the compaction summarizer, the intent read, the " +
       "sub-agent report repair — as opposed to your work. 'off' (default) runs them on the " +
       "session model; 'auto' picks the cheapest healthy connected route, which may be another " +
       "provider; a model id or 'provider/model' names one. Naming one explicitly also lets it " +
@@ -621,10 +621,17 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     kind: "text",
     placeholder: "boss | chief | your name | (empty for none)",
     description:
-      "What Rune calls you on the working row while it works -- a few of its lines carry an " +
+      "What Will calls you on the working row while it works -- a few of its lines carry an " +
       "address (`on it, boss`); with no callsign those lines drop it. At most sixteen " +
       "characters.",
-    nameAliases: ["call sign", "nickname", "name", "what rune calls me", "address"],
+    nameAliases: [
+      "call sign",
+      "nickname",
+      "name",
+      "what will calls me",
+      "what rune calls me",
+      "address",
+    ],
     validate: (v) =>
       v.length > 16 ? "keep it to sixteen characters -- a name, not a sentence" : undefined,
     live: true,

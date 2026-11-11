@@ -898,7 +898,7 @@ export async function serve(opts: ServeOptions = {}): Promise<{ stop: () => void
       : [loopbackOnly ? "127.0.0.1" : host];
 
   const url = `ws://${dialHosts[0]}:${boundPort}`;
-  console.log(`rune serve — protocol ${PROTOCOL_VERSION}`);
+  console.log(`will serve — protocol ${PROTOCOL_VERSION}`);
   console.log(`  listening  ${url}`);
   console.log(`  workspace  ${workspace}`);
   console.log(`  hosts      ${hostSpawnLabel(currentContext(import.meta.dir))}`);
@@ -925,7 +925,7 @@ export async function serve(opts: ServeOptions = {}): Promise<{ stop: () => void
       // are and the next `rune serve` reattaches.
       const left = pool.detachAll();
       if (left.length > 0) {
-        console.log(`\n${left.length} session host(s) left running; reattach with rune serve`);
+        console.log(`\n${left.length} session host(s) left running; reattach with will serve`);
       }
       return;
     }
@@ -943,11 +943,11 @@ export async function serve(opts: ServeOptions = {}): Promise<{ stop: () => void
 function printStatus(): void {
   const cfg = readServeConfig();
   if (!cfg) {
-    console.log("rune serve: not running (no ~/.rune/serve.json)");
+    console.log("will serve: not running (no ~/.rune/serve.json)");
     return;
   }
   const dialHost = cfg.host === "0.0.0.0" || cfg.host === "::" ? "127.0.0.1" : cfg.host;
-  console.log(`rune serve`);
+  console.log(`will serve`);
   console.log(`  bind       ${cfg.host}:${cfg.port}`);
   console.log(`  workspace  ${cfg.workspace || "(not recorded)"}`);
   console.log(`  started    ${cfg.createdAt}`);

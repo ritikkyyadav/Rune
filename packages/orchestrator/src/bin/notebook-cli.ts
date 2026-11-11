@@ -36,7 +36,7 @@ export function runNotebook(positionals: string[], values: Record<string, unknow
     const entries = store.list({ includeRetired: !!values.all, limit: 50 });
     if (entries.length === 0) {
       console.log(
-        dim("  Notebook is empty — Rune fills it as it verifies things about your codebases."),
+        dim("  Notebook is empty — Will fills it as it verifies things about your codebases."),
       );
     } else {
       console.log(`\n  ${dim("§ TACTICS NOTEBOOK")} ${faint(`(${store.count()} active)`)}\n`);
@@ -51,13 +51,13 @@ export function runNotebook(positionals: string[], values: Record<string, unknow
         );
       }
       console.log(
-        `\n  ${dim("manage:")} ${info("rune notebook show <id>")} ${dim("·")} ${info("rune notebook rm <id>")}\n`,
+        `\n  ${dim("manage:")} ${info("will notebook show <id>")} ${dim("·")} ${info("will notebook rm <id>")}\n`,
       );
     }
   } else if (sub === "show") {
     const e = positionals[2] ? store.getByPrefix(positionals[2]) : null;
     if (!e) {
-      console.log(dim("  Usage: rune notebook show <id-prefix> (no unique match)"));
+      console.log(dim("  Usage: will notebook show <id-prefix> (no unique match)"));
     } else {
       console.log(`\n  ${dim("§ ENTRY")} ${info(e.id)}\n`);
       console.log(`  ${text(e.body)}\n`);
@@ -75,14 +75,14 @@ export function runNotebook(positionals: string[], values: Record<string, unknow
   } else if (sub === "rm") {
     const e = positionals[2] ? store.getByPrefix(positionals[2]) : null;
     if (!e) {
-      console.log(dim("  Usage: rune notebook rm <id-prefix> (no unique match)"));
+      console.log(dim("  Usage: will notebook rm <id-prefix> (no unique match)"));
     } else if (e.blocked) {
       // A person disabled it so that re-learning cannot bring it back. Deleting
       // the row would erase that "no" and let the next run learn it afresh —
       // undoing a decision with a command that looks like tidying up.
       console.log(
         `  ${warn("!")} ${faint(e.body.slice(0, 70))} is disabled; removing it would let a run learn it again. ` +
-          `To undo the disable on purpose: rune evolve lessons --enable ${e.id.slice(-8)}`,
+          `To undo the disable on purpose: will evolve lessons --enable ${e.id.slice(-8)}`,
       );
     } else {
       store.remove(e.id);
@@ -92,7 +92,7 @@ export function runNotebook(positionals: string[], values: Record<string, unknow
         at: new Date().toISOString(),
         kind: "lesson",
         subject: `lesson:${e.id}`,
-        note: `removed by a person (rune notebook rm): ${e.body.slice(0, 120)}`,
+        note: `removed by a person (will notebook rm): ${e.body.slice(0, 120)}`,
       });
       console.log(`  ${ok("✓")} removed: ${faint(e.body.slice(0, 70))}`);
     }
@@ -104,7 +104,7 @@ export function runNotebook(positionals: string[], values: Record<string, unknow
     console.log(`  ${ok("✓")} exported ${entries.length} entries → ${info(out)}`);
   } else {
     console.log(
-      dim("  Usage: rune notebook [list [--all]|show <id>|rm <id>|export [--out <path>]]"),
+      dim("  Usage: will notebook [list [--all]|show <id>|rm <id>|export [--out <path>]]"),
     );
   }
   store.close();

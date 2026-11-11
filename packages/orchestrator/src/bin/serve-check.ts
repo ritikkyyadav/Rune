@@ -177,7 +177,7 @@ export async function runServeCheck(values: Record<string, unknown>): Promise<nu
   const step = (text: string): void => console.log(`  · ${text}`);
   const pass = (text: string): void => console.log(`  ✓ ${text}`);
 
-  console.log("rune serve --check");
+  console.log("will serve --check");
   console.log(`  binary     ${process.execPath}`);
   console.log(`  mode       ${isCompiled(ctx) ? "compiled" : "source"}`);
   console.log(`  hosts      ${hostSpawnLabel(ctx)}`);

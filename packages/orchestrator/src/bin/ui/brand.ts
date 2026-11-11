@@ -1,21 +1,11 @@
 import { readFileSync } from "node:fs";
+import { PRODUCT_NAME } from "@rune/shared";
 
-// --- Product identity (Rune) ---
-// "Rune" is the only product name -- in the UI and in the internals (dirs, env,
-// packages, binaries). It replaced "Gear" on 2026-09-03 (which had replaced
-// "Alan"); the previous spellings survive only as read-through migration shims
-// -- shared/paths.ts (home, database, memory file, env), credential-store.ts
-// (keychain service), git-undo.ts (commit prefix), playbook.ts and
-// evolve/promote.ts (markers), org-policy.ts (system paths) -- never as a name
-// anything prints.
-// Every user-visible surface (startup banner, /status card, --version, help) reads
-// its name + version from here, so the current brand is defined in one place.
-
-/** Public product name shown to users. */
-export const PRODUCT_NAME = "Rune";
-
-/** Command shown in help and guidance. */
-export const PRODUCT_COMMAND = "rune";
+// Public branding is shared with browser surfaces and provider authentication.
+// The @rune packages, RUNE_* variables, ~/.rune data, keychain services and wire
+// identifiers stay stable so the name change never splits an existing install.
+export { PRODUCT_NAME, PRODUCT_COMMAND } from "@rune/shared";
+export const PRODUCT_WORDMARK = [...PRODUCT_NAME.toUpperCase()].join(" ");
 
 /**
  * Injected at build time by `bun build --define=RUNE_BUILD_VERSION="..."`.
@@ -57,7 +47,7 @@ export const PRODUCT_VERSION: string =
 
 /**
  * The version as a person reads it in the frame: `0.1.1`, never
- * `0.1.1-dev+6b9afcf`. The build marker is for `--version`, `rune doctor` and
+ * `0.1.1-dev+6b9afcf`. The build marker is for `--version`, `will doctor` and
  * the install guard, which compare builds; the header names the product a
  * person is using (founder, 2026-09-16: "simply v0.1.1"). A source run keeps its
  * `-dev` marker stripped too -- the number is still the truth about which
@@ -69,5 +59,5 @@ export function displayVersion(version: string): string {
 
 export const PRODUCT_DISPLAY_VERSION: string = displayVersion(PRODUCT_VERSION);
 
-/** Full public identifier, e.g. for `--version`: "Rune v0.3.0". */
+/** Full public identifier, e.g. for `--version`: "Will v0.3.0". */
 export const PRODUCT_LABEL = `${PRODUCT_NAME} v${PRODUCT_VERSION}`;

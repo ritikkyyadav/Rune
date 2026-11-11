@@ -27,6 +27,7 @@
 // off-by-one that can garble a screen lives, so it is the part with tests.
 
 import { DEFAULT_UI_LAYOUT, type UiLayout } from "./layout";
+import { PRODUCT_WORDMARK } from "./brand";
 
 type Writer = (s: string) => void;
 
@@ -408,7 +409,7 @@ export function refusalRows(columns: number, rows: number): string[] {
   const have = `${Math.max(0, columns)}x${Math.max(0, rows)}`;
   const need = `${MIN_COLS}x${MIN_ROWS}`;
   return [
-    "R U N E",
+    PRODUCT_WORDMARK,
     pick([
       `needs ${need}. this window is ${have}.`,
       `needs ${need}, this is ${have}.`,

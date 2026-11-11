@@ -35,7 +35,7 @@ export const UPDATE_CONFIG_TOOL_SCHEMA: ToolSchema = {
   name: "update_config",
   version: "0.1.0",
   description:
-    'Change one of Rune\'s own settings when the user asks (e.g. "shift to 4th gear", ' +
+    'Change one of Will\'s own settings when the user asks (e.g. "shift to 4th gear", ' +
     '"turn the sandbox off", "enable auto commit"). The change applies immediately ' +
     "and is saved to ~/.rune/config.toml so it persists across restarts. Call with `setting` " +
     "and `value`. Omit `value` to read the current value; omit both to list every setting. " +
@@ -54,7 +54,7 @@ export const UPDATE_CONFIG_TOOL_SCHEMA: ToolSchema = {
       value: {
         type: "string",
         description:
-          'The new value, e.g. "1" / "2" / "3" / "4" / "auto" for rune (1 guided · 2 edits · ' +
+          'The new value, e.g. "1" / "2" / "3" / "4" / "auto" for gear (1 guided · 2 edits · ' +
           "3 workspace + sandboxed shell · 4 full autonomy · auto classifier), " +
           '"off"/"auto"/"configured"/"mirror" for subagents, or "on"/"off" for booleans. ' +
           "Omit to read the current value.",

@@ -292,7 +292,9 @@ export function auditSummary(audit: string | null, width = 150): string {
   const keep = plain
     .split("\n")
     .filter((l) =>
-      /^\s{2}(Rune audit|Goal|Plan|Retro|Runs|Tools|Checks|Safety|Held|Cost|Harness)\b/.test(l),
+      /^\s{2}((?:Will|Rune) audit|Goal|Plan|Retro|Runs|Tools|Checks|Safety|Held|Cost|Harness)\b/.test(
+        l,
+      ),
     )
     .map((l) => clip(l.trim()));
   return keep.length > 0
@@ -313,7 +315,7 @@ export function composeComment(outcome: RunOutcome, inputs: ReviewInputs): strin
   // the <details> block into the previous paragraph.
   const lines: Array<string | null> = [
     MARKER,
-    inputs.mock ? `### Rune review — dry run (mock provider)` : `### Rune review`,
+    inputs.mock ? `### Will review — dry run (mock provider)` : `### Will review`,
     "",
     // The label is the whole ethics of this mode. A comment that looks like a
     // review and was produced by a mock is worse than no comment at all, so it
@@ -346,12 +348,12 @@ export function composeComment(outcome: RunOutcome, inputs: ReviewInputs): strin
     "```",
     "",
     outcome.sessionId
-      ? `Session \`${outcome.sessionId}\` · \`rune audit ${outcome.sessionId}\` for the full page.`
+      ? `Session \`${outcome.sessionId}\` · \`will audit ${outcome.sessionId}\` for the full page.`
       : null,
     "",
     "</details>",
     "",
-    `<sub>Rune · gear ${inputs.gear} · exit ${outcome.exitCode}` +
+    `<sub>Will · gear ${inputs.gear} · exit ${outcome.exitCode}` +
       `${inputs.mock ? " · mock provider, no model consulted" : ""}</sub>`,
   ];
   return lines.filter((line): line is string => line !== null).join("\n");

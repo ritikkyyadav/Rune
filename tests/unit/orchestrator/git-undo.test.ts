@@ -1,6 +1,6 @@
 /**
  * Git auto-commit + /undo: every successful run's writes land as ONE
- * revertible "rune:" commit, and undo can only ever discard a Rune commit —
+ * revertible "rune:" commit, and undo can only ever discard a Will commit —
  * never user work. Each guard here corresponds to a way the naive version
  * would eat someone's changes.
  */
@@ -108,7 +108,7 @@ describe("undoLastRuneCommit", () => {
     const r = undoLastRuneCommit(root); // HEAD = "seed"
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.reason).toContain("not a Rune-managed commit");
+    expect(r.reason).toContain("not a Will-managed commit");
   });
 
   test("refuses when the worktree is dirty (reset --hard would eat user edits)", () => {

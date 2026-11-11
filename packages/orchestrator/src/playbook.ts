@@ -112,7 +112,7 @@ export function renderPlaybookBlock(entries: NotebookEntry[]): string {
   const sessions = distinctSessions(entries);
   const lines: string[] = [
     START,
-    `Learned by Rune from ${sessions} session${sessions === 1 ? "" : "s"} in this repository. ` +
+    `Learned by Will from ${sessions} session${sessions === 1 ? "" : "s"} in this repository. ` +
       "Rewritten when a lesson recurs; anything outside these markers is kept.",
   ];
   for (const section of SECTION_ORDER) {
@@ -136,7 +136,7 @@ export function renderPlaybookBlock(entries: NotebookEntry[]): string {
 function lessonLines(block: string): string {
   return block
     .split("\n")
-    .filter((l) => !l.startsWith("Learned by Rune from "))
+    .filter((l) => !/^Learned by (?:Will|Rune) from /.test(l))
     .map((l) => l.replace(/ _\(\d+ sessions?\)_$/, ""))
     .join("\n");
 }
@@ -145,7 +145,7 @@ function frontmatter(workspaceName: string, sessions: number): string {
   return [
     "---",
     "name: playbook",
-    `description: How to work in ${workspaceName} — verified commands, fixes and pitfalls Rune learned from ${sessions} session${sessions === 1 ? "" : "s"} here. Load before running builds, tests or shell commands in this repository.`,
+    `description: How to work in ${workspaceName} — verified commands, fixes and pitfalls Will learned from ${sessions} session${sessions === 1 ? "" : "s"} here. Load before running builds, tests or shell commands in this repository.`,
     "---",
     "",
     "# Playbook",
@@ -196,7 +196,7 @@ export function writePlaybook(
       next = `${current.replace(/\s*$/, "")}\n\n${block}\n`;
     }
   } else {
-    next = `${frontmatter(basename(workspaceRoot) || "this repository", sessions)}${block}\n\n## Notes\n\nYour own notes — Rune keeps everything outside the markers.\n`;
+    next = `${frontmatter(basename(workspaceRoot) || "this repository", sessions)}${block}\n\n## Notes\n\nYour own notes — Will keeps everything outside the markers.\n`;
   }
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, next);

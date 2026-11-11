@@ -202,7 +202,7 @@ export class DeviceCodeStrategy implements AuthenticationStrategy {
       providerId: ctx.providerId,
       method: this.method,
       message: `Device login failed: ${message}`,
-      recovery: `run: rune login ${ctx.providerId}`,
+      recovery: `run: will login ${ctx.providerId}`,
     });
   }
 }

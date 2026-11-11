@@ -3,7 +3,7 @@
 // This test has been rebound five times: from `docs/design/rune-customizer-v2.html`
 // to the Savoir DNA, from the Savoir DNA to an electric-blue identity, to the
 // founder's violet, to the redesigned Savoir blue — and now (2026-09-26) to
-// "Rune Mono": black and white chrome, a matte finish beside the crisp one, and
+// "Will Mono": black and white chrome, a matte finish beside the crisp one, and
 // exactly one blue left in the product, on the light-mode added-line band.
 // Rebound rather than deleted, because what it holds is not a hex table.
 //
@@ -128,7 +128,7 @@ describe("the palette, verbatim", () => {
   it("has exactly one accent, named for the product", () => {
     expect(RUNE_ACCENT_NAMES).toEqual(["rune"]);
     expect(Object.keys(RUNE_ACCENT_LABELS)).toEqual(["rune"]);
-    expect(RUNE_ACCENT_LABELS.rune).toBe("Rune mono");
+    expect(RUNE_ACCENT_LABELS.rune).toBe("Will mono");
   });
 
   it("keeps every grey neutral: no hue anywhere in the chrome", () => {

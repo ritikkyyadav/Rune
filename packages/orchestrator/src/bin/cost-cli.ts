@@ -97,7 +97,7 @@ export async function runCost(args: string[], values: Record<string, unknown>): 
   try {
     const id = resolveSession(sm, args[0]);
     if (!id) {
-      say(dim("  No session found. Usage: rune cost [sessionId|last]"));
+      say(dim("  No session found. Usage: will cost [sessionId|last]"));
       return 1;
     }
     const session = sm.getSession(id)!;
@@ -154,7 +154,7 @@ export async function runCost(args: string[], values: Record<string, unknown>): 
     }
 
     say();
-    say(dim(`  per-turn detail: rune audit ${id.slice(0, 8)}`));
+    say(dim(`  per-turn detail: will audit ${id.slice(0, 8)}`));
     say();
     return 0;
   } finally {

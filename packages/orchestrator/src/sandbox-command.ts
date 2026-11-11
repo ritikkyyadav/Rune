@@ -84,7 +84,7 @@ export const SANDBOX_OVERRIDE_CHOICES: ReadonlyArray<{
 export function sandboxModeExplanation(mode: SandboxMode): string {
   switch (mode) {
     case "auto-allow":
-      return "Commands run in the OS sandbox (no network unless a call sets network: true; writes confined to the workspace, temp and Rune's cache; credential stores unreadable). Because the sandbox is the boundary, 3rd gear and Auto approve sandboxed commands without a prompt. Explicit ask/deny rules are always respected.";
+      return "Commands run in the OS sandbox (no network unless a call sets network: true; writes confined to the workspace, temp and Will's cache; credential stores unreadable). Because the sandbox is the boundary, 3rd gear and Auto approve sandboxed commands without a prompt. Explicit ask/deny rules are always respected.";
     case "regular":
       return "Commands run in the same OS sandbox, but the gear's ordinary permission prompt still applies to each one — containment without the auto-approval.";
     default:

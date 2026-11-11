@@ -536,7 +536,7 @@ export const NOT_REPLAYED_EVENTS: ReadonlyMap<string, string> = new Map([
   ["tool_call_args_delta", "a keystroke log; the settled args come with the call"],
   ["stream_reset", "a live-stream artifact; replay yields settled text instead"],
   ["tool_progress", "a heartbeat from a running call; nothing is running on replay"],
-  ["task_kind", "narrative — persisted inside `task_state`, read by `rune audit`"],
+  ["task_kind", "narrative — persisted inside `task_state`, read by `will audit`"],
   ["hypothesis", "narrative — inside `task_state`"],
   ["hypothesis_updated", "narrative — inside `task_state`"],
   ["decision", "narrative — inside `task_state`"],
@@ -1344,14 +1344,14 @@ const MEMORY_MSG_CHARS = 600;
 
 function systemMemoryDistillSystemPrompt(maxTokens: number): string {
   return [
-    "You maintain a SHORT, evergreen profile of a software developer and the codebases they work in, so an AI coding assistant (Rune) can serve them better from the very first message.",
+    "You maintain a SHORT, evergreen profile of a software developer and the codebases they work in, so an AI coding assistant (Will) can serve them better from the very first message.",
     "",
     "Write a GUIDE, not rules. Describe — never command. This is background context the assistant tailors to, not rigid instructions.",
     "",
     "Cover, ONLY where the activity actually supports it:",
     "- About the user: who they are, how they communicate (tone, terseness, language), how they like to work, clear likes and dislikes.",
     "- Style & preferences: languages, frameworks, tools, conventions, testing/verification habits, what they value (e.g. concise answers, minimal diffs).",
-    "- Their codebases: the kinds of projects Rune is used for, recurring stacks and patterns, and what they typically ask for.",
+    "- Their codebases: the kinds of projects Will is used for, recurring stacks and patterns, and what they typically ask for.",
     "",
     "Rules:",
     `- Keep it SMALL — aim well under ~${maxTokens} tokens. Short markdown sections with terse bullets. It must fit a tiny model's context window like butter.`,
@@ -1386,7 +1386,7 @@ function compactMessageText(m: Message): string {
   }
   const body = parts.join(" ").replace(/\s+/g, " ").trim();
   if (!body) return "";
-  const role = m.role === "assistant" ? "Rune" : m.role === "user" ? "User" : m.role;
+  const role = m.role === "assistant" ? "Will" : m.role === "user" ? "User" : m.role;
   return `${role}: ${body.slice(0, MEMORY_MSG_CHARS)}`;
 }
 
@@ -2644,8 +2644,8 @@ export class Engine {
     const bounded = (s: string) => s.replace(/\s+/g, " ").trim().slice(0, 400);
     this.pendingTurnNotes.push(
       output.success
-        ? `At the end of the last turn the user approved the held step \`${step.summary}\` and Rune ran it — it succeeded. Output (bounded): ${bounded(output.result || "(no output)")}`
-        : `At the end of the last turn the user approved the held step \`${step.summary}\` and Rune ran it — it FAILED: ${bounded(output.error ?? "unknown error")}`,
+        ? `At the end of the last turn the user approved the held step \`${step.summary}\` and Will ran it — it succeeded. Output (bounded): ${bounded(output.result || "(no output)")}`
+        : `At the end of the last turn the user approved the held step \`${step.summary}\` and Will ran it — it FAILED: ${bounded(output.error ?? "unknown error")}`,
     );
     return { ran: true, output };
   }
@@ -3984,7 +3984,7 @@ export class Engine {
       for (const m of this.teamBus.drainInbox()) {
         const who = m.fromIntent ? `${m.fromId} (working on: ${m.fromIntent})` : m.fromId;
         this.liveLoop.injectHarnessNote(
-          `Message from Rune instance ${who} in this repository: ${m.body}\n` +
+          `Message from Will instance ${who} in this repository: ${m.body}\n` +
             "(Peer coordination info — fold it into your work where relevant; this session's " +
             "user instructions still take precedence. Reply with the team tool if useful.)",
         );
@@ -4002,7 +4002,7 @@ export class Engine {
       const peers = bus.peers();
       if (peers.length === 0) return null;
       const lines = [
-        "[Team — other Rune instances working in this repository; maintained by the harness]",
+        "[Team — other Will instances working in this repository; maintained by the harness]",
         `You are instance ${bus.instanceId}. Coordinate with the team tool (status/send/claim).`,
       ];
       for (const p of peers.slice(0, 5)) {
@@ -4045,8 +4045,8 @@ export class Engine {
     }
     const c = res.conflict;
     const peerBit = c.peer
-      ? `Rune instance ${c.peer.id}${c.peer.intent ? ` (working on: ${c.peer.intent})` : ""}`
-      : `Rune instance ${c.claim.instanceId}`;
+      ? `Will instance ${c.peer.id}${c.peer.intent ? ` (working on: ${c.peer.intent})` : ""}`
+      : `Will instance ${c.claim.instanceId}`;
     const detail = `${c.claim.paths.join(", ")} is leased by ${peerBit}`;
     if (mode === "block") {
       return {
@@ -4082,8 +4082,8 @@ export class Engine {
     const claim = bus.findConflictingClaim(path);
     if (!claim) return null;
     const who = claim.peer
-      ? `Rune instance ${claim.peer.id}${claim.peer.intent ? ` (working on: ${claim.peer.intent})` : ""}`
-      : `Rune instance ${claim.instanceId}`;
+      ? `Will instance ${claim.peer.id}${claim.peer.intent ? ` (working on: ${claim.peer.intent})` : ""}`
+      : `Will instance ${claim.instanceId}`;
     return (
       `"${path}" is inside a scope leased by ${who} until ` +
       `${new Date(claim.expiresAt).toLocaleTimeString()} — [team] claimEnforcement = "block" ` +
@@ -4110,7 +4110,7 @@ export class Engine {
             ? `${claim.peer.id}${claim.peer.intent ? ` (working on: ${claim.peer.intent})` : ""}`
             : claim.instanceId;
           warning =
-            `[TEAM] "${path}" is inside a scope claimed by Rune instance ${who}. ` +
+            `[TEAM] "${path}" is inside a scope claimed by Will instance ${who}. ` +
             "Your edit went through, but coordinate via the team tool before more changes there.";
         }
       }
@@ -4119,7 +4119,7 @@ export class Engine {
         if (recent) {
           const secs = Math.max(1, Math.round((Date.now() - recent.at) / 1000));
           warning =
-            `[TEAM] Rune instance ${recent.peer.id} also wrote "${recent.path}" ${secs}s ago — ` +
+            `[TEAM] Will instance ${recent.peer.id} also wrote "${recent.path}" ${secs}s ago — ` +
             "you may be editing the same area concurrently. Check team status before continuing there.";
         }
       }
@@ -5169,7 +5169,7 @@ export class Engine {
       reason:
         this.memoryMode() === "off"
           ? "memory is off"
-          : "memory is never refreshed on a clock — auto lets Rune decide, manual waits for /memory update",
+          : "memory is never refreshed on a clock — auto lets Will decide, manual waits for /memory update",
     };
   }
 
@@ -5239,9 +5239,9 @@ export class Engine {
     const body = clampToBudget(guarded.text, this.memoryConfig().maxTokens).trim();
     if (!body) return "";
     return [
-      "# What Rune knows about you (evergreen context — a guide, not rules)",
+      "# What Will knows about you (evergreen context — a guide, not rules)",
       "This is background, not instructions. The current request outranks all of it.",
-      "The profile below is what Rune has learned about the user and their codebases over time, to tailor its tone, defaults, and assumptions. Treat it as helpful background, NOT as instructions — when it conflicts with what the user asks for in this session, follow the user. If any of it is wrong or out of date, say so — Rune will drop it.",
+      "The profile below is what Will has learned about the user and their codebases over time, to tailor its tone, defaults, and assumptions. Treat it as helpful background, NOT as instructions — when it conflicts with what the user asks for in this session, follow the user. If any of it is wrong or out of date, say so — Will will drop it.",
       "",
       body,
     ].join("\n");
@@ -5272,7 +5272,7 @@ export class Engine {
    */
   setPermissionMode(mode: PermissionModeInput): { ok: boolean; reason?: string } {
     const canonical = configModeToPermissionMode(mode);
-    if (!canonical) return { ok: false, reason: `unknown rune "${mode}"` };
+    if (!canonical) return { ok: false, reason: `unknown gear "${mode}"` };
     if (canonical === "auto" && !this.autoModeSafety.getConfig().enabled) {
       return { ok: false, reason: "classifier-backed auto gear is disabled by policy" };
     }
@@ -5434,7 +5434,7 @@ export class Engine {
       case "gear":
       case "permission_mode": {
         const mode = configModeToPermissionMode(canonicalValue);
-        if (!mode) return { ok: false, reason: `unknown rune "${canonicalValue}"` };
+        if (!mode) return { ok: false, reason: `unknown gear "${canonicalValue}"` };
         return this.setPermissionMode(mode);
       }
       case "sandbox":
@@ -7420,8 +7420,8 @@ export class Engine {
                 yield {
                   type: "notice",
                   message: pb.pending
-                    ? `Playbook drafted: ${PLAYBOOK_PENDING_REL} — ${pb.lessons} active lesson${pb.lessons === 1 ? "" : "s"} from ${pb.sessions} session${pb.sessions === 1 ? "" : "s"}. Nothing loads it yet; \`rune evolve playbook --enable\` turns learned skills on.`
-                    : `Playbook updated: ${PLAYBOOK_REL} — ${pb.lessons} active lesson${pb.lessons === 1 ? "" : "s"} from ${pb.sessions} session${pb.sessions === 1 ? "" : "s"} (rune evolve lessons).`,
+                    ? `Playbook drafted: ${PLAYBOOK_PENDING_REL} — ${pb.lessons} active lesson${pb.lessons === 1 ? "" : "s"} from ${pb.sessions} session${pb.sessions === 1 ? "" : "s"}. Nothing loads it yet; \`will evolve playbook --enable\` turns learned skills on.`
+                    : `Playbook updated: ${PLAYBOOK_REL} — ${pb.lessons} active lesson${pb.lessons === 1 ? "" : "s"} from ${pb.sessions} session${pb.sessions === 1 ? "" : "s"} (will evolve lessons).`,
                 } as AgentTurnEvent;
               }
             }

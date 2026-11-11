@@ -80,7 +80,7 @@ describe("ui/banner", () => {
     // cannot change family, size or width — it can change TRACKING, CASE and
     // WEIGHT, and a name spaced out across the grid cannot be read as the first
     // word of a sentence.
-    expect(row(100)).toContain("R U N E");
+    expect(row(100)).toContain("W I L L");
     expect(row(100)).not.toContain("rune ·");
   });
 
@@ -141,7 +141,7 @@ describe("ui/banner", () => {
     // One cell short of the pill: its left pad hangs in the gutter (see
     // flow.header), so the heavy rule starts under the R and ends under the
     // pill's right edge.
-    expect(stripAnsi(F.seamRule(F.chromeWidth(), F.lockup("Rune").cells - 1))).toBe(lines[1]);
+    expect(stripAnsi(F.seamRule(F.chromeWidth(), F.lockup("Will").cells - 1))).toBe(lines[1]);
   });
 
   it("chrome aligns to the WINDOW, so the build lands on the rule's right edge", () => {
@@ -201,7 +201,7 @@ describe("ui/banner", () => {
     // The compact notice mark is the quiet phase diamond, one text cell. The
     // identity is the wordmark alone (no gear); this small mark only prefixes
     // one-line notices, not the header logo.
-    expect(stripAnsi(wordmark())).toBe(`${glyph("phase")} Rune`);
+    expect(stripAnsi(wordmark())).toBe(`${glyph("phase")} Will`);
   });
 });
 

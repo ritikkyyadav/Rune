@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Rune — one-line Windows installer.
+  Will — one-line Windows installer.
 
 .DESCRIPTION
   Downloads the prebuilt rune.exe and rune-tools.exe for this machine, VERIFIES
@@ -11,7 +11,7 @@
   them: web-install.sh hard-exits on anything that is not Darwin or Linux, and
   there was no .ps1. This is that file.
 
-  A note on what you get: Rune has no OS sandbox on Windows. 1st and 2nd gear
+  A note on what you get: Will has no OS sandbox on Windows. 1st and 2nd gear
   (guided, workspace edits) behave exactly as they do elsewhere; 3rd and 4th
   rune run shell commands WITHOUT the OS-level containment macOS and Linux
   provide. Run under WSL2 if you want the sandbox. The installer says this out
@@ -24,7 +24,7 @@
   Where the binaries go (default: %LOCALAPPDATA%\Rune\bin).
 
 .PARAMETER Repo
-  GitHub repo hosting the releases (default: ritikkyyadav/Rune).
+  GitHub repo hosting the releases (default: ritikkyyadav/Will).
 
 .PARAMETER SkipTools
   Install rune.exe alone. File, search and shell tools will not work.
@@ -47,7 +47,7 @@
 param(
   [string] $Version = $(if ($env:RUNE_VERSION) { $env:RUNE_VERSION } else { 'latest' }),
   [string] $InstallDir = $(if ($env:RUNE_INSTALL_DIR) { $env:RUNE_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'Rune\bin' }),
-  [string] $Repo = $(if ($env:RUNE_REPO) { $env:RUNE_REPO } else { 'ritikkyyadav/Rune' }),
+  [string] $Repo = $(if ($env:RUNE_REPO) { $env:RUNE_REPO } else { 'ritikkyyadav/Will' }),
   [switch] $SkipTools,
   [switch] $NoPath,
   [switch] $Uninstall
@@ -95,9 +95,9 @@ function Remove-FromUserPath([string] $dir) {
 
 if ($Uninstall) {
   Write-Host ''
-  Write-Step 'Rune uninstaller'
+  Write-Step 'Will uninstaller'
   $removed = $false
-  foreach ($name in @('rune.exe', 'rune-tools.exe', 'rune.exe.backup', 'rune-tools.exe.backup')) {
+  foreach ($name in @('will.cmd', 'rune.exe', 'rune-tools.exe', 'rune.exe.backup', 'rune-tools.exe.backup')) {
     $p = Join-Path $InstallDir $name
     if (Test-Path $p) {
       Remove-Item -Force $p
@@ -137,7 +137,7 @@ $base = if ($Version -eq 'latest') {
 }
 
 Write-Host ''
-Write-Step 'Rune installer'
+Write-Step 'Will installer'
 Write-Dim  "platform : windows-$arch"
 Write-Dim  "release  : $Version"
 Write-Dim  "install  : $InstallDir"
@@ -218,6 +218,13 @@ try {
   $cliDest = Join-Path $InstallDir 'rune.exe'
   if (Test-Path $cliDest) { Copy-Item -Force $cliDest "$cliDest.backup" }
   Move-Item -Force $cliPath $cliDest
+  # Forward to the same binary so upgrades and rollbacks cannot leave a stale
+  # second copy behind. %~dp0 also supports install paths containing spaces.
+  @'
+@echo off
+"%~dp0rune.exe" %*
+exit /b %errorlevel%
+'@ | Set-Content -Encoding Ascii (Join-Path $InstallDir 'will.cmd')
   Write-Ok "Installed: $cliDest"
 
   if ($toolsPath) {
@@ -236,16 +243,16 @@ if (-not $NoPath) {
   Add-ToUserPath $InstallDir
 } else {
   Write-Host ''
-  Write-Step 'Add Rune to your PATH yourself:'
+  Write-Step 'Add Will to your PATH yourself:'
   Write-Host "      `$env:Path += `";$InstallDir`"" -ForegroundColor Cyan
 }
 
 Write-Host ''
 Write-Host '  No OS sandbox on Windows.' -ForegroundColor Yellow
 Write-Dim  '1st and 2nd gear behave normally. 3rd and 4th gear run shell commands without the'
-Write-Dim  'OS-level containment macOS and Linux provide. Run Rune under WSL2 for the sandbox.'
+Write-Dim  'OS-level containment macOS and Linux provide. Run Will under WSL2 for the sandbox.'
 Write-Host ''
-Write-Step 'Then run: rune'
+Write-Step 'Then run: will'
 Write-Dim  'Free to start: grab a Google AI Studio key and set $env:GOOGLE_API_KEY'
-Write-Dim  'Later: `rune upgrade --check` tells you when a newer release exists.'
+Write-Dim  'Later: `will upgrade --check` tells you when a newer release exists.'
 Write-Host ''

@@ -2151,7 +2151,7 @@ export class TaskStateStore {
     const lines: string[] = [
       "# Mission",
       "",
-      "> Maintained by Rune. This is the durable record of the current task —",
+      "> Maintained by Will. This is the durable record of the current task —",
       "> read it when unsure what the mission is. Do not edit by hand:",
       "> todo_write and the run itself keep it current.",
       "",

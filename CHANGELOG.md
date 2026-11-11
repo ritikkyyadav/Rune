@@ -1,8 +1,8 @@
 # Changelog
 
-All notable changes to Rune are recorded here.
+All notable changes to Will (previously Rune) are recorded here.
 
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Rune adheres to
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Will adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 The version a build reports comes from exactly one place — `scripts/version.sh`, injected at compile
@@ -10,6 +10,20 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
 `<semver>-dev+<sha>`.
 
 ## [Unreleased]
+
+### Changed
+
+- Rename the public product to **Will** and the GitHub repository to
+  `ritikkyyadav/Will`. Update interface copy, terminal titles, sign-in pages,
+  documentation, and canonical installer, update, and plugin-index URLs.
+- Add the `will` command alongside `rune`. Keep existing data paths, credentials,
+  package exports, protocol identifiers, and release asset names compatible.
+- Sign and verify staged macOS binaries before hashing and installing them.
+
+### Fixed
+
+- Update the native indexer's bundled SQLite through `rusqlite` 0.41.1 to address
+  RUSTSEC-2026-0459, found by the repository's dependency audit.
 
 ## [1.4.17] - 2026-10-27
 
@@ -1582,31 +1596,31 @@ evidence, the terminal was rewritten, and the cost and safety subsystems were ma
 
 Version bump, installer polish, and install-from-GitHub documentation.
 
-[Unreleased]: https://github.com/ritikkyyadav/Rune/compare/v1.4.17...HEAD
-[1.4.17]: https://github.com/ritikkyyadav/Rune/compare/v1.4.16...v1.4.17
-[1.4.16]: https://github.com/ritikkyyadav/Rune/compare/v1.4.15...v1.4.16
-[1.4.15]: https://github.com/ritikkyyadav/Rune/compare/v1.4.14...v1.4.15
-[1.4.14]: https://github.com/ritikkyyadav/Rune/compare/v1.4.13...v1.4.14
-[1.4.13]: https://github.com/ritikkyyadav/Rune/compare/v1.4.12...v1.4.13
-[1.4.12]: https://github.com/ritikkyyadav/Rune/compare/v1.4.11...v1.4.12
-[1.4.11]: https://github.com/ritikkyyadav/Rune/compare/v1.4.10...v1.4.11
-[1.4.10]: https://github.com/ritikkyyadav/Rune/compare/v1.4.9...v1.4.10
-[1.4.9]: https://github.com/ritikkyyadav/Rune/compare/v1.4.8...v1.4.9
-[1.4.8]: https://github.com/ritikkyyadav/Rune/compare/v1.4.7...v1.4.8
-[1.4.7]: https://github.com/ritikkyyadav/Rune/compare/v1.4.6...v1.4.7
-[1.4.6]: https://github.com/ritikkyyadav/Rune/compare/v1.4.5...v1.4.6
-[1.4.5]: https://github.com/ritikkyyadav/Rune/compare/v1.4.4...v1.4.5
-[1.4.4]: https://github.com/ritikkyyadav/Rune/compare/v1.4.3...v1.4.4
-[1.4.3]: https://github.com/ritikkyyadav/Rune/compare/v1.4.2...v1.4.3
-[1.4.2]: https://github.com/ritikkyyadav/Rune/compare/v1.3.4...v1.4.2
-[1.3.4]: https://github.com/ritikkyyadav/Rune/compare/v1.3.3...v1.3.4
-[1.3.3]: https://github.com/ritikkyyadav/Rune/compare/v1.3.2...v1.3.3
-[1.3.2]: https://github.com/ritikkyyadav/Rune/compare/v1.3.1...v1.3.2
-[1.3.1]: https://github.com/ritikkyyadav/Rune/compare/v1.3.0...v1.3.1
-[1.3.0]: https://github.com/ritikkyyadav/Rune/compare/v1.2.0...v1.3.0
-[1.2.0]: https://github.com/ritikkyyadav/Rune/compare/v0.1.1...v1.2.0
-[0.4.1]: https://github.com/ritikkyyadav/Rune/compare/v0.4.0...v0.4.1
-[0.4.0]: https://github.com/ritikkyyadav/Rune/compare/v0.3.1...v0.4.0
-[0.3.1]: https://github.com/ritikkyyadav/Rune/compare/v0.3.0...v0.3.1
-[0.3.0]: https://github.com/ritikkyyadav/Rune/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/ritikkyyadav/Rune/releases/tag/v0.2.0
+[Unreleased]: https://github.com/ritikkyyadav/Will/compare/v1.4.17...HEAD
+[1.4.17]: https://github.com/ritikkyyadav/Will/compare/v1.4.16...v1.4.17
+[1.4.16]: https://github.com/ritikkyyadav/Will/compare/v1.4.15...v1.4.16
+[1.4.15]: https://github.com/ritikkyyadav/Will/compare/v1.4.14...v1.4.15
+[1.4.14]: https://github.com/ritikkyyadav/Will/compare/v1.4.13...v1.4.14
+[1.4.13]: https://github.com/ritikkyyadav/Will/compare/v1.4.12...v1.4.13
+[1.4.12]: https://github.com/ritikkyyadav/Will/compare/v1.4.11...v1.4.12
+[1.4.11]: https://github.com/ritikkyyadav/Will/compare/v1.4.10...v1.4.11
+[1.4.10]: https://github.com/ritikkyyadav/Will/compare/v1.4.9...v1.4.10
+[1.4.9]: https://github.com/ritikkyyadav/Will/compare/v1.4.8...v1.4.9
+[1.4.8]: https://github.com/ritikkyyadav/Will/compare/v1.4.7...v1.4.8
+[1.4.7]: https://github.com/ritikkyyadav/Will/compare/v1.4.6...v1.4.7
+[1.4.6]: https://github.com/ritikkyyadav/Will/compare/v1.4.5...v1.4.6
+[1.4.5]: https://github.com/ritikkyyadav/Will/compare/v1.4.4...v1.4.5
+[1.4.4]: https://github.com/ritikkyyadav/Will/compare/v1.4.3...v1.4.4
+[1.4.3]: https://github.com/ritikkyyadav/Will/compare/v1.4.2...v1.4.3
+[1.4.2]: https://github.com/ritikkyyadav/Will/compare/v1.3.4...v1.4.2
+[1.3.4]: https://github.com/ritikkyyadav/Will/compare/v1.3.3...v1.3.4
+[1.3.3]: https://github.com/ritikkyyadav/Will/compare/v1.3.2...v1.3.3
+[1.3.2]: https://github.com/ritikkyyadav/Will/compare/v1.3.1...v1.3.2
+[1.3.1]: https://github.com/ritikkyyadav/Will/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/ritikkyyadav/Will/compare/v1.2.0...v1.3.0
+[1.2.0]: https://github.com/ritikkyyadav/Will/compare/v0.1.1...v1.2.0
+[0.4.1]: https://github.com/ritikkyyadav/Will/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/ritikkyyadav/Will/compare/v0.3.1...v0.4.0
+[0.3.1]: https://github.com/ritikkyyadav/Will/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/ritikkyyadav/Will/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/ritikkyyadav/Will/releases/tag/v0.2.0

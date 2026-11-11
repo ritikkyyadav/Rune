@@ -119,7 +119,7 @@ const WEAKENING_PATTERNS: ReadonlyArray<{ rule: string; re: RegExp }> = [
   },
   {
     rule: "git-safety",
-    re: /\b(?:force[-\s]?push|push\s+(?:straight\s+)?to\s+(?:main|master)|git\s+push\s+(?:--force|-f)\b|reset\s+--hard|git\s+stash|--force-with-lease)\b|\b(?:it'?s\s+)?(?:fine|ok(?:ay)?|safe)\s+to\s+push\b|\b(?:you|rune)\s+(?:should\s+|can\s+|just\s+)?(?:push|merge)\b[^.]{0,40}\byourself\b|\bpush\b[^.]{0,40}\b(?:when|once|as\s+soon\s+as)\s+the\s+(?:tests?|checks?|suite|gates?)\b/i,
+    re: /\b(?:force[-\s]?push|push\s+(?:straight\s+)?to\s+(?:main|master)|git\s+push\s+(?:--force|-f)\b|reset\s+--hard|git\s+stash|--force-with-lease)\b|\b(?:it'?s\s+)?(?:fine|ok(?:ay)?|safe)\s+to\s+push\b|\b(?:you|rune|will)\s+(?:should\s+|can\s+|just\s+)?(?:push|merge)\b[^.]{0,40}\byourself\b|\bpush\b[^.]{0,40}\b(?:when|once|as\s+soon\s+as)\s+the\s+(?:tests?|checks?|suite|gates?)\b/i,
   },
   {
     rule: "override",

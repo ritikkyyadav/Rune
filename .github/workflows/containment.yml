@@ -147,19 +147,20 @@ jobs:
           mkdir -p "$HOME"
           bash scripts/install.sh
 
-      - name: rune --version matches the tree
+      - name: will and rune --version match the tree
         env:
           HOME: ${{ runner.temp }}/rune-clean-home
         run: |
           set -euo pipefail
           "$HOME/.rune/bin/rune" --version | tee rune-version.out
-          grep -F "Rune v${EXPECTED_VERSION}" rune-version.out
+          grep -F "Will v${EXPECTED_VERSION}" rune-version.out
+          "$HOME/.rune/bin/will" --version | cmp -s rune-version.out -
 
-      - name: rune doctor runs clean on a first-ever install
+      - name: will doctor runs clean on a first-ever install
         env:
           HOME: ${{ runner.temp }}/rune-clean-home
           NO_COLOR: "1"
         run: |
           set -euo pipefail
-          "$HOME/.rune/bin/rune" doctor | tee rune-doctor.out
-          grep -F "RUNE DOCTOR" rune-doctor.out
+          "$HOME/.rune/bin/will" doctor | tee rune-doctor.out
+          grep -F "WILL DOCTOR" rune-doctor.out

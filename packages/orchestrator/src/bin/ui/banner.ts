@@ -1,3 +1,5 @@
+import { PRODUCT_WORDMARK } from "./brand";
+
 // --- Rune identity header ---
 // The masthead: who, where, which build. Three fields, one row.
 //
@@ -204,7 +206,7 @@ export function renderMasthead(opts: { version?: string; workspace?: string } = 
   const gearW = Math.max(...RUNE_LOGO.map((line) => visLen(line)));
   const mid = Math.floor(RUNE_LOGO.length / 2); // 3 on a seven-row gear
   const beside: Record<number, string> = {
-    [mid - 1]: bold(brand("R U N E")),
+    [mid - 1]: bold(brand(PRODUCT_WORDMARK)),
     [mid]: dim("the terminal coding agent"),
     [mid + 1]: where ? `${dim(where)}  ${faint(`v${version}`)}` : faint(`v${version}`),
   };

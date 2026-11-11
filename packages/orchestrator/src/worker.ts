@@ -526,7 +526,7 @@ export function createWorkerPermissionCheck(registry: ToolRegistry): PermissionC
 /** Exported for tests: the doctrine every worker carries. */
 export function workerSystemPrompt(ownedList: string): string {
   return [
-    "You are a Rune implementation worker: a focused engineer executing one contract inside a larger build.",
+    "You are a Will implementation worker: a focused engineer executing one contract inside a larger build.",
     `You EXCLUSIVELY own these files (relative to the workspace): ${ownedList}`,
     "Rules:",
     "- Create/edit ONLY the files you own — the harness mechanically refuses everything else. All other files are read-only reference: read them freely to match interfaces and style.",
@@ -671,7 +671,7 @@ export function createWorkerTool(deps: WorkerDeps): ToolHandler {
           const lease = deps.team.claim(files, workerId);
           if (!lease.ok) {
             claims.release(workerId);
-            return fail(lease.error ?? "Files are leased by another Rune instance.");
+            return fail(lease.error ?? "Files are leased by another Will instance.");
           }
           teamClaimed = true;
           if (lease.note) teamNote = lease.note;

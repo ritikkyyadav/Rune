@@ -22,7 +22,7 @@
 # check a contributor cannot fix, which is the thing the original gate existed
 # to avoid.
 
-name: rune review
+name: Will review
 
 on:
   pull_request:

@@ -50,7 +50,7 @@ export async function runMemoryUpdateCli(opts: MemoryUpdateCliOptions): Promise<
   try {
     const mode: MemoryMode = engine.memoryMode();
     if (mode === "off") {
-      opts.out("  memory is off — `rune memory auto` or `rune memory manual` turns it on");
+      opts.out("  memory is off — `will memory auto` or `will memory manual` turns it on");
       return 1;
     }
     // "The current session", outside a session: the most recently active one.

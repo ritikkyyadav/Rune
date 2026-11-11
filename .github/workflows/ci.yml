@@ -320,7 +320,7 @@ jobs:
             packages/orchestrator/src/bin/rune-cli.ts --outfile "$out"
           # The injection must actually reach the binary: a define that stops
           # working would otherwise show up first in a shipped release.
-          "$out" --version | grep -F "Rune v$v"
+          "$out" --version | grep -F "Will v$v"
       # Windows binaries have been built for months with nothing exercising
       # them at runtime — ci.yml typechecked and stopped there. The packaged
       # artifact now has to start, answer, and run real tools on Windows too.
@@ -339,7 +339,7 @@ jobs:
           fi
           export RUNE_HOME="$RUNNER_TEMP/rune-home"
           mkdir -p "$RUNE_HOME"
-          "$out" --version | grep -E "Rune v[0-9]"
+          "$out" --version | grep -E "Will v[0-9]"
           "$out" --help > /dev/null
           # The artifact pair must actually work, not merely start: a
           # write -> read -> edit -> bash round-trip through rune-tools.

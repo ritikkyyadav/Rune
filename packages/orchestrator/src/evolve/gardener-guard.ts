@@ -43,7 +43,7 @@ export const HOOK_MARKER = "rune:gardener-guard";
 export function renderPreCommitHook(offLimits: readonly string[] = GARDENER_OFF_LIMITS): string {
   return [
     "#!/bin/sh",
-    `# ${HOOK_MARKER} — written by \`rune evolve gardener --run\`.`,
+    `# ${HOOK_MARKER} — written by \`will evolve gardener --run\`.`,
     "#",
     "# A gardener run fixes harness defects on its own branch. These paths decide",
     "# what any run is ALLOWED to do, so a run may not change them: the doctrine,",

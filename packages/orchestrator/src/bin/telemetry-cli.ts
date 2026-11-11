@@ -83,7 +83,7 @@ function cmdStatus(cfg: TelemetryCfg): void {
   const state = loadTelemetryState(HOME());
   const on = effectiveOn(cfg, state.decision);
 
-  console.log(`\n  ${dim("§ RUNE TELEMETRY")}\n`);
+  console.log(`\n  ${dim("§ WILL TELEMETRY")}\n`);
   console.log(
     `  ${on ? ok("● ON") : dim("○ OFF")}  ${
       on ? text("anonymous diagnostics are shared at each launch") : dim("nothing is transmitted")
@@ -122,11 +122,11 @@ function cmdStatus(cfg: TelemetryCfg): void {
   }
 
   console.log(
-    `\n  ${faint("preview exactly what would be sent:")} ${info("rune telemetry preview")}`,
+    `\n  ${faint("preview exactly what would be sent:")} ${info("will telemetry preview")}`,
   );
   console.log(
     `  ${faint(state.decision === "granted" ? "turn off:" : "opt in:")} ${info(
-      state.decision === "granted" ? "rune telemetry off" : "rune telemetry on",
+      state.decision === "granted" ? "will telemetry off" : "will telemetry on",
     )}\n`,
   );
 }
@@ -148,14 +148,14 @@ function cmdOn(cfg: TelemetryCfg): void {
   } else {
     console.log(`\n  ${dim("Reports will be delivered at the start of each launch.")}`);
   }
-  console.log(`  ${faint("see the exact payloads:")} ${info("rune telemetry preview")}\n`);
+  console.log(`  ${faint("see the exact payloads:")} ${info("will telemetry preview")}\n`);
 }
 
 function cmdOff(): void {
   setConsent(HOME(), "denied");
   console.log(`\n  ${ok("✓")} ${text("Telemetry opted OUT.")} Nothing will be transmitted.`);
   console.log(
-    `  ${dim("Your local Black Box still records incidents on this machine —")} ${info("rune doctor")}\n`,
+    `  ${dim("Your local Black Box still records incidents on this machine —")} ${info("will doctor")}\n`,
   );
 }
 
@@ -210,7 +210,7 @@ function cmdPreview(cfg: TelemetryCfg): void {
   const peek = peekUsage(HOME());
   if (Object.keys(peek).length === 0) {
     console.log(
-      `\n  ${faint("(usage counters are empty right now — they accrue as you use Rune.)")}`,
+      `\n  ${faint("(usage counters are empty right now — they accrue as you use Will.)")}`,
     );
   }
   console.log("");

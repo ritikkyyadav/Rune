@@ -105,7 +105,7 @@ async function readSecret(question: string): Promise<string> {
 
 function usage(): void {
   say();
-  say(`${accent("rune mcp")} ${dim("— connect Rune to the services you already use")}`);
+  say(`${accent("will mcp")} ${dim("— connect Will to the services you already use")}`);
   say();
   say(`${text("Commands")}`);
   say(
@@ -129,11 +129,11 @@ function usage(): void {
   );
   say();
   say(`${text("Examples")}`);
-  say(`  ${dim("$")} rune mcp add notion ${dim("--scope user")}`);
-  say(`  ${dim("$")} rune mcp login notion`);
-  say(`  ${dim("$")} rune mcp add ${dim("https://mcp.example.com/mcp --name example")}`);
+  say(`  ${dim("$")} will mcp add notion ${dim("--scope user")}`);
+  say(`  ${dim("$")} will mcp login notion`);
+  say(`  ${dim("$")} will mcp add ${dim("https://mcp.example.com/mcp --name example")}`);
   say(
-    `  ${dim("$")} rune mcp add ${dim('"npx -y @modelcontextprotocol/server-filesystem ." --name files')}`,
+    `  ${dim("$")} will mcp add ${dim('"npx -y @modelcontextprotocol/server-filesystem ." --name files')}`,
   );
   say();
 }
@@ -194,7 +194,7 @@ function entryToConfig(entry: CatalogEntry): McpServerConfig {
 async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<number> {
   const target = args[0];
   if (!target) {
-    say(`  ${danger(glyph("failure"))} usage: rune mcp add <name|url|command>`);
+    say(`  ${danger(glyph("failure"))} usage: will mcp add <name|url|command>`);
     return 1;
   }
   const scope = scopeOf(values);
@@ -231,14 +231,14 @@ async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<
       say(`  ${danger(glyph("failure"))} no connector named ${accent(target)} in the catalog`);
       if (near.length > 0)
         say(`    ${dim("did you mean")} ${near.map((n) => accent(n)).join(dim(" · "))}`);
-      say(`    ${dim("or pass a URL:")} rune mcp add https://… --name ${target}`);
-      say(`    ${dim("see everything:")} rune mcp list --catalog`);
+      say(`    ${dim("or pass a URL:")} will mcp add https://… --name ${target}`);
+      say(`    ${dim("see everything:")} will mcp list --catalog`);
       return 1;
     }
     if (entry.closed) {
       // Claude-only hosts, and sign-ins only a vendor's partners can use:
       // writing the entry would only defer the failure to `login`.
-      say(`  ${warn(glyph("retry"))} ${accent(entry.name)} cannot be connected from Rune`);
+      say(`  ${warn(glyph("retry"))} ${accent(entry.name)} cannot be connected from Will`);
       say(`    ${dim(entry.closed)}`);
       return 1;
     }
@@ -248,7 +248,7 @@ async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<
       say(
         `  ${warn(glyph("retry"))} ${accent(entry.name)} is in the catalog but publishes no endpoint yet`,
       );
-      say(`    ${dim("add it by URL once you have one:")} rune mcp add <url> --name ${entry.name}`);
+      say(`    ${dim("add it by URL once you have one:")} will mcp add <url> --name ${entry.name}`);
       return 1;
     }
     name = name ?? entry.name;
@@ -291,7 +291,7 @@ async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<
     if (!(await store.get(mcpTokenAccount(name!)))) {
       say();
       say(
-        `  ${text("Next")}  ${accent(`rune mcp login ${name}`)} ${dim(`— paste ${withArticle(checkedEntry.auth.noun)} from ${checkedEntry.auth.createAt}`)}`,
+        `  ${text("Next")}  ${accent(`will mcp login ${name}`)} ${dim(`— paste ${withArticle(checkedEntry.auth.noun)} from ${checkedEntry.auth.createAt}`)}`,
       );
     }
   } else if (config.url && signInOf(added) === "oauth") {
@@ -303,7 +303,7 @@ async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<
     if (!(await provider.hasCredentials())) {
       say();
       say(
-        `  ${text("Next")}  ${accent(`rune mcp login ${name}`)} ${dim("— most remote connectors require it")}`,
+        `  ${text("Next")}  ${accent(`will mcp login ${name}`)} ${dim("— most remote connectors require it")}`,
       );
     }
   }
@@ -316,7 +316,7 @@ async function cmdAdd(args: string[], values: Record<string, unknown>): Promise<
 async function cmdRemove(args: string[], values: Record<string, unknown>): Promise<number> {
   const name = args[0];
   if (!name) {
-    say(`  ${danger(glyph("failure"))} usage: rune mcp remove <name>`);
+    say(`  ${danger(glyph("failure"))} usage: will mcp remove <name>`);
     return 1;
   }
   const workspaceRoot = workspaceOf(values);
@@ -336,7 +336,7 @@ async function cmdRemove(args: string[], values: Record<string, unknown>): Promi
   // credential is not something a `remove` should do silently.
   const store = await openCredentialStore();
   if ((await store.get(mcpCredentialAccount(name))) || (await store.get(mcpTokenAccount(name)))) {
-    say(`    ${dim("its stored sign-in is still in the keychain —")} rune mcp logout ${name}`);
+    say(`    ${dim("its stored sign-in is still in the keychain —")} will mcp logout ${name}`);
   }
   return 0;
 }
@@ -369,7 +369,7 @@ async function cmdList(args: string[], values: Record<string, unknown>): Promise
   if (servers.length === 0) {
     say(`  ${dim("No connectors configured.")}`);
     say(
-      `  ${text("Add one")}  ${accent("rune mcp add notion")} ${dim("·")} ${accent("rune mcp list --catalog")}`,
+      `  ${text("Add one")}  ${accent("will mcp add notion")} ${dim("·")} ${accent("will mcp list --catalog")}`,
     );
     say();
     return 0;
@@ -434,7 +434,7 @@ async function cmdCatalog(): Promise<number> {
     }
   }
   say();
-  say(`  ${text("Not available from Rune")}  ${dim(`${CLOSED_CONNECTORS.length}`)}`);
+  say(`  ${text("Not available from Will")}  ${dim(`${CLOSED_CONNECTORS.length}`)}`);
   for (const e of CLOSED_CONNECTORS) {
     say(`    ${accent(e.id.padEnd(18))} ${faint(e.reason)}`);
   }
@@ -475,14 +475,14 @@ async function cmdLogin(
 ): Promise<number> {
   const name = args[0];
   if (!name) {
-    say(`  ${danger(glyph("failure"))} usage: rune mcp login <name>`);
+    say(`  ${danger(glyph("failure"))} usage: will mcp login <name>`);
     return 1;
   }
   const workspaceRoot = workspaceOf(values);
   const entry = mergedServers(workspaceRoot).servers.find((s) => s.name === name);
   if (!entry) {
     say(
-      `  ${danger(glyph("failure"))} ${accent(name)} is not configured — ${accent(`rune mcp add ${name}`)} first`,
+      `  ${danger(glyph("failure"))} ${accent(name)} is not configured — ${accent(`will mcp add ${name}`)} first`,
     );
     return 1;
   }
@@ -576,7 +576,7 @@ async function cmdLogin(
 async function cmdLogout(args: string[]): Promise<number> {
   const name = args[0];
   if (!name) {
-    say(`  ${danger(glyph("failure"))} usage: rune mcp logout <name>`);
+    say(`  ${danger(glyph("failure"))} usage: will mcp logout <name>`);
     return 1;
   }
   const store = await openCredentialStore();
@@ -594,7 +594,7 @@ async function cmdLogout(args: string[]): Promise<number> {
 function cmdToggle(args: string[], values: Record<string, unknown>, enabled: boolean): number {
   const name = args[0];
   if (!name) {
-    say(`  ${danger(glyph("failure"))} usage: rune mcp ${enabled ? "enable" : "disable"} <name>`);
+    say(`  ${danger(glyph("failure"))} usage: will mcp ${enabled ? "enable" : "disable"} <name>`);
     return 1;
   }
   const scope = setServerEnabled(workspaceOf(values), name, enabled);
@@ -621,7 +621,7 @@ async function cmdDoctor(values: Record<string, unknown>): Promise<number> {
   const { servers, errors } = mergedServers(workspaceRoot);
 
   say();
-  say(`${pad}${accent("rune mcp doctor")}`);
+  say(`${pad}${accent("will mcp doctor")}`);
   say();
   say(`  ${text("Config")}`);
   say(`    ${faint(`user       ${mcpConfigPath("user", workspaceRoot)}`)}`);
@@ -631,7 +631,7 @@ async function cmdDoctor(values: Record<string, unknown>): Promise<number> {
   if (servers.length === 0) {
     say();
     say(`  ${dim("No connectors configured — nothing to check.")}`);
-    say(`  ${accent("rune mcp add notion")} ${dim("·")} ${accent("rune mcp list --catalog")}`);
+    say(`  ${accent("will mcp add notion")} ${dim("·")} ${accent("will mcp list --catalog")}`);
     say();
     return 0;
   }
@@ -666,7 +666,7 @@ async function cmdDoctor(values: Record<string, unknown>): Promise<number> {
     const label = `${accent(s.name.padEnd(16))}`;
 
     if (!enabled) {
-      say(`    ${label} ${dim("disabled")} ${faint(`— rune mcp enable ${s.name}`)}`);
+      say(`    ${label} ${dim("disabled")} ${faint(`— will mcp enable ${s.name}`)}`);
       continue;
     }
 
@@ -688,7 +688,7 @@ async function cmdDoctor(values: Record<string, unknown>): Promise<number> {
     if (status.needsAuth) {
       problems++;
       say(`    ${label} ${danger("needs login")}`);
-      say(`      ${faint(`fix: rune mcp login ${s.name}`)}`);
+      say(`      ${faint(`fix: will mcp login ${s.name}`)}`);
       continue;
     }
     if (status.health === "down" || !status.ready) {
@@ -698,7 +698,7 @@ async function cmdDoctor(values: Record<string, unknown>): Promise<number> {
       say(
         `      ${faint(
           s.config.url
-            ? `fix: check the URL, or rune mcp login ${s.name}`
+            ? `fix: check the URL, or will mcp login ${s.name}`
             : `fix: check the command runs — ${s.config.command} ${(s.config.args ?? []).join(" ")}`.trim(),
         )}`,
       );

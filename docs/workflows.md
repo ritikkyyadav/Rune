@@ -83,10 +83,10 @@ A kill lands between two nodes far more often than between two waves, and the en
 is not paying twice for the expensive node that already succeeded.
 
 ```
-rune workflow examples/workflows/review.workflow.json --dry-run   # print the waves
-rune workflow examples/workflows/review.workflow.json --mock      # run the graph with no model
-rune workflow examples/workflows/review.workflow.json --fresh     # ignore saved state
-rune workflow examples/workflows/greenfield.workflow.json --mock --max-parallel 1 \
+will workflow examples/workflows/review.workflow.json --dry-run   # print the waves
+will workflow examples/workflows/review.workflow.json --mock      # run the graph with no model
+will workflow examples/workflows/review.workflow.json --fresh     # ignore saved state
+will workflow examples/workflows/greenfield.workflow.json --mock --max-parallel 1 \
   --stop-after backend                                            # a kill you can aim
 ```
 
@@ -145,7 +145,7 @@ rather than as an absence.
 `research.ts` runs on this executor. Its investigator fan-out — the DAG this file was extracted
 from — is a workflow whose nodes are the round's sub-questions, run through `runWorkflow` with the
 same bounded concurrency, the same per-node failure isolation and the same events every other
-workflow gets. Its surface is unchanged: `rune research`, `/research` and the research event stream
+workflow gets. Its surface is unchanged: `will research`, `/research` and the research event stream
 are what they were, and the research tests are untouched.
 
 A round is one wave of independent nodes. The dependency between _rounds_ is the reflect step, and

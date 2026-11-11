@@ -100,7 +100,7 @@ export async function runDetach(
   const prompt = positionals.slice(1).join(" ").trim();
   if (!prompt) {
     console.error(
-      'Usage: rune detach "<prompt>" [--worktree] [-w <workspace>] [-p <provider>] [-m <model>] [--gear <1-4|auto>]',
+      'Usage: will detach "<prompt>" [--worktree] [-w <workspace>] [-p <provider>] [-m <model>] [--gear <1-4|auto>]',
     );
     process.exit(2);
   }
@@ -183,7 +183,7 @@ export async function runDetach(
     );
   }
   if (route.RUNE_GEAR) console.log(`  gear:      ${route.RUNE_GEAR}`);
-  console.log(`  attach:    rune attach ${sessionId.slice(0, 8)}`);
+  console.log(`  attach:    will attach ${sessionId.slice(0, 8)}`);
   console.log(`  host log:  ${logPath}`);
   process.exit(0);
 }
@@ -193,7 +193,7 @@ export async function runAttach(positionals: string[]): Promise<void> {
   const reg = loadRegistry();
   const entries = Object.values(reg).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
   if (entries.length === 0) {
-    console.error('no detached runs recorded — start one with: rune detach "<prompt>"');
+    console.error('no detached runs recorded — start one with: will detach "<prompt>"');
     process.exit(1);
   }
   const entry =
@@ -214,7 +214,7 @@ export async function runAttach(positionals: string[]): Promise<void> {
   } catch {
     console.error(
       `host for ${entry.sessionId.slice(0, 8)} is no longer running.\n` +
-        `The transcript is in the session store: rune resume ${entry.sessionId}`,
+        `The transcript is in the session store: will resume ${entry.sessionId}`,
     );
     process.exit(1);
   }
@@ -254,7 +254,7 @@ export async function runAttach(positionals: string[]): Promise<void> {
   process.on("SIGINT", () => {
     client.close();
     console.log(
-      "\ndetached — the run continues. Reattach with: rune attach " + entry.sessionId.slice(0, 8),
+      "\ndetached — the run continues. Reattach with: will attach " + entry.sessionId.slice(0, 8),
     );
     process.exit(0);
   });

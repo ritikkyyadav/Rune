@@ -433,11 +433,11 @@ await new Promise((resolve) => setTimeout(resolve, 40_000));
   test("the next process is told what is known about the call that never returned", () => {
     const resumed = rig.server.matching((r) => r.role === "lead").at(-1)!;
     expect(resumed.raw).toContain(
-      "No result was recorded: the previous Rune run ended before bash returned.",
+      "No result was recorded: the previous Will run ended before bash returned.",
     );
     expect(resumed.raw).toContain("It may not have run, or it may have run in part or in full.");
     // Not that it did not run, and not to run it again.
-    expect(resumed.raw).not.toContain("Not executed: the previous Rune run ended");
+    expect(resumed.raw).not.toContain("Not executed: the previous Will run ended");
     expect(resumed.raw).not.toContain("Re-run it if the result is still needed");
   });
 });

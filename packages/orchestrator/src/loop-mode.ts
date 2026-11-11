@@ -224,7 +224,7 @@ function parseInterval(value: string, unit: string, warnings: string[]): number 
   }
   const requested = Math.ceil(quantity * multiplier);
   if (requested < LOOP_MIN_INTERVAL_MS) {
-    warnings.push("Sub-minute intervals are rounded up to Rune's one-minute minimum.");
+    warnings.push("Sub-minute intervals are rounded up to Will's one-minute minimum.");
     return LOOP_MIN_INTERVAL_MS;
   }
   if (requested >= LOOP_EXPIRY_MS) {
@@ -264,12 +264,12 @@ export function resolveLoopPrompt(
     try {
       const parent = lstatSync(dirname(candidate.path));
       if (parent.isSymbolicLink()) {
-        warning = `${dirname(candidate.path)} is a symlink, so Rune ignored it for loop safety.`;
+        warning = `${dirname(candidate.path)} is a symlink, so Will ignored it for loop safety.`;
         continue;
       }
       const stat = lstatSync(candidate.path);
       if (stat.isSymbolicLink()) {
-        warning = `${candidate.path} is a symlink, so Rune ignored it for loop safety.`;
+        warning = `${candidate.path} is a symlink, so Will ignored it for loop safety.`;
         continue;
       }
       if (!stat.isFile()) continue;
@@ -293,7 +293,7 @@ export function resolveLoopPrompt(
     } catch (error) {
       const code = (error as NodeJS.ErrnoException | undefined)?.code;
       if (code !== "ENOENT") {
-        warning = `Rune could not read ${candidate.path}; the built-in loop prompt will be used.`;
+        warning = `Will could not read ${candidate.path}; the built-in loop prompt will be used.`;
       }
     }
   }

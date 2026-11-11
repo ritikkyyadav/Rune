@@ -401,7 +401,7 @@ export function sessionTag(id: string): string {
  */
 export function farewell(sessionId?: string): string {
   const back = sessionId
-    ? `  ${faint("resume with")} ${quiet(`rune resume ${sessionTail(sessionId)}`)}`
+    ? `  ${faint("resume with")} ${quiet(`will resume ${sessionTail(sessionId)}`)}`
     : "";
   return `${MARK}${muted("Goodbye.")}${back}`;
 }

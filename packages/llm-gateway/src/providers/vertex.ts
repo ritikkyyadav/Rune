@@ -172,7 +172,7 @@ export class VertexProvider implements LlmProvider {
       status: 404,
       provider: "vertex",
       message:
-        `Vertex has no publisher for "${model}". Rune routes ids starting with ` +
+        `Vertex has no publisher for "${model}". Will routes ids starting with ` +
         `"claude" to the Anthropic publisher and "gemini" to Google's.`,
     });
   }

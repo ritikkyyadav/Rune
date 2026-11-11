@@ -1,6 +1,6 @@
 # Language servers
 
-Rune talks to real language servers over LSP, for two things: the on-demand
+Will talks to real language servers over LSP, for two things: the on-demand
 `lsp` tool the model calls itself, and **post-edit diagnostics** — the language
 server's verdict on the file the model just wrote, delivered in the same tool
 result.
@@ -99,7 +99,7 @@ autoFeedback = false   # off for this project whatever is installed
 ```
 
 or, live in a session, `/config lsp off` (`true` forces it on, Rust and Go
-included). `rune audit` reports how many edits carried a diagnostics block and
+included). `will audit` reports how many edits carried a diagnostics block and
 how many of those were fixed before the verifier ran.
 
 ### `RUNE_LSP_SERVERS`

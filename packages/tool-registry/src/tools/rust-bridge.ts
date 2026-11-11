@@ -55,7 +55,7 @@ export function sandboxDenialHint(
   if (!SANDBOX_DENIAL_RE.test(stderr)) return null;
   const base =
     "This command ran inside the OS sandbox and failed with a permission error, which is usually a " +
-    "sandbox restriction: writes are confined to the workspace, temp and Rune's cache; credential " +
+    "sandbox restriction: writes are confined to the workspace, temp and Will's cache; credential " +
     "stores (~/.ssh, ~/.aws, keychains) are unreadable; the network is closed unless network: true.";
   return isUnsandboxedFallbackAllowed()
     ? `${base} If the command genuinely needs host access, re-run it once with unsandboxed: true — it then runs on the host under the regular permission prompt. If it only needs the network, use network: true instead.`

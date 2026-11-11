@@ -37,6 +37,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -45,7 +46,7 @@ import { PRODUCT_VERSION } from "./ui/brand";
 
 // ─── The release surface ───
 
-export const DEFAULT_UPDATE_REPO = "ritikkyyadav/Rune";
+export const DEFAULT_UPDATE_REPO = "ritikkyyadav/Will";
 
 /** How long a "no newer release" answer is trusted before we ask again. */
 export const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -231,8 +232,14 @@ export async function fetchStable(env: UpgradeEnv): Promise<LatestRelease | null
  * beside it as `.backup`. Renames only, so it takes no time and needs no
  * network; running it again swaps back. False when there is nothing to swap.
  */
-export function rollBack(installDir: string): boolean {
-  const targets = [cliTarget(installDir), join(installDir, "rune-tools")];
+export function rollBack(
+  installDir: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  const targets = [
+    cliTarget(installDir, platform),
+    join(installDir, platform === "win32" ? "rune-tools.exe" : "rune-tools"),
+  ];
   const swappable = targets.filter((t) => existsSync(t) && existsSync(`${t}.backup`));
   if (!swappable.some((t) => t === targets[0])) return false;
   for (const target of swappable) {
@@ -320,7 +327,7 @@ export async function checkForUpdateLine(env: UpgradeEnv = defaultEnv()): Promis
 }
 
 function nagLine(version: string, current: string): string {
-  return `Rune v${version} is available (you have v${current}) — run \`rune upgrade\` to install it.`;
+  return `Will v${version} is available (you have v${current}) — run \`will upgrade\` to install it.`;
 }
 
 // ─── Download, verify, promote ───
@@ -508,9 +515,27 @@ export interface UpgradeResult {
  * Replacing the wrapper would strip the env loading it does, so when a
  * `rune-compiled` exists that is what gets replaced.
  */
-export function cliTarget(installDir: string): string {
+export function cliTarget(
+  installDir: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
   const compiled = join(installDir, "rune-compiled");
-  return existsSync(compiled) ? compiled : join(installDir, "rune");
+  return existsSync(compiled)
+    ? compiled
+    : join(installDir, platform === "win32" ? "rune.exe" : "rune");
+}
+
+/** Both public names follow one artifact through upgrades and rollbacks. */
+export function installPublicCommand(installDir: string, platform: NodeJS.Platform): void {
+  const launcher = join(installDir, platform === "win32" ? "will.cmd" : "will");
+  const staged = `${launcher}.new`;
+  rmSync(staged, { force: true });
+  if (platform === "win32") {
+    writeFileSync(staged, '@echo off\r\n"%~dp0rune.exe" %*\r\nexit /b %errorlevel%\r\n');
+  } else {
+    symlinkSync("rune", staged);
+  }
+  renameSync(staged, launcher);
 }
 
 export async function runUpgrade(
@@ -524,16 +549,18 @@ export async function runUpgrade(
   // ── Back to the build kept beside this one (R7) ──
   if (argv.includes("--rollback")) {
     try {
-      if (!rollBack(env.installDir)) {
-        log(`  Nothing to roll back to: there is no .backup beside ${cliTarget(env.installDir)}.`);
+      if (!rollBack(env.installDir, env.platform)) {
+        log(
+          `  Nothing to roll back to: there is no .backup beside ${cliTarget(env.installDir, env.platform)}.`,
+        );
         return 1;
       }
     } catch (err) {
       log(`  Rollback failed: ${err instanceof Error ? err.message : String(err)}`);
       return 1;
     }
-    log(`  Rolled back to the build that was kept as .backup. \`rune --version\` says which.`);
-    log(`  The one it replaced is now the .backup: \`rune upgrade --rollback\` again undoes this.`);
+    log(`  Rolled back to the build that was kept as .backup. \`will --version\` says which.`);
+    log(`  The one it replaced is now the .backup: \`will upgrade --rollback\` again undoes this.`);
     return 0;
   }
   const pinned = flagValue(argv, "--to");
@@ -545,7 +572,7 @@ export async function runUpgrade(
 
   const suffix = assetSuffix(env.platform, env.arch);
   if (!suffix) {
-    log(`  rune upgrade does not have a release build for ${env.platform}/${env.arch}.`);
+    log(`  will upgrade does not have a release build for ${env.platform}/${env.arch}.`);
     log(`  Install from source: https://github.com/${env.repo}`);
     return 1;
   }
@@ -576,18 +603,18 @@ export async function runUpgrade(
   const cmp = compareVersions(version, env.version);
   if (cmp === 0 || (cmp < 0 && !pinned)) {
     log(
-      `  up to date — Rune v${env.version} (${pinned ? "asked for" : channel === "stable" ? "stable release" : "latest release"}: v${version})`,
+      `  up to date — Will v${env.version} (${pinned ? "asked for" : channel === "stable" ? "stable release" : "latest release"}: v${version})`,
     );
     return 0;
   }
 
   log(
     cmp > 0
-      ? `  Rune v${version} is available. You have v${env.version}.`
-      : `  Rune v${version} is older than the v${env.version} you have; installing it as asked.`,
+      ? `  Will v${version} is available. You have v${env.version}.`
+      : `  Will v${version} is older than the v${env.version} you have; installing it as asked.`,
   );
   if (checkOnly) {
-    log(`  Run \`rune upgrade\` to install it.`);
+    log(`  Run \`will upgrade\` to install it.`);
     return 0;
   }
 
@@ -650,8 +677,15 @@ export async function runUpgrade(
   // ── Promote ──
   try {
     mkdirSync(env.installDir, { recursive: true });
-    promote(cliTarget(env.installDir), cliBytes, true);
-    if (toolsBytes) promote(join(env.installDir, "rune-tools"), toolsBytes, true);
+    promote(cliTarget(env.installDir, env.platform), cliBytes, true);
+    if (toolsBytes) {
+      promote(
+        join(env.installDir, env.platform === "win32" ? "rune-tools.exe" : "rune-tools"),
+        toolsBytes,
+        true,
+      );
+    }
+    installPublicCommand(env.installDir, env.platform);
     try {
       retireSourceBuildRecord(env.installDir);
     } catch {
@@ -667,7 +701,7 @@ export async function runUpgrade(
   // The daily check should not immediately re-nag about what we just installed.
   writeState(env.statePath, { lastCheckedAt: env.now(), latest: version });
 
-  log(`  Installed Rune v${version} → ${env.installDir}`);
+  log(`  Installed Will v${version} → ${env.installDir}`);
   log(`  The previous build is kept beside it as .backup.`);
   return 0;
 }

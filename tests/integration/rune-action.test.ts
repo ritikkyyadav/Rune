@@ -131,8 +131,8 @@ describe("the action's pieces", () => {
   });
 
   test("strips ANSI out of the audit page", () => {
-    const painted = "  [36mRune audit[0m [2m01a0[0m  fix the thing";
-    expect(auditSummary(painted)).toBe("Rune audit 01a0  fix the thing");
+    const painted = "  [36mWill audit[0m [2m01a0[0m  fix the thing";
+    expect(auditSummary(painted)).toBe("Will audit 01a0  fix the thing");
   });
 
   test("a mock run says it is one, before it says anything else", () => {
@@ -150,7 +150,7 @@ describe("the action's pieces", () => {
       ...parseInputs([], { GITHUB_WORKSPACE: repo }),
       mock: true,
     });
-    expect(comment).toContain("### Rune review — dry run (mock provider)");
+    expect(comment).toContain("### Will review — dry run (mock provider)");
     expect(comment).toContain("**mock provider**");
     expect(comment).toContain("nothing whatever about the change");
     expect(comment).toContain("mock provider, no model consulted");
@@ -159,7 +159,7 @@ describe("the action's pieces", () => {
     expect(comment).toContain("<!-- rune-review -->");
 
     const real = composeComment(outcome, parseInputs([], { GITHUB_WORKSPACE: repo }));
-    expect(real).toContain("### Rune review\n");
+    expect(real).toContain("### Will review\n");
     expect(real).not.toContain("mock provider");
   });
 
@@ -257,11 +257,11 @@ describe("the action end to end, against a fake model", () => {
 
       expect(code, `stderr:\n${err}`).toBe(0);
       expect(out).toContain("<!-- rune-review -->");
-      expect(out).toContain("### Rune review");
+      expect(out).toContain("### Will review");
       expect(out).toContain("inverts the function");
       expect(out).toContain("What the run actually did");
       // The receipt half. Without it the comment is just a model's opinion.
-      expect(out).toContain("Rune audit");
+      expect(out).toContain("Will audit");
       // The diff is handed over as a file, not pasted into the prompt.
       expect(existsSync(join(repo, "DIFF.patch"))).toBe(true);
     },
@@ -317,13 +317,13 @@ describe("the action end to end, against a fake model", () => {
       expect(err).toContain("MOCK provider");
       // Labelled, in the heading and in the footer, so neither a reader nor a
       // notification can mistake it for a review.
-      expect(out).toContain("### Rune review — dry run (mock provider)");
+      expect(out).toContain("### Will review — dry run (mock provider)");
       expect(out).toContain("mock provider, no model consulted");
       // …and it is still a real run: a session, a turn, and the audit of it.
       expect(out).toContain("No model was consulted");
       expect(out).toContain("`app.ts`");
       expect(out).toContain("What the run actually did");
-      expect(out).toContain("Rune audit");
+      expect(out).toContain("Will audit");
     },
     180_000,
   );

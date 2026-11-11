@@ -16,11 +16,11 @@ describe("ui/status renderStatus", () => {
   };
 
   it("opens with a title, not a second masthead", () => {
-    // The card drew the header's own lockup -- R U N E and the build -- into
+    // The card drew the header's own lockup -- W I L L and the build -- into
     // the transcript, under the header pinned at the top of the same window
     // (the TUI audit of 2026-10-26: "duplicate header inside the transcript").
     const lines = stripAnsi(renderStatus({ ...base, version: "0.3.0" })).split("\n");
-    expect(lines.some((line) => line.includes("R U N E"))).toBe(false);
+    expect(lines.some((line) => line.includes("W I L L"))).toBe(false);
     const title = lines.find((line) => line.trim().startsWith("Status"))!;
     expect(title.startsWith(`${F.MARK}Status`)).toBe(true);
     // The build still sits hard against the right edge.

@@ -1,3 +1,5 @@
+import { PRODUCT_NAME } from "@rune/shared";
+
 // ─── Interactive Dashboards ───
 //
 // The `interactive_dashboard` tool renders model-authored HTML dashboards
@@ -408,7 +410,7 @@ export class DashboardManager {
     const id = randomBytes(4).toString("hex");
     const rec: DashboardRecord = {
       id,
-      title: args.title || "Rune dashboard",
+      title: args.title || `${PRODUCT_NAME} dashboard`,
       html: args.spec !== undefined ? specShellHtml(jsonForScript(args.spec)) : (args.html ?? ""),
       spec: args.spec,
       // For spec dashboards the spec itself is the initial render payload
@@ -1189,7 +1191,7 @@ export function createDashboardTool(manager: DashboardManager): ToolHandler {
         switch (args.action) {
           case "create": {
             const info = await manager.create({
-              title: typeof args.title === "string" ? args.title : "Rune dashboard",
+              title: typeof args.title === "string" ? args.title : `${PRODUCT_NAME} dashboard`,
               html: typeof args.html === "string" ? args.html : undefined,
               spec: coerceData(args.spec) ?? undefined,
               data: coerceData(args.data),

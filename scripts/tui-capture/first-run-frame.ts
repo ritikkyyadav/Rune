@@ -39,7 +39,7 @@ const tight = (s: string): string => (s.startsWith(" ") ? s.slice(1) : s);
 
 function header(cols: number, title: string): string[] {
   const usable = cols - 1;
-  const left = `  R U N E  ${title}`;
+  const left = `  W I L L  ${title}`;
   const right = "v0.4.1-dev+b5aef39";
   const gap = Math.max(1, usable - width(left) - width(right));
   return ["", `${left}${" ".repeat(gap)}${right}`, `  ${"━".repeat(7)}${"─".repeat(usable - 9)}`];

@@ -1,6 +1,6 @@
 # The command sandbox
 
-Every `bash` call Rune makes runs, by default, inside an OS sandbox: Seatbelt (`sandbox-exec`) on
+Every `bash` call Will makes runs, by default, inside an OS sandbox: Seatbelt (`sandbox-exec`) on
 macOS, bubblewrap on Linux. The sandbox is kernel-enforced and it is the reason 3rd gear and Auto
 mode can approve a shell command without asking anyone — the walls, not a person, bound what the
 command can do.
@@ -20,7 +20,7 @@ also a config key, so it can be checked in with a project.
 ## Mode
 
 - **`auto-allow`** — commands run in the sandbox: no network unless a call sets `network: true`,
-  writes confined to the workspace, temp and Rune's cache, credential stores unreadable. Because
+  writes confined to the workspace, temp and Will's cache, credential stores unreadable. Because
   the sandbox is the boundary, 3rd gear and Auto approve sandboxed commands without a prompt.
   Explicit ask/deny rules are always respected.
 - **`regular`** — the same containment, but the gear's ordinary permission prompt still applies to
@@ -87,10 +87,10 @@ What the profile enforces, and `/sandbox config` prints:
 
 - **Reads** are broad (a compiler has to see the system) minus the credential stores: `~/.ssh`,
   `~/.aws`, `~/.gnupg`, `~/.config/gh`, `~/.config/gcloud`, `~/.kube`, `~/.docker`, `~/.npmrc`,
-  `~/.netrc`, the shell histories and Rune's own `secrets.json` — plus `denyRead`.
+  `~/.netrc`, the shell histories and Will's own `secrets.json` — plus `denyRead`.
 - **Writes** are allowed under the workspace, `~/.rune/cache`, `/tmp`, `/private/tmp`,
   `/private/var/folders` and `$TMPDIR` — plus `allowWrite`.
-- **Denied within allowed**, in every gear: Rune's own control surface inside the workspace
+- **Denied within allowed**, in every gear: Will's own control surface inside the workspace
   (`.rune/config.toml`, `hooks.json`, `mcp.json`, `sandbox.json`, `policy.json`, `org.pub`, and the
   `hooks/`, `skills/`, `plugins/`, `commands/` directories; the legacy `.gear/` and `.alan/`
   spellings too) and `.git/hooks` — a git hook is persistence, it runs on the next commit long

@@ -481,8 +481,8 @@ export const CONNECTOR_METHODS = {
         this.print(
           `  ${faint(
             row.source === "plugin"
-              ? `${label} comes from the plugin ${row.plugin ?? ""}; turn it off with rune plugin disable ${row.plugin ?? ""}`
-              : `${label} is Rune's own browser; /browser off removes it`,
+              ? `${label} comes from the plugin ${row.plugin ?? ""}; turn it off with will plugin disable ${row.plugin ?? ""}`
+              : `${label} is Will's own browser; /browser off removes it`,
           )}`,
         );
         return false;

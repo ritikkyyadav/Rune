@@ -6,7 +6,7 @@
 // and total — the release page looks complete and `curl | bash` cannot find a
 // thing.
 //
-// This has already happened once. The Gear → Rune rename moved the installers
+// This has already happened once. The Gear → Will rename moved the installers
 // to `rune-*` while every published release up to v0.3.1 carries `gear-*`, so
 // the one-line install has been broken since 2026-09-05 and will stay broken
 // until a release is cut under the new names. Nothing in the repository would
@@ -117,10 +117,10 @@ describe("no asset path still carries the previous name", () => {
     }
   });
 
-  test("the installer tells the user to run `rune`", () => {
+  test("the installer tells the user to run `will`", () => {
     // It said `gear` for three days after the rename — the last line of the
     // install, naming a command that does not exist.
-    expect(WEB_INSTALL).toContain('say "Then run: $(c 1 rune)"');
+    expect(WEB_INSTALL).toContain('say "Then run: $(c 1 will)"');
     expect(WEB_INSTALL).not.toMatch(/Then run: \$\(c 1 gear\)/);
   });
 });

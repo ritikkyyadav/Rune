@@ -1,20 +1,28 @@
-# Rune
+# Will
 
 **A coding agent for your terminal.**
 
-Work on your codebase with the model you choose. Rune brings file edits, shell commands,
+Work on your codebase with the model you choose. Will brings file edits, shell commands,
 checks, and resumable sessions into one workspace.
 
-[Get started](#install) · [Documentation](#documentation) · [Releases](https://github.com/ritikkyyadav/Rune/releases) · [Report an issue](https://github.com/ritikkyyadav/Rune/issues)
+[Get started](#install) · [Documentation](#documentation) · [Releases](https://github.com/ritikkyyadav/Will/releases) · [Report an issue](https://github.com/ritikkyyadav/Will/issues)
 
 <p>
-  <a href="docs/assets/readme/rune-session-120x32.jpg"><picture><source media="(max-width: 640px)" srcset="docs/assets/readme/rune-session-80x22.jpg"><img src="docs/assets/readme/rune-session-120x32.jpg" alt="Rune v1.4.11 in the white terminal and matte light theme, editing a CLI and running its tests" width="100%"></picture></a>
+  <a href="docs/assets/readme/will-session-120x32.jpg"><picture><source media="(max-width: 640px)" srcset="docs/assets/readme/will-session-80x22.jpg"><img src="docs/assets/readme/will-session-120x32.jpg" alt="Will v1.4.17 in the white terminal and matte light theme, editing a CLI and running its tests" width="100%"></picture></a>
 </p>
 
-<sub>Rune v1.4.11 · Light / Matte · Real terminal capture with a local scripted model.
-<a href="docs/assets/readme/README.md">Capture details</a></sub>
+<sub>Will v1.4.17 · Light / Matte · Real terminal capture with a local scripted model.
+<a href="docs/assets/readme/will-capture.md">Capture details</a></sub>
 
 ## Install
+
+Will is the new name for Rune. Existing sessions, sign-ins, settings, themes, and
+integrations use the same storage and identifiers. Installers provide `will` and
+keep `rune` as a compatible command. See [rename compatibility](docs/will-rename.md).
+
+The rename is available on `main`. The current v1.4.17 release binaries still display
+Rune; [build from source](docs/getting-started.md#from-source) to use Will until the
+next release.
 
 **macOS and Linux**
 
@@ -32,15 +40,15 @@ Installers verify release checksums. Windows currently runs without an OS sandbo
 See the [installation guide](docs/getting-started.md#installation) for source builds,
 PATH setup, verification, and uninstalling.
 
-Already installed? Run `rune upgrade`.
+Already installed? Run `will upgrade`.
 
 ## Start working
 
-Open a project and launch Rune:
+Open a project and launch Will:
 
 ```sh
 cd your-project
-rune
+will
 ```
 
 Choose a provider and model during setup, then describe the change you want:
@@ -50,16 +58,16 @@ Add a --version flag to the CLI and a test for it.
 ```
 
 Use `/login` to connect a provider, `/model` to choose a model, and `/help` for commands.
-Rune supports hosted providers and local models through Ollama.
+Will supports hosted providers and local models through Ollama.
 [Provider setup](docs/providers.md)
 
 To use the appearance shown above:
 
 ```sh
-RUNE_THEME=rune-light RUNE_FINISH=matte rune
+RUNE_THEME=rune-light RUNE_FINISH=matte will
 ```
 
-You can also choose Light and Matte in `/theme`; Rune saves your selection.
+You can also choose Light and Matte in `/theme`; Will saves your selection.
 
 ## Built for work in your codebase
 
@@ -67,7 +75,7 @@ You can also choose Light and Matte in `/theme`; Rune saves your selection.
 - **Check the result.** Keep test output and acceptance checks beside the work they verify.
 - **Control execution.** Choose a permission level and configure the OS sandbox separately.
 - **Pick up where you left off.** Resume sessions, restore checkpoints with `/rewind`, and
-  inspect the execution record with `rune audit`.
+  inspect the execution record with `will audit`.
 - **Extend your workflow.** Add project instructions, skills, hooks, plugins, and MCP servers.
 - **Use the same engine elsewhere.** Run headless tasks, connect a remote terminal, or use ACP
   from an editor.
@@ -77,7 +85,7 @@ Session data is stored locally. Telemetry is off by default.
 
 ## Latest release
 
-[**v1.4.17**](https://github.com/ritikkyyadav/Rune/releases/tag/v1.4.17) makes the interface
+[**v1.4.17**](https://github.com/ritikkyyadav/Will/releases/tag/v1.4.17) makes the interface
 stop destroying work and stop saying `done` when it is not: Option keys and a stray Esc no longer
 erase a draft or stop a run, typing cannot approve a command, each turn ends with how it actually
 ended, sub-agents are named and watched as they work, and a first launch asks which model.
@@ -109,7 +117,7 @@ Requires [Bun](https://bun.sh) and [Rust](https://rustup.rs).
 ```sh
 bun install
 cargo build --release -p rune-tools
-./bin/rune
+./bin/will
 ```
 
 ```sh

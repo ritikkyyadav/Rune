@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────
-#  Rune — Sovereign Agentic Coding Assistant by Savoir Studio
-#  Just type `rune` from any directory to start.
+#  Will — Sovereign Agentic Coding Assistant by Savoir Studio
+#  Just type `will` from any directory to start (`rune` remains an alias).
 #  Data lives in ~/.rune (an old ~/.gear or ~/.alan is moved there once, with a symlink left behind).
 # ──────────────────────────────────────────────────────────
 set -euo pipefail
@@ -9,7 +9,7 @@ set -euo pipefail
 # ─── Stale working-directory self-heal ───
 # If this shell's cwd was deleted, moved (e.g. to Trash), or replaced while
 # the tab sat in it, getcwd() fails and the Bun runtime dies at startup with
-# a cryptic "Unexpected" / "low max file descriptors" error before Rune ever
+# a cryptic "Unexpected" / "low max file descriptors" error before Will ever
 # runs. Re-resolve $PWD by its path: if the folder exists (again), re-enter it
 # fresh; if it is really gone, say exactly what happened and how to fix it.
 if ! pwd -P >/dev/null 2>&1; then
@@ -17,7 +17,7 @@ if ! pwd -P >/dev/null 2>&1; then
     echo "  ! This terminal's working directory was stale (deleted or replaced) — re-entered $PWD" >&2
   else
     echo "" >&2
-    echo "  ✗ Rune can't start: this terminal's working directory no longer exists." >&2
+    echo "  ✗ Will can't start: this terminal's working directory no longer exists." >&2
     echo "    It was deleted, moved to Trash, or replaced while this shell was inside it." >&2
     echo "    Fix: cd to an existing folder and retry — e.g.  cd ~  then cd back to your project." >&2
     echo "" >&2
@@ -102,7 +102,7 @@ for arg in "$@"; do
   case "$arg" in
     --help|-h)
       cat <<'USAGE'
-Usage: rune [options] [message]
+Usage: will [options] [message]
 
 Options:
   -m, --model <model>       LLM model (default: config/provider default)
@@ -116,16 +116,16 @@ Options:
   -l, --list                List sessions
 
 Commands:
-  rune                      Start interactive chat (CLI agent)
-  rune "your question"      Ask a one-shot question
-  rune --list               List past sessions
-  rune --resume <id>        Resume a session
-  rune login [provider]     Sign in to a provider (API key, or OAuth where supported)
-  rune logout <provider>    Remove a provider's stored key/OAuth from the secure store
-  rune providers            List providers, auth method, and credential status
-  rune use <provider>       Set the active provider for new sessions
-  rune models [provider]    List a provider's models (live discovery + fallback)
-  rune setup                First-time setup (build + install)
+  will                      Start interactive chat (CLI agent)
+  will "your question"      Ask a one-shot question
+  will --list               List past sessions
+  will --resume <id>        Resume a session
+  will login [provider]     Sign in to a provider (API key, or OAuth where supported)
+  will logout <provider>    Remove a provider's stored key/OAuth from the secure store
+  will providers            List providers, auth method, and credential status
+  will use <provider>       Set the active provider for new sessions
+  will models [provider]    List a provider's models (live discovery + fallback)
+  will setup                First-time setup (build + install)
 
 Config: ~/.rune/config.toml
 API keys: ~/.rune/.env
@@ -133,11 +133,9 @@ USAGE
       exit 0
       ;;
     --version|-v|-V)
-      # Single version source: ui/brand.ts (kept in lockstep with the package
-      # semver). A hardcoded copy here drifted to a version that never shipped.
-      v="$(sed -n 's/.*PRODUCT_VERSION = "\([^"]*\)".*/\1/p' \
-        "$RUNE_ROOT/packages/orchestrator/src/bin/ui/brand.ts" 2>/dev/null | head -1)"
-      echo "Rune v${v:-unknown}"
+      # Use the same version source as compiled builds.
+      . "$RUNE_ROOT/scripts/version.sh"
+      echo "Will v$(rune_version)"
       exit 0
       ;;
   esac
@@ -157,7 +155,7 @@ find_bun() {
 # ─── First-time setup check ───
 setup() {
   echo ""
-  echo "  $(bold '  Rune Setup')"
+  echo "  $(bold '  Will Setup')"
   echo "  $(dim '──────────────────────────────────────')"
   echo ""
 
@@ -198,7 +196,7 @@ setup() {
   # 6. Create config if missing
   if [ ! -f "$RUNE_DATA/config.toml" ]; then
     cat > "$RUNE_DATA/config.toml" <<'TOML'
-# Rune Configuration
+# Will Configuration
 [llm]
 defaultProvider = "openrouter"
 
@@ -239,11 +237,11 @@ ENV
   fi
 
   echo ""
-  echo "  $(green '✓') $(bold 'Setup complete!') Type $(cyan 'rune') to start."
+  echo "  $(green '✓') $(bold 'Setup complete!') Type $(cyan 'will') to start."
   echo ""
 }
 
-# Handle `rune setup` command
+# Handle `will setup` command
 if [ "${1:-}" = "setup" ]; then
   setup
   exit 0
@@ -252,7 +250,7 @@ fi
 # ─── Ensure everything is ready ───
 BUN=$(find_bun) || {
   echo ""
-  echo "  $(red '✗') Bun not found. Run: $(bold 'rune setup')"
+  echo "  $(red '✗') Bun not found. Run: $(bold 'will setup')"
   echo ""
   exit 1
 }

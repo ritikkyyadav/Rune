@@ -1,4 +1,5 @@
 import { createHash } from "crypto";
+import { PRODUCT_NAME } from "@rune/shared";
 
 // This runs locally after credential storage. No assets, fonts, dependencies,
 // analytics, or network requests are needed for the completion experience.
@@ -143,7 +144,7 @@ const PAGE = `<!doctype html>
 <meta name="referrer" content="no-referrer">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-${SCRIPT_HASH}'; style-src 'unsafe-inline'; connect-src 'none'; img-src data:; base-uri 'none'; form-action 'none'">
 <link rel="icon" href="data:,">
-<title>Logged in successfully — Rune</title>
+<title>Logged in successfully — ${PRODUCT_NAME}</title>
 <style>
 :root{color-scheme:light;--paper:#fbfcfd;--ink:#202328;--muted:#6c737e;--hairline:#e6e9ee}
 *{box-sizing:border-box}
@@ -186,11 +187,11 @@ footer{position:absolute;z-index:2;bottom:0;left:0;width:100%;display:flex;justi
 <canvas id="field" aria-hidden="true"></canvas>
 <div class="pointer-glow" aria-hidden="true"></div>
 <div class="veil" aria-hidden="true"></div>
-<header><div class="wordmark" aria-label="Rune">Rune</div><div class="header-note">Your workspace awaits</div></header>
+<header><div class="wordmark" aria-label="${PRODUCT_NAME}">${PRODUCT_NAME}</div><div class="header-note">Your workspace awaits</div></header>
 <main><section class="message" aria-labelledby="success-title">
 <p class="status">Connection established</p>
 <h1 id="success-title">Logged in<span>successfully.</span></h1>
-<p class="provider"><strong>__PROVIDER__</strong> is now connected to Rune.<br>You're ready to pick up where you left off.</p>
+<p class="provider"><strong>__PROVIDER__</strong> is now connected to ${PRODUCT_NAME}.<br>You're ready to pick up where you left off.</p>
 <div class="return"><strong>Return to your terminal</strong><span aria-hidden="true"></span>You can close this tab</div>
 </section></main>
 <footer><span>Ready when you are.</span><div class="motion-controls"><span class="motion-note">Move your pointer to explore</span><button class="motion-toggle" id="motion-toggle" type="button" aria-pressed="false" aria-controls="field">Pause motion</button></div></footer>

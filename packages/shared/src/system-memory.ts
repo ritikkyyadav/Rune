@@ -51,7 +51,7 @@ export const MEMORY_MODES: readonly MemoryMode[] = ["off", "auto", "manual"];
 /** One line each, for `/config`, the first-run wizard and `/memory`. */
 export const MEMORY_MODE_DESCRIPTIONS: Record<MemoryMode, string> = {
   off: "nothing is remembered, read or written",
-  auto: "Rune decides when to update its memory",
+  auto: "Will decides when to update its memory",
   manual: "only `/memory update` changes it",
 };
 
@@ -287,7 +287,7 @@ const MEMORY_KEY_SERVICE = "rune";
  * What Keychain Access lists the item as. Every other Rune item is labelled
  * plain "rune", so a dialog about this one could not say which it meant.
  */
-const MEMORY_KEY_LABEL = "Rune memory key";
+const MEMORY_KEY_LABEL = "Will memory key";
 
 /**
  * How long a read that may put a password dialog on screen is given. The
@@ -1348,7 +1348,7 @@ export function resolveMemoryMode(
     return {
       mode: "off",
       notice:
-        "memory is off: the mode in ~/.rune/system-memory.json does not carry this home's signature (`rune memory auto` or `rune memory manual` sets it again)",
+        "memory is off: the mode in ~/.rune/system-memory.json does not carry this home's signature (`will memory auto` or `will memory manual` sets it again)",
     };
   }
   // A mode chosen live via `/memory`, below the two settings a person can reach
@@ -1397,7 +1397,7 @@ export function resolveMemoryMode(
 /** The three-mode refusal every surface prints when handed a withdrawn cadence. */
 export const MEMORY_CADENCE_REFUSAL =
   "memory has three modes — off, auto, manual. Cadences (daily, weekly, 3d) are withdrawn: " +
-  "auto lets Rune decide when to update, manual waits for /memory update.";
+  "auto lets Will decide when to update, manual waits for /memory update.";
 
 /** True for the words the withdrawn cadence surface used to accept. */
 export function isWithdrawnCadence(s: string): boolean {

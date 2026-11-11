@@ -6,7 +6,7 @@ wait for the provider's window, continue the same session, and keep doing that u
 done or a limit you set is reached.
 
 ```bash
-rune -P "migrate the store to v2 and get the tests green" --resume-until 8h --resume-budget 2
+will -P "migrate the store to v2 and get the tests green" --resume-until 8h --resume-budget 2
 ```
 
 | flag              | meaning                                                                              | default            |
@@ -45,13 +45,13 @@ A mission's state lives in `rune.db` beside its session. If the process that was
 the terminal closed, the machine rebooted — nothing is lost:
 
 ```bash
-rune missions              # every mission: status, next attempt, deadline, spend, history
-rune missions run          # continue this workspace's due missions, then exit
-rune missions cancel <id>  # stop one; it stays in the list with its history
+will missions              # every mission: status, next attempt, deadline, spend, history
+will missions run          # continue this workspace's due missions, then exit
+will missions cancel <id>  # stop one; it stays in the list with its history
 ```
 
-`rune missions run` is a one-shot, meant for a scheduler you already have (cron, launchd): there
-is no Rune daemon. A plan is resumed by one process at a time: when the `-P` process that started
+`will missions run` is a one-shot, meant for a scheduler you already have (cron, launchd): there
+is no Will daemon. A plan is resumed by one process at a time: when the `-P` process that started
 it is still waiting and a scheduled run finds it due too, whichever claims it first continues the
 session and the other stops. A cancel holds against both. A resumed run uses the configuration in force _now_ — the gear, the sandbox,
 `--auto-approve` as passed to `missions run` — not the one the mission was started under.

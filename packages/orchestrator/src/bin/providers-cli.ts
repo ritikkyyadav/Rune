@@ -129,9 +129,9 @@ export async function runProviders(): Promise<void> {
   out();
   out(
     faint("Sign in with ") +
-      info("rune login <provider|engine>") +
+      info("will login <provider|engine>") +
       faint(" · switch with ") +
-      info("rune use <provider>"),
+      info("will use <provider>"),
   );
 }
 
@@ -141,7 +141,7 @@ export async function runUse(args: string[]): Promise<void> {
   const providerId = args[0];
   const modelArg = args[1];
   if (!providerId) {
-    out(warn("Usage: ") + info("rune use <provider> [model]"));
+    out(warn("Usage: ") + info("will use <provider> [model]"));
     out(faint("Providers: ") + PROVIDER_PRESETS.map((p) => p.id).join(", "));
     process.exitCode = 1;
     return;
@@ -156,7 +156,7 @@ export async function runUse(args: string[]): Promise<void> {
   const model = modelArg ?? preset?.defaultModel ?? loadLastModel()?.model ?? "";
   saveLastModel({ provider: providerId, model });
   out(ok(`✓ Active provider set to ${bold(text(preset?.label ?? providerId))}`));
-  out(`${faint("model")} ${info(model)}  ${faint("(next `rune` session uses this)")}`);
+  out(`${faint("model")} ${info(model)}  ${faint("(next `will` session uses this)")}`);
 }
 
 // ─── rune models ───
@@ -255,12 +255,12 @@ export async function runModels(args: string[]): Promise<void> {
   out();
   out(
     faint("Use one with ") +
-      info(`rune use ${providerId} <model>`) +
+      info(`will use ${providerId} <model>`) +
       faint(" or ") +
-      info(`rune -m ${providerId}/<model>`),
+      info(`will -m ${providerId}/<model>`),
   );
   if (source === "cached")
-    out(faint("Refresh with ") + info(`rune models ${providerId} --refresh`));
+    out(faint("Refresh with ") + info(`will models ${providerId} --refresh`));
 }
 
 /** One line of an error, bounded — a stack trace is not a status line. */

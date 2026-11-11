@@ -277,7 +277,7 @@ describe("the five breaker gaps the corpus found", () => {
     }
   });
 
-  test("Rune's controls are Rune's controls whichever tool reaches them", () => {
+  test("Will's controls are Will's controls whichever tool reaches them", () => {
     // The gap: `guardrailChangeReason` inspected `update_config` alone, so the
     // same edit through a shell was not a guardrail change at all.
     expect(
@@ -286,12 +286,20 @@ describe("the five breaker gaps the corpus found", () => {
     expect(shellGuardrailChange(bash("rune config set sandbox.enabled false"))).toContain(
       "through the CLI",
     );
+    for (const command of [
+      "will config set sandbox.enabled false",
+      "will policy disable",
+      "will sandbox off",
+    ]) {
+      expect(shellGuardrailChange(bash(command))).toContain("through the CLI");
+    }
+    expect(shellGuardrailChange(bash("will config get sandbox"))).toBeUndefined();
     expect(shellGuardrailChange(bash("echo x > .rune/hooks/pre-tool.sh"))).toContain(
       "through the shell",
     );
   });
 
-  test("memory is one of Rune's controls (V7 findings 1, 2, 17)", () => {
+  test("memory is one of Will's controls (V7 findings 1, 2, 17)", () => {
     // What every future session is BRIEFED with is a control surface, and it
     // was not on the list: `CONTROL_SUBDIRS` knew skills, plugins, hooks,
     // commands and policy, so `cat > ~/.rune/memory/entries/a.json` — a write
@@ -311,7 +319,7 @@ describe("the five breaker gaps the corpus found", () => {
     expect(shellGuardrailChange(bash("cat ~/.rune/system-memory.md"))).toBeUndefined();
   });
 
-  test("the acceptance vault is one of Rune's controls (V8 critical 3)", () => {
+  test("the acceptance vault is one of Will's controls (V8 critical 3)", () => {
     // Promoted from `tests/verification/v8-acceptance-vault.test.ts`. The vault
     // at `~/.rune/acceptance-pins/<workspace hash>` holds the ONLY copy of the
     // oracle a run is graded by that the run itself cannot rewrite — and the
@@ -474,7 +482,7 @@ describe("the five breaker gaps the corpus found", () => {
     expect(shellGuardrailChange(bash("echo OPENAI_API_KEY=x >> ~/.rune/.env"))).toContain(
       "through the shell",
     );
-    // And a secret that is not Rune's is not Rune's business: the project's
+    // And a secret that is not Will's is not Will's business: the project's
     // own `.env` and a test fixture in the workspace stay readable.
     for (const command of [
       "cat .env",
@@ -832,14 +840,14 @@ describe("~<username> walks past $HOME", () => {
     // where before there was none.)
     expect(
       shellGuardrailChange(bash(`python3 -c "print(open('~${user}/.rune/memory/.key').read())"`)),
-    ).toMatch(/Rune's own/);
+    ).toMatch(/Will's own/);
   });
 
   test("the control surface under somebody else's home is still the control surface", () => {
     expect(isSelfProtectionPath(ROOT, `~${user}/.rune/hooks/pre.sh`)).toBe(true);
     expect(isSecretControlPath(ROOT, `~${user}/.rune/memory/.key`)).toBe(true);
     expect(shellGuardrailChange(bash(`cp evil.json ~${user}/.rune/memory/entries/a.json`))).toMatch(
-      /Rune's own/,
+      /Will's own/,
     );
   });
 

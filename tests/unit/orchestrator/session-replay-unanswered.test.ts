@@ -54,7 +54,7 @@ describe("a call with no result on the log", () => {
     expect(told).not.toMatch(/re-?run it/i);
     // What is known, and what is not.
     expect(told).toContain("No result was recorded");
-    expect(told).toContain("the previous Rune run ended before bash returned");
+    expect(told).toContain("the previous Will run ended before bash returned");
     expect(told).toContain("It may not have run, or it may have run in part or in full");
     // What to do about it.
     expect(told).toContain("check the state it would have changed");

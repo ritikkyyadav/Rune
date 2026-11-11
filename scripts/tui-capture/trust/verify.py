@@ -17,7 +17,7 @@ def check(name, ok, s=None):
         save(s, OUT, "%s-FAIL-%d" % (CASE, len(results)))
 
 def boot(s):
-    if not wait_text(s, "r u n e", 90):
+    if not wait_text(s, "w i l l", 90):
         raise AssertionError("Rune did not reach its startup screen")
     s.pump(1.5)
 

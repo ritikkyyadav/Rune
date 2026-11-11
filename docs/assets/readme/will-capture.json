@@ -1,0 +1,55 @@
+{
+  "captured_on": "2026-11-09",
+  "product": "Will",
+  "product_version": "1.4.17-dev",
+  "source_base_commit": "e5820fbec01cc460f3d146683eeca8f146ea8152",
+  "source": "codex/will-rebrand working tree; name change over the installed v1.4.17 source",
+  "model": {
+    "provider": "Ollama-compatible local scripted server",
+    "host": "127.0.0.1",
+    "requests_served": 20,
+    "hosted_provider_calls": 0
+  },
+  "appearance": {
+    "terminal_background": "#FFFFFF",
+    "terminal_foreground": "#2E2E2E",
+    "theme": "rune-light",
+    "finish": "matte"
+  },
+  "driver": "scripts/tui-capture/capture-readme-hero.py",
+  "driver_sha256": "400079290209c3ebaf6948d1116616e5e75ce88cb0a51b2edf72b50694c69caf",
+  "frames": [
+    {
+      "cols": 120,
+      "rows": 32,
+      "surface": "real PTY alternate screen",
+      "fixture_reset": true,
+      "fixture_tests": {
+        "passed": 2,
+        "failed": 0
+      },
+      "fixture_version_stdout": "0.3.2",
+      "files": {
+        "will-session-120x32.html": "33aa183759b7f52be126be0912eb25ffd72a679ed1d103c1fb4f37822298475d",
+        "will-session-120x32.txt": "f55f021a57263e43a6efbec62201f3d6b9880747ba930aa7838e57671f2675d2",
+        "will-session-120x32.jpg": "cad27453baf8cb69336f8e40d271b87b6b21045187557e63b2f524a790981b60"
+      }
+    },
+    {
+      "cols": 80,
+      "rows": 22,
+      "surface": "real PTY alternate screen",
+      "fixture_reset": true,
+      "fixture_tests": {
+        "passed": 2,
+        "failed": 0
+      },
+      "fixture_version_stdout": "0.3.2",
+      "files": {
+        "will-session-80x22.html": "e6ecbaa8c2ab04c04522e0d067385c2131fc3e56a20e9c4d3e2f51385d8a63c2",
+        "will-session-80x22.txt": "2ce7fe5d4f35186a1e5bac565631efaa70c7f4903e9b7babc9e8386384075f6d",
+        "will-session-80x22.jpg": "d7e4f4fb046ff9c2e31953ee3ddbb875ab9bab762d3d92e6103dc6e22c526a7e"
+      }
+    }
+  ]
+}

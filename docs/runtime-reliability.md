@@ -71,7 +71,7 @@ uncommitted; the base commit alone does not reproduce this build.
 | Installed server                 | Session check passed and test hosts were cleaned up                                                                      |
 | Installed TUI                    | `/config` picker and direct edit saved budget/concurrency; a new process restored both settings through `/settings list` |
 
-The guarded installer delivered **Rune v0.3.0-dev+8d7c89f**, built from base commit
+The guarded installer delivered **Will v0.3.0-dev+8d7c89f**, built from base commit
 `8d7c89f3158b84a666dc13083eb39c13e41ddbf2` plus the working changes. Fresh login and
 minimal-environment shells resolved the installed build. The settings smoke used an
 isolated profile and made no model requests. Tests requiring live enterprise services

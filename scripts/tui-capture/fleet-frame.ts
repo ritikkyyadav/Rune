@@ -49,7 +49,7 @@ const tight = (s: string): string => (s.startsWith(" ") ? s.slice(1) : s);
 
 function header(cols: number): string[] {
   const usable = cols - 1;
-  const left = "  R U N E  ~/Project/Alan";
+  const left = "  W I L L  ~/Project/Alan";
   const right = "v0.4.1-dev+62f02d0";
   const gap = Math.max(1, usable - w(left) - w(right));
   return ["", `${left}${" ".repeat(gap)}${right}`, `  ${"━".repeat(7)}${RULE.repeat(usable - 9)}`];
@@ -487,8 +487,8 @@ if (compare) {
     }
     // The mock files carry a leading blank line for some frames; align on the
     // masthead row so row N here is row N there.
-    const mockTop = mock.findIndex((l) => l.includes("R U N E"));
-    const ourTop = rows.findIndex((l) => l.includes("R U N E"));
+    const mockTop = mock.findIndex((l) => l.includes("W I L L"));
+    const ourTop = rows.findIndex((l) => l.includes("W I L L"));
     let same = 0;
     const diffs: string[] = [];
     for (let i = 0; i < rows.length; i++) {
