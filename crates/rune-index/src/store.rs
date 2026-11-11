@@ -262,13 +262,19 @@ impl SymbolStore {
 
     /// Return aggregate stats about the index.
     pub fn stats(&self) -> Result<IndexStats, IndexError> {
-        let total_files: u64 =
-            self.conn
-                .query_row("SELECT COUNT(*) FROM indexed_files", [], |row| row.get(0))?;
+        // SQLite COUNT is a nonnegative signed 64-bit integer. Read that SQL
+        // type explicitly while preserving the public unsigned stats fields.
+        let total_files = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM indexed_files", [], |row| {
+                row.get::<_, i64>(0)
+            })? as u64;
 
-        let total_symbols: u64 =
-            self.conn
-                .query_row("SELECT COUNT(*) FROM symbols", [], |row| row.get(0))?;
+        let total_symbols = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM symbols", [], |row| {
+                row.get::<_, i64>(0)
+            })? as u64;
 
         let mut stmt = self.conn.prepare(
             "SELECT language, COUNT(*) FROM indexed_files GROUP BY language ORDER BY COUNT(*) DESC",
@@ -276,7 +282,7 @@ impl SymbolStore {
         let languages = stmt
             .query_map([], |row| {
                 let lang: String = row.get(0)?;
-                let count: u64 = row.get(1)?;
+                let count = row.get::<_, i64>(1)? as u64;
                 Ok((lang, count))
             })?
             .collect::<Result<Vec<_>, _>>()?;

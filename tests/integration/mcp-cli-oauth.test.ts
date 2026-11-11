@@ -176,7 +176,7 @@ describe("rune mcp add + login, end to end", () => {
     expect(code).toBe(1);
     const text = printed();
     expect(text).toContain("needs login");
-    expect(text).toContain(`rune mcp login ${SERVER}`);
+    expect(text).toContain(`will mcp login ${SERVER}`);
   });
 
   test("workspace scope wins over user scope for the same name", async () => {
@@ -230,7 +230,7 @@ describe("rune mcp add + login, end to end", () => {
     expect(await runMcp(["remove", SERVER], { workspace })).toBe(0);
     const text = printed();
     expect(text).toContain("removed");
-    expect(text).toContain(`rune mcp logout ${SERVER}`);
+    expect(text).toContain(`will mcp logout ${SERVER}`);
 
     // logout then actually forgets it.
     output.length = 0;

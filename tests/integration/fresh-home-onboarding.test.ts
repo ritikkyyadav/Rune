@@ -164,7 +164,7 @@ describe("a fresh machine reaches its first answer", () => {
       // ── 2. Doctor on an empty machine: clean, and it says so.
       const d1 = await rune(["doctor"]);
       expect(d1.code).toBe(0);
-      expect(d1.out).toContain("RUNE DOCTOR");
+      expect(d1.out).toContain("WILL DOCTOR");
       expect(d1.out).toContain("no cap or retirement recorded");
       lap("doctor (empty home)");
 

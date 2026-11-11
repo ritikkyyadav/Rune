@@ -20,6 +20,11 @@ time — so a released binary cannot disagree with the tag beside it. Untagged b
   package exports, protocol identifiers, and release asset names compatible.
 - Sign and verify staged macOS binaries before hashing and installing them.
 
+### Fixed
+
+- Update the native indexer's bundled SQLite through `rusqlite` 0.41.1 to address
+  RUSTSEC-2026-0459, found by the repository's dependency audit.
+
 ## [1.4.17] - 2026-10-27
 
 **The interface stops destroying work and stops saying `done` when it is not.** A patch on
